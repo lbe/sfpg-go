@@ -1,0 +1,16 @@
+version: "2"
+sql:
+  - schema: "migrations/migrations" # Load all migration files for schema
+    queries: "sqlc/queries"
+    engine: "sqlite"
+    gen:
+      go:
+        package: "gallerydb"
+        out: "./internal/gallerydb"
+        emit_interface: true
+        emit_prepared_queries: true # Enable explicit prepared queries
+        overrides:
+          - column: "*.found"
+            go_type: "bool"
+          - column: "*.route"
+            go_type: "string"

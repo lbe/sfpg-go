@@ -1,0 +1,27 @@
+<div id="config-etag-display" class="mb-4">
+  <div class="form-control">
+    <label class="label">
+      <span class="label-text">ETag Version (Cache Buster)</span>
+    </label>
+    <input
+      type="text"
+      id="config-etag-version"
+      value="{{ .ETagVersion }}"
+      readonly
+      class="input input-bordered w-64"
+    />
+    <label class="label">
+      <span class="label-text-alt">Current application cache version</span>
+    </label>
+  </div>
+  <button
+    type="button"
+    class="btn btn-outline btn-primary btn-sm mt-2"
+    hx-post="/config/increment-etag"
+    hx-include="[name='csrf_token']"
+    hx-target="#config-etag-display"
+    hx-swap="outerHTML"
+  >
+    Increment ETag Version
+  </button>
+</div>

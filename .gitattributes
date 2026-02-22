@@ -1,0 +1,17 @@
+# Enforce consistent line endings for all contributors
+* text=auto eol=lf
+
+# Explicitly declare text files to ensure they have LF line endings
+*.go text
+*.md text
+*.sh text
+*.sql text
+*.tmpl text
+*.yml text
+*.yaml text
+.gitignore text
+.prettierrc text
+.air.toml text
+
+# Denote files that are truly binary and should not be modified
+# (Add any binary file extensions here if needed)

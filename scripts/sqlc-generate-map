@@ -1,0 +1,254 @@
+#!/usr/bin/env perl
+
+use v5.40;
+use strict;
+use warnings;
+use utf8;
+
+use YAML::PP;
+use Path::Tiny;
+use List::Util qw( uniq );
+
+#---------------------------------------------------------------------------
+# Load and parse sqlc.yaml from the current directory
+#---------------------------------------------------------------------------
+
+my $yaml_file = path('sqlc.yaml');
+
+die "Cannot find sqlc.yaml in current directory\n"
+    unless $yaml_file->exists;
+
+my $ypp    = YAML::PP->new;
+my $config = $ypp->load_file( $yaml_file->stringify );
+
+my $sql_entry = $config->{sql}[0]
+    or die "No sql entries found in sqlc.yaml\n";
+
+my $queries_dir = path( $sql_entry->{queries} )
+    or die "No queries directory found in sqlc.yaml\n";
+
+my $go_out_dir = path( $sql_entry->{gen}{go}{out} )
+    or die "No Go output directory found in sqlc.yaml\n";
+
+die "Queries directory '$queries_dir' does not exist\n"
+    unless $queries_dir->exists;
+
+die "Go output directory '$go_out_dir' does not exist\n"
+    unless $go_out_dir->exists;
+
+#---------------------------------------------------------------------------
+# Parse SQL files for -- name: <QueryName> :<type> annotations
+#---------------------------------------------------------------------------
+
+my %sql_names;    # query_name => 1
+
+for my $sql_file ( $queries_dir->children(qr/\.sql$/x) ) {
+    my $content = $sql_file->slurp_utf8;
+    while ( $content =~ /--\s*name:\s*(\w+)\s*:\w+/gx ) {
+        $sql_names{$1} = 1;
+    }
+}
+
+die "No sqlc query annotations found in '$queries_dir'\n"
+    unless %sql_names;
+
+#---------------------------------------------------------------------------
+# Parse Go files for constants and function names
+#---------------------------------------------------------------------------
+
+my %const_names;     # query_name => constant_name
+my %func_names;      # query_name => function_name
+
+for my $go_file ( $go_out_dir->children(qr/\.go$/x) ) {
+    my $content = $go_file->slurp_utf8;
+
+    # Match constants: const <camelCaseName> or <camelCaseName>Query
+    while ( $content =~ /const\s+([a-z][a-zA-Z0-9]*)(?:Query)?\s*=/gx ) {
+
+        my $const = $1;
+
+        # Derive the sqlc name by stripping trailing 'Query' if present
+        # and capitalising the first letter to match the -- name annotation
+        ( my $base = $const ) =~ s/Query$//x;
+        my $sql_name = ucfirst($base);
+
+        if ( exists $sql_names{$sql_name} ) {
+            $const_names{$sql_name} = $const;
+        }
+    }
+
+    # Match functions: func (q *Queries) <FuncName>(
+    while ( $content =~ /func\s+\(q\s+\*\w+\)\s+(\w+)\s*\(/gx ) {
+        my $func = $1;
+
+        if ( exists $sql_names{$func} ) {
+            $func_names{$func} = $func;
+        }
+    }
+}
+
+#---------------------------------------------------------------------------
+# Output tab-separated results sorted by sql --name
+#---------------------------------------------------------------------------
+
+my $placeholder = 'N/A';
+
+say join( "\t", 'sql --name', 'constant name', 'function name' );
+
+for my $sql_name ( sort keys %sql_names ) {
+    my $const = $const_names{$sql_name} // $placeholder;
+    my $func  = $func_names{$sql_name}  // $placeholder;
+    say join( "\t", $sql_name, $const, $func );
+}
+
+=pod
+
+=head1 NAME
+
+sqlc-map - Map sqlc SQL query names to their generated Go constants and functions
+
+=head1 SYNOPSIS
+
+    sqlc-map.pl [> output.tsv]
+
+=head1 DESCRIPTION
+
+C<sqlc-map.pl> reads the C<sqlc.yaml> configuration file in the current
+directory to locate the SQL query files and the generated Go package
+directory. It then parses both to produce a tab-separated mapping between
+the sqlc C<-- name> annotation in the SQL files and the corresponding
+constant name and function name in the generated Go package.
+
+The output is sorted alphabetically by the SQL query name and is suitable
+for redirection to a file for use in documentation or tooling.
+
+=head1 OUTPUT
+
+The script produces a tab-separated stream with a header row containing
+three columns:
+
+=over 4
+
+=item * B<sql --name>
+
+The query name as specified in the C<-- name: QueryName :type> annotation
+in the SQL source file.
+
+=item * B<constant name>
+
+The name of the Go constant in the generated package that holds the SQL
+query string. sqlc generates constants in camelCase, optionally suffixed
+with C<Query> (e.g. C<getUser> or C<getUserQuery>). If no constant is
+found for a query, the value C<N/A> is used.
+
+=item * B<function name>
+
+The name of the generated Go function on the C<Queries> receiver that
+executes the query (e.g. C<GetUser>). If no function is found for a query,
+the value C<N/A> is used.
+
+=back
+
+=head1 CONFIGURATION
+
+The script reads C<sqlc.yaml> from the current working directory. It
+expects a C<version: "2"> configuration with at least one C<sql> entry
+containing the following keys:
+
+=over 4
+
+=item * C<queries>
+
+Path to the directory containing C<.sql> files with sqlc annotations.
+
+=item * C<gen.go.out>
+
+Path to the directory containing the generated Go package files.
+
+=back
+
+Example C<sqlc.yaml>:
+
+    version: "2"
+    sql:
+      - schema: "schema.sql"
+        queries: "queries/"
+        engine: "sqlite"
+        gen:
+          go:
+            package: "db"
+            out: "db/"
+            emit_interface: true
+
+=head1 DEPENDENCIES
+
+=over 4
+
+=item * L<YAML::PP>
+
+Used to parse the C<sqlc.yaml> configuration file.
+
+=item * L<Path::Tiny>
+
+Used for all file and directory operations.
+
+=item * L<List::Util>
+
+Used for utility functions.
+
+=back
+
+All dependencies are available on CPAN.
+
+=head1 ERRORS
+
+The script will die with a descriptive message if any of the following
+conditions are encountered:
+
+=over 4
+
+=item * C<sqlc.yaml> is not found in the current directory.
+
+=item * The C<queries> or C<gen.go.out> directories do not exist.
+
+=item * No sqlc C<-- name> annotations are found in the SQL files.
+
+=back
+
+=head1 LIMITATIONS
+
+=over 4
+
+=item *
+
+Only the first C<sql> entry in C<sqlc.yaml> is processed.
+
+=item *
+
+SQL and Go files are expected to reside in flat directories with no
+subdirectories.
+
+=item *
+
+The Go receiver struct is assumed to be named C<Queries>. If a custom
+receiver name is configured in C<sqlc.yaml>, the function name column
+may not populate correctly.
+
+=item *
+
+Only C<version: "2"> of the C<sqlc.yaml> format is supported.
+
+=back
+
+=head1 AUTHOR
+
+William
+
+=head1 LICENSE
+
+Copyright (C) 2026 William. All rights reserved.
+
+This script is free software; you can redistribute it and/or modify it
+under the same terms as Perl itself.
+
+=cut
