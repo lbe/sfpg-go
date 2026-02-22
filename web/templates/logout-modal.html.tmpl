@@ -1,0 +1,33 @@
+<!-- Logout Modal (DaisyUI) -->
+<input
+  type="checkbox"
+  id="logout_modal"
+  class="modal-toggle"
+  _="on change
+            if me.checked
+              -- Close lightbox when logout modal opens
+              if #lightbox_modal does not match .hidden
+                trigger closeModal on #lightbox_modal
+                wait 200ms
+              end
+            end"
+/>
+<div class="modal" role="dialog">
+  <div class="modal-box">
+    <h3 class="mb-4 text-lg font-bold">Confirm Logout</h3>
+    <p class="py-4">Are you sure you want to log out?</p>
+    <form
+      id="logout-form"
+      hx-post="/logout"
+      hx-swap="none"
+      _="on htmx:afterRequest if event.detail.successful then set #logout_modal.checked to false end"
+    >
+      <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}" />
+      <div class="modal-action">
+        <button class="btn btn-primary" type="submit">Confirm</button>
+        <label for="logout_modal" class="btn">Cancel</label>
+      </div>
+    </form>
+  </div>
+  <label class="modal-backdrop" for="logout_modal">Close</label>
+</div>

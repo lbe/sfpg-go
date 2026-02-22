@@ -1,0 +1,17 @@
+# Configuration file for sfpg
+# All keys are optional except session-secret (required).
+# Precedence: CLI flags > env vars (SFG_* or SESSION_SECRET) > config files > defaults.
+
+port: 8081
+# discover: true
+# debug-delay-ms: 0
+# profile: ""
+# compression: true
+# http-cache: true
+# enable-cache-preload: true
+# max-http-cache-entry-insert-per-transaction: 10
+
+# session-secret: "your-strong-random-secret-key-here"
+# Required. Used for signing session cookies.
+# Can also be set via SESSION_SECRET environment variable.
+# Generate with: openssl rand -base64 32

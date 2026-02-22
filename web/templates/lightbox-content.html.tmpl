@@ -1,0 +1,258 @@
+{{ define "lightbox-content" }}
+  <div class="relative flex h-full w-full items-center justify-center">
+    {{/* SECTION 1: STATIC IMAGES LAYER */}}
+    <div
+      id="lightbox-images"
+      class="absolute inset-0 h-full w-full"
+      _="on route(url)
+            set allSlots to [#slot-1, #slot-2, #slot-3]
+            set targetSlot to null
+            
+            -- Find the slot with the requested URL
+            for s in allSlots
+              if s.getAttribute('src') == url set targetSlot to s end
+            end
+            
+            -- Swap Visibility
+            if targetSlot is not null
+               for s in allSlots
+                 if s == targetSlot
+                    remove .hidden from s
+                 else
+                    add .hidden to s
+                 end
+               end
+               
+               -- Handle Spinner
+               if targetSlot.complete
+                  add .hidden to #lightbox-spinner
+               else
+                  remove .hidden from #lightbox-spinner
+               end
+               
+               -- Recalculate scale for newly visible image
+               call updateLightboxScale(targetSlot)
+            end
+          end"
+    >
+      {{/* Scale images to fit container.
+        Large images use max-h-full max-w-full for downscaling.
+        Small images use transform scale (up to 200%) for upscaling.
+
+        Note: No Tailwind transform classes (-translate-x-1/2 -translate-y-1/2) are used
+        to avoid conflicts with the Hyperscript-managed inline transform styles.
+        The updateLightboxScale() function has full control over positioning and scaling.
+      */}}
+      <img
+        id="slot-1"
+        class="lightbox-slot absolute top-1/2 left-1/2 hidden max-h-full max-w-full object-contain"
+        src=""
+        style="transform: translate(-50%, -50%);"
+        _="on load
+             if I do not match .hidden add .hidden to #lightbox-spinner
+             call updateLightboxScale(me)
+             call updateScaled()
+           end"
+      />
+      <img
+        id="slot-2"
+        class="lightbox-slot absolute top-1/2 left-1/2 hidden max-h-full max-w-full object-contain"
+        src=""
+        style="transform: translate(-50%, -50%);"
+        _="on load
+             if I do not match .hidden add .hidden to #lightbox-spinner
+             call updateLightboxScale(me)
+             call updateScaled()
+           end"
+      />
+      <img
+        id="slot-3"
+        class="lightbox-slot absolute top-1/2 left-1/2 hidden max-h-full max-w-full object-contain"
+        src=""
+        style="transform: translate(-50%, -50%);"
+        _="on load
+             if I do not match .hidden add .hidden to #lightbox-spinner
+             call updateLightboxScale(me)
+             call updateScaled()
+           end"
+      />
+
+      <!-- Main Lightbox Spinner -->
+      <div
+        id="lightbox-spinner"
+        class="htmx-indicator absolute inset-0 z-10 flex items-center justify-center"
+      >
+        <span class="loading loading-spinner loading-lg"></span>
+      </div>
+    </div>
+
+    {{/* SECTION 2: UI LAYER */}}
+    <div
+      id="lightbox-ui"
+      class="absolute inset-0 z-20 h-full w-full"
+      {{/* We can remove the data attributes if we pass the values directly to the function */}}
+      hx-get="/info/image/{{ .CurrentImageID }}?v={{ cacheVersion }}"
+      hx-trigger="manual-load"
+      hx-target="#box_info"
+      hx-indicator="#info_box_spinner"
+      _="init 
+           call initLightboxRouter(me, 
+                                   '{{ .CurrentImageID }}', 
+                                   '/raw-image/{{ .CurrentImageID }}', 
+                                   '/raw-image/{{ .NextIndex }}', 
+                                   '/raw-image/{{ .PrevIndex }}')
+         end"
+    >
+      {{/* Navigation Overlays */}}
+      <div class="grid h-full w-full grid-cols-3">
+        <div class="h-full w-full cursor-pointer">
+          <a
+            class="block h-full w-full"
+            {{ if .HasPrev }}
+              hx-get="/lightbox/{{ .PrevIndex }}?v={{ cacheVersion }}"
+              hx-target="#lightbox-ui" hx-select="#lightbox-ui"
+              hx-swap="outerHTML" title="Previous" _="on click call
+              lightboxNav('/raw-image/{{ .PrevIndex }}', '{{ .PrevIndex }}')"
+            {{ end }}
+          ></a>
+        </div>
+        <div
+          class="h-full w-full cursor-pointer"
+          _="on click trigger closeModal on #lightbox_modal"
+          title="Close"
+        ></div>
+        <div class="h-full w-full cursor-pointer">
+          <a
+            class="block h-full w-full"
+            {{ if .HasNext }}
+              hx-get="/lightbox/{{ .NextIndex }}?v={{ cacheVersion }}"
+              hx-target="#lightbox-ui" hx-select="#lightbox-ui"
+              hx-swap="outerHTML" title="Next" _="on click call
+              lightboxNav('/raw-image/{{ .NextIndex }}', '{{ .NextIndex }}')"
+            {{ end }}
+          ></a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <span
+    id="image-count-display"
+    hx-swap-oob="true"
+    class="text-base-content/80 font-mono text-xs font-medium tracking-[-0.01em]"
+    data-current-index="{{ .CurrentIndex }}"
+    data-image-count="{{ .ImageCount }}"
+    >{{ .CurrentIndex | plus 1 }} / {{ .ImageCount }}</span
+  >
+
+  {{/* OOB Buttons - Placed outside the main structure to avoid duplication in hx-select="#lightbox-ui" */}}
+  <button
+    id="lightbox-first-btn"
+    hx-swap-oob="true"
+    type="button"
+    class="border-base-content/5 bg-base-300/60 text-base-content/70 hover:bg-base-300 hover:text-primary hover:border-primary/20 relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none"
+    title="First"
+    hx-get="/lightbox/{{ .FirstIndex }}?v={{ cacheVersion }}"
+    hx-target="#lightbox-ui"
+    hx-select="#lightbox-ui"
+    hx-swap="outerHTML"
+    _="on click call lightboxNav('/raw-image/{{ .FirstIndex }}', '{{ .FirstIndex }}')"
+    {{ if not .HasPrev }}disabled{{ end }}
+  >
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    >
+      <path d="m11 17-5-5 5-5" />
+      <path d="m18 17-5-5 5-5" />
+    </svg>
+  </button>
+
+  <button
+    id="lightbox-prev-btn"
+    hx-swap-oob="true"
+    type="button"
+    class="border-base-content/5 bg-base-300/60 text-base-content/70 hover:bg-base-300 hover:text-primary hover:border-primary/20 relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none"
+    title="Previous"
+    hx-get="/lightbox/{{ .PrevIndex }}?v={{ cacheVersion }}"
+    hx-target="#lightbox-ui"
+    hx-select="#lightbox-ui"
+    hx-swap="outerHTML"
+    _="on click call lightboxNav('/raw-image/{{ .PrevIndex }}', '{{ .PrevIndex }}')"
+    {{ if not .HasPrev }}disabled{{ end }}
+  >
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    >
+      <path d="m15 18-6-6 6-6" />
+    </svg>
+  </button>
+
+  <button
+    id="lightbox-next-btn"
+    hx-swap-oob="true"
+    type="button"
+    class="border-base-content/5 bg-base-300/60 text-base-content/70 hover:bg-base-300 hover:text-primary hover:border-primary/20 relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none"
+    title="Next"
+    hx-get="/lightbox/{{ .NextIndex }}?v={{ cacheVersion }}"
+    hx-target="#lightbox-ui"
+    hx-select="#lightbox-ui"
+    hx-swap="outerHTML"
+    _="on click call lightboxNav('/raw-image/{{ .NextIndex }}', '{{ .NextIndex }}')"
+    {{ if not .HasNext }}disabled{{ end }}
+  >
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    >
+      <path d="m9 18 6-6-6-6" />
+    </svg>
+  </button>
+
+  <button
+    id="lightbox-last-btn"
+    hx-swap-oob="true"
+    type="button"
+    class="border-base-content/5 bg-base-300/60 text-base-content/70 hover:bg-base-300 hover:text-primary hover:border-primary/20 relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none"
+    title="Last"
+    hx-get="/lightbox/{{ .LastIndex }}?v={{ cacheVersion }}"
+    hx-target="#lightbox-ui"
+    hx-select="#lightbox-ui"
+    hx-swap="outerHTML"
+    _="on click call lightboxNav('/raw-image/{{ .LastIndex }}', '{{ .LastIndex }}')"
+    {{ if not .HasNext }}disabled{{ end }}
+  >
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    >
+      <path d="m6 17 5-5-5-5" />
+      <path d="m13 17 5-5-5-5" />
+    </svg>
+  </button>
+{{ end }}

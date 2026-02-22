@@ -1,0 +1,218 @@
+# Cursor Rules for SFPG-Go
+
+## Test-Driven Development (TDD)
+
+1. **Always follow TDD principles**: Red, Green, Refactor
+   - Write tests first when implementing new features
+   - Run tests after each change
+   - Refactor only after tests pass
+
+2. **Test execution workflow**:
+   - **NEVER** repeatedly run `go test` with different grep pipes sequentially
+   - **ALWAYS** redirect test output to a text file first: `go test -tags "integration e2e" ./... > ./tmp/test_output.txt 2>&1` (create `./tmp` if needed: `mkdir -p ./tmp`)
+   - Then grep the text file as many times as needed: `grep -E "FAIL|PASS|ERROR" ./tmp/test_output.txt`
+   - This is more efficient and follows user instructions exactly (server package tests take ~1 minute)
+   - **ALL tests** = unit + integration + e2e. Always use `-tags "integration e2e"` so integration/e2e-tagged tests run.
+
+3. **Test verification**:
+   - **Before every commit**: Run `go test -tags "integration e2e" ./...` (redirect to `./tmp/test_output.txt`, grep for FAIL). All must pass.
+   - Always run and confirm ALL tests pass before considering work complete
+   - When fixing one test, verify all other tests still pass
+   - Use `go test -tags "integration e2e" ./... -race` for race condition testing
+   - Use `required_permissions: ['all']` for go test/build commands (they need to run outside sandbox)
+   - **If you see errors like "package encoding/pem is not in std" or similar Go standard library errors when running go build/test, this indicates the command needs `required_permissions: ['all']` to access the Go standard library outside the sandbox**
+
+4. **Test quality**:
+   - Use HTML parsing (`golang.org/x/net/html`) instead of fragile `strings.Contains` checks
+   - **NEVER use `strings.Contains` on httptest response bodies** - always parse the HTML first
+   - Parse httptest output using `html.Parse()` and then query the parsed structure
+   - Create helper functions for HTML parsing and reuse them
+   - Add tests incrementally as code becomes available
+   - Never skip tests or claim tests exist when they don't
+   - Add tests one at a time and verify each works before adding the next
+
+## Development Workflow
+
+1. **Follow plans and sequences**:
+   - Read and follow the sequence of tasks in plan files (`.cursor/plans/*.plan.md`)
+   - Don't skip ahead or reorder tasks without explicit user approval
+   - Complete tasks in the order specified
+
+2. **Error handling**:
+   - Fix errors as they are found during testing
+   - Don't accumulate errors to fix later
+   - Address issues immediately when discovered
+
+3. **Code quality**:
+   - Follow existing project patterns - don't introduce new patterns without justification
+   - Don't take unilateral action inconsistent with existing patterns
+   - Pay attention to detail - small mistakes compound into big problems
+   - When fixing something, don't break things that were already working
+
+## Scripting and Automation
+
+1. **Python is FORBIDDEN**:
+   - **NEVER use Python** in this project - not for scripts, not for one-off tasks, not for anything
+   - Python is not allowed under any circumstances
+   - If you think you need Python, you don't - use bash or Perl instead
+
+2. **Allowed scripting languages**:
+   - Use **bash** for simple scripts and automation
+   - Use **Perl** if you need something more powerful than bash
+   - Use standard Unix tools (grep, sed, awk, etc.) as appropriate
+   - When in doubt, use bash first; only use Perl if bash is insufficient
+
+3. **Script creation**:
+   - Prefer bash for most tasks
+   - Only use Perl when bash is clearly insufficient
+   - Never create Python scripts, even temporarily
+   - Never use Python in terminal commands or one-liners
+
+## Frontend Development
+
+1. **No JavaScript**:
+   - This is a Hyperscript project - **DO NOT USE JAVASCRIPT**
+   - Replace any JavaScript with Hyperscript equivalents
+   - Use HTMX for HTML-over-the-wire functionality
+   - **If you think JavaScript is needed, present your case and request explicit permission before using it**
+
+2. **Hyperscript validation**:
+   - Use the automated CLI validator: `go run ./scripts/validate-hyperscript.go web/templates`
+   - Validate Hyperscript syntax before integrating into templates
+   - Prefer validating the specific file you modified for faster feedback
+   - This eliminates the "death cycle" of template errors during development
+
+3. **UI/UX importance**:
+   - UI issues are NOT "minor" or "cosmetic" - they are real bugs
+   - Don't dismiss UI problems or push them off
+   - Fix UI issues immediately when reported
+   - The UI needs to work - it's not optional
+
+## Code Review and Communication
+
+1. **Follow instructions exactly**:
+   - Read all instructions carefully before taking action
+   - Follow instructions exactly as given - don't override or assume
+   - If instructions conflict, ask for clarification rather than choosing one approach
+
+2. **Attention to detail**:
+   - Pay close attention to user feedback and requirements
+   - Don't make the same mistakes repeatedly
+   - When user provides specific feedback, address it completely
+   - Don't half-implement fixes - complete them properly
+
+3. **Honesty and transparency**:
+   - Never claim tests exist when they don't
+   - Never skip tests that should be created
+   - Be honest about what has and hasn't been done
+   - If you make a mistake, acknowledge it and fix it properly
+
+4. **No assumptions without verification**:
+   - **NEVER make assumptions** about code state, test results, or any facts
+   - **ALWAYS verify** claims with evidence before stating them
+   - If you don't know something or can't verify it, say so explicitly
+   - Only make assumptions after explicitly asking the user for permission to assume
+   - When in doubt, verify with the user first
+
+## Concurrency and Race Conditions
+
+1. **Protect shared state**:
+   - Use mutexes (`sync.RWMutex` or `sync.Mutex`) to protect shared fields accessed by multiple goroutines
+   - Protect context access (`app.ctx`) when it can be modified while background goroutines read it
+   - Always test with `-race` flag for race condition detection
+
+2. **Background goroutines**:
+   - Ensure all background goroutines properly handle context cancellation
+   - Use proper synchronization when accessing shared state from goroutines
+   - Test graceful shutdown scenarios
+
+## Configuration and Testing
+
+1. **Test isolation**:
+   - Each test should be independent and not rely on state from other tests
+   - Use `CreateApp()` or `CreateAppWithOpt()` for test setup
+   - Clean up resources properly (use `defer app.Shutdown()`)
+
+2. **Test data**:
+   - Use temporary directories for test data
+   - Don't rely on external state or files
+   - Ensure tests can run in parallel safely
+
+## File and Path Handling
+
+1. **Always use absolute paths** when possible in tool calls
+2. **Respect .gitignore and .cursorignore** - don't access ignored files unless explicitly needed
+3. **Use proper file permissions** - request `required_permissions` when needed (git_write, network, all)
+
+## HTMX and Web Development
+
+1. **Understand HTMX flow**:
+   - Read the code to understand how routes work - don't assume direct URL access works
+   - Many routes are partials and won't work properly if not called via appropriate HTMX calls
+   - Understand the difference between full page renders and partial renders
+   - Check for HTMX headers (`Hx-Request`) to determine request type
+
+2. **HTMX response handling**:
+   - Use `hx-swap-oob="outerHTML"` for updating elements outside the main target
+   - Return `http.StatusOK` (200) for validation errors so HTMX processes the response
+   - Include empty divs for all swap targets in error responses to clear them
+
+3. **Form handling**:
+   - Always call `r.ParseForm()` in POST handlers before accessing form values
+   - Handle checkbox values correctly (they send "on" when checked, empty when unchecked)
+   - Convert checkbox values to "true"/"false" before parsing as boolean
+
+4. **Template rendering**:
+   - Understand when templates render full pages vs partials
+   - Check for `<body>` tag absence to verify partial responses in tests
+   - Use proper HTML parsing in tests instead of string matching
+
+## Server and Development Environment
+
+1. **Server lifecycle**:
+   - Start and kill the dev server as needed for testing
+   - Reference `.air.toml` for the dev server command
+   - Use `required_permissions: ['all']` for go test/build commands (they need to run outside sandbox)
+   - **If build/test commands fail with Go standard library errors (e.g., "package encoding/pem is not in std"), add `required_permissions: ['all']` to the command**
+   - **If build/test commands fail with Go standard library errors (e.g., "package encoding/pem is not in std"), add `required_permissions: ['all']` to the command**
+
+2. **Cache management**:
+   - Use `ui.SetCacheVersion()` to update the cache busting version
+   - Templates automatically use the version set in the `ui` package via `{{cacheVersion}}`
+   - This ensures a clean starting state for testing
+   - Hard refresh browser after eTag changes
+
+3. **Database connections**:
+   - Always get connections from pools: `cpcRw, err := app.dbRwPool.Get()`
+   - Always return connections: `defer app.dbRwPool.Put(cpcRw)`
+   - Use connection pools properly - don't create new connections when pools exist
+
+## Code Patterns and Best Practices
+
+1. **Error handling patterns**:
+   - Handle invalid session cookies gracefully (clear and create fresh sessions)
+   - CSRF validation should handle new/invalid sessions appropriately
+   - Don't fail on invalid cookies - create new sessions instead
+
+2. **HTML parsing in tests**:
+   - Use `golang.org/x/net/html` for robust HTML parsing
+   - **ALWAYS parse httptest response bodies** - never use `strings.Contains` on raw response body strings
+   - Parse using `html.Parse(strings.NewReader(bodyStr))` then query the parsed structure
+   - Create reusable helper functions: `findElementByID`, `findElementsByClass`, `getTextContent`
+   - Parse HTML once, then query the parsed structure
+   - Example pattern:
+     ```go
+     doc, err := html.Parse(strings.NewReader(w.Body.String()))
+     if err != nil {
+         t.Fatalf("Failed to parse HTML: %v", err)
+     }
+     element := findElementByID(doc, "expected-id")
+     if element == nil {
+         t.Fatal("Element not found")
+     }
+     ```
+
+3. **Test isolation and cleanup**:
+   - Use `t.TempDir()` for test-specific directories
+   - Always call `defer app.Shutdown()` in tests
+   - Clean up resources properly to avoid test interference

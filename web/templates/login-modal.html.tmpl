@@ -1,0 +1,62 @@
+<!-- Login Modal (DaisyUI) -->
+<input
+  type="checkbox"
+  id="login_modal"
+  class="modal-toggle"
+  _="on change
+            if me.checked
+              -- Close lightbox when login modal opens
+              if #lightbox_modal does not match .hidden
+                trigger closeModal on #lightbox_modal
+                wait 200ms
+              end
+            end"
+/>
+<div class="modal" role="dialog">
+  <div class="modal-box">
+    <h3 class="mb-4 text-lg font-bold">Login</h3>
+    <form
+      id="login-form"
+      hx-post="/login"
+      hx-swap="none"
+      _="on 'login-success' from body
+           wait 50ms
+           set #login_modal.checked to false"
+    >
+      <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}" />
+      <div id="login-error-message" class="text-error mb-4 min-h-[1.5rem]">
+        {{ .ErrorMessage }}
+      </div>
+      <div class="form-control mb-4">
+        <label class="label">
+          <span class="label-text">Username</span>
+        </label>
+        <input
+          type="text"
+          name="username"
+          placeholder="username"
+          class="input input-bordered w-full"
+          required
+          value="{{ .Username }}"
+        />
+      </div>
+      <div class="form-control mb-4">
+        <label class="label">
+          <span class="label-text">Password</span>
+        </label>
+        <input
+          type="password"
+          name="password"
+          placeholder="password"
+          class="input input-bordered w-full"
+          required
+        />
+      </div>
+      <div class="modal-action">
+        <button class="btn btn-primary" type="submit">Login</button>
+        <label for="login_modal" class="btn">Cancel</label>
+      </div>
+    </form>
+  </div>
+  <label class="modal-backdrop" for="login_modal">Close</label>
+</div>

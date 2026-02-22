@@ -1,0 +1,22 @@
+<div
+  class="modal-box max-h-[90vh] max-w-4xl"
+  _="init set #export-diff-modal-toggle.checked to true"
+>
+  <h3 class="mb-4 text-lg font-bold">Export Configuration</h3>
+  <p class="mb-4">Current configuration YAML:</p>
+  <pre
+    class="bg-base-200 max-h-[60vh] overflow-auto rounded-lg p-4 text-xs whitespace-pre-wrap"
+  >
+{{ .CurrentYAML }}</pre
+  >
+  <div class="modal-action">
+    <label for="export-diff-modal-toggle" class="btn">Close</label>
+    <a
+      href="/config/export/download"
+      download="config.yaml"
+      class="btn btn-primary"
+      >Download</a
+    >
+  </div>
+</div>
+<label class="modal-backdrop" for="export-diff-modal-toggle">Close</label>

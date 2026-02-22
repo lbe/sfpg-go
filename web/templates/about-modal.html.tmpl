@@ -1,0 +1,45 @@
+<!-- About Modal (DaisyUI) -->
+<input
+  type="checkbox"
+  id="about_modal"
+  class="modal-toggle"
+  _="on change
+            if me.checked
+              -- Close lightbox when about modal opens
+              if #lightbox_modal does not match .hidden
+                trigger closeModal on #lightbox_modal
+                wait 200ms
+              end
+            end"
+/>
+<div class="modal" role="dialog">
+  <div class="modal-box max-w-md">
+    <h3 class="mb-4 text-lg font-bold">Simple Photo Gallery</h3>
+    <p class="text-base-content/70 -mt-2 mb-4 text-xs">
+      Version
+      {{ .Version }}
+    </p>
+    <div class="py-2 text-sm">
+      <p class="mb-4">
+        A single file application that generates a web photo gallery directly
+        from the files in an image directory.
+      </p>
+      <p class="mb-4">Written in Go and optimized for performance.</p>
+      <p class="mb-2">
+        <span class="font-medium">Repository:</span>
+      </p>
+      <a
+        href="https://gitea.gms-online.com/whgi/sfpg-go"
+        target="_blank"
+        rel="noopener noreferrer"
+        class="link link-primary text-sm break-all"
+      >
+        https://gitea.gms-online.com/whgi/sfpg-go
+      </a>
+    </div>
+    <div class="modal-action">
+      <label for="about_modal" class="btn btn-primary">Close</label>
+    </div>
+  </div>
+  <label class="modal-backdrop" for="about_modal">Close</label>
+</div>

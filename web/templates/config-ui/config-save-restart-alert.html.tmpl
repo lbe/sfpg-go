@@ -1,0 +1,25 @@
+<div id="config-success-message" class="alert alert-info mb-2">
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    class="h-6 w-6 shrink-0 stroke-current"
+    fill="none"
+    viewBox="0 0 24 24"
+  >
+    <path
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      stroke-width="2"
+      d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+    />
+  </svg>
+  <span
+    >Settings saved. Server restart required for changes to take effect.</span
+  >
+</div>
+<span
+  id="config-restart-badge"
+  class="badge badge-warning"
+  hx-swap-oob="outerHTML"
+  >Restart Required</span
+>
+<div id="config-error-message" hx-swap-oob="outerHTML"></div>

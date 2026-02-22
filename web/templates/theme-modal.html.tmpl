@@ -1,0 +1,169 @@
+<!-- Theme Selector Modal -->
+<div id="theme-modal-container">
+  <input type="checkbox" id="theme_modal" class="modal-toggle" />
+  <div class="modal" role="dialog">
+    <div
+      class="modal-box flex h-[80vh] w-11/12 max-w-4xl flex-col overflow-hidden p-0"
+    >
+      <!-- Fixed Header -->
+      <div
+        class="border-base-300 flex flex-shrink-0 items-center justify-between border-b p-6 pb-4"
+      >
+        <h3 class="text-2xl font-bold">Select Theme</h3>
+        <label
+          for="theme_modal"
+          class="btn btn-sm btn-circle btn-ghost"
+          _="on click
+               wait 300ms
+               remove #theme-modal-container from body"
+          >&#10005;</label
+        >
+      </div>
+
+      <!-- Hidden input to store selected theme (shared scope between cards and apply button) -->
+      <input
+        type="hidden"
+        id="theme-selected-value"
+        value="{{ .CurrentTheme }}"
+      />
+
+      <!-- Theme Grid -->
+      <div class="flex-1 overflow-y-auto p-6">
+        <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
+          {{ range .Themes }}
+            <div
+              class="theme-card rounded-box {{ if eq . $.CurrentTheme }}
+                border-primary ring-2 ring-primary
+              {{ else }}
+                border-base-300
+              {{ end }} cursor-pointer border-2 p-4 transition-all hover:scale-105"
+              data-theme="{{ . }}"
+              _="on mouseenter
+                   set @data-theme of #theme-preview-pane to my @data-theme
+                 on click
+                   set #theme-selected-value.value to my @data-theme
+                   remove .border-primary .ring-2 .ring-primary from <.theme-card/>
+                   add .border-base-300 to <.theme-card/>
+                   remove .border-base-300 from me
+                   add .border-primary to me
+                   add .ring-2 to me
+                   add .ring-primary to me"
+            >
+              <!-- Theme Name -->
+              <div class="mb-3 text-center font-semibold capitalize">
+                {{ . }}
+              </div>
+
+              <!-- Color Preview using DaisyUI CSS variables -->
+              <div
+                class="bg-base-100 rounded-box border-base-300 flex flex-col gap-1 border p-2"
+                data-theme="{{ . }}"
+              >
+                <!-- Primary color -->
+                <div class="flex items-center gap-2">
+                  <div class="bg-primary h-4 w-4 rounded"></div>
+                  <span class="text-xs">Primary</span>
+                </div>
+                <!-- Secondary color -->
+                <div class="flex items-center gap-2">
+                  <div class="bg-secondary h-4 w-4 rounded"></div>
+                  <span class="text-xs">Secondary</span>
+                </div>
+                <!-- Accent color -->
+                <div class="flex items-center gap-2">
+                  <div class="bg-accent h-4 w-4 rounded"></div>
+                  <span class="text-xs">Accent</span>
+                </div>
+                <!-- Neutral color -->
+                <div class="flex items-center gap-2">
+                  <div class="bg-neutral h-4 w-4 rounded"></div>
+                  <span class="text-xs">Neutral</span>
+                </div>
+                <!-- Base colors -->
+                <div class="mt-1 flex gap-1">
+                  <div class="bg-base-100 h-4 flex-1 rounded border"></div>
+                  <div class="bg-base-200 h-4 flex-1 rounded"></div>
+                  <div class="bg-base-300 h-4 flex-1 rounded"></div>
+                </div>
+              </div>
+            </div>
+          {{ end }}
+        </div>
+
+        <!-- Preview Pane -->
+        <div class="mt-6">
+          <h4 class="mb-3 text-lg font-semibold">Preview</h4>
+          <div
+            id="theme-preview-pane"
+            class="bg-base-100 rounded-box border-base-300 border p-4"
+            data-theme="{{ .CurrentTheme }}"
+          >
+            <div class="flex flex-col gap-3">
+              <!-- Mock UI Elements -->
+              <div class="flex items-center justify-between">
+                <h5 class="text-xl font-bold">Sample Heading</h5>
+                <button class="btn btn-primary btn-sm">Primary</button>
+              </div>
+              <p class="text-base-content/80">
+                This is how text will appear in the selected theme.
+              </p>
+              <div class="flex gap-2">
+                <button class="btn btn-secondary btn-sm">Secondary</button>
+                <button class="btn btn-accent btn-sm">Accent</button>
+                <button class="btn btn-neutral btn-sm">Neutral</button>
+              </div>
+              <div class="bg-base-200 rounded-box p-3">
+                <div class="flex items-center gap-3">
+                  <div class="bg-primary h-10 w-10 rounded-lg"></div>
+                  <div>
+                    <div class="font-semibold">Card Title</div>
+                    <div class="text-sm opacity-70">Card description text</div>
+                  </div>
+                </div>
+              </div>
+              <div class="alert alert-info">
+                <span>Info alert example</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Fixed Footer -->
+      <div class="border-base-300 flex-shrink-0 border-t p-6 pt-4">
+        <div class="modal-action justify-end">
+          <label
+            for="theme_modal"
+            class="btn"
+            _="on click
+                 wait 300ms
+                 remove #theme-modal-container from body"
+            >Cancel</label
+          >
+          <button
+            id="theme-apply-btn"
+            class="btn btn-primary"
+            _="on click
+                 set selectedTheme to #theme-selected-value.value
+                 set bodyStr to 'theme=' + selectedTheme + '&csrf_token={{ .CSRFToken }}'
+                 fetch /theme with method:'POST', headers:{'Content-Type': 'application/x-www-form-urlencoded'}, body:bodyStr
+                 set #theme_modal.checked to false
+                 wait 300ms
+                 remove #theme-modal-container from body
+                 js location.reload() end"
+          >
+            Apply Theme
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <label
+      class="modal-backdrop"
+      for="theme_modal"
+      _="on click
+           wait 300ms
+           remove #theme-modal-container from body"
+    ></label>
+  </div>
+</div>

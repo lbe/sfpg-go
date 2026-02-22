@@ -1,0 +1,98 @@
+<svg
+  width="256"
+  height="256"
+  viewBox="0 0 256 256"
+  xmlns="http://www.w3.org/2000/svg"
+>
+  <!-- Background with subtle rounded rectangle (transparent for favicon use) -->
+  <rect x="0" y="0" width="256" height="256" fill="none" rx="48" ry="48" />
+
+  <!-- Colorful gradient definitions -->
+  <defs>
+    <!-- Lens radial gradient -->
+    <radialGradient id="lensGradient" cx="50%" cy="50%" r="60%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.9" />
+      <stop offset="35%" stop-color="#ffdf6b" />
+      <stop offset="65%" stop-color="#ff5f6d" />
+      <stop offset="100%" stop-color="#845ef7" />
+    </radialGradient>
+
+    <!-- Body gradient -->
+    <linearGradient id="bodyGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e3a8a" />
+      <stop offset="50%" stop-color="#22c55e" />
+      <stop offset="100%" stop-color="#f97316" />
+    </linearGradient>
+
+    <!-- Small accent gradient (flash / top accent) -->
+    <linearGradient id="accentGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#a855f7" />
+      <stop offset="100%" stop-color="#f97316" />
+    </linearGradient>
+  </defs>
+
+  <!-- Camera body outline -->
+  <rect
+    x="32"
+    y="72"
+    width="192"
+    height="128"
+    rx="24"
+    ry="24"
+    fill="url(#bodyGradient)"
+    stroke="#0f172a"
+    stroke-width="10"
+  />
+
+  <!-- Top housing / viewfinder area -->
+  <rect
+    x="72"
+    y="44"
+    width="72"
+    height="40"
+    rx="14"
+    ry="14"
+    fill="url(#accentGradient)"
+    stroke="#0f172a"
+    stroke-width="8"
+  />
+
+  <!-- Small flash circle -->
+  <circle
+    cx="180"
+    cy="64"
+    r="10"
+    fill="#facc15"
+    stroke="#0f172a"
+    stroke-width="6"
+  />
+
+  <!-- Lens outer ring -->
+  <circle
+    cx="128"
+    cy="136"
+    r="52"
+    fill="rgba(15,23,42,0.4)"
+    stroke="#0b1120"
+    stroke-width="10"
+  />
+
+  <!-- Lens colorful core -->
+  <circle
+    cx="128"
+    cy="136"
+    r="38"
+    fill="url(#lensGradient)"
+    stroke="#ffffff"
+    stroke-width="4"
+  />
+
+  <!-- Lens inner highlight -->
+  <circle
+    cx="112"
+    cy="120"
+    r="10"
+    fill="#ffffff"
+    fill-opacity="0.75"
+  />
+</svg>

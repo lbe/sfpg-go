@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hyperscript Syntax Validator</title>
+    <script src="https://unpkg.com/hyperscript.org@0.9.12"></script>
+    <style>
+      body {
+        font-family: monospace;
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+      .container {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 20px;
+      }
+      textarea {
+        width: 100%;
+        height: 400px;
+        font-family: monospace;
+        font-size: 14px;
+        padding: 10px;
+        border: 1px solid #ccc;
+      }
+      .output {
+        border: 1px solid #ccc;
+        padding: 10px;
+        min-height: 400px;
+        background: #f5f5f5;
+      }
+      .error {
+        color: red;
+        background: #ffe6e6;
+        padding: 10px;
+        border: 1px solid red;
+      }
+      .success {
+        color: green;
+        background: #e6ffe6;
+        padding: 10px;
+        border: 1px solid green;
+      }
+      button {
+        padding: 10px 20px;
+        margin: 10px 5px;
+        font-size: 16px;
+      }
+      .test-button {
+        background: #4caf50;
+        color: white;
+        border: none;
+        cursor: pointer;
+      }
+      .test-button:hover {
+        background: #45a049;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Hyperscript Syntax Validator</h1>
+    <p>
+      Paste your Hyperscript code here to validate syntax before adding it to
+      templates.
+    </p>
+
+    <div class="container">
+      <div>
+        <h2>Hyperscript Code</h2>
+        <textarea
+          id="hyperscript-input"
+          placeholder="Paste Hyperscript code here..."
+        ></textarea>
+        <button class="test-button" onclick="testHyperscript()">
+          Test Syntax
+        </button>
+        <button onclick="loadExample()">Load Example</button>
+        <button onclick="clearAll()">Clear</button>
+      </div>
+      <div>
+        <h2>Result</h2>
+        <div id="output" class="output">
+          <p>Enter Hyperscript code and click "Test Syntax" to validate.</p>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      function testHyperscript() {
+        const input = document.getElementById("hyperscript-input").value.trim();
+        const output = document.getElementById("output");
+
+        if (!input) {
+          output.innerHTML =
+            '<div class="error">Please enter some Hyperscript code.</div>';
+          return;
+        }
+
+        // Create a test element with the hyperscript
+        const testElement = document.createElement("div");
+        testElement.setAttribute("_", input);
+
+        // Try to parse/validate by adding to DOM
+        try {
+          // Create a temporary container
+          const container = document.createElement("div");
+          container.style.display = "none";
+          container.appendChild(testElement);
+          document.body.appendChild(container);
+
+          // Wait for hyperscript to process
+          setTimeout(() => {
+            try {
+              // Check if hyperscript processed it by looking for the processor
+              if (window._hyperscript) {
+                // Try to manually trigger parsing if available
+                if (window._hyperscript.processNode) {
+                  window._hyperscript.processNode(testElement);
+                }
+                // If we get here without error, syntax is likely valid
+                output.innerHTML =
+                  '<div class="success">✓ Syntax appears valid! The code was parsed successfully.</div>';
+              } else {
+                output.innerHTML =
+                  '<div class="error">✗ Could not validate. Hyperscript library may not be loaded. Check console for errors.</div>';
+              }
+            } catch (e) {
+              output.innerHTML =
+                '<div class="error">✗ Syntax Error: ' + e.message + "</div>";
+              console.error("Hyperscript validation error:", e);
+            } finally {
+              // Clean up
+              if (container.parentNode) {
+                document.body.removeChild(container);
+              }
+            }
+          }, 100);
+        } catch (e) {
+          output.innerHTML =
+            '<div class="error">✗ Error: ' + e.message + "</div>";
+          console.error("Validation error:", e);
+        }
+      }
+
+      function loadExample() {
+        const example = `on click
+  set hasChanges to false
+  set changesHTML to '<table class=&quot;table table-compact w-full&quot;><thead><tr><th>Setting</th><th>Current Value</th><th>Unsaved Value</th></tr></thead><tbody>'
+  
+  set form to #config-form
+  set configFields to ['listener-address', 'listener-port', 'server-compression']
+  
+  for fieldName in configFields
+    set field to form.querySelector('[name=' + fieldName + ']')
+    if field
+      set origValue to field.getAttribute('data-original-value')
+      set currValue to field.value
+      if origValue != currValue
+        set hasChanges to true
+        set origStr to if origValue then origValue else '(empty)'
+        set currStr to if currValue then currValue else '(empty)'
+        set changesHTML to changesHTML + '<tr><td class=&quot;font-semibold&quot;>' + fieldName + '</td><td class=&quot;text-base-content&quot;>' + origStr + '</td><td class=&quot;text-warning&quot;>' + currStr + '</td></tr>'
+      end
+    end
+  end
+  
+  set changesHTML to changesHTML + '</tbody></table>'
+  set #cancel-diff-content.innerHTML to changesHTML`;
+
+        document.getElementById("hyperscript-input").value = example;
+      }
+
+      function clearAll() {
+        document.getElementById("hyperscript-input").value = "";
+        document.getElementById("output").innerHTML =
+          '<p>Enter Hyperscript code and click "Test Syntax" to validate.</p>';
+      }
+
+      // Allow Ctrl+Enter to test
+      document
+        .getElementById("hyperscript-input")
+        .addEventListener("keydown", function (e) {
+          if (e.ctrlKey && e.key === "Enter") {
+            testHyperscript();
+          }
+        });
+    </script>
+  </body>
+</html>
