@@ -1,0 +1,17 @@
+<div id="config-success-message">
+  <div
+    id="config-error-message"
+    class="text-error"
+    hx-swap-oob="outerHTML"
+    _="on load
+			remove .htmx-request from #config-form
+			remove .htmx-request from body
+			add .hidden to #config-spinner
+		on htmx:afterSwap from me
+			remove .htmx-request from #config-form
+			remove .htmx-request from body
+			add .hidden to #config-spinner"
+  >
+    {{ .Message }}
+  </div>
+</div>

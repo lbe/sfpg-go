@@ -1,0 +1,2 @@
+{"sessionId":"debug-session","runId":"run1","timestamp":1770189149205,"hypothesisId":"A","location":"layout.html.tmpl:DOMContentLoaded","message":"Body tag keyboard handler check","data":{"bodyExists":true,"hasHandlerAttr":true,"handlerPresent":true,"handlerAttrLength":2837}}
+{"sessionId":"debug-session","runId":"run1","timestamp":1770189149205,"hypothesisId":"B","location":"layout.html.tmpl:window.load","message":"Hyperscript library check","data":{"hyperscriptLoaded":true,"hyperscriptProcessNode":true,"windowHyperscript":"function"}}

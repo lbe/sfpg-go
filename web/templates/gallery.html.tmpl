@@ -1,0 +1,149 @@
+{{ define "body" }}
+  <div
+    id="boxgallery"
+    class="overflow-auto text-center break-words"
+    role="list"
+    _="on htmx:afterSwap
+        add .populated to me
+      on htmx:beforeSwap
+        remove .populated from me
+      on mouseleave
+        if not document.querySelector('body[info-pinned]') and me matches .populated
+          set the innerHTML of #box_info to ''
+        end"
+  >
+    {{ if .Thumbs }}
+      {{ $first := index .Thumbs 0 }}
+      <div
+        id="initial-info-loader"
+        class="hidden"
+        hx-get="/info/{{- if $first.IsImage -}}
+          image
+        {{- else -}}
+          folder
+        {{- end -}}/{{ $first.ID }}?v={{ cacheVersion }}"
+        hx-target="#box_info"
+        hx-swap="innerHTML"
+        hx-trigger="loadfirstinfo"
+        _="init
+             if #box_info_wrapper does not match .hidden
+               trigger loadfirstinfo
+             end"
+        hx-indicator="#info_box_spinner"
+      ></div>
+    {{ end }}
+    {{/* Loop through directory and file paths */}}
+    {{- range .Thumbs }}
+      {{ if .IsImage }}
+        <div
+          id="gallery-tile-{{ .ID }}"
+          class="gallery-tile inline-block h-[202px] w-[238px] content-start"
+          role="listitem"
+          hx-get="/info/image/{{ .ID }}?v={{ cacheVersion }}"
+          hx-target="#box_info"
+          hx-swap="innerHTML"
+          hx-trigger="mouseenter delay:1000ms"
+          hx-indicator="#info_box_spinner"
+          hx-sync="#box_info:abort"
+          _="on htmx:beforeRequest
+            if event.target is me
+              if #box_info_wrapper matches .hidden
+                halt the event
+              else if #inner_box_info@data-info-id is '{{ .ID }}'
+                halt the event
+              end
+            end"
+        >
+          <a
+            id="lightbox-{{ .ID }}"
+            href="{{ .Path }}?v={{ cacheVersion }}"
+            hx-get="/lightbox/{{ .ID }}?v={{ cacheVersion }}"
+            hx-target="#lightbox_content"
+            hx-swap="innerHTML"
+            {{/* FIX: Break inheritance from the parent div.
+              This prevents Info Box hover events from aborting the Lightbox click request.
+            */}}
+            hx-sync="this:replace"
+            _="on click 
+              trigger openModal on #lightbox_modal 
+              halt the event
+            end"
+            class="group bg-base-200 border-base-300 m-[7px] block h-[188px] w-[224px] cursor-pointer rounded-[6px] border text-center text-xs shadow-md transition-all duration-200 ease-in-out hover:shadow-xl hover:brightness-95"
+            aria-label="View {{ .DispName }}"
+          >
+            <div class="block h-[168px] w-[222px]">
+              <img
+                src="{{ .ThumbPath }}"
+                alt="{{ .DispName }}"
+                class="content-box mt-[10px] mr-[10px] mb-[5px] ml-[10px] inline overflow-clip rounded-[3px] object-cover"
+              />
+            </div>
+            <span class="sr-only">View </span>{{ .DispName }}
+          </a>
+        </div>
+      {{ else }}
+        <div
+          id="gallery-tile-{{ .ID }}"
+          class="gallery-tile inline-block h-[202px] w-[238px] content-start"
+          role="listitem"
+          hx-get="/info/folder/{{ .ID }}?v={{ cacheVersion }}"
+          hx-target="#box_info"
+          hx-swap="innerHTML"
+          hx-trigger="mouseenter delay:1000ms"
+          hx-indicator="#info_box_spinner"
+          hx-sync="#box_info:abort"
+          _="on htmx:beforeRequest
+            if event.target is me
+              if #box_info_wrapper matches .hidden
+                halt the event
+              else if #inner_box_info@data-info-id is '{{ .ID }}'
+                halt the event
+              end
+            end"
+        >
+          <a
+            href="#"
+            hx-get="{{ .Path }}?v={{ cacheVersion }}"
+            hx-target="#gallery-content"
+            hx-push-url="true"
+            class="group bg-base-200 border-base-300 m-[7px] block h-[188px] w-[224px] cursor-pointer rounded-[6px] border text-center text-xs shadow-md transition-all duration-200 ease-in-out hover:shadow-xl hover:brightness-95"
+            aria-label="View {{ .DispName }}"
+          >
+            <div class="block h-[168px] w-[222px]">
+              <img
+                src="{{ .ThumbPath }}"
+                alt="{{ .DispName }}"
+                class="content-box mt-[10px] mr-[10px] mb-[5px] ml-[10px] inline overflow-clip rounded-[3px] object-cover"
+              />
+            </div>
+            <span class="sr-only">View </span>{{ .DispName }}
+          </a>
+        </div>
+      {{ end }}
+    {{- end }}
+  </div>
+{{ end }}
+
+{{/* Inline OOB blocks for partial updates - only rendered during htmx partial swaps */}}
+{{ define "gallery-oob" }}
+  <span
+    id="image-count-display"
+    hx-swap-oob="true"
+    class="self-center px-4 text-center text-sm"
+  >
+    {{ template "image-count" . }}
+  </span>
+
+  {{/* OOB breadcrumbs: plain links only (no hx-*) so they always trigger full page navigation, never HTMX. */}}
+  <div hx-swap-oob="innerHTML:#breadcrumbs-container">
+    {{ if .Breadcrumbs }}
+      <div class="breadcrumbs" hx-disinherit="*">
+        <ul>
+          {{ range .Breadcrumbs }}
+            <li><a href="{{ .Path }}?v={{ cacheVersion }}">{{ .Name }}</a></li>
+          {{ end }}
+        </ul>
+      </div>
+    {{ end }}
+  </div>
+{{ end }}

@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Pre-commit hook:
+# 1. Run all tests (must pass)
+# 2. Check formatting with make format-check (must pass)
+# 3. Run golangci-lint with make lint (must pass)
+
+echo "[pre-commit] running tests..."
+if ! make test-all; then
+  echo "[pre-commit] ❌ Tests failed. Commit aborted."
+  exit 1
+fi
+
+echo "[pre-commit] checking code formatting..."
+if ! make format-check; then
+  echo "[pre-commit] ❌ Formatting check failed. Run 'make format' to fix. Commit aborted."
+  exit 1
+fi
+
+echo "[pre-commit] running linter..."
+if ! make lint; then
+  echo "[pre-commit] ❌ Lint failed. Commit aborted."
+  exit 1
+fi
+
+echo "[pre-commit] ✓ All checks passed"
+
+exit 0

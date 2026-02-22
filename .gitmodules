@@ -1,0 +1,3 @@
+[submodule "internal/imagemeta"]
+	path = internal/imagemeta
+	url = https://github.com/lbe/imagemeta.git

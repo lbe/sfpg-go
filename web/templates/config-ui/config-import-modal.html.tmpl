@@ -1,0 +1,48 @@
+<div
+  class="modal-box max-h-[90vh] max-w-4xl"
+  _="init set #import-diff-modal-toggle.checked to true"
+>
+  <h3 class="mb-4 text-lg font-bold">Import Configuration Preview</h3>
+  <p class="mb-4">
+    Compare the imported configuration with the current configuration:
+  </p>
+  <textarea name="yaml" id="import-yaml-content" class="hidden">
+{{ .ImportedYAML }}</textarea
+  >
+  <input
+    type="hidden"
+    name="csrf_token"
+    id="import-csrf-token"
+    value="{{ .CSRFToken }}"
+  />
+  <div class="mb-4 grid grid-cols-2 gap-4">
+    <div>
+      <h4 class="mb-2 font-semibold">Current Configuration</h4>
+      <pre
+        class="bg-base-200 max-h-[50vh] overflow-auto rounded-lg p-4 text-xs whitespace-pre-wrap"
+      >
+{{ .CurrentYAML }}</pre
+      >
+    </div>
+    <div>
+      <h4 class="mb-2 font-semibold">Imported Configuration</h4>
+      <pre
+        class="bg-base-200 max-h-[50vh] overflow-auto rounded-lg p-4 text-xs whitespace-pre-wrap"
+      >
+{{ .NewYAML }}</pre
+      >
+    </div>
+  </div>
+  <div class="modal-action">
+    <label for="import-diff-modal-toggle" class="btn">Cancel</label>
+    <button
+      class="btn btn-primary"
+      hx-post="/config/import/commit"
+      hx-swap="none"
+      hx-include="#import-yaml-content,#import-csrf-token"
+    >
+      Import
+    </button>
+  </div>
+</div>
+<label class="modal-backdrop" for="import-diff-modal-toggle">Close</label>

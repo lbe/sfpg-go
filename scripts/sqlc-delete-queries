@@ -1,0 +1,451 @@
+#!/usr/bin/env perl
+
+use v5.40;
+use strict;
+use warnings;
+use utf8;
+
+use Path::Tiny;
+use Getopt::Long qw( GetOptions );
+
+#---------------------------------------------------------------------------
+# Process command line options
+#---------------------------------------------------------------------------
+
+my $dry_run = 0;
+
+GetOptions( 'dry-run|n' => \$dry_run )
+    or die "Usage: $0 [--dry-run|-n] < filtered.tsv\n";
+
+#---------------------------------------------------------------------------
+# Read sqlc.yaml to locate the queries directory
+#---------------------------------------------------------------------------
+
+use YAML::PP;
+
+my $yaml_file = path('sqlc.yaml');
+die "Cannot find sqlc.yaml in current directory\n"
+    unless $yaml_file->exists;
+
+my $ypp    = YAML::PP->new;
+my $config = $ypp->load_file( $yaml_file->stringify );
+
+my $sql_entry = $config->{sql}[0]
+    or die "No sql entries found in sqlc.yaml\n";
+
+my $queries_dir = path( $sql_entry->{queries} )
+    or die "No queries directory found in sqlc.yaml\n";
+
+die "Queries directory '$queries_dir' does not exist\n"
+    unless $queries_dir->exists;
+
+#---------------------------------------------------------------------------
+# Read query names to delete from stdin (TSV, skip header)
+#---------------------------------------------------------------------------
+
+my %to_delete;    # sql_name => 1
+
+while ( my $line = <STDIN> ) {
+    chomp $line;
+    next if $line =~ /^\s*sql\s+--name/x;    # skip header
+    next if $line =~ /^\s*$/x;               # skip blank lines
+
+    my ($sql_name) = split /\t/x, $line;
+    next unless defined $sql_name && $sql_name =~ /\S/x;
+
+    $to_delete{$sql_name} = 1;
+}
+
+die "No query names found in input\n" unless %to_delete;
+
+#---------------------------------------------------------------------------
+# Parse each SQL file and identify blocks to delete
+#---------------------------------------------------------------------------
+
+# A block is defined as:
+#   - Starting at the -- name: comment line
+#   - Ending at the line containing the closing semicolon
+#   - Plus one trailing blank line if present
+
+my @sql_files = $queries_dir->children( qr/\.sql$/x );
+die "No SQL files found in '$queries_dir'\n" unless @sql_files;
+
+for my $sql_file (@sql_files) {
+    _process_file( $sql_file, \%to_delete, $dry_run );
+}
+
+#---------------------------------------------------------------------------
+# Subroutines
+#---------------------------------------------------------------------------
+
+sub _parse_blocks {
+    my ($lines_ref) = @_;
+
+    my @blocks;       # list of { name=>, start=>, end=> } (0-based line indices)
+    my $in_block  = 0;
+    my $block_start;
+    my $block_name;
+    my $found_semi = 0;
+    my $last_semi_idx;
+
+    for my $idx ( 0 .. $#{$lines_ref} ) {
+        my $line = $lines_ref->[$idx];
+
+        if ( $line =~ /^--\s*name:\s*(\w+)\s*:\w+/x ) {
+            if ($in_block) {
+
+                # Previous block ended without a semicolon — warn and record
+                # it anyway with the last known semi or undef
+                if ( !$found_semi ) {
+                    warn
+                        "Warning: block '$block_name' has no closing semicolon"
+                        . " — skipping deletion\n";
+                    push @blocks,
+                        {
+                        name      => $block_name,
+                        start     => $block_start,
+                        end       => undef,
+                        has_semi  => 0,
+                        };
+                }
+                else {
+                    push @blocks,
+                        {
+                        name     => $block_name,
+                        start    => $block_start,
+                        end      => $last_semi_idx,
+                        has_semi => 1,
+                        };
+                }
+            }
+
+            $in_block      = 1;
+            $block_start   = $idx;
+            $block_name    = $1;
+            $found_semi    = 0;
+            $last_semi_idx = undef;
+        }
+        elsif ($in_block) {
+            if ( $line =~ /;\s*$/x ) {
+                $found_semi    = 1;
+                $last_semi_idx = $idx;
+            }
+        }
+    }
+
+    # Handle the final block in the file
+    if ($in_block) {
+        if ( !$found_semi ) {
+            warn "Warning: block '$block_name' has no closing semicolon"
+                . " — skipping deletion\n";
+            push @blocks,
+                {
+                name     => $block_name,
+                start    => $block_start,
+                end      => undef,
+                has_semi => 0,
+                };
+        }
+        else {
+            push @blocks,
+                {
+                name     => $block_name,
+                start    => $block_start,
+                end      => $last_semi_idx,
+                has_semi => 1,
+                };
+        }
+    }
+
+    return @blocks;
+}
+
+sub _process_file {
+    my ( $sql_file, $to_delete_ref, $is_dry_run ) = @_;
+
+    my @lines  = $sql_file->lines_utf8;    # retains line endings
+    my @blocks = _parse_blocks( \@lines );
+
+    # Determine which blocks in this file need deletion
+    my @deletable = grep {
+               $to_delete_ref->{ $_->{name} }
+            && $_->{has_semi}
+    } @blocks;
+
+    return unless @deletable;
+
+    if ($is_dry_run) {
+        _dry_run_output( $sql_file, \@lines, \@deletable );
+        return;
+    }
+
+    # Build the set of line indices to remove.
+    # For each block: remove start..end, plus one trailing blank line
+    # if the line immediately after end is blank.
+    my %remove;    # idx => 1
+
+    for my $block (@deletable) {
+        for my $idx ( $block->{start} .. $block->{end} ) {
+            $remove{$idx} = 1;
+        }
+
+        # Remove trailing blank line after the closing semicolon if present
+        my $after = $block->{end} + 1;
+        if ( $after <= $#lines && $lines[$after] =~ /^\s*$/x ) {
+            $remove{$after} = 1;
+        }
+    }
+
+    my @remaining = map  { $lines[$_] }
+                    grep { !$remove{$_} } 0 .. $#lines;
+
+    # If nothing remains (ignoring blank lines/whitespace), delete the file
+    my $has_content = grep { /\S/x } @remaining;
+
+    if ( !$has_content ) {
+        say "Deleting empty file: $sql_file";
+        $sql_file->remove;
+        return;
+    }
+
+    # Write backup
+    my $bak_file = path( $sql_file . '.bak' );
+    $sql_file->copy($bak_file);
+    say "Backup written: $bak_file";
+
+    # Write modified file
+    $sql_file->spew_utf8(@remaining);
+    say "Modified: $sql_file ("
+        . scalar(@deletable)
+        . " block(s) removed)";
+
+    return;
+}
+
+sub _dry_run_output {
+    my ( $sql_file, $lines_ref, $deletable_ref ) = @_;
+
+    say "=== DRY RUN: $sql_file ===";
+
+    for my $block ( sort { $a->{start} <=> $b->{start} } @{$deletable_ref} ) {
+        say "--- Would delete block: $block->{name} "
+            . "(lines "
+            . ( $block->{start} + 1 ) . q{-}
+            . ( $block->{end} + 1 ) . ")";
+
+        for my $idx ( $block->{start} .. $block->{end} ) {
+            print $lines_ref->[$idx];
+        }
+
+        # Show trailing blank line if it would also be removed
+        my $after = $block->{end} + 1;
+        if (   $after <= $#{$lines_ref}
+            && $lines_ref->[$after] =~ /^\s*$/x )
+        {
+            print $lines_ref->[$after];
+        }
+
+        say q{---};
+    }
+
+    return;
+}
+
+=pod
+
+=head1 NAME
+
+sqlc-delete.pl - Delete sqlc query blocks from SQL source files based on filtered TSV input
+
+=head1 SYNOPSIS
+
+    sqlc-map.pl | sqlc-delete.pl [--dry-run|-n]
+
+    # Preview what would be deleted
+    sqlc-map.pl | grep 'Upsert' | sqlc-delete.pl --dry-run
+
+    # Perform the deletion
+    sqlc-map.pl | grep 'Upsert' | sqlc-delete.pl
+
+=head1 DESCRIPTION
+
+C<sqlc-delete.pl> reads a tab-separated stream from stdin (as produced by
+C<sqlc-map.pl>) and deletes the corresponding query blocks from the SQL
+source files in the queries directory defined in C<sqlc.yaml>.
+
+The script reads C<sqlc.yaml> from the current working directory to locate
+the SQL source files. Each query block is identified by its C<-- name:>
+annotation and is considered to span from that annotation line to the line
+containing the closing semicolon. One trailing blank line after the
+semicolon is also removed to maintain consistent spacing between the
+remaining query blocks.
+
+A backup of each modified SQL file is written with a C<.bak> extension
+before any changes are made. If all query blocks are removed from a SQL
+file, the file is deleted entirely.
+
+=head1 OPTIONS
+
+=over 4
+
+=item B<--dry-run>, B<-n>
+
+Preview mode. Prints the SQL lines that would be deleted without modifying
+any files. No backups are created in dry run mode.
+
+=back
+
+=head1 INPUT FORMAT
+
+Input is read from stdin as a tab-separated stream. The format matches the
+output of C<sqlc-map.pl>:
+
+    sql --name<TAB>constant name<TAB>function name
+
+The header row is automatically skipped. Only the first column
+(C<sql --name>) is used to identify which query blocks to delete. This
+allows the output of C<sqlc-map.pl> to be filtered using standard tools
+such as C<grep> before being piped into this script.
+
+Example:
+
+    sqlc-map.pl | grep 'Upsert' | sqlc-delete.pl
+
+=head1 BLOCK BOUNDARY RULES
+
+A query block is defined as follows:
+
+=over 4
+
+=item * Starts at the C<-- name: QueryName :type> comment line.
+
+=item * Ends at the line containing the closing semicolon (C<;>).
+
+=item * One trailing blank line after the semicolon is also removed.
+
+=back
+
+If a query block cannot be found to have a closing semicolon, a warning
+is issued and that block is skipped without modification.
+
+=head1 CONFIGURATION
+
+The script reads C<sqlc.yaml> from the current working directory. It
+expects a C<version: "2"> configuration with at least one C<sql> entry
+containing the following key:
+
+=over 4
+
+=item * C<queries>
+
+Path to the directory containing the C<.sql> source files.
+
+=back
+
+Example C<sqlc.yaml>:
+
+    version: "2"
+    sql:
+      - schema: "schema.sql"
+        queries: "queries/"
+        engine: "sqlite"
+        gen:
+          go:
+            package: "db"
+            out: "db/"
+            emit_interface: true
+
+=head1 BACKUP BEHAVIOR
+
+Before modifying any SQL file, the script writes a backup copy with the
+same filename and a C<.bak> suffix appended (e.g. C<config.sql.bak>). If
+a backup file already exists it is silently overwritten.
+
+No backup is created when running in C<--dry-run> mode.
+
+=head1 FILE DELETION
+
+If all query blocks are removed from a SQL file and no meaningful content
+remains, the file is deleted entirely. A message is printed to stdout
+indicating the deletion.
+
+=head1 ERRORS AND WARNINGS
+
+=over 4
+
+=item * Dies if C<sqlc.yaml> is not found in the current directory.
+
+=item * Dies if the queries directory does not exist.
+
+=item * Dies if no SQL files are found in the queries directory.
+
+=item * Dies if no valid query names are found in the stdin input.
+
+=item * Warns and skips any query block that has no closing semicolon.
+
+=back
+
+=head1 DEPENDENCIES
+
+=over 4
+
+=item * L<YAML::PP>
+
+Used to parse the C<sqlc.yaml> configuration file.
+
+=item * L<Path::Tiny>
+
+Used for all file and directory operations.
+
+=item * L<Getopt::Long>
+
+Used to process command line options.
+
+=back
+
+All dependencies are available on CPAN.
+
+=head1 LIMITATIONS
+
+=over 4
+
+=item *
+
+Only the first C<sql> entry in C<sqlc.yaml> is processed.
+
+=item *
+
+SQL files are expected to reside in a flat directory with no
+subdirectories.
+
+=item *
+
+Only C<version: "2"> of the C<sqlc.yaml> format is supported.
+
+=item *
+
+If the same C<-- name> annotation appears in multiple SQL files, the
+block is deleted from all files containing it.
+
+=item *
+
+Input is only accepted via stdin. File argument input is not supported.
+
+=back
+
+=head1 SEE ALSO
+
+L<sqlc-map.pl> - Generates the TSV input consumed by this script.
+
+=head1 AUTHOR
+
+William
+
+=head1 LICENSE
+
+Copyright (C) 2026 William. All rights reserved.
+
+This script is free software; you can redistribute it and/or modify it
+under the same terms as Perl itself.
+
+=cut

@@ -1,0 +1,38 @@
+{{ define "infobox-folder.html.tmpl" }}
+  <div
+    id="inner_box_info"
+    class="m-[5px] text-xs"
+    data-info-id="{{ .Folder.ID }}"
+  >
+    <div
+      id="thumbimgbox"
+      class="m-0 flex h-[168px] w-[222px] justify-center p-0"
+    >
+      <img
+        class="mx-2.5 mt-2.5 mb-[5px] rounded-[3px]"
+        src="/thumbnail/folder/{{ .Folder.ID }}"
+        alt="{{ .Folder.Name }}"
+      />
+    </div>
+    <strong>Gallery Name</strong>
+    <br />
+    <div class="w-[225px] px-1 py-px">
+      {{ .Folder.Name }}
+    </div>
+    <br />
+    <strong>Information</strong>
+    <br />
+    <div class="w-[225px] px-1 py-px">
+      Date: <span id="folder-mtime">{{ .FormattedMtime }}</span>
+      {{ if .DirCount }}
+        <br />Directories: <span id="folder-dir-count">{{ .DirCount }}</span>
+      {{ end }}
+      {{ if .ImageCount }}
+        <br />Images: <span id="folder-image-count">{{ .ImageCount }}</span>
+      {{ end }}
+      {{ if .FileCount }}
+        <br />Files: <span id="folder-file-count">{{ .FileCount }}</span>
+      {{ end }}
+    </div>
+  </div>
+{{ end }}

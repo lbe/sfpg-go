@@ -1,0 +1,76 @@
+<!-- About Modal (DaisyUI) -->
+<input
+  type="checkbox"
+  id="about_modal"
+  class="modal-toggle"
+  _="on change
+            if me.checked
+              -- Close lightbox when about modal opens
+              if #lightbox_modal does not match .hidden
+                trigger closeModal on #lightbox_modal
+                wait 200ms
+              end
+            end
+          on keydown[key=='Escape'] from #about_modal
+            if me.checked
+              set me.checked to false
+            end"
+/>
+<div class="modal" role="dialog">
+  <div class="modal-box max-w-md">
+    <h3 class="mb-4 text-lg font-bold">Simple Photo Gallery</h3>
+    <p class="text-base-content/70 -mt-2 mb-4 text-xs">
+      Version
+      {{ .Version }}
+    </p>
+
+    <!-- Gallery Statistics -->
+    {{ if .GalleryStats }}
+      <div class="bg-base-200 mb-4 rounded-lg p-3 text-xs">
+        <p class="mb-2 font-semibold">Gallery Statistics</p>
+        <div class="space-y-1">
+          <div>Folders: {{ .GalleryStats.Folders }}</div>
+          <div>Images: {{ .GalleryStats.Images }}</div>
+          <div>
+            Images Size:
+            {{ .GalleryStats.ImagesSize | formatBytesInt64 }}
+          </div>
+          {{ if .GalleryStats.FirstDiscovery }}
+            <div>First Discovery: {{ .GalleryStats.FirstDiscovery }}</div>
+          {{ end }}
+          {{ if .GalleryStats.LastDiscovery }}
+            <div>Last Discovery: {{ .GalleryStats.LastDiscovery }}</div>
+          {{ end }}
+        </div>
+      </div>
+    {{ end }}
+
+
+    <!-- Description -->
+    <div class="mb-4 text-sm">
+      <p class="mb-2">
+        A single file application that generates a web photo gallery directly
+        from the files in an image directory.
+      </p>
+      <p class="mb-2">Written in Go and optimized for performance.</p>
+    </div>
+
+    <!-- Repository Link -->
+    <div class="mb-2">
+      <p class="mb-1 text-sm font-medium">Repository:</p>
+      <a
+        href="https://github/lbe/sfpg-go"
+        target="_blank"
+        rel="noopener noreferrer"
+        class="link link-primary text-sm break-all"
+      >
+        https://github.com/lbe/sfpg-go
+      </a>
+    </div>
+
+    <div class="modal-action">
+      <label for="about_modal" class="btn btn-primary">Close</label>
+    </div>
+  </div>
+  <label class="modal-backdrop" for="about_modal">Close</label>
+</div>

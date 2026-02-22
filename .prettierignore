@@ -1,0 +1,20 @@
+# Folders to skip
+node_modules/
+bin/
+tmp/
+bench/
+zarchive/
+**/testdata/**
+internal/imagemeta
+
+# Build artifacts
+coverage.out
+coverage.html
+sfpg-go-gemini
+
+# Go vendor (if present)
+vendor/
+
+# Logs and generated files
+**/*.log
+**/*.min.*

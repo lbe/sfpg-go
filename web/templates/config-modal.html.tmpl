@@ -1,0 +1,2076 @@
+<!-- Configuration Modal - Loaded on demand via HTMX -->
+<div id="config-modal-container">
+  <input type="checkbox" id="config_modal" class="modal-toggle" />
+  <div class="modal" role="dialog">
+    <div
+      class="modal-box flex h-[90vh] w-11/12 max-w-5xl flex-col overflow-hidden p-0"
+    >
+      <!-- Fixed Header -->
+      <div
+        class="border-base-300 flex flex-shrink-0 items-center justify-between border-b p-6 pb-4"
+      >
+        <h3 class="text-2xl font-bold">Configuration</h3>
+        <label
+          for="config_modal"
+          class="btn btn-sm btn-circle btn-ghost"
+          _="on click
+                  wait 300ms
+                  remove #config-modal-container from body"
+          >✕</label
+        >
+      </div>
+
+      <!-- Alert area for messages (OOB updates) -->
+      <div id="config-alerts" class="flex-shrink-0 px-6 pt-2"></div>
+      <div id="restart-warning" class="hidden flex-shrink-0 px-6 pt-2"></div>
+      <div id="config-success-message" class="flex-shrink-0 px-6 pt-2"></div>
+
+      <!-- Form wraps everything -->
+      <form
+        id="config-form"
+        hx-post="/config"
+        hx-target="#config-success-message"
+        hx-swap="outerHTML"
+        hx-indicator="#config-loading"
+        class="flex min-h-0 flex-1 flex-col overflow-hidden"
+        _="on htmx:afterSwap
+               if #config-error-message.innerHTML.trim() != ''
+                 remove .htmx-request from me
+                 remove .htmx-request from body
+                 add .hidden to #config-spinner
+               end
+            on htmx:afterSettle
+               if #config-error-message.innerHTML.trim() != ''
+                 remove .htmx-request from me
+                 remove .htmx-request from body
+                 add .hidden to #config-spinner
+               end
+            on htmx:afterRequest
+               wait 10ms
+               if #config-error-message.innerHTML.trim() != ''
+                 remove .htmx-request from me
+                 remove .htmx-request from body
+                 add .hidden to #config-spinner
+               end"
+      >
+        <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}" />
+        <div
+          id="config-error-message"
+          class="text-error mb-4 px-6"
+          _="on htmx:afterSwap from me
+                remove .htmx-request from #config-form
+                remove .htmx-request from body
+                add .hidden to #config-spinner
+             on load
+                remove .htmx-request from #config-form
+                remove .htmx-request from body
+                add .hidden to #config-spinner
+             on mutation
+                if my.innerHTML.trim() != ''
+                  remove .htmx-request from #config-form
+                  remove .htmx-request from body
+                  add .hidden to #config-spinner
+                end"
+        ></div>
+
+        <!-- Fixed Tabs Navigation -->
+        <div role="tablist" class="tabs tabs-boxed mx-6 mb-4 flex-shrink-0">
+          <button
+            id="tab-server-btn"
+            type="button"
+            role="tab"
+            class="tab tab-active"
+            data-tab="tab-server"
+            aria-controls="tab-server"
+            aria-selected="true"
+            _="on click 
+                     set targetPanelId to my.getAttribute('data-tab')
+                     set targetPanel to document.getElementById(targetPanelId)
+                     set tabList to me.closest('[role=tablist]')
+                     set allTabs to tabList.querySelectorAll('button[role=tab]')
+                     for tab in allTabs
+                       remove .tab-active from tab
+                       set tab@aria-selected to 'false'
+                     end
+                     add .tab-active to me
+                     set my@aria-selected to 'true'
+                     add .hidden to <.tab-panel/> in #tab-panels
+                     remove .hidden from targetPanel"
+          >
+            Server
+          </button>
+          <button
+            id="tab-logging-btn"
+            type="button"
+            role="tab"
+            class="tab"
+            data-tab="tab-logging"
+            aria-controls="tab-logging"
+            aria-selected="false"
+            _="on click 
+                     set targetPanelId to my.getAttribute('data-tab')
+                     set targetPanel to document.getElementById(targetPanelId)
+                     set tabList to me.closest('[role=tablist]')
+                     set allTabs to tabList.querySelectorAll('button[role=tab]')
+                     for tab in allTabs
+                       remove .tab-active from tab
+                       set tab@aria-selected to 'false'
+                     end
+                     add .tab-active to me
+                     set my@aria-selected to 'true'
+                     add .hidden to <.tab-panel/> in #tab-panels
+                     remove .hidden from targetPanel"
+          >
+            Logging
+          </button>
+          <button
+            id="tab-application-btn"
+            type="button"
+            role="tab"
+            class="tab"
+            data-tab="tab-application"
+            aria-controls="tab-application"
+            aria-selected="false"
+            _="on click 
+                     set targetPanelId to my.getAttribute('data-tab')
+                     set targetPanel to document.getElementById(targetPanelId)
+                     set tabList to me.closest('[role=tablist]')
+                     set allTabs to tabList.querySelectorAll('button[role=tab]')
+                     for tab in allTabs
+                       remove .tab-active from tab
+                       set tab@aria-selected to 'false'
+                     end
+                     add .tab-active to me
+                     set my@aria-selected to 'true'
+                     add .hidden to <.tab-panel/> in #tab-panels
+                     remove .hidden from targetPanel"
+          >
+            Application
+          </button>
+          <button
+            id="tab-session-btn"
+            type="button"
+            role="tab"
+            class="tab"
+            data-tab="tab-session"
+            aria-controls="tab-session"
+            aria-selected="false"
+            _="on click 
+                     set targetPanelId to my.getAttribute('data-tab')
+                     set targetPanel to document.getElementById(targetPanelId)
+                     set tabList to me.closest('[role=tablist]')
+                     set allTabs to tabList.querySelectorAll('button[role=tab]')
+                     for tab in allTabs
+                       remove .tab-active from tab
+                       set tab@aria-selected to 'false'
+                     end
+                     add .tab-active to me
+                     set my@aria-selected to 'true'
+                     add .hidden to <.tab-panel/> in #tab-panels
+                     remove .hidden from targetPanel"
+          >
+            Session
+          </button>
+          <button
+            id="tab-performance-btn"
+            type="button"
+            role="tab"
+            class="tab"
+            data-tab="tab-performance"
+            aria-controls="tab-performance"
+            aria-selected="false"
+            _="on click 
+                     set targetPanelId to my.getAttribute('data-tab')
+                     set targetPanel to document.getElementById(targetPanelId)
+                     set tabList to me.closest('[role=tablist]')
+                     set allTabs to tabList.querySelectorAll('button[role=tab]')
+                     for tab in allTabs
+                       remove .tab-active from tab
+                       set tab@aria-selected to 'false'
+                     end
+                     add .tab-active to me
+                     set my@aria-selected to 'true'
+                     add .hidden to <.tab-panel/> in #tab-panels
+                     remove .hidden from targetPanel"
+          >
+            Performance
+          </button>
+          <button
+            id="tab-discovery-btn"
+            type="button"
+            role="tab"
+            class="tab"
+            data-tab="tab-discovery"
+            aria-controls="tab-discovery"
+            aria-selected="false"
+            _="on click 
+                     set targetPanelId to my.getAttribute('data-tab')
+                     set targetPanel to document.getElementById(targetPanelId)
+                     set tabList to me.closest('[role=tablist]')
+                     set allTabs to tabList.querySelectorAll('button[role=tab]')
+                     for tab in allTabs
+                       remove .tab-active from tab
+                       set tab@aria-selected to 'false'
+                     end
+                     add .tab-active to me
+                     set my@aria-selected to 'true'
+                     add .hidden to <.tab-panel/> in #tab-panels
+                     remove .hidden from targetPanel"
+          >
+            Discovery
+          </button>
+          <button
+            id="tab-admin-btn"
+            type="button"
+            role="tab"
+            class="tab"
+            data-tab="tab-admin"
+            aria-controls="tab-admin"
+            aria-selected="false"
+            _="on click 
+                     set targetPanelId to my.getAttribute('data-tab')
+                     set targetPanel to document.getElementById(targetPanelId)
+                     set tabList to me.closest('[role=tablist]')
+                     set allTabs to tabList.querySelectorAll('button[role=tab]')
+                     for tab in allTabs
+                       remove .tab-active from tab
+                       set tab@aria-selected to 'false'
+                     end
+                     add .tab-active to me
+                     set my@aria-selected to 'true'
+                     add .hidden to <.tab-panel/> in #tab-panels
+                     remove .hidden from targetPanel"
+          >
+            Admin ID
+          </button>
+        </div>
+
+        <!-- Scrollable Tab Content -->
+        <div id="tab-panels" class="min-h-0 flex-1 overflow-y-auto px-6 pb-6">
+          <div
+            id="tab-server"
+            role="tabpanel"
+            aria-labelledby="tab-server-btn"
+            class="tab-panel bg-base-100 border-base-300 rounded-box border p-6"
+          >
+            {{ template "config-server-tab" . }}
+          </div>
+          <div
+            id="tab-logging"
+            role="tabpanel"
+            aria-labelledby="tab-logging-btn"
+            class="tab-panel bg-base-100 border-base-300 rounded-box hidden border p-6"
+          >
+            {{ template "config-logging-tab" . }}
+          </div>
+          <div
+            id="tab-application"
+            role="tabpanel"
+            aria-labelledby="tab-application-btn"
+            class="tab-panel bg-base-100 border-base-300 rounded-box hidden border p-6"
+          >
+            {{ template "config-application-tab" . }}
+          </div>
+          <div
+            id="tab-session"
+            role="tabpanel"
+            aria-labelledby="tab-session-btn"
+            class="tab-panel bg-base-100 border-base-300 rounded-box hidden border p-6"
+          >
+            {{ template "config-session-tab" . }}
+          </div>
+          <div
+            id="tab-performance"
+            role="tabpanel"
+            aria-labelledby="tab-performance-btn"
+            class="tab-panel bg-base-100 border-base-300 rounded-box hidden border p-6"
+          >
+            {{ template "config-performance-tab" . }}
+          </div>
+          <div
+            id="tab-discovery"
+            role="tabpanel"
+            aria-labelledby="tab-discovery-btn"
+            class="tab-panel bg-base-100 border-base-300 rounded-box hidden border p-6"
+          >
+            {{ template "config-discovery-tab" . }}
+          </div>
+          <div
+            id="tab-admin"
+            role="tabpanel"
+            aria-labelledby="tab-admin-btn"
+            class="tab-panel bg-base-100 border-base-300 rounded-box hidden border p-6"
+          >
+            {{ template "config-admin-tab" . }}
+          </div>
+        </div>
+      </form>
+
+      <!-- Fixed Footer with buttons and info area -->
+      <div class="border-base-300 flex-shrink-0 border-t p-6 pt-4">
+        <!-- Button explanation and badge area (fixed height) -->
+        <div class="mb-2 flex h-8 items-center justify-end">
+          <div class="flex items-center gap-2">
+            <div
+              id="button-explanation-text"
+              class="text-base-content/70 w-[452px] overflow-hidden text-center text-sm text-ellipsis whitespace-nowrap"
+            ></div>
+            <div
+              id="button-explanation-area-right"
+              class="flex items-center justify-center"
+            >
+              <span id="config-restart-badge" class="badge badge-warning hidden"
+                >Restart Required</span
+              >
+            </div>
+          </div>
+        </div>
+
+        <!-- Footer with buttons (right-aligned) -->
+        <div class="modal-action justify-end">
+          <div class="flex items-center gap-2">
+            <button
+              class="btn btn-outline btn-sm"
+              hx-post="/config/restore-last-known-good?action=preview"
+              hx-target="#restore-diff-modal"
+              hx-swap="innerHTML"
+              _="on mouseenter set #button-explanation-text.textContent to 'Restore the last known good configuration from the database' on mouseleave set #button-explanation-text.textContent to ''"
+            >
+              Restore
+            </button>
+            <button
+              class="btn btn-outline btn-primary btn-sm"
+              hx-post="/config/export/to-file"
+              hx-target="#export-diff-modal"
+              hx-swap="innerHTML"
+              _="on mouseenter set #button-explanation-text.textContent to 'Export current configuration to a YAML file for backup' on mouseleave set #button-explanation-text.textContent to ''"
+            >
+              Export
+            </button>
+            <a
+              class="btn btn-outline btn-primary btn-sm"
+              href="/config/export/download"
+              download="config.yaml"
+              _="on mouseenter set #button-explanation-text.textContent to 'Download current configuration as a YAML file' on mouseleave set #button-explanation-text.textContent to ''"
+            >
+              Download
+            </a>
+            <button
+              class="btn btn-outline btn-primary btn-sm"
+              _="on click click() on #import-file-input on mouseenter set #button-explanation-text.textContent to 'Import configuration from a YAML file' on mouseleave set #button-explanation-text.textContent to ''"
+            >
+              Import
+            </button>
+            <input
+              type="file"
+              id="import-file-input"
+              accept=".yaml,.yml"
+              class="hidden"
+              hx-post="/config/import/preview"
+              hx-target="#import-diff-modal"
+              hx-swap="innerHTML"
+              hx-trigger="change"
+              hx-encoding="multipart/form-data"
+              name="yaml"
+              _="on change
+                if my.files.length > 0
+                  set #import-diff-modal-toggle.checked to true
+                end"
+            />
+            <button
+              type="button"
+              class="btn btn-sm"
+              id="config-cancel-btn"
+              _="on click
+                set hasChanges to false
+                set configFields to ['listener_address', 'listener_port', 'server_compression_enable',
+                                     'log_directory', 'log_level', 'log_rollover', 'log_retention_count',
+                                     'site_name', 'image_directory', 'current_theme',
+                                     'session_max_age', 'session_http_only', 'session_secure', 'session_same_site',
+                                     'enable_http_cache', 'enable_cache_preload', 'cache_max_size', 'cache_max_entry_size', 'cache_max_time', 'cache_cleanup_interval',
+                                     'db_max_pool_size', 'db_min_idle_connections', 'db_optimize_interval',
+                                     'worker_pool_max', 'worker_pool_min_idle', 'worker_pool_max_idle_time', 'queue_size',
+                                     'run_file_discovery']
+                
+                set form to #config-form
+                if form and window.configOriginalValues
+                  for fieldName in configFields
+                    set field to form.querySelector('[name=' + fieldName + ']')
+                    if field
+                      set originalValue to window.configOriginalValues[fieldName]
+                      if originalValue is not undefined
+                        set currentValue to null
+                        if field.type == 'checkbox'
+                          set currentValue to field.checked
+                        else
+                          set currentValue to field.value
+                        end
+                        
+                        set origStr to String(originalValue)
+                        set currStr to String(currentValue)
+                        
+                        if origStr != currStr
+                          set hasChanges to true
+                        end
+                      end
+                    end
+                  end
+                  
+                  -- Check themes
+                  set themesSelect to form.querySelector('select[name=themes]')
+                  if themesSelect
+                    set originalThemes to window.configOriginalValues['themes']
+                    set origThemesStr to ''
+                    set currThemesStr to ''
+                    
+                    if originalThemes and originalThemes.length > 0
+                      for theme in originalThemes
+                        if origThemesStr != '' set origThemesStr to origThemesStr + ', ' end
+                        set origThemesStr to origThemesStr + theme
+                      end
+                    end
+                    
+                    set selectedOptions to themesSelect.selectedOptions
+                    set firstTheme to true
+                    for option in selectedOptions
+                      if not firstTheme set currThemesStr to currThemesStr + ', ' end
+                      set currThemesStr to currThemesStr + option.value
+                      set firstTheme to false
+                    end
+                    
+                    if origThemesStr == '' set origThemesStr to '(none)' end
+                    if currThemesStr == '' set currThemesStr to '(none)' end
+                    
+                    if origThemesStr != currThemesStr
+                      set hasChanges to true
+                    end
+                  end
+                end
+                
+                if hasChanges
+                  call buildConfigDiff(configFields, #cancel-diff-content, true)
+                  set #cancel-diff-modal.checked to true
+                else
+                  set #config_modal.checked to false
+                  wait 300ms
+                  remove #config-modal-container from body
+                end"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              form="config-form"
+              class="btn btn-primary btn-sm relative text-center"
+              id="config-loading"
+            >
+              <span class="text-center">Save Settings</span>
+              <span
+                id="config-spinner"
+                class="loading loading-spinner loading-sm htmx-indicator absolute inset-0 flex items-center justify-center"
+              ></span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modals for diff display -->
+    <input
+      type="checkbox"
+      id="restore-diff-modal-toggle"
+      class="modal-toggle"
+    />
+    <div id="restore-diff-modal" class="modal" role="dialog"></div>
+    <input type="checkbox" id="export-diff-modal-toggle" class="modal-toggle" />
+    <div id="export-diff-modal" class="modal" role="dialog"></div>
+    <input type="checkbox" id="import-diff-modal-toggle" class="modal-toggle" />
+    <div id="import-diff-modal" class="modal" role="dialog"></div>
+    <input type="checkbox" id="cancel-diff-modal" class="modal-toggle" />
+    <div class="modal" role="dialog">
+      <div class="modal-box max-w-4xl">
+        <h3 class="mb-4 text-lg font-bold">Unsaved Changes</h3>
+        <p class="mb-4">
+          You have unsaved changes. Are you sure you want to cancel?
+        </p>
+        <div
+          id="cancel-diff-content"
+          class="border-base-300 mb-4 max-h-96 overflow-y-auto rounded border p-4"
+        >
+          <!-- Diff content will be inserted here -->
+        </div>
+        <div class="modal-action">
+          <label
+            for="cancel-diff-modal"
+            class="btn btn-primary"
+            _="on click
+              set #config_modal.checked to false
+              wait 300ms
+              remove #config-modal-container from body"
+            >Discard Changes</label
+          >
+          <label for="cancel-diff-modal" class="btn">Keep Editing</label>
+        </div>
+      </div>
+      <label class="modal-backdrop" for="cancel-diff-modal"></label>
+    </div>
+    <input type="checkbox" id="restart-diff-modal" class="modal-toggle" />
+    <div class="modal" role="dialog">
+      <div class="modal-box max-w-4xl">
+        <h3 class="mb-4 text-lg font-bold">Restart Required</h3>
+        <p class="mb-4">
+          Some settings require a server restart to take effect. The following
+          changes will be applied after restart:
+        </p>
+        <div
+          id="restart-diff-content"
+          class="border-base-300 mb-4 max-h-96 overflow-y-auto rounded border p-4"
+        >
+          <!-- Diff content will be inserted here -->
+        </div>
+        <div class="modal-action">
+          <button
+            class="btn btn-primary"
+            hx-post="/config/restart"
+            hx-target="#config-success-message"
+            hx-swap="outerHTML"
+            hx-vals='{"csrf_token": "{{ .CSRFToken }}"}'
+            _="on htmx:afterRequest
+                 -- Close the restart dialog
+                 set #restart-diff-modal.checked to false
+                 -- Close the config modal
+                 set #config_modal.checked to false
+                 -- Remove the config modal container after a brief delay
+                 wait 100ms
+                 remove #config-modal-container from body
+                 -- Show the restart overlay
+                 send showRestartOverlay to #restart-overlay"
+          >
+            Restart Server
+          </button>
+          <label for="restart-diff-modal" class="btn">Close</label>
+        </div>
+      </div>
+      <label class="modal-backdrop" for="restart-diff-modal"></label>
+    </div>
+
+    <label
+      class="modal-backdrop"
+      for="config_modal"
+      _="on click
+              wait 300ms
+              remove #config-modal-container from body"
+    ></label>
+  </div>
+</div>
+
+<script type="text/hyperscript">
+  def buildConfigDiff(fieldList, targetElement, includeThemes)
+    set changesHTML to '<table class="table table-compact w-full"><thead><tr><th>Setting</th><th>Current Value</th><th>Unsaved Value</th></tr></thead><tbody>'
+
+    set form to #config-form
+    if form and window.configOriginalValues
+      for fieldName in fieldList
+        set field to form.querySelector(`[name='${fieldName}']`)
+        if field
+          set originalValue to window.configOriginalValues[fieldName]
+          if originalValue is not undefined
+            set currentValue to null
+            if field.type == 'checkbox'
+              set currentValue to field.checked
+            else
+              set currentValue to field.value
+            end
+
+            set origStr to String(originalValue)
+            set currStr to String(currentValue)
+
+            if origStr != currStr
+              set changesHTML to `${changesHTML}<tr><td class="font-semibold">${fieldName}</td><td class="text-base-content">${origStr}</td><td class="text-warning">${currStr}</td></tr>`
+            end
+          end
+        end
+      end
+
+      if includeThemes
+        -- Special handling for themes (multi-select)
+        set themesSelect to form.querySelector('select[name=themes]')
+        if themesSelect
+          set originalThemes to window.configOriginalValues['themes']
+          set origThemesStr to ''
+          set currThemesStr to ''
+
+          -- Build original themes string
+          if originalThemes and originalThemes.length > 0
+            for theme in originalThemes
+              if origThemesStr != '' set origThemesStr to `${origThemesStr}, ` end
+              set origThemesStr to `${origThemesStr}${theme}`
+            end
+          end
+
+          -- Build current themes string
+          set selectedOptions to themesSelect.selectedOptions
+          set firstTheme to true
+          for option in selectedOptions
+            if not firstTheme set currThemesStr to `${currThemesStr}, ` end
+            set currThemesStr to `${currThemesStr}${option.value}`
+            set firstTheme to false
+          end
+
+          if origThemesStr == '' set origThemesStr to '(none)' end
+          if currThemesStr == '' set currThemesStr to '(none)' end
+
+          if origThemesStr != currThemesStr
+            set changesHTML to `${changesHTML}<tr><td class="font-semibold">themes</td><td class="text-base-content">${origThemesStr}</td><td class="text-warning">${currThemesStr}</td></tr>`
+          end
+        end
+      end
+    end
+
+    set changesHTML to `${changesHTML}</tbody></table>`
+    set targetElement.innerHTML to changesHTML
+  end
+
+  -- Listen for HTMX settle events (fires after all OOB swaps complete) to trigger restart modal
+  on htmx:afterSettle from document
+    set badge to #config-restart-badge
+    -- Check if badge exists first, then check visibility and content
+    if badge is not null
+      if badge.textContent == 'Restart Required' and badge.classList.contains('hidden') == false and badge.classList.contains('restart-modal-shown') == false
+        wait 100ms
+        set configFields to ['listener_address', 'listener_port', 'server_compression_enable', 'log_directory', 'log_level', 'log_rollover', 'log_retention_count', 'site_name', 'image_directory', 'current_theme', 'session_max_age', 'session_http_only', 'session_secure', 'session_same_site', 'enable_http_cache', 'enable_cache_preload', 'cache_max_size', 'cache_max_entry_size', 'cache_max_time', 'cache_cleanup_interval', 'db_max_pool_size', 'db_min_idle_connections', 'db_optimize_interval', 'worker_pool_max', 'worker_pool_min_idle', 'worker_pool_max_idle_time', 'queue_size', 'run_file_discovery']
+        call buildConfigDiff(configFields, #restart-diff-content, true)
+        wait 200ms
+        set #restart-diff-modal.checked to true
+        -- Mark that we've shown the modal so we don't re-trigger
+        add .restart-modal-shown to badge
+      end
+    end
+  end
+
+    -- Store original form values when modal opens
+    init
+      set window.configOriginalValues to {}
+      set form to #config-form
+      if form
+        -- Use selector to find all named inputs/selects (using JS to avoid Go template escaping)
+        set allFields to form.querySelectorAll('[name]')
+
+        for field in allFields
+          set fieldName to field@name
+          if field.type == 'checkbox'
+            set window.configOriginalValues[fieldName] to field.checked
+          else
+            set window.configOriginalValues[fieldName] to field.value
+          end
+        end
+
+        -- Special handling for themes (multi-select)
+        set themesSelect to form.querySelector('select[name=themes]')
+        if themesSelect
+          set selectedOptions to themesSelect.selectedOptions
+          set themesArray to []
+          for option in selectedOptions
+            set themesArray to themesArray.concat([option.value])
+          end
+          set window.configOriginalValues['themes'] to themesArray
+        end
+      end
+    end
+
+    -- Track changes to show/hide restart required badge
+    on change from #config-form
+      set needsRestart to false
+      set form to #config-form
+
+      -- Get the field that triggered the change
+      set changedField to event.target
+      set changedFieldName to changedField.getAttribute('name')
+
+      -- Ignore admin credential fields - they never require restart
+      set adminFields to ['admin_username', 'admin_current_password', 'admin_new_password', 'admin_confirm_password']
+      if changedFieldName in adminFields
+        -- Admin fields changed, but don't trigger restart badge
+        exit
+      end
+
+      if form and window.configOriginalValues
+        -- Find all fields that have the data-requires-restart attribute
+        set restartFields to form.querySelectorAll('[data-requires-restart="true"]')
+        for field in restartFields
+          set fieldName to field@name
+          set originalValue to window.configOriginalValues[fieldName]
+          if originalValue is not undefined
+            if field.type == 'checkbox'
+              if field.checked != originalValue set needsRestart to true end
+            else
+              if field.value != originalValue set needsRestart to true end
+            end
+          end
+        end
+      -- Themes also requires restart (hardcoded check since it's a special multi-select)
+      set themesSelect to form.querySelector('select[name=themes]')
+      if themesSelect
+        set originalThemes to window.configOriginalValues['themes']
+        set selectedOptions to themesSelect.selectedOptions
+
+        if originalThemes and originalThemes.length != selectedOptions.length
+          set needsRestart to true
+        else if originalThemes
+          for option in selectedOptions
+            if originalThemes.indexOf(option.value) == -1
+              set needsRestart to true
+            end
+          end
+        end
+      end
+    end
+
+    if needsRestart
+      remove .hidden from #config-restart-badge
+    else
+      add .hidden to #config-restart-badge
+    end
+  end
+</script>
+
+{{ define "config-server-tab" }}
+  <div class="form-control mb-4">
+    <label class="label">
+      <span class="label-text font-semibold">
+        Listener Address
+        {{ if index .HelpText "listener_address" }}
+          <div
+            class="tooltip tooltip-right"
+            data-tip="{{ index .HelpText "listener_address" }}"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke-width="1.5"
+              stroke="currentColor"
+              class="ml-1 inline h-4 w-4 cursor-help"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 5.25h.008v.008H12v-.008Z"
+              />
+            </svg>
+          </div>
+        {{ end }}
+      </span>
+    </label>
+    <input
+      type="text"
+      name="listener_address"
+      data-requires-restart="true"
+      placeholder="0.0.0.0"
+      class="input input-bordered w-64"
+      value="{{ if .Config }}{{ .Config.ListenerAddress }}{{ end }}"
+    />
+    <label class="label">
+      <span class="label-text-alt">
+        {{ if index .HelpText "listener_address" }}
+          {{ index .HelpText "listener_address" }}
+          {{ if index .ExampleValue "listener_address" }}
+            (Example: {{ index .ExampleValue "listener_address" }})
+          {{ end }}
+        {{ else if index .ExampleValue "listener_address" }}
+          Example:
+          {{ index .ExampleValue "listener_address" }}
+        {{ else }}
+          IP address or hostname to bind to (e.g., 0.0.0.0 for all interfaces).
+          Restart required.
+        {{ end }}
+      </span>
+    </label>
+  </div>
+
+  <div class="form-control mb-4">
+    <label class="label">
+      <span class="label-text font-semibold">
+        Listener Port
+        {{ if index .HelpText "listener_port" }}
+          <div
+            class="tooltip tooltip-right"
+            data-tip="{{ index .HelpText "listener_port" }}"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke-width="1.5"
+              stroke="currentColor"
+              class="ml-1 inline h-4 w-4 cursor-help"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 5.25h.008v.008H12v-.008Z"
+              />
+            </svg>
+          </div>
+        {{ end }}
+      </span>
+    </label>
+    <input
+      type="number"
+      name="listener_port"
+      data-requires-restart="true"
+      placeholder="8081"
+      class="input input-bordered w-32"
+      min="1"
+      max="65535"
+      value="{{ if .Config }}{{ .Config.ListenerPort }}{{ end }}"
+      required
+    />
+    <label class="label">
+      <span class="label-text-alt">
+        {{ if index .HelpText "listener_port" }}
+          {{ index .HelpText "listener_port" }}
+          {{ if index .ExampleValue "listener_port" }}
+            (Example: {{ index .ExampleValue "listener_port" }})
+          {{ end }}
+        {{ else if index .ExampleValue "listener_port" }}
+          Example:
+          {{ index .ExampleValue "listener_port" }}
+        {{ else }}
+          TCP port number (1-65535). Restart required.
+        {{ end }}
+      </span>
+    </label>
+  </div>
+
+  <div class="form-control mb-4">
+    <label class="label">
+      <span class="label-text font-semibold">Server Compression</span>
+    </label>
+    <label class="label cursor-pointer justify-start gap-4">
+      <input
+        type="checkbox"
+        name="server_compression_enable"
+        data-requires-restart="true"
+        class="checkbox checkbox-primary"
+        {{ if and .Config .Config.ServerCompressionEnable }}checked{{ end }}
+      />
+      <span class="label-text">Enable gzip/brotli compression</span>
+    </label>
+    <label class="label">
+      <span class="label-text-alt"
+        >Enable HTTP compression. Restart required.</span
+      >
+    </label>
+  </div>
+
+  {{ template "config-etag-field.html.tmpl" . }}
+{{ end }}
+
+{{ define "config-logging-tab" }}
+  <div class="form-control mb-4">
+    <label class="label">
+      <span class="label-text font-semibold">Log Directory</span>
+    </label>
+    <input
+      type="text"
+      name="log_directory"
+      data-requires-restart="true"
+      placeholder="/path/to/logs"
+      class="input input-bordered w-96"
+      value="{{ if .Config }}{{ .Config.LogDirectory }}{{ end }}"
+    />
+    <label class="label">
+      <span class="label-text-alt"
+        >Directory path for log files. Restart required.</span
+      >
+    </label>
+  </div>
+
+  <div class="form-control mb-4">
+    <label class="label">
+      <span class="label-text font-semibold">Log Level</span>
+    </label>
+    <select
+      name="log_level"
+      data-requires-restart="true"
+      class="select select-bordered w-32"
+    >
+      <option
+        value="debug"
+        {{ if and .Config (eq .Config.LogLevel "debug") }}selected{{ end }}
+      >
+        Debug
+      </option>
+      <option
+        value="info"
+        {{ if and .Config (eq .Config.LogLevel "info") }}selected{{ end }}
+      >
+        Info
+      </option>
+      <option
+        value="warn"
+        {{ if and .Config (eq .Config.LogLevel "warn") }}selected{{ end }}
+      >
+        Warn
+      </option>
+      <option
+        value="error"
+        {{ if and .Config (eq .Config.LogLevel "error") }}selected{{ end }}
+      >
+        Error
+      </option>
+    </select>
+    <label class="label">
+      <span class="label-text-alt"
+        >Minimum log level to record. Restart required.</span
+      >
+    </label>
+  </div>
+
+  <div class="form-control mb-4">
+    <label class="label">
+      <span class="label-text font-semibold">Log Rollover</span>
+    </label>
+    <select
+      name="log_rollover"
+      data-requires-restart="true"
+      class="select select-bordered w-32"
+    >
+      <option
+        value="daily"
+        {{ if and .Config (eq .Config.LogRollover "daily") }}selected{{ end }}
+      >
+        Daily
+      </option>
+      <option
+        value="weekly"
+        {{ if and .Config (eq .Config.LogRollover "weekly") }}selected{{ end }}
+      >
+        Weekly
+      </option>
+      <option
+        value="monthly"
+        {{ if and .Config (eq .Config.LogRollover "monthly") }}selected{{ end }}
+      >
+        Monthly
+      </option>
+    </select>
+    <label class="label">
+      <span class="label-text-alt"
+        >How often to rotate log files. Restart required.</span
+      >
+    </label>
+  </div>
+
+  <div class="form-control mb-4">
+    <label class="label">
+      <span class="label-text font-semibold">Log Retention Count</span>
+    </label>
+    <input
+      type="number"
+      name="log_retention_count"
+      data-requires-restart="true"
+      placeholder="7"
+      class="input input-bordered w-24"
+      min="1"
+      value="{{ if .Config }}{{ .Config.LogRetentionCount }}{{ end }}"
+    />
+    <label class="label">
+      <span class="label-text-alt"
+        >Number of rotated log files to keep. Restart required.</span
+      >
+    </label>
+  </div>
+{{ end }}
+
+{{ define "config-application-tab" }}
+  <div class="form-control mb-4">
+    <label class="label">
+      <span class="label-text font-semibold">Site Name</span>
+    </label>
+    <input
+      type="text"
+      name="site_name"
+      placeholder="SFPG Gallery"
+      class="input input-bordered w-64"
+      value="{{ if .Config }}{{ .Config.SiteName }}{{ end }}"
+    />
+    <label class="label">
+      <span class="label-text-alt">Display name for the gallery site</span>
+    </label>
+  </div>
+
+  <div class="form-control mb-4">
+    <label class="label">
+      <span class="label-text font-semibold">Image Directory</span>
+    </label>
+    <input
+      type="text"
+      name="image_directory"
+      data-requires-restart="true"
+      placeholder="/path/to/images"
+      class="input input-bordered w-96"
+      value="{{ if .Config }}{{ .Config.ImageDirectory }}{{ end }}"
+    />
+    <label class="label">
+      <span class="label-text-alt"
+        >Directory path containing images. Restart required.</span
+      >
+    </label>
+  </div>
+
+  <div class="form-control mb-4">
+    <label class="label">
+      <span class="label-text font-semibold">Available Themes</span>
+    </label>
+    <select
+      name="themes"
+      multiple
+      class="select select-bordered w-64"
+      size="10"
+    >
+      {{ $themes := .Config.Themes }}
+      <option
+        value="light"
+        {{- if not $themes }}
+          selected
+        {{ else }}
+          {{ range $themes }}{{ if eq . "light" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Light
+      </option>
+      <option
+        value="dark"
+        {{- if not $themes }}
+          selected
+        {{ else }}
+          {{ range $themes }}{{ if eq . "dark" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Dark
+      </option>
+      <option
+        value="acid"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "acid" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Acid
+      </option>
+      <option
+        value="aqua"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "aqua" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Aqua
+      </option>
+      <option
+        value="autumn"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "autumn" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Autumn
+      </option>
+      <option
+        value="black"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "black" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Black
+      </option>
+      <option
+        value="bumblebee"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "bumblebee" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Bumblebee
+      </option>
+      <option
+        value="business"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "business" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Business
+      </option>
+      <option
+        value="caramellatte"
+        {{- if $themes }}
+          {{ range $themes }}
+            {{ if eq . "caramellatte" }}selected{{ end }}
+          {{ end }}
+        {{ end -}}
+      >
+        Caramellatte
+      </option>
+      <option
+        value="coffee"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "coffee" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Coffee
+      </option>
+      <option
+        value="corporate"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "corporate" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Corporate
+      </option>
+      <option
+        value="cupcake"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "cupcake" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Cupcake
+      </option>
+      <option
+        value="cmyk"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "cmyk" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Cmyk
+      </option>
+      <option
+        value="cyberpunk"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "cyberpunk" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Cyberpunk
+      </option>
+      <option
+        value="dim"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "dim" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Dim
+      </option>
+      <option
+        value="dracula"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "dracula" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Dracula
+      </option>
+      <option
+        value="emerald"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "emerald" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Emerald
+      </option>
+      <option
+        value="fantasy"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "fantasy" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Fantasy
+      </option>
+      <option
+        value="forest"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "forest" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Forest
+      </option>
+      <option
+        value="garden"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "garden" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Garden
+      </option>
+      <option
+        value="halloween"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "halloween" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Halloween
+      </option>
+      <option
+        value="lemonade"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "lemonade" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Lemonade
+      </option>
+      <option
+        value="lofi"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "lofi" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Lofi
+      </option>
+      <option
+        value="luxury"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "luxury" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Luxury
+      </option>
+      <option
+        value="nord"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "nord" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Nord
+      </option>
+      <option
+        value="night"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "night" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Night
+      </option>
+      <option
+        value="pastel"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "pastel" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Pastel
+      </option>
+      <option
+        value="retro"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "retro" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Retro
+      </option>
+      <option
+        value="silk"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "silk" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Silk
+      </option>
+      <option
+        value="sunset"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "sunset" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Sunset
+      </option>
+      <option
+        value="synthwave"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "synthwave" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Synthwave
+      </option>
+      <option
+        value="valentine"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "valentine" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Valentine
+      </option>
+      <option
+        value="wireframe"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "wireframe" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Wireframe
+      </option>
+      <option
+        value="winter"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "winter" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Winter
+      </option>
+      <option
+        value="abyss"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "abyss" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Abyss
+      </option>
+    </select>
+    <label class="label">
+      <span class="label-text-alt"
+        >Select which DaisyUI themes are available to users</span
+      >
+    </label>
+  </div>
+
+  <div class="form-control mb-4">
+    <label class="label">
+      <span class="label-text font-semibold">Default Theme</span>
+    </label>
+    <select
+      name="current_theme"
+      class="select select-bordered w-48"
+      id="default-theme-select"
+    >
+      {{ if .Config.Themes }}
+        {{ range .Config.Themes }}
+          <option
+            value="{{ . }}"
+            {{ if and $.Config (eq $.Config.CurrentTheme .) }}selected{{ end }}
+          >
+            {{ . }}
+          </option>
+        {{ end }}
+      {{ else }}
+        <option
+          value="dark"
+          {{ if and .Config (eq .Config.CurrentTheme "dark") }}selected{{ end }}
+        >
+          dark
+        </option>
+        <option
+          value="light"
+          {{ if and .Config (eq .Config.CurrentTheme "light") }}
+            selected
+          {{ end }}
+        >
+          light
+        </option>
+      {{ end }}
+    </select>
+    <label class="label">
+      <span class="label-text-alt"
+        >Default theme for the UI (must be one of the selected themes
+        above)</span
+      >
+    </label>
+    <div id="theme-validation-error" class="text-error mt-1 hidden text-sm">
+      Default theme must be one of the selected themes
+    </div>
+  </div>
+
+  <script type="text/hyperscript">
+    /* Update default theme dropdown when themes checkboxes change */
+    on change from .theme-checkbox
+      set selectEl to #default-theme-select
+      set currentValue to selectEl.value
+      set selectEl.innerHTML to ''
+      set checkboxes to document.querySelectorAll('input[name="themes"]:checked')
+      set isValid to false
+      set firstTheme to null
+
+      /* Build dropdown options and check validation */
+      for checkbox in checkboxes
+        set theme to checkbox.value
+        if firstTheme is null set firstTheme to theme end
+        if theme == currentValue set isValid to true end
+
+        set option to document.createElement('option')
+        set option.value to theme
+        set option.textContent to theme.charAt(0).toUpperCase() + theme.slice(1)
+        if theme == currentValue set option.selected to true end
+        call selectEl.appendChild(option)
+      end
+
+      /* Validate and update selection */
+      if checkboxes.length == 0
+        remove .hidden from #theme-validation-error
+      else if not isValid
+        if firstTheme is not null
+          set selectEl.value to firstTheme
+        end
+        add .hidden to #theme-validation-error
+      else
+        add .hidden to #theme-validation-error
+      end
+    end
+  </script>
+{{ end }}
+
+{{ define "config-session-tab" }}
+  <div class="form-control mb-4">
+    <label class="label">
+      <span class="label-text font-semibold">Session Max Age</span>
+    </label>
+    <input
+      type="number"
+      name="session_max_age"
+      data-requires-restart="true"
+      placeholder="604800"
+      class="input input-bordered w-32"
+      min="1"
+      value="{{ if .Config }}{{ .Config.SessionMaxAge }}{{ end }}"
+    />
+    <label class="label">
+      <span class="label-text-alt"
+        >Session lifetime in seconds (e.g., 604800 = 7 days). Restart
+        required.</span
+      >
+    </label>
+  </div>
+
+  <div class="form-control mb-4">
+    <label class="label">
+      <span class="label-text font-semibold">Session HTTP Only</span>
+    </label>
+    <label class="label cursor-pointer justify-start gap-4">
+      <input
+        type="checkbox"
+        name="session_http_only"
+        data-requires-restart="true"
+        class="checkbox checkbox-primary"
+        {{ if and .Config .Config.SessionHttpOnly }}checked{{ end }}
+      />
+      <span class="label-text"
+        >Prevent JavaScript access to session cookies</span
+      >
+    </label>
+    <label class="label">
+      <span class="label-text-alt"
+        >Protects against XSS attacks by preventing client-side scripts from
+        accessing session cookies. Recommended for security. Restart
+        required.</span
+      >
+    </label>
+  </div>
+
+  <div class="form-control mb-4">
+    <label class="label">
+      <span class="label-text font-semibold">Session Secure</span>
+    </label>
+    <label class="label cursor-pointer justify-start gap-4">
+      <input
+        type="checkbox"
+        name="session_secure"
+        data-requires-restart="true"
+        class="checkbox checkbox-primary"
+        {{ if and .Config .Config.SessionSecure }}checked{{ end }}
+      />
+      <span class="label-text">Only send cookies over HTTPS</span>
+    </label>
+    <label class="label">
+      <span class="label-text-alt"
+        >Ensures session cookies are only transmitted over encrypted HTTPS
+        connections. Required for production deployments. Restart
+        required.</span
+      >
+    </label>
+  </div>
+
+  <div class="form-control mb-4">
+    <label class="label">
+      <span class="label-text font-semibold">Session Same Site</span>
+    </label>
+    <select
+      name="session_same_site"
+      data-requires-restart="true"
+      class="select select-bordered w-32"
+    >
+      <option
+        value="Lax"
+        {{ if and .Config (eq .Config.SessionSameSite "Lax") }}selected{{ end }}
+      >
+        Lax
+      </option>
+      <option
+        value="Strict"
+        {{ if and .Config (eq .Config.SessionSameSite "Strict") }}
+          selected
+        {{ end }}
+      >
+        Strict
+      </option>
+      <option
+        value="None"
+        {{ if and .Config (eq .Config.SessionSameSite "None") }}
+          selected
+        {{ end }}
+      >
+        None
+      </option>
+    </select>
+    <label class="label">
+      <span class="label-text-alt"
+        >CSRF protection level (Lax recommended). Restart required.</span
+      >
+    </label>
+  </div>
+{{ end }}
+
+{{ define "config-performance-tab" }}
+  <fieldset
+    class="fieldset border-base-300 bg-base-200/30 mb-6 rounded-lg border p-4"
+  >
+    <legend class="fieldset-legend text-base font-semibold">Cache</legend>
+    <div class="form-control mb-4">
+      <label class="label cursor-pointer justify-start gap-4">
+        <input
+          type="checkbox"
+          name="enable_http_cache"
+          data-requires-restart="true"
+          class="checkbox checkbox-primary"
+          {{ if and .Config .Config.EnableHTTPCache }}checked{{ end }}
+        />
+        <span class="label-text font-semibold">HTTP Cache Enabled</span>
+      </label>
+      <label class="label">
+        <span class="label-text-alt"
+          >Enable SQLite-backed HTTP response caching. Restart required.</span
+        >
+      </label>
+    </div>
+
+    <div class="form-control mb-4">
+      <label class="label">
+        <span class="label-text font-semibold">Cache Max Size</span>
+      </label>
+      <input
+        type="number"
+        name="cache_max_size"
+        data-requires-restart="true"
+        placeholder="524288000"
+        class="input input-bordered w-48"
+        min="0"
+        value="{{ if .Config }}{{ .Config.CacheMaxSize }}{{ end }}"
+      />
+      <label class="label">
+        <span class="label-text-alt"
+          >Maximum cache size in bytes (e.g., 524288000 = 500MB). Restart
+          required.</span
+        >
+      </label>
+    </div>
+
+    <div class="form-control mb-4">
+      <label class="label">
+        <span class="label-text font-semibold">Cache Max Entry Size</span>
+      </label>
+      <input
+        type="number"
+        name="cache_max_entry_size"
+        data-requires-restart="true"
+        placeholder="10485760"
+        class="input input-bordered w-48"
+        min="0"
+        value="{{ if .Config }}{{ .Config.CacheMaxEntrySize }}{{ end }}"
+      />
+      <label class="label">
+        <span class="label-text-alt"
+          >Maximum size per cache entry in bytes (e.g., 10485760 = 10MB).
+          Restart required.</span
+        >
+      </label>
+    </div>
+
+    <div class="form-control mb-4">
+      <label class="label">
+        <span class="label-text font-semibold">Cache Max Time</span>
+      </label>
+      <input
+        type="text"
+        name="cache_max_time"
+        data-requires-restart="true"
+        placeholder="720h"
+        class="input input-bordered w-32"
+        value="{{ if .Config }}{{ .Config.CacheMaxTime }}{{ end }}"
+      />
+      <label class="label">
+        <span class="label-text-alt">
+          {{ if index .HelpText "cache_max_time" }}
+            {{ index .HelpText "cache_max_time" }}
+            {{ if index .ExampleValue "cache_max_time" }}
+              (Examples: {{ index .ExampleValue "cache_max_time" }})
+            {{ end }}
+          {{ else if index .ExampleValue "cache_max_time" }}
+            Examples:
+            {{ index .ExampleValue "cache_max_time" }}
+          {{ else }}
+            Cache TTL as duration (e.g., 720h = 30 days, 5m = 5 minutes).
+            Restart required.
+          {{ end }}
+        </span>
+      </label>
+    </div>
+
+    <div class="form-control mb-4">
+      <label class="label">
+        <span class="label-text font-semibold">Cache Cleanup Interval</span>
+      </label>
+      <input
+        type="text"
+        name="cache_cleanup_interval"
+        data-requires-restart="true"
+        placeholder="5m"
+        class="input input-bordered w-32"
+        value="{{ if .Config }}{{ .Config.CacheCleanupInterval }}{{ end }}"
+      />
+      <label class="label">
+        <span class="label-text-alt"
+          >How often to clean expired cache entries (e.g., 5m = 5 minutes).
+          Restart required.</span
+        >
+      </label>
+    </div>
+  </fieldset>
+
+  <fieldset
+    class="fieldset border-base-300 bg-base-200/30 mb-6 rounded-lg border p-4"
+  >
+    <legend class="fieldset-legend text-base font-semibold">DB Pool</legend>
+    <div class="form-control mb-4">
+      <label class="label">
+        <span class="label-text font-semibold">DB Max Pool Size</span>
+      </label>
+      <input
+        type="number"
+        name="db_max_pool_size"
+        data-requires-restart="true"
+        placeholder="100"
+        class="input input-bordered w-24"
+        min="1"
+        value="{{ if .Config }}{{ .Config.DBMaxPoolSize }}{{ end }}"
+      />
+      <label class="label">
+        <span class="label-text-alt"
+          >Maximum database connections in pool. Restart required.</span
+        >
+      </label>
+    </div>
+
+    <div class="form-control mb-4">
+      <label class="label">
+        <span class="label-text font-semibold">DB Min Idle Connections</span>
+      </label>
+      <input
+        type="number"
+        name="db_min_idle_connections"
+        data-requires-restart="true"
+        placeholder="10"
+        class="input input-bordered w-24"
+        min="0"
+        value="{{ if .Config }}{{ .Config.DBMinIdleConnections }}{{ end }}"
+      />
+      <label class="label">
+        <span class="label-text-alt"
+          >Minimum idle connections to maintain. Restart required.</span
+        >
+      </label>
+    </div>
+
+    <div class="form-control mb-4">
+      <label class="label">
+        <span class="label-text font-semibold">DB Optimize Interval</span>
+      </label>
+      <input
+        type="text"
+        name="db_optimize_interval"
+        data-requires-restart="true"
+        placeholder="1h"
+        class="input input-bordered w-32"
+        value="{{ if .Config }}{{ .Config.DBOptimizeInterval }}{{ end }}"
+      />
+      <label class="label">
+        <span class="label-text-alt"
+          >How often to run SQLite OPTIMIZE (e.g., 1h = 1 hour). Restart
+          required.</span
+        >
+      </label>
+    </div>
+  </fieldset>
+
+  <fieldset
+    class="fieldset border-base-300 bg-base-200/30 mb-6 rounded-lg border p-4"
+  >
+    <legend class="fieldset-legend text-base font-semibold">Worker Pool</legend>
+    <div class="form-control mb-4">
+      <label class="label">
+        <span class="label-text font-semibold">Worker Pool Max</span>
+      </label>
+      <input
+        type="number"
+        name="worker_pool_max"
+        data-requires-restart="true"
+        placeholder="0"
+        class="input input-bordered w-24"
+        min="0"
+        value="{{ if .Config }}{{ .Config.WorkerPoolMax }}{{ end }}"
+      />
+      <label class="label">
+        <span class="label-text-alt"
+          >Maximum worker threads (0 = auto-calculate based on CPU cores).
+          Restart required.</span
+        >
+      </label>
+    </div>
+
+    <div class="form-control mb-4">
+      <label class="label">
+        <span class="label-text font-semibold">Worker Pool Min Idle</span>
+      </label>
+      <input
+        type="number"
+        name="worker_pool_min_idle"
+        data-requires-restart="true"
+        placeholder="0"
+        class="input input-bordered w-24"
+        min="0"
+        value="{{ if .Config }}{{ .Config.WorkerPoolMinIdle }}{{ end }}"
+      />
+      <label class="label">
+        <span class="label-text-alt"
+          >Minimum idle worker threads (0 = auto-calculate). Restart
+          required.</span
+        >
+      </label>
+    </div>
+
+    <div class="form-control mb-4">
+      <label class="label">
+        <span class="label-text font-semibold">Worker Pool Max Idle Time</span>
+      </label>
+      <input
+        type="text"
+        name="worker_pool_max_idle_time"
+        data-requires-restart="true"
+        placeholder="10s"
+        class="input input-bordered w-32"
+        value="{{ if .Config }}{{ .Config.WorkerPoolMaxIdleTime }}{{ end }}"
+      />
+      <label class="label">
+        <span class="label-text-alt"
+          >Time before idle workers are terminated (e.g., 10s = 10 seconds).
+          Restart required.</span
+        >
+      </label>
+    </div>
+  </fieldset>
+
+  <fieldset
+    class="fieldset border-base-300 bg-base-200/30 mb-6 rounded-lg border p-4"
+  >
+    <legend class="fieldset-legend text-base font-semibold">Queue</legend>
+    <div class="form-control mb-4">
+      <label class="label">
+        <span class="label-text font-semibold">Queue Size</span>
+      </label>
+      <input
+        type="number"
+        name="queue_size"
+        data-requires-restart="true"
+        placeholder="10000"
+        class="input input-bordered w-32"
+        min="1"
+        value="{{ if .Config }}{{ .Config.QueueSize }}{{ end }}"
+      />
+      <label class="label">
+        <span class="label-text-alt"
+          >Maximum size of the work queue. Restart required.</span
+        >
+      </label>
+    </div>
+  </fieldset>
+
+  <fieldset
+    class="fieldset border-base-300 bg-base-200/30 mb-6 rounded-lg border p-4"
+  >
+    <legend class="fieldset-legend text-base font-semibold">
+      Cache Preload
+    </legend>
+    <div class="form-control mb-4">
+      <label class="label cursor-pointer justify-start gap-4">
+        <input
+          type="checkbox"
+          name="enable_cache_preload"
+          class="checkbox checkbox-primary"
+          {{ if and .Config .Config.EnableCachePreload }}checked{{ end }}
+        />
+        <span class="label-text font-semibold">Enable Cache Preload</span>
+      </label>
+      <label class="label">
+        <span class="label-text-alt"
+          >Pre-load HTTP cache entries when folders are opened for faster
+          navigation.</span
+        >
+      </label>
+    </div>
+  </fieldset>
+{{ end }}
+
+{{ define "config-discovery-tab" }}
+  <div class="form-control mb-4">
+    <label class="label">
+      <span class="label-text font-semibold">Run File Discovery</span>
+    </label>
+    <label class="label cursor-pointer justify-start gap-4">
+      <input
+        type="checkbox"
+        name="run_file_discovery"
+        class="checkbox checkbox-primary"
+        {{ if and .Config .Config.RunFileDiscovery }}checked{{ end }}
+      />
+      <span class="label-text"
+        >Automatically discover and index image files on startup</span
+      >
+    </label>
+  </div>
+{{ end }}
+
+{{ define "config-admin-tab" }}
+  <div class="form-control mb-4">
+    <label class="label">
+      <span class="label-text font-semibold">Admin User ID</span>
+    </label>
+    <input
+      type="text"
+      name="admin_username"
+      placeholder="admin"
+      class="input input-bordered w-64"
+      value="{{ if .Username }}{{ .Username }}{{ end }}"
+      minlength="8"
+    />
+    <label class="label">
+      <span class="label-text-alt"
+        >Admin username (minimum 8 characters, alphanumeric, underscore, or
+        hyphen only)</span
+      >
+    </label>
+  </div>
+
+  <div class="form-control mb-4">
+    <label class="label">
+      <span class="label-text font-semibold">Current Password</span>
+    </label>
+    <div class="relative w-64">
+      <input
+        type="password"
+        name="admin_current_password"
+        placeholder="Enter current password"
+        class="input input-bordered w-full pr-10"
+        id="admin_current_password"
+      />
+      <button
+        type="button"
+        tabindex="-1"
+        class="btn btn-ghost btn-sm absolute top-1/2 right-2 h-auto min-h-0 -translate-y-1/2 p-1"
+        id="toggle_admin_current_password"
+        _="on click
+           set input to #admin_current_password
+           if input.type == 'password'
+             set input.type to 'text'
+             set my.innerHTML to '👁️'
+           else
+             set input.type to 'password'
+             set my.innerHTML to '👁️‍🗨️'
+           end"
+      >
+        👁️‍🗨️
+      </button>
+    </div>
+    <label class="label">
+      <span class="label-text-alt"
+        >Required to authorize any credential changes</span
+      >
+    </label>
+  </div>
+
+  <div class="form-control mb-4">
+    <label class="label">
+      <span class="label-text font-semibold">New Password</span>
+    </label>
+    <div class="relative w-64">
+      <input
+        type="password"
+        name="admin_new_password"
+        placeholder="Enter new password"
+        class="input input-bordered w-full pr-10"
+        id="admin_new_password"
+        minlength="8"
+      />
+      <button
+        type="button"
+        tabindex="-1"
+        class="btn btn-ghost btn-sm absolute top-1/2 right-2 h-auto min-h-0 -translate-y-1/2 p-1"
+        id="toggle_admin_new_password"
+        _="on click
+           set input to #admin_new_password
+           if input.type == 'password'
+             set input.type to 'text'
+             set my.innerHTML to '👁️'
+           else
+             set input.type to 'password'
+             set my.innerHTML to '👁️‍🗨️'
+           end"
+      >
+        👁️‍🗨️
+      </button>
+    </div>
+    <div
+      id="admin_new_password_error"
+      class="label-text-alt text-error hidden"
+    ></div>
+    <label class="label">
+      <span class="label-text-alt"
+        >Minimum 8 characters, must include: 1 uppercase, 1 lowercase, 1 number,
+        1 special character</span
+      >
+    </label>
+  </div>
+
+  <div class="form-control mb-4">
+    <label class="label">
+      <span class="label-text font-semibold">Confirm Password</span>
+    </label>
+    <div class="relative w-64">
+      <input
+        type="password"
+        name="admin_confirm_password"
+        placeholder="Confirm new password"
+        class="input input-bordered w-full pr-10"
+        id="admin_confirm_password"
+        minlength="8"
+      />
+      <button
+        type="button"
+        tabindex="-1"
+        class="btn btn-ghost btn-sm absolute top-1/2 right-2 h-auto min-h-0 -translate-y-1/2 p-1"
+        id="toggle_admin_confirm_password"
+        _="on click
+           set input to #admin_confirm_password
+           if input.type == 'password'
+             set input.type to 'text'
+             set my.innerHTML to '👁️'
+           else
+             set input.type to 'password'
+             set my.innerHTML to '👁️‍🗨️'
+           end"
+      >
+        👁️‍🗨️
+      </button>
+    </div>
+    <div
+      id="admin_confirm_password_error"
+      class="label-text-alt text-error hidden"
+    ></div>
+    <label class="label">
+      <span class="label-text-alt">Must match new password</span>
+    </label>
+  </div>
+
+  <script type="text/javascript">
+    function checkPasswordValid(password) {
+      const regex =
+        /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]).{8,}$/;
+      return regex.test(password);
+    }
+
+    function validateNewPassword() {
+      const newPass = document.getElementById("admin_new_password").value;
+      const errorMsg = document.getElementById("admin_new_password_error");
+      const inputEl = document.getElementById("admin_new_password");
+      const confirmPass = document.getElementById(
+        "admin_confirm_password",
+      ).value;
+      const confirmErrorMsg = document.getElementById(
+        "admin_confirm_password_error",
+      );
+
+      if (newPass === "") {
+        errorMsg.classList.add("hidden");
+        inputEl.classList.remove("input-error");
+      } else if (!checkPasswordValid(newPass)) {
+        errorMsg.classList.remove("hidden");
+        errorMsg.textContent =
+          "Password must contain at least one uppercase, one lowercase, one number, and one special character";
+        inputEl.classList.add("input-error");
+      } else {
+        errorMsg.classList.add("hidden");
+        inputEl.classList.remove("input-error");
+      }
+
+      // Also validate password match when new password changes
+      if (newPass !== "" && confirmPass !== "" && newPass !== confirmPass) {
+        confirmErrorMsg.classList.remove("hidden");
+        confirmErrorMsg.textContent = "Passwords do not match";
+        document
+          .getElementById("admin_confirm_password")
+          .classList.add("input-error");
+      } else if (
+        newPass !== "" &&
+        confirmPass !== "" &&
+        newPass === confirmPass
+      ) {
+        confirmErrorMsg.classList.add("hidden");
+        document
+          .getElementById("admin_confirm_password")
+          .classList.remove("input-error");
+      } else {
+        confirmErrorMsg.classList.add("hidden");
+        document
+          .getElementById("admin_confirm_password")
+          .classList.remove("input-error");
+      }
+    }
+
+    function validateConfirmPassword() {
+      const newPass = document.getElementById("admin_new_password").value;
+      const confirmPass = document.getElementById(
+        "admin_confirm_password",
+      ).value;
+      const errorMsg = document.getElementById("admin_confirm_password_error");
+      const inputEl = document.getElementById("admin_confirm_password");
+
+      if (newPass !== "" && confirmPass !== "" && newPass !== confirmPass) {
+        errorMsg.classList.remove("hidden");
+        errorMsg.textContent = "Passwords do not match";
+        inputEl.classList.add("input-error");
+      } else if (
+        newPass !== "" &&
+        confirmPass !== "" &&
+        newPass === confirmPass
+      ) {
+        errorMsg.classList.add("hidden");
+        inputEl.classList.remove("input-error");
+      } else {
+        errorMsg.classList.add("hidden");
+        inputEl.classList.remove("input-error");
+      }
+    }
+
+    document.addEventListener("DOMContentLoaded", function () {
+      const newPasswordInput = document.getElementById("admin_new_password");
+      const confirmPasswordInput = document.getElementById(
+        "admin_confirm_password",
+      );
+
+      if (newPasswordInput) {
+        newPasswordInput.addEventListener("input", validateNewPassword);
+      }
+
+      if (confirmPasswordInput) {
+        confirmPasswordInput.addEventListener("input", validateConfirmPassword);
+      }
+    });
+  </script>
+{{ end }}

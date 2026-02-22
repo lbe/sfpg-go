@@ -1,0 +1,1009 @@
+{{ define "image-count" }}
+  {{- if . -}}
+    {{- if .ImageCount -}}
+      {{- if gt .ImageCount 0 -}}
+        {{- .ImageCount }}
+        {{ if eq .ImageCount 1 }}Image{{- else }}Images{{- end -}}
+      {{- end -}}
+    {{- end -}}
+  {{- end -}}
+{{ end }}
+{{ define "layout" }}
+  <!DOCTYPE html>
+  <html lang="en" data-theme="{{ .Theme }}">
+    <head>
+      <meta charset="UTF-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <meta name="description" content="SFPG-Go-Gemini Image Gallery" />
+      <title>SEPG</title>
+      <link
+        rel="icon"
+        href="/static/favicon/favicon.svg"
+        type="image/svg+xml"
+      />
+      <script src="https://cdn.tailwindcss.com"></script>
+      <link
+        href="https://cdn.jsdelivr.net/npm/daisyui@4.12.10/dist/full.min.css"
+        rel="stylesheet"
+        type="text/css"
+      />
+      <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+      <script src="https://unpkg.com/hyperscript.org@0.9.12"></script>
+      <script type="text/hyperscript">
+        def disableFooterButtons()
+          add @disabled to #lightbox-first-btn
+          add @disabled to #lightbox-prev-btn
+          add @disabled to #lightbox_close-btn
+          add @disabled to #lightbox-next-btn
+          add @disabled to #lightbox-last-btn
+          add @disabled to #slideshow-btn
+          add @disabled to #info-btn
+          add @disabled to #lightbox-actual-size-btn
+        end
+
+        def enableFooterButtons()
+          remove @disabled from #lightbox-first-btn
+          remove @disabled from #lightbox-prev-btn
+          remove @disabled from #lightbox_close-btn
+          remove @disabled from #lightbox-next-btn
+          remove @disabled from #lightbox-last-btn
+          remove @disabled from #slideshow-btn
+          remove @disabled from #info-btn
+          remove @disabled from #lightbox-actual-size-btn
+        end
+
+        -- NEW: DRY Refactor for Lightbox Navigation
+        def lightboxNav(imgUrl, infoId)
+           send route(url: imgUrl) to #lightbox-images
+           remove .hidden from #info_box_spinner
+           add .htmx-request to #info_box_spinner
+
+           fetch `/info/image/${infoId}` as html put result into #box_info
+
+           remove .htmx-request from #info_box_spinner
+           add .hidden to #info_box_spinner
+        end
+
+        -- OPTIMIZED SCALING LOGIC (Fixed for 3-slot carousel)
+        def updateScaledValues()
+          -- Check if element exists before proceeding (prevent console errors)
+          if #scaled-width is null exit end
+
+          -- 1. Find the currently visible slot
+          set slots to <img.lightbox-slot/>
+          set img to null
+          for s in slots
+            if s does not match .hidden set img to s end
+          end
+
+          if img
+             get img.clientWidth
+             set w to it
+             get img.clientHeight
+             set h to it
+
+             if w > 0 and h > 0
+               set #scaled-width.innerText to w
+               set #scaled-height.innerText to h
+               add .hidden to #scaled-spinner
+               remove .hidden from #scaled-sep
+             end
+          end
+        end
+
+        def updateScaled()
+          wait 20ms
+          call updateScaledValues()
+        end
+
+        -- Calculate scale for lightbox images (up to 200% max)
+        -- Scales images to fit container, upscaling small images up to 200%
+        def updateLightboxScale(img)
+          if img is null exit end
+
+          set container to #lightbox-images
+          if container is null exit end
+
+          set containerWidth to container.clientWidth
+          set containerHeight to container.clientHeight
+
+          set naturalWidth to img.naturalWidth
+          set naturalHeight to img.naturalHeight
+
+          -- Exit if image hasn't loaded yet
+          if naturalWidth is 0 or naturalHeight is 0
+            exit
+          end
+
+          -- Calculate scale needed to fit container while maintaining aspect ratio
+          set scaleX to containerWidth / naturalWidth
+          set scaleY to containerHeight / naturalHeight
+          set scale to Math.min(scaleX, scaleY)
+
+          -- Cap at 200% max scale for upscaling
+          if scale > 2.0
+            set scale to 2.0
+          end
+
+          -- For upscaling (small images): apply scale transform and remove constraints
+          -- For downscaling (large images): use CSS max-width/height constraints only
+          if scale > 1.0
+            -- Upscale: apply transform and remove max-width/height constraints
+            set img.style.transform to 'translate(-50%, -50%) scale(' + scale + ')'
+            set img.style.maxWidth to 'none'
+            set img.style.maxHeight to 'none'
+          else
+            -- Downscale: clear transform, let CSS max-width/height handle it
+            set img.style.transform to 'translate(-50%, -50%)'
+            set img.style.maxWidth to '100%'
+            set img.style.maxHeight to '100%'
+          end
+        end
+
+        -- EVENT LISTENERS
+        on htmx:afterSwap from #lightbox_content call updateScaled() end
+        on htmx:afterSwap from #box_info call updateScaled() end
+
+        on resize from window
+          wait 150ms
+          call updateScaled()
+          -- Recalculate scale for visible lightbox image
+          set slots to <img.lightbox-slot/>
+          for s in slots
+            if s does not match .hidden
+              call updateLightboxScale(s)
+            end
+          end
+        end
+
+        -- NEW: Centralized Router Initialization Logic
+        def initLightboxRouter(container, currId, currSrc, nextSrc, prevSrc)
+            -- 1. Info Box Check
+            set box to #box_info
+            set needsLoad to true
+
+            if box and box.children.length > 0
+                set infoDiv to box.firstElementChild
+                if infoDiv and infoDiv.getAttribute('data-info-id') == currId
+                    set needsLoad to false
+                end
+            end
+            if needsLoad send 'manual-load' to container end
+
+            -- 2. SYNC & PRELOAD LOGIC
+            set targetCurr to currSrc
+            set targetNext to nextSrc
+            set targetPrev to prevSrc
+
+            set allSlots to [#slot-1, #slot-2, #slot-3]
+            set currSlot to null
+            set nextSlot to null
+            set prevSlot to null
+
+            -- A. Identify Slots
+            for s in allSlots
+              set src to s.getAttribute('src')
+              if src == targetCurr set currSlot to s end
+            end
+            if currSlot is null set currSlot to #slot-1 end
+
+            if currSlot.getAttribute('src') != targetCurr set currSlot.src to targetCurr end
+
+            -- B. Identify Next/Prev
+            for s in allSlots
+              if s != currSlot and s.getAttribute('src') == targetNext set nextSlot to s end
+            end
+            for s in allSlots
+               if s != currSlot and s != nextSlot and s.getAttribute('src') == targetPrev set prevSlot to s end
+            end
+
+            -- C. Fill Gaps
+            if nextSlot is null
+               for s in allSlots
+                  if s != currSlot and s != prevSlot and nextSlot is null
+                     set nextSlot to s
+                     if nextSlot.getAttribute('src') != targetNext set nextSlot.src to targetNext end
+                  end
+               end
+            end
+
+            if prevSlot is null
+               for s in allSlots
+                  if s != currSlot and s != nextSlot and prevSlot is null
+                     set prevSlot to s
+                     if prevSlot.getAttribute('src') != targetPrev set prevSlot.src to targetPrev end
+                  end
+               end
+            end
+
+            -- D. Ensure Visibility
+            send route(url: targetCurr) to #lightbox-images
+        end
+      </script>
+    </head>
+    <body
+      class="bg-base-100 flex h-screen flex-col overflow-hidden"
+      _="init
+           -- Restore info box state from sessionStorage on page load
+           if sessionStorage.getItem('infobox-visible') === 'true'
+             add .info-pinned to me
+             remove .hidden from #box_info_wrapper
+             trigger resizeMe on #lightbox_modal
+             wait 20ms
+             get #box_info.children.length
+             if it is 0
+               send loadfirstinfo to #initial-info-loader
+             end
+           end
+         on keydown(key) from window
+           -- Skip handler if typing in input/textarea fields
+           if event.target.tagName is in ['INPUT', 'TEXTAREA']
+             exit
+           end
+           
+           -- 1. LOGIN/LOGOUT/ABOUT MODALS - only handle Escape
+           if #login_modal.checked or #logout_modal.checked or #about_modal.checked
+             if key is 'Escape'
+               if #login_modal.checked set #login_modal.checked to false end
+               if #logout_modal.checked set #logout_modal.checked to false end
+               if #about_modal.checked set #about_modal.checked to false end
+               halt the event
+             end
+             exit
+           end
+
+           -- 1a. CONFIG MODAL - only handle Escape (same as Cancel button)
+           if #config_modal.checked
+             if key is 'Escape'
+               set cancelBtn to #config-cancel-btn
+               if cancelBtn
+                 call cancelBtn.click()
+               end
+               halt the event
+             end
+             exit
+           end
+
+           -- 2. ACTUAL SIZE MODAL
+           if #actual-size_modal does not match .hidden
+             if key is 'Escape'
+               halt the event
+               click() on #actual-size-image
+             end
+             halt
+           end
+
+           -- 3. LIGHTBOX MODAL
+           if #lightbox_modal does not match .hidden
+             if key is 'Escape' or key is 'q'
+                trigger closeModal on #lightbox_modal
+             end
+             
+             if key is in ['ArrowLeft', 'ArrowUp', 'h', 'j', 'PageUp']
+                if not #lightbox-prev-btn.disabled click() on #lightbox-prev-btn end
+             end
+             
+             if key is in ['ArrowRight', 'ArrowDown', 'k', 'l', 'PageDown']
+                if not #lightbox-next-btn.disabled click() on #lightbox-next-btn end
+             end
+             
+             if key is 'i' click() on #info-btn end
+             
+             if key is 'Home' 
+                if not #lightbox-first-btn.disabled click() on #lightbox-first-btn end
+             end
+             if key is 'End'
+                if not #lightbox-last-btn.disabled click() on #lightbox-last-btn end
+             end
+
+           -- 4. GALLERY VIEW
+           else if #boxgallery exists
+             if key is 'Enter' or key is ' '
+                set firstLink to #boxgallery.querySelector('a[id^=lightbox-]')
+                if firstLink
+                   halt the event
+                   click() on firstLink
+                end
+             end
+             
+             if key is in ['ArrowLeft', 'h', 'j']
+                halt the event
+                call history.back()
+             end
+             
+             if key is in ['ArrowRight', 'k', 'l']
+                halt the event
+                call history.forward()
+             end
+             
+             if key is 'i' click() on #info-btn end
+           end"
+    >
+      <!-- Main Content & Info Box Container -->
+      <div class="flex flex-1 overflow-hidden">
+        <!-- New wrapper for info box and its spinner -->
+        <div
+          id="box_info_wrapper"
+          class="relative mt-[7px] mb-[7px] ml-[7px] hidden h-[calc(100vh-72px-14px)] w-[236px] flex-shrink-0"
+          _="init
+              if body matches .info-pinned
+                remove .hidden from me
+              end"
+        >
+          <!-- The target for the swap -->
+          <div
+            id="box_info"
+            class="bg-base-200 border-base-300 h-full w-full overflow-y-auto rounded-[6px] border shadow-md"
+          >
+            <!-- Content loaded here -->
+          </div>
+
+          <!-- The indicator, sibling to the target -->
+          <div
+            id="info_box_spinner"
+            class="htmx-indicator absolute inset-0 z-10 flex items-center justify-center rounded-md"
+          >
+            <span class="loading loading-spinner loading-md"></span>
+          </div>
+        </div>
+
+        <!-- Main Content Area -->
+        <div id="BodyContainer" class="relative flex-1">
+          <div id="gallery-content" class="h-full w-full overflow-y-auto">
+            {{ template "body" . }}
+          </div>
+
+          {{/* Dashboard polling element - outside #dashboard-container to survive swaps */}}
+          {{ if eq .PageName "dashboard" }}
+            <div
+              hx-get="/dashboard"
+              hx-trigger="every 5s"
+              hx-target="#dashboard-container"
+              hx-swap="innerHTML"
+              _="on htmx:afterRequest
+                   if event.detail.successful
+                     set timeString to js return new Date().toLocaleTimeString() end
+                     put timeString into #last-updated
+                   end"
+            ></div>
+          {{ end }}
+
+
+          <!-- Lightbox Modal -->
+          <div
+            id="lightbox_modal"
+            class="fixed top-0 z-50 hidden h-[calc(100vh-4rem)] items-center justify-center"
+            _='init
+                set window.lightboxSpinner to the innerHTML of #lightbox_content
+              end
+              def resizeLightbox()
+                if #box_info_wrapper matches .hidden
+                   set my.style.left to &apos;0px&apos;
+                else
+                   if body matches .info-pinned
+                      set my.style.left to &apos;243px&apos;
+                   else
+                      set my.style.left to &apos;0px&apos;
+                   end
+                end
+                set my.style.right to &apos;0px&apos;
+              end
+              on openModal
+                call resizeLightbox()
+                remove .hidden from me
+                remove .items-center from me
+                remove .justify-center from me
+                  add .lightbox-open to body
+                remove @disabled from #lightbox-first-btn
+                remove @disabled from #lightbox-prev-btn
+                remove @disabled from #lightbox_close-btn
+                remove @disabled from #lightbox-next-btn
+                remove @disabled from #lightbox-last-btn
+                remove @disabled from #slideshow-btn
+                remove @disabled from #info-btn
+                remove @disabled from #lightbox-actual-size-btn
+                log &apos;Penultimate step: storing current image count HTML&apos;
+                set window.galleryCountHTML to #image-count-display.innerHTML
+                log &apos;Lightbox opened&apos;
+              on resizeMe call resizeLightbox()
+              on closeModal
+                set my.style.left to &apos;&apos;
+                remove .lightbox-open from body
+                set my.style.right to &apos;&apos;
+                remove .slideshow-running from #slideshow-btn
+                set #slideshow-btn.innerHTML to &apos;<svg class="play-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg><svg class="pause-icon hidden" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>&apos;
+                add .hidden to me
+                add .items-center to me
+                add .justify-center to me
+                set the innerHTML of #lightbox_content to window.lightboxSpinner
+                set #image-count-display.innerHTML to window.galleryCountHTML
+                add @disabled to #lightbox-first-btn
+                add @disabled to #lightbox-prev-btn
+                add @disabled to #lightbox_close-btn
+                add @disabled to #lightbox-next-btn
+                add @disabled to #lightbox-last-btn
+                add @disabled to #slideshow-btn
+                add @disabled to #info-btn
+                add @disabled to #lightbox-actual-size-btn
+              '
+          >
+            <!-- Semi-transparent overlay -->
+            <div
+              id="lightbox_overlay"
+              class="bg-base-200 absolute inset-0 opacity-80"
+              _="on click trigger closeModal on #lightbox_modal"
+            ></div>
+
+            <!-- Content area -->
+            <div
+              id="lightbox_content"
+              class="relative z-10 flex h-full w-full items-center justify-center p-4 transition-opacity duration-200 [&.htmx-request]:opacity-0"
+            >
+              <span class="loading loading-spinner loading-lg"></span>
+            </div>
+          </div>
+
+          <!-- Actual Size Modal -->
+          <div
+            id="actual-size_modal"
+            class="bg-base-200 fixed inset-x-0 top-0 z-51 hidden h-[calc(100vh-4rem)] overflow-auto"
+            _="on keydown if event.key is 'Escape'
+                 remove .actual-size-mode from body
+                 call enableFooterButtons()
+                 add .hidden to me
+                 remove .hidden from #lightbox_modal"
+          >
+            <div class="flex min-h-full w-full items-center justify-center">
+              <img
+                id="actual-size-image"
+                src=""
+                alt="Full size image"
+                class="max-h-none max-w-none"
+                _="on click
+                     remove .actual-size-mode from body
+                     call enableFooterButtons()
+                     add .hidden to #actual-size_modal
+                     remove .hidden from #lightbox_modal"
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Footer - Floating Dock Style -->
+      <div
+        id="footer-container"
+        class="sticky bottom-0 z-20 border-t border-[oklch(var(--bc)/0.08)] bg-[oklch(var(--b2)/0.85)] backdrop-blur-[20px]"
+      >
+        <footer class="relative flex h-[72px] items-center px-6 pt-7 pb-1">
+          {{/* Breadcrumbs: intercept link clicks and set location.href so we always do full navigation (not HTMX). Links without hx-get are treated as full-page. */}}
+          <div
+            id="breadcrumbs-container"
+            class="absolute top-0 right-0 left-0 flex h-7 items-center justify-center text-xs text-[oklch(var(--bc)/0.6)]"
+            _="on click from <a/> in me
+                 if target.tagName is 'A' and target.getAttribute('href') and not target.getAttribute('hx-get')
+                   halt the event
+                   set location.href to target.getAttribute('href')
+                 end"
+          >
+            {{ if .Breadcrumbs }}
+              <div class="breadcrumbs text-[oklch(var(--bc)/0.6)]">
+                <ul>
+                  {{ range .Breadcrumbs }}
+                    <li>
+                      <a
+                        href="{{ .Path }}?v={{ cacheVersion }}"
+                        hx-boost="false"
+                        class="text-[oklch(var(--bc)/0.6)] transition-opacity hover:opacity-100"
+                        >{{ .Name }}</a
+                      >
+                    </li>
+                  {{ end }}
+                </ul>
+              </div>
+            {{ end }}
+          </div>
+
+          <!-- Group 1: Left Aligned - Info, Count -->
+          <div class="flex flex-1 items-center justify-start gap-3 pl-2">
+            <!-- Info Button -->
+            <button
+              id="info-btn"
+              class="border-base-content/5 bg-base-300/60 text-base-content/70 hover:bg-base-300 hover:text-primary hover:border-primary/20 relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none"
+              {{ if eq .PageName "dashboard" }}disabled{{ end }}
+              title="Info"
+              _="on click
+                toggle .hidden on #box_info_wrapper
+                toggle .info-pinned on body
+                trigger resizeMe on #lightbox_modal
+                call updateScaled() 
+                -- Persist info box state to sessionStorage
+                if body matches .info-pinned
+                  sessionStorage.setItem('infobox-visible', 'true')
+                else
+                  sessionStorage.setItem('infobox-visible', 'false')
+                end
+                wait 20ms
+                get #box_info.children.length
+                if it is 0
+                  send loadfirstinfo to #initial-info-loader
+                end"
+            >
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <circle cx="12" cy="12" r="10" />
+                <path d="M12 16v-4" />
+                <path d="M12 8h.01" />
+              </svg>
+            </button>
+
+            <!-- Count Display -->
+            <span
+              id="image-count-display"
+              class="text-base-content/80 font-mono text-xs font-medium tracking-[-0.01em]"
+            >
+              {{ template "image-count" . }}
+            </span>
+          </div>
+
+          <!-- Group 2: Center - Navigation Controls -->
+          <div class="flex flex-none items-center justify-center gap-1.5">
+            <!-- First -->
+            <button
+              id="lightbox-first-btn"
+              type="button"
+              class="border-base-content/5 bg-base-300/60 text-base-content/70 hover:bg-base-300 hover:text-primary hover:border-primary/20 relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none"
+              disabled
+              title="First"
+            >
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="m11 17-5-5 5-5" />
+                <path d="m18 17-5-5 5-5" />
+              </svg>
+            </button>
+
+            <!-- Previous -->
+            <button
+              id="lightbox-prev-btn"
+              type="button"
+              class="border-base-content/5 bg-base-300/60 text-base-content/70 hover:bg-base-300 hover:text-primary hover:border-primary/20 relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none"
+              disabled
+              title="Previous"
+            >
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="m15 18-6-6 6-6" />
+              </svg>
+            </button>
+
+            <!-- Close -->
+            <button
+              id="lightbox_close-btn"
+              class="border-base-content/5 bg-base-300/60 text-base-content/70 hover:bg-base-300 hover:text-primary hover:border-primary/20 relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none"
+              disabled
+              title="Close"
+              _="on click 
+                  trigger closeModal on #lightbox_modal"
+            >
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M18 6 6 18" />
+                <path d="m6 6 12 12" />
+              </svg>
+            </button>
+
+            <!-- Divider -->
+            <div class="bg-base-content/10 mx-1 h-[18px] w-px"></div>
+
+            <!-- Slideshow / Play -->
+            <button
+              id="slideshow-btn"
+              class="border-base-content/5 bg-base-300/60 text-base-content/70 hover:bg-base-300 hover:text-primary hover:border-primary/20 relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none"
+              disabled
+              title="Slideshow"
+              _="init
+                  remove .slideshow-running from me
+                  repeat forever
+                    if I match .slideshow-running
+                      send click to #lightbox-next-btn
+                      wait 5s
+                    else
+                      wait 200ms
+                    end
+                  end
+                  on click
+                    toggle .slideshow-running on me
+                    if I match .slideshow-running then
+                      add .hidden to .play-icon in me
+                      remove .hidden from .pause-icon in me
+                    else
+                      remove .hidden from .play-icon in me
+                      add .hidden to .pause-icon in me
+                    end"
+            >
+              <svg
+                class="play-icon"
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <polygon points="5 3 19 12 5 21 5 3" />
+              </svg>
+              <svg
+                class="pause-icon hidden"
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <rect x="6" y="4" width="4" height="16" />
+                <rect x="14" y="4" width="4" height="16" />
+              </svg>
+            </button>
+
+            <!-- Actual Size -->
+            <button
+              id="lightbox-actual-size-btn"
+              class="border-base-content/5 bg-base-300/60 text-base-content/70 hover:bg-base-300 hover:text-primary hover:border-primary/20 relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none"
+              disabled
+              title="Actual Size"
+              _="on click
+                  toggle .actual-size-mode on body
+                  if body matches .actual-size-mode
+                    set slots to <img.lightbox-slot/>
+                    set visibleImg to null
+                    for s in slots
+                      if s does not match .hidden set visibleImg to s end
+                    end
+                    if visibleImg
+                      get visibleImg.src
+                      set #actual-size-image.src to it
+                    end
+                    add .hidden to #lightbox_modal
+                    remove .hidden from #actual-size_modal
+                    call disableFooterButtons()
+                    remove @disabled from #lightbox-actual-size-btn
+                  else
+                    add .hidden to #actual-size_modal
+                    remove .hidden from #lightbox_modal
+                  end"
+            >
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="m21 21-6-6m6 6v-4.8m0 4.8h-4.8" />
+                <path d="M3 16.2V21m0 0h4.8M3 21l6-6" />
+                <path d="M21 7.8V3m0 0h-4.8M21 3l-6 6" />
+                <path d="M3 7.8V3m0 0h4.8M3 3l6 6" />
+              </svg>
+            </button>
+
+            <!-- Divider -->
+            <div class="bg-base-content/10 mx-1 h-[18px] w-px"></div>
+
+            <!-- Next -->
+            <button
+              id="lightbox-next-btn"
+              type="button"
+              class="border-base-content/5 bg-base-300/60 text-base-content/70 hover:bg-base-300 hover:text-primary hover:border-primary/20 relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none"
+              disabled
+              title="Next"
+            >
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="m9 18 6-6-6-6" />
+              </svg>
+            </button>
+
+            <!-- Last -->
+            <button
+              id="lightbox-last-btn"
+              type="button"
+              class="border-base-content/5 bg-base-300/60 text-base-content/70 hover:bg-base-300 hover:text-primary hover:border-primary/20 relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none"
+              disabled
+              title="Last"
+            >
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="m6 17 5-5-5-5" />
+                <path d="m13 17 5-5-5-5" />
+              </svg>
+            </button>
+          </div>
+
+          <!-- Group 3: Right Aligned - Menu -->
+          <div class="flex flex-1 items-center justify-end gap-3 pr-2">
+            <div class="dropdown dropdown-top dropdown-end">
+              <button
+                id="hamburger-menu-btn"
+                type="button"
+                class="border-base-content/5 bg-base-300/60 text-base-content/70 hover:bg-base-300 hover:text-primary hover:border-primary/20 relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none"
+                tabindex="0"
+                aria-label="Menu"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <line x1="4" x2="20" y1="12" y2="12" />
+                  <line x1="4" x2="20" y1="6" y2="6" />
+                  <line x1="4" x2="20" y1="18" y2="18" />
+                </svg>
+              </button>
+              <ul
+                id="hamburger-menu-items"
+                class="menu dropdown-content bg-base-100 border-base-300 rounded-box z-[60] w-56 border p-2 shadow-lg"
+                tabindex="0"
+              >
+                <li>
+                  <a
+                    href="/theme/modal"
+                    hx-get="/theme/modal"
+                    hx-target="body"
+                    hx-swap="beforeend"
+                    _="on click wait 100ms then set #theme_modal.checked to true"
+                    aria-label="Theme"
+                    >Theme</a
+                  >
+                </li>
+                <li>
+                  <label
+                    for="about_modal"
+                    class="cursor-pointer"
+                    aria-label="About"
+                    >About</label
+                  >
+                </li>
+                <div class="divider my-1"></div>
+                {{ if .IsAuthenticated }}
+                  <li>
+                    <a
+                      href="/dashboard?v={{ cacheVersion }}"
+                      aria-label="Dashboard"
+                      >Dashboard</a
+                    >
+                  </li>
+                  <li>
+                    <a
+                      href="/config?v={{ cacheVersion }}"
+                      hx-get="/config"
+                      hx-target="body"
+                      hx-swap="beforeend"
+                      _="on click wait 100ms then set #config_modal.checked to true"
+                      aria-label="Configuration"
+                      >Configuration</a
+                    >
+                  </li>
+                  {{/* Server submenu using DaisyUI collapse */}}
+                  <li>
+                    <details class="bg-base-100 collapse-arrow collapse">
+                      <summary
+                        class="collapse-title min-h-0 py-2 text-sm font-medium"
+                      >
+                        Server
+                      </summary>
+                      <div class="collapse-content">
+                        <ul class="menu menu-compact">
+                          <li>
+                            <label
+                              for="shutdown_modal"
+                              class="text-error cursor-pointer"
+                              aria-label="Shutdown"
+                            >
+                              <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                class="h-4 w-4"
+                                fill="none"
+                                viewBox="0 0 24 24"
+                                stroke="currentColor"
+                              >
+                                <path
+                                  stroke-linecap="round"
+                                  stroke-linejoin="round"
+                                  stroke-width="2"
+                                  d="M13 10V3L4 14h7v7l9-11h-7z"
+                                />
+                              </svg>
+                              Shutdown
+                            </label>
+                          </li>
+                          <li>
+                            <button
+                              hx-post="/server/discovery"
+                              hx-target="#server-toast-container"
+                              hx-swap="innerHTML"
+                              class="text-success"
+                              aria-label="Run Discovery"
+                            >
+                              <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                class="h-4 w-4"
+                                fill="none"
+                                viewBox="0 0 24 24"
+                                stroke="currentColor"
+                              >
+                                <path
+                                  stroke-linecap="round"
+                                  stroke-linejoin="round"
+                                  stroke-width="2"
+                                  d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                                />
+                              </svg>
+                              Run Discovery
+                            </button>
+                          </li>
+                        </ul>
+                      </div>
+                    </details>
+                  </li>
+                  <div class="divider my-1"></div>
+                  <li>
+                    <label
+                      for="logout_modal"
+                      class="cursor-pointer"
+                      aria-label="Logout"
+                      >Logout</label
+                    >
+                  </li>
+                {{ else }}
+                  <li>
+                    <label
+                      for="login_modal"
+                      class="cursor-pointer"
+                      aria-label="Login"
+                      >Login</label
+                    >
+                  </li>
+                {{ end }}
+              </ul>
+            </div>
+          </div>
+        </footer>
+      </div>
+
+      <!-- Login Modal (at body level for proper z-index) -->
+      {{ template "login-modal.html.tmpl" . }}
+
+
+      <!-- Logout Modal (at body level for proper z-index) -->
+      {{ template "logout-modal.html.tmpl" . }}
+
+
+      <!-- About Modal (at body level for proper z-index) -->
+      {{ template "about-modal.html.tmpl" . }}
+
+
+      <!-- Shutdown Modal (at body level for proper z-index) -->
+      {{ template "shutdown-modal.html.tmpl" . }}
+
+
+      <!-- Server Toast Container (for notifications) -->
+      <div id="server-toast-container" class="fixed top-4 right-4 z-[70]"></div>
+
+      <!-- Server Restart Overlay -->
+      <div
+        id="restart-overlay"
+        class="bg-base-300/95 fixed inset-0 z-[9999] flex hidden flex-col items-center justify-center"
+        _="on showRestartOverlay
+             set #restart-counter.textContent to '0'
+             set window.restartStartTime to Date.now()
+             remove .hidden from me
+             startRestartCounter()
+           end
+           
+           on hideRestartOverlay
+             add .hidden to me
+             set window.restartStartTime to null
+           end"
+      >
+        <div
+          class="loading loading-spinner loading-lg text-primary mb-8 h-24 w-24"
+        ></div>
+        <h2 class="mb-4 text-3xl font-bold">Restarting Server</h2>
+        <p class="text-base-content/70 mb-2 text-lg">
+          Please wait while the server restarts...
+        </p>
+        <p class="font-mono text-xl">
+          <span id="restart-counter">0</span> seconds
+        </p>
+        <!-- HTMX polling for health check - only polls when restartStartTime is set -->
+        <div
+          id="restart-poller"
+          hx-get="/health"
+          hx-trigger="every 1s [window.restartStartTime !== null]"
+          hx-swap="none"
+          _="on htmx:afterRequest
+                  if event.detail.successful
+                    set window.restartStartTime to null
+                    add .hidden to #restart-overlay
+                    js window.location.reload() end
+                  end
+                end"
+        ></div>
+      </div>
+
+      <script type="text/hyperscript">
+        def startRestartCounter()
+          if window.restartStartTime is not null
+            set elapsed to Math.floor((Date.now() - window.restartStartTime) / 1000)
+            set #restart-counter.textContent to String(elapsed)
+            wait 1s
+            startRestartCounter()
+          end
+        end
+      </script>
+    </body>
+  </html>
+{{ end }}

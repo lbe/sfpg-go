@@ -1,0 +1,6 @@
+port: 8081
+discover: true
+debug-delay-ms: 0
+profile: ""
+compression: true
+http-cache: true
