@@ -12,6 +12,12 @@ A self-hosted photo gallery web application written in Go. It serves images from
 
 The application is designed to be performant and simple to deploy, using concurrency for background tasks and a hypermedia-driven frontend architecture to minimize client-side JavaScript.
 
+<p align="center">
+  <img src="sfpg-go-demo.gif" alt="SFPG Go Demo" width="700">
+  <br>
+  <em>Demonstration of the SFPG Go interface with 2-second transitions.</em>
+</p>
+
 ## Motivation
 
 This project was inspired by [Single File PHP Gallery](http://sye.dk/sfpg/). I have been a long time user of it and think it is a great project!
