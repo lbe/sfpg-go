@@ -189,3 +189,6 @@ bin/*
 
 # exclude serena files
 .serena/*
+
+# exclude .cursor 
+.cursor/*
