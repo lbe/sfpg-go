@@ -14,7 +14,7 @@ require (
 	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646
 	github.com/phsym/console-slog v0.3.1
 	github.com/pkg/profile v1.7.0
-	github.com/playwright-community/playwright-go v0.5200.1
+	github.com/playwright-community/playwright-go v0.5700.1
 	golang.org/x/crypto v0.48.0
 	golang.org/x/image v0.36.0
 	golang.org/x/net v0.50.0
@@ -23,7 +23,7 @@ require (
 )
 
 require (
-	github.com/deckarep/golang-set/v2 v2.7.0 // indirect
+	github.com/deckarep/golang-set/v2 v2.8.0 // indirect
 	github.com/dlclark/regexp2 v1.11.4 // indirect
 	github.com/felixge/fgprof v0.9.3 // indirect
 	github.com/go-jose/go-jose/v3 v3.0.4 // indirect
