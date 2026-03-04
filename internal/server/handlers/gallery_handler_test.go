@@ -166,11 +166,15 @@ func TestGetSessionIDForPreload_FallsBackToRemoteAddr(t *testing.T) {
 func TestFixupDirectoryName_Truncates(t *testing.T) {
 	name := strings.Repeat("a", 30)
 	result := fixupDirectoryName(name)
-	if !strings.HasSuffix(result, "...") {
-		t.Errorf("expected truncated name, got %q", result)
+	// Center-ellipsis: "..." appears in the middle, not at the end.
+	if !strings.Contains(result, "...") {
+		t.Errorf("expected center-ellipsis in truncated name, got %q", result)
 	}
-	if !strings.Contains(result, "aaaaa") {
-		t.Errorf("expected result to contain base name, got %q", result)
+	if strings.HasSuffix(result, "...") {
+		t.Errorf("expected center-ellipsis (not right-truncation), got %q", result)
+	}
+	if !strings.HasPrefix(result, "📁︎ ") {
+		t.Errorf("expected folder prefix, got %q", result)
 	}
 }
 

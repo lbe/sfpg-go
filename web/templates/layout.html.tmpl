@@ -58,7 +58,8 @@
            remove .hidden from #info_box_spinner
            add .htmx-request to #info_box_spinner
 
-           fetch `/info/image/${infoId}` as html put result into #box_info
+           fetch `/info/image/${infoId}?v={{ cacheVersion }}` as html put result into #box_info
+            call updateScaled()
 
            remove .htmx-request from #info_box_spinner
            add .hidden to #info_box_spinner
@@ -220,19 +221,39 @@
             send route(url: targetCurr) to #lightbox-images
         end
       </script>
+      <style>
+        @media (hover: none) and (pointer: coarse), (any-pointer: coarse) {
+          #info-btn-mobile {
+            display: flex !important;
+          }
+
+          #info-btn {
+            display: none !important;
+          }
+
+          #box_info_wrapper {
+            display: none !important;
+          }
+        }
+      </style>
     </head>
     <body
       class="bg-base-100 flex h-screen flex-col overflow-hidden"
+      style="padding-bottom: max(0px, env(safe-area-inset-bottom));"
       _="init
-           -- Restore info box state from sessionStorage on page load
-           if sessionStorage.getItem('infobox-visible') === 'true'
-             add .info-pinned to me
-             remove .hidden from #box_info_wrapper
-             trigger resizeMe on #lightbox_modal
-             wait 20ms
-             get #box_info.children.length
-             if it is 0
-               send loadfirstinfo to #initial-info-loader
+           -- Hide info-box on dashboard (no sidebar needed there)
+           if #dashboard-container exists
+             add .hidden to #box_info_wrapper
+           else
+             -- Restore info box state from sessionStorage on gallery/lightbox pages
+             if sessionStorage.getItem('infobox-visible') === 'true'
+               add .info-pinned to me
+               remove .hidden from #box_info_wrapper
+               wait 20ms
+               get #box_info.children.length
+               if it is 0
+                 send loadfirstinfo to #initial-info-loader
+               end
              end
            end
          on keydown(key) from window
@@ -319,9 +340,30 @@
              if key is 'i' click() on #info-btn end
            end"
     >
+      <!-- Mobile Info Modal (no drawer pattern) -->
+      <input id="mobile_info_modal" type="checkbox" class="modal-toggle" />
+      <div class="modal" role="dialog">
+        <div id="mobile_info_modal_box" class="modal-box relative p-2">
+          <div
+            id="box_info_mobile"
+            class="bg-base-200 border-base-300 min-h-[16rem] w-full overflow-y-auto rounded-[6px] border shadow-md"
+          >
+            <!-- Content mirrored from #box_info -->
+          </div>
+
+          <div
+            id="info_box_spinner_mobile"
+            class="htmx-indicator absolute inset-0 z-10 flex hidden items-center justify-center rounded-md"
+          >
+            <span class="loading loading-spinner loading-md"></span>
+          </div>
+        </div>
+        <label class="modal-backdrop" for="mobile_info_modal">Close</label>
+      </div>
+
       <!-- Main Content & Info Box Container -->
       <div class="flex flex-1 overflow-hidden">
-        <!-- New wrapper for info box and its spinner -->
+        <!-- Info Box Wrapper: Hidden by default, visible only in gallery context -->
         <div
           id="box_info_wrapper"
           class="relative mt-[7px] mb-[7px] ml-[7px] hidden h-[calc(100vh-72px-14px)] w-[236px] flex-shrink-0"
@@ -334,6 +376,12 @@
           <div
             id="box_info"
             class="bg-base-200 border-base-300 h-full w-full overflow-y-auto rounded-[6px] border shadow-md"
+            _="on htmx:afterSwap
+                 if #mobile_info_modal.checked
+                   set #box_info_mobile.innerHTML to my.innerHTML
+                   set #box_info_mobile.scrollTop to 0
+                   set #mobile_info_modal_box.scrollTop to 0
+                 end"
           >
             <!-- Content loaded here -->
           </div>
@@ -341,7 +389,7 @@
           <!-- The indicator, sibling to the target -->
           <div
             id="info_box_spinner"
-            class="htmx-indicator absolute inset-0 z-10 flex items-center justify-center rounded-md"
+            class="htmx-indicator absolute inset-0 z-10 flex hidden items-center justify-center rounded-md"
           >
             <span class="loading loading-spinner loading-md"></span>
           </div>
@@ -372,7 +420,8 @@
           <!-- Lightbox Modal -->
           <div
             id="lightbox_modal"
-            class="fixed top-0 z-50 hidden h-[calc(100vh-4rem)] items-center justify-center"
+            class="fixed top-0 right-0 left-0 z-50 hidden items-center justify-center"
+            style="height: calc(100dvh - 4rem - max(0px, env(safe-area-inset-bottom))); bottom: auto;"
             _='init
                 set window.lightboxSpinner to the innerHTML of #lightbox_content
               end
@@ -446,7 +495,8 @@
           <!-- Actual Size Modal -->
           <div
             id="actual-size_modal"
-            class="bg-base-200 fixed inset-x-0 top-0 z-51 hidden h-[calc(100vh-4rem)] overflow-auto"
+            class="bg-base-200 fixed inset-x-0 top-0 z-51 hidden overflow-auto"
+            style="height: calc(100dvh - 4rem - max(0px, env(safe-area-inset-bottom))); bottom: auto;"
             _="on keydown if event.key is 'Escape'
                  remove .actual-size-mode from body
                  call enableFooterButtons()
@@ -506,17 +556,50 @@
 
           <!-- Group 1: Left Aligned - Info, Count -->
           <div class="flex flex-1 items-center justify-start gap-3 pl-2">
-            <!-- Info Button -->
+            <!-- Mobile Info Button (only visible on mobile) -->
+            <button
+              id="info-btn-mobile"
+              class="border-base-content/5 bg-base-300/60 text-base-content/70 hover:bg-base-300 hover:text-primary hover:border-primary/20 relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none sm:hidden"
+              title="Info"
+              _="on click
+                if #box_info.children.length is 0
+                  send loadfirstinfo to #initial-info-loader
+                end
+                set #box_info_mobile.innerHTML to #box_info.innerHTML
+                set #box_info_mobile.scrollTop to 0
+                set #mobile_info_modal.checked to true
+                wait 10ms
+                set #mobile_info_modal_box.scrollTop to 0
+                set #box_info_mobile.scrollTop to 0
+              "
+            >
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <circle cx="12" cy="12" r="10" />
+                <path d="M12 16v-4" />
+                <path d="M12 8h.01" />
+              </svg>
+            </button>
+            <!-- Info Button (desktop only) -->
             <button
               id="info-btn"
-              class="border-base-content/5 bg-base-300/60 text-base-content/70 hover:bg-base-300 hover:text-primary hover:border-primary/20 relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none"
+              class="border-base-content/5 bg-base-300/60 text-base-content/70 hover:bg-base-300 hover:text-primary hover:border-primary/20 relative hidden h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none sm:flex"
               {{ if eq .PageName "dashboard" }}disabled{{ end }}
               title="Info"
               _="on click
+                -- Desktop: toggle info box wrapper (existing behavior)
                 toggle .hidden on #box_info_wrapper
                 toggle .info-pinned on body
                 trigger resizeMe on #lightbox_modal
-                call updateScaled() 
+                call updateScaled()
                 -- Persist info box state to sessionStorage
                 if body matches .info-pinned
                   sessionStorage.setItem('infobox-visible', 'true')
@@ -548,7 +631,7 @@
             <!-- Count Display -->
             <span
               id="image-count-display"
-              class="text-base-content/80 font-mono text-xs font-medium tracking-[-0.01em]"
+              class="text-base-content/80 text-xs font-medium tracking-[-0.01em]"
             >
               {{ template "image-count" . }}
             </span>
@@ -975,9 +1058,7 @@
         <p class="text-base-content/70 mb-2 text-lg">
           Please wait while the server restarts...
         </p>
-        <p class="font-mono text-xl">
-          <span id="restart-counter">0</span> seconds
-        </p>
+        <p class="text-xl"><span id="restart-counter">0</span> seconds</p>
         <!-- HTMX polling for health check - only polls when restartStartTime is set -->
         <div
           id="restart-poller"

@@ -21,6 +21,7 @@ help:
 	@echo "  make run           - Build and run the server"
 	@echo "  make format        - Format Go, templates, and assets"
 	@echo "  make format-check  - Check formatting without writing"
+	@echo "  make validate-templates - Validate Go template rendering + Hyperscript"
 	@echo "  make validate-hyperscript - Validate Hyperscript in templates"
 	@echo "  make clean         - Remove build artifacts"
 	@echo ""
@@ -95,6 +96,12 @@ clean:
 validate-hyperscript:
 	# Validate Hyperscript syntax across templates
 	go run ./scripts/validate-hyperscript.go web/templates
+
+.PHONY: validate-templates
+validate-templates:
+	# Fast-fail checks for template integrity and embedded hyperscript
+	SEPG_SESSION_SECURE=false go test ./internal/server -run TestTemplateRendering -count=1
+	go run ./scripts/validate-hyperscript.go -quiet web/templates
 
 .PHONY: format fmt
 format fmt:

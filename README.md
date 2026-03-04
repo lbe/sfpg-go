@@ -224,9 +224,10 @@ make test-all  # Run tests across all packages
 make test-race # Run tests with race detector
 
 # Code quality
-make lint         # Run golangci-lint (required before commits)
-make format       # Format Go code and run Prettier
-make format-check # Check formatting without writing changes
+make lint               # Run golangci-lint (required before commits)
+make validate-templates # Validate Go template rendering + Hyperscript
+make format             # Format Go code and run Prettier
+make format-check       # Check formatting without writing changes
 
 # Coverage and benchmarks
 make cover  # Generate coverage report (coverage.html)
@@ -239,7 +240,7 @@ make run   # Build and run the server
 make clean # Remove build artifacts
 ```
 
-**Before committing:** The pre-commit hooks will automatically run `make test-all`, `make format-check`, and `make lint`. If any check fails, the commit will be aborted.
+**Before committing:** The pre-commit hooks will automatically run `make validate-templates`, `make test-all`, `make format-check`, and `make lint`. If any check fails, the commit will be aborted.
 
 ### Code Linting
 
