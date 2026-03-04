@@ -1256,6 +1256,79 @@ go test -tags integration -race ./...
 
 ---
 
+## Frontend Architecture
+
+**Last Updated:** 2026-03-04
+
+SFPG uses a **hypermedia-driven, mobile-first** frontend built entirely with Go HTML templates, HTMX, Hyperscript, daisyUI, and TailwindCSS. There is no JavaScript framework and no client-side state management.
+
+### Design Principles
+
+- **No JavaScript** — all interactivity via HTMX (HTML-over-the-wire) and Hyperscript
+- **Mobile-first** — touch devices are first-class; desktop enhancements are additive
+- **iOS safe areas** — `env(safe-area-inset-bottom)` used on body and modals to clear the home indicator
+- **Responsive layout** — flexbox wrapping instead of fixed-grid for gallery tiles
+
+### Gallery Tile Layout
+
+Gallery tiles use a `flex flex-wrap justify-center gap` container so tiles reflow naturally at all viewport widths without JavaScript. Each tile uses the daisyUI `card` component.
+
+Thumbnail images use `object-contain` inside a `<figure>` element so portrait and landscape images display without cropping, regardless of aspect ratio.
+
+Long filenames and directory names are truncated with **center-ellipsis** (preserving both prefix and suffix) rather than right-truncation, so the file extension and end of the name remain readable.
+
+### Lightbox Touch Navigation
+
+The lightbox supports swipe navigation on touch devices via Hyperscript `pointerdown`/`pointerup` handlers:
+
+- **Threshold:** 48px horizontal displacement required to trigger a swipe
+- **Drift guard:** ±40px vertical tolerance prevents accidental swipes during vertical scrolling
+- **Ghost tap prevention:** a `:didSwipe` flag suppresses the `click` event that fires after a swipe
+- **Button visibility:** prev/next nav buttons are hidden on mobile (`hidden sm:flex`); swipe replaces them
+- **Modal height:** uses `100dvh` (dynamic viewport height) with `env(safe-area-inset-bottom)` subtracted for correct iOS Safari rendering
+
+### Mobile Info Panel
+
+On touch devices (detected via CSS `hover:none` and `pointer:coarse` media queries), the desktop sidebar info box is hidden entirely and replaced with a dedicated modal:
+
+| Element              | Desktop                  | Mobile                 |
+| -------------------- | ------------------------ | ---------------------- |
+| `#box_info_wrapper`  | Visible sidebar (toggle) | `display:none` via CSS |
+| `#info-btn`          | Visible (`sm:flex`)      | Hidden (`hidden`)      |
+| `#info-btn-mobile`   | Hidden (`sm:hidden`)     | Visible (`flex`)       |
+| `#mobile_info_modal` | —                        | daisyUI checkbox modal |
+
+Content is mirrored from `#box_info` into `#box_info_mobile` on every HTMX swap via a Hyperscript `on htmx:afterSwap` handler, so the modal always reflects the latest selection without an extra network request.
+
+The dashboard suppresses the sidebar entirely — `#box_info_wrapper` is hidden via Hyperscript `init` when `#dashboard-container` is detected in the DOM.
+
+### Dashboard Typography
+
+The dashboard uses a compact typography scale optimised for dense metric display:
+
+| Element          | Before                 | After                        |
+| ---------------- | ---------------------- | ---------------------------- |
+| Page heading     | `text-3xl font-bold`   | `text-2xl font-semibold`     |
+| Section headings | `text-lg`              | `text-base`                  |
+| Card titles      | `card-title text-base` | plain `h3 text-sm`           |
+| Stat labels      | (no size)              | `text-xs`                    |
+| Stat values      | `font-mono text-2xl`   | `font-semibold text-lg/base` |
+
+Removing `font-mono` from stat values aligns them with the rest of the UI's sans-serif type while `font-semibold` maintains visual weight.
+
+### Template Files
+
+| Template                     | Purpose                                                                     |
+| ---------------------------- | --------------------------------------------------------------------------- |
+| `layout.html.tmpl`           | Shell, footer toolbar, mobile info modal, lightbox modal, safe-area padding |
+| `gallery.html.tmpl`          | Flex tile grid, HTMX gallery content, mobile info sync                      |
+| `lightbox-content.html.tmpl` | Lightbox image, swipe handlers, prev/next buttons                           |
+| `infobox-image.html.tmpl`    | Image metadata panel (loaded into `#box_info`)                              |
+| `infobox-folder.html.tmpl`   | Folder metadata panel (loaded into `#box_info`)                             |
+| `dashboard.html.tmpl`        | Admin metrics dashboard                                                     |
+
+---
+
 ## Appendix
 
 ### File Structure

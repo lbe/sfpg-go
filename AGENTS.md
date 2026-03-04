@@ -157,6 +157,16 @@ go run ./scripts/validate-hyperscript.go web/templates/gallery.html
 
 See [references/hyperscript-reference.md](references/hyperscript-reference.md) for Hyperscript patterns.
 
+### Template Validation
+
+Before or after template edits, run the fast template integrity gate:
+
+```bash
+make validate-templates
+```
+
+This runs `TestTemplateRendering` plus Hyperscript validation and catches malformed HTML/template attribute structure early.
+
 ## Testing Workflow (CRITICAL)
 
 NEVER run tests with grep pipes directly - this runs Go compiler multiple times:

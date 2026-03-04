@@ -36,6 +36,9 @@ jobs:
       - name: Run Format Check
         run: make -C ${{ github.workspace }} format-check
 
+      - name: Validate Templates
+        run: make -C ${{ github.workspace }} validate-templates
+
       - name: Run Tests (Coverage)
         run: make -C ${{ github.workspace }} cover
 

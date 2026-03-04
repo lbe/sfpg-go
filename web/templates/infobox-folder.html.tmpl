@@ -1,38 +1,50 @@
 {{ define "infobox-folder.html.tmpl" }}
-  <div
-    id="inner_box_info"
-    class="m-[5px] text-xs"
-    data-info-id="{{ .Folder.ID }}"
-  >
-    <div
-      id="thumbimgbox"
-      class="m-0 flex h-[168px] w-[222px] justify-center p-0"
-    >
-      <img
-        class="mx-2.5 mt-2.5 mb-[5px] rounded-[3px]"
-        src="/thumbnail/folder/{{ .Folder.ID }}"
-        alt="{{ .Folder.Name }}"
-      />
+  <div id="inner_box_info" class="m-2 text-xs" data-info-id="{{ .Folder.ID }}">
+    <div class="card bg-base-200 mb-3 shadow-sm">
+      <figure class="bg-base-300 flex h-40 items-center justify-center">
+        <img
+          class="max-w-full rounded-[3px] object-cover"
+          src="/thumbnail/folder/{{ .Folder.ID }}"
+          alt="{{ .Folder.Name }}"
+        />
+      </figure>
     </div>
-    <strong>Gallery Name</strong>
-    <br />
-    <div class="w-[225px] px-1 py-px">
-      {{ .Folder.Name }}
+
+    <div class="card bg-base-200 mb-3 shadow-sm">
+      <div class="card-body p-3">
+        <h3 class="card-title text-xs">Gallery Name</h3>
+        <p class="break-words">{{ .Folder.Name }}</p>
+      </div>
     </div>
-    <br />
-    <strong>Information</strong>
-    <br />
-    <div class="w-[225px] px-1 py-px">
-      Date: <span id="folder-mtime">{{ .FormattedMtime }}</span>
-      {{ if .DirCount }}
-        <br />Directories: <span id="folder-dir-count">{{ .DirCount }}</span>
-      {{ end }}
-      {{ if .ImageCount }}
-        <br />Images: <span id="folder-image-count">{{ .ImageCount }}</span>
-      {{ end }}
-      {{ if .FileCount }}
-        <br />Files: <span id="folder-file-count">{{ .FileCount }}</span>
-      {{ end }}
+
+    <div class="card bg-base-200 mb-3 shadow-sm">
+      <div class="card-body p-3">
+        <h3 class="card-title text-xs">Information</h3>
+        <div class="space-y-1">
+          <div>
+            <span class="text-base-content/70">Date:</span>
+            <span id="folder-mtime">{{ .FormattedMtime }}</span>
+          </div>
+          {{ if .DirCount }}
+            <div>
+              <span class="text-base-content/70">Directories:</span>
+              <span id="folder-dir-count">{{ .DirCount }}</span>
+            </div>
+          {{ end }}
+          {{ if .ImageCount }}
+            <div>
+              <span class="text-base-content/70">Images:</span>
+              <span id="folder-image-count">{{ .ImageCount }}</span>
+            </div>
+          {{ end }}
+          {{ if .FileCount }}
+            <div>
+              <span class="text-base-content/70">Files:</span>
+              <span id="folder-file-count">{{ .FileCount }}</span>
+            </div>
+          {{ end }}
+        </div>
+      </div>
     </div>
   </div>
 {{ end }}

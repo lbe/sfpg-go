@@ -1,7 +1,7 @@
 {{ define "body" }}
   <div
     id="boxgallery"
-    class="overflow-auto text-center break-words"
+    class="flex flex-wrap justify-center gap-[14px] overflow-auto p-[7px]"
     role="list"
     _="on htmx:afterSwap
         add .populated to me
@@ -10,6 +10,12 @@
       on mouseleave
         if not document.querySelector('body[info-pinned]') and me matches .populated
           set the innerHTML of #box_info to ''
+        end
+      on htmx:afterSwap from #box_info
+        if #mobile_info_modal.checked
+          set #box_info_mobile.innerHTML to innerHTML of #box_info
+          set #box_info_mobile.scrollTop to 0
+          set #mobile_info_modal_box.scrollTop to 0
         end"
   >
     {{ if .Thumbs }}
@@ -37,7 +43,7 @@
       {{ if .IsImage }}
         <div
           id="gallery-tile-{{ .ID }}"
-          class="gallery-tile inline-block h-[202px] w-[238px] content-start"
+          class="gallery-tile"
           role="listitem"
           hx-get="/info/image/{{ .ID }}?v={{ cacheVersion }}"
           hx-target="#box_info"
@@ -68,23 +74,25 @@
               trigger openModal on #lightbox_modal 
               halt the event
             end"
-            class="group bg-base-200 border-base-300 m-[7px] block h-[188px] w-[224px] cursor-pointer rounded-[6px] border text-center text-xs shadow-md transition-all duration-200 ease-in-out hover:shadow-xl hover:brightness-95"
+            class="card bg-base-200 border-base-300 block h-[188px] w-[224px] cursor-pointer rounded-[6px] border text-center text-xs shadow-md transition-all duration-200 ease-in-out hover:shadow-xl"
             aria-label="View {{ .DispName }}"
           >
-            <div class="block h-[168px] w-[222px]">
+            <figure class="flex h-[168px] items-center justify-center p-2">
               <img
                 src="{{ .ThumbPath }}"
                 alt="{{ .DispName }}"
-                class="content-box mt-[10px] mr-[10px] mb-[5px] ml-[10px] inline overflow-clip rounded-[3px] object-cover"
+                class="max-h-full max-w-full rounded-[3px] object-contain"
               />
+            </figure>
+            <div class="truncate px-2 pb-2">
+              <span class="sr-only">View </span>{{ .DispName }}
             </div>
-            <span class="sr-only">View </span>{{ .DispName }}
           </a>
         </div>
       {{ else }}
         <div
           id="gallery-tile-{{ .ID }}"
-          class="gallery-tile inline-block h-[202px] w-[238px] content-start"
+          class="gallery-tile"
           role="listitem"
           hx-get="/info/folder/{{ .ID }}?v={{ cacheVersion }}"
           hx-target="#box_info"
@@ -106,17 +114,19 @@
             hx-get="{{ .Path }}?v={{ cacheVersion }}"
             hx-target="#gallery-content"
             hx-push-url="true"
-            class="group bg-base-200 border-base-300 m-[7px] block h-[188px] w-[224px] cursor-pointer rounded-[6px] border text-center text-xs shadow-md transition-all duration-200 ease-in-out hover:shadow-xl hover:brightness-95"
+            class="card bg-base-200 border-base-300 block h-[188px] w-[224px] cursor-pointer rounded-[6px] border text-center text-xs shadow-md transition-all duration-200 ease-in-out hover:shadow-xl"
             aria-label="View {{ .DispName }}"
           >
-            <div class="block h-[168px] w-[222px]">
+            <figure class="flex h-[168px] items-center justify-center p-2">
               <img
                 src="{{ .ThumbPath }}"
                 alt="{{ .DispName }}"
-                class="content-box mt-[10px] mr-[10px] mb-[5px] ml-[10px] inline overflow-clip rounded-[3px] object-cover"
+                class="max-h-full max-w-full rounded-[3px] object-contain"
               />
+            </figure>
+            <div class="truncate px-2 pb-2">
+              <span class="sr-only">View </span>{{ .DispName }}
             </div>
-            <span class="sr-only">View </span>{{ .DispName }}
           </a>
         </div>
       {{ end }}

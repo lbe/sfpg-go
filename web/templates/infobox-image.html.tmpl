@@ -1,144 +1,207 @@
 {{ define "infobox-image.html.tmpl" }}
-  <div
-    id="inner_box_info"
-    class="m-[5px] text-xs"
-    data-info-id="{{ .File.ID }}"
-  >
-    <div
-      id="thumbimgbox"
-      class="m-0 flex h-[168px] w-[222px] justify-center p-0"
-    >
-      <img
-        class="mt-2.5 mb-[5px] rounded-[3px]"
-        src="/thumbnail/file/{{ .File.ID }}?v={{ cacheVersion }}"
-        alt="{{ .File.Filename }}"
-      />
+  <div id="inner_box_info" class="m-2 text-xs" data-info-id="{{ .File.ID }}">
+    {{/* Thumbnail Card */}}
+    <div class="card bg-base-200 mb-3 shadow-sm">
+      <figure class="bg-base-300 flex h-40 items-center justify-center">
+        <img
+          class="max-w-full rounded-[3px] object-cover"
+          src="/thumbnail/file/{{ .File.ID }}?v={{ cacheVersion }}"
+          alt="{{ .File.Filename }}"
+        />
+      </figure>
     </div>
-    <strong>Image Name</strong>
-    <br />
-    <div class="w-[225px] px-1 py-px break-words">
-      <span id="image-filename">{{ .File.Filename }}</span>
+
+    {{/* Image Name Card */}}
+    <div class="card bg-base-200 mb-3 shadow-sm">
+      <div class="card-body p-3">
+        <h3 class="card-title text-xs">Image Name</h3>
+        <p id="image-filename" class="break-words">{{ .File.Filename }}</p>
+      </div>
     </div>
-    <br />
-    <strong>Information</strong>
-    <br />
-    <div class="w-[225px] px-1 py-px">
-      Date:
-      <span id="image-mtime">{{ .File.Mtime.Int64 | formatUnix }}</span>
-      <br />
-      Image Size:
-      <span id="image-size"
-        >{{ .File.Width.Int64 | formatInt }} x
-        {{ .File.Height.Int64 | formatInt }}</span
-      >
-      {{/* UPDATED: Removed dependency on <style> tag.
-        Uses Tailwind arbitrary variant to handle visibility based on parent body class.
-      */}}
-      <span id="scaled-wrapper" class="hidden [.lightbox-open_&]:inline">
-        <br />
-        Scaled to:
-        <span id="scaled-width"></span>
-        <span id="scaled-sep" class="hidden"> x </span>
-        <span
-          id="scaled-spinner"
-          class="htmx-indicator loading loading-spinner loading-xs"
-          aria-hidden="true"
-        ></span>
-        <span id="scaled-height"></span>
-      </span>
-      <br />
-      File size:
-      <span id="image-file-size">{{ .File.SizeBytes.Int64 | formatInt }}</span>
-      bytes
-      {{ if .ImageIndex }}
-        <br />
-        Image number: <span id="image-index">{{ .ImageIndex }}</span> /
-        <span id="image-count">{{ .ImageCount }}</span>
-      {{ end }}
+
+    {{/* Information Card */}}
+    <div class="card bg-base-200 mb-3 shadow-sm">
+      <div class="card-body p-3">
+        <h3 class="card-title text-xs">Information</h3>
+        <div class="space-y-1">
+          <div>
+            <span class="text-base-content/70">Date:</span>
+            <span id="image-mtime">{{ .File.Mtime.Int64 | formatUnix }}</span>
+          </div>
+          <div>
+            <span class="text-base-content/70">Image Size:</span>
+            <span id="image-size"
+              >{{ .File.Width.Int64 | formatInt }} x
+              {{ .File.Height.Int64 | formatInt }}</span
+            >
+          </div>
+          {{/* Scaled info - visible in lightbox context */}}
+          <div id="scaled-wrapper" class="hidden [.lightbox-open_&]:block">
+            <span class="text-base-content/70">Scaled to:</span>
+            <span id="scaled-width"></span>
+            <span id="scaled-sep" class="hidden"> x </span>
+            <span id="scaled-height"></span>
+            <span
+              id="scaled-spinner"
+              class="loading loading-spinner loading-xs hidden"
+              aria-hidden="true"
+            ></span>
+          </div>
+          <div>
+            <span class="text-base-content/70">File size:</span>
+            <span id="image-file-size"
+              >{{ .File.SizeBytes.Int64 | formatInt }}</span
+            >
+            bytes
+          </div>
+          {{ if .ImageIndex }}
+            <div>
+              <span class="text-base-content/70">Image number:</span>
+              <span id="image-index">{{ .ImageIndex }}</span> /
+              <span id="image-count">{{ .ImageCount }}</span>
+            </div>
+          {{ end }}
+        </div>
+      </div>
     </div>
+
+    {{/* EXIF Card */}}
     {{ if .Exif.FileID }}
-      <br />
-      <strong>EXIF</strong>
-      <br />
-      <div class="w-[225px] px-1 py-px">
-        {{ if .Exif.CaptureDate.Valid }}
-          Date:
-          <span id="exif-capture-date"
-            >{{ .Exif.CaptureDate.Int64 | formatUnix }}</span
-          >
-        {{ end }}
-        {{ if .Exif.CameraMake.Valid }}
-          <br />Camera:
-          <span id="exif-camera-make">{{ .Exif.CameraMake.String }}</span>
-          <span id="exif-camera-model">{{ .Exif.CameraModel.String }}</span>
-        {{ end }}
-        {{ if .Exif.Iso.Valid }}
-          <br />ISO: <span id="exif-iso">{{ .Exif.Iso.Int64 }}</span>
-        {{ end }}
-        {{ if .Exif.ShutterSpeed.Valid }}
-          <br />Shutter Speed:
-          <span id="exif-shutter-speed">{{ .Exif.ShutterSpeed.String }}</span>
-        {{ end }}
-        {{ if .Exif.Aperture.Valid }}
-          <br />Aperture: f<span id="exif-aperture"
-            >{{ .Exif.Aperture.String }}</span
-          >
-        {{ end }}
-        {{ if .Exif.FocalLength.Valid }}
-          <br />Focal Length:
-          <span id="exif-focal-length">{{ .Exif.FocalLength.String }}</span>mm
-        {{ end }}
-        {{ if and .Exif.Latitude.Valid .Exif.Longitude.Valid }}
-          <br />Latitude:
-          <span id="exif-latitude">{{ .Exif.Latitude.Float64 }}</span>
-          <br />Longitude:
-          <span id="exif-longitude">{{ .Exif.Longitude.Float64 }}</span>
-          <br /><a
-            id="exif-maps-link"
-            target="_blank"
-            href="https://maps.google.com/maps?q={{ .Exif.Latitude.Float64 }},{{ .Exif.Longitude.Float64 }}"
-            >View on Google Maps</a
-          >
-        {{ end }}
+      <div class="card bg-base-200 mb-3 shadow-sm">
+        <div class="card-body p-3">
+          <h3 class="card-title text-xs">EXIF</h3>
+          <div class="space-y-1">
+            {{ if .Exif.CaptureDate.Valid }}
+              <div>
+                <span class="text-base-content/70">Date:</span>
+                <span id="exif-capture-date"
+                  >{{ .Exif.CaptureDate.Int64 | formatUnix }}</span
+                >
+              </div>
+            {{ end }}
+            {{ if .Exif.CameraMake.Valid }}
+              <div>
+                <span class="text-base-content/70">Camera:</span>
+                <span id="exif-camera-make">{{ .Exif.CameraMake.String }}</span>
+                <span id="exif-camera-model"
+                  >{{ .Exif.CameraModel.String }}</span
+                >
+              </div>
+            {{ end }}
+            {{ if .Exif.Iso.Valid }}
+              <div>
+                <span class="text-base-content/70">ISO:</span>
+                <span id="exif-iso">{{ .Exif.Iso.Int64 }}</span>
+              </div>
+            {{ end }}
+            {{ if .Exif.ShutterSpeed.Valid }}
+              <div>
+                <span class="text-base-content/70">Shutter Speed:</span>
+                <span id="exif-shutter-speed"
+                  >{{ .Exif.ShutterSpeed.String }}</span
+                >
+              </div>
+            {{ end }}
+            {{ if .Exif.Aperture.Valid }}
+              <div>
+                <span class="text-base-content/70">Aperture:</span>
+                f<span id="exif-aperture">{{ .Exif.Aperture.String }}</span>
+              </div>
+            {{ end }}
+            {{ if .Exif.FocalLength.Valid }}
+              <div>
+                <span class="text-base-content/70">Focal Length:</span>
+                <span id="exif-focal-length"
+                  >{{ .Exif.FocalLength.String }}</span
+                >mm
+              </div>
+            {{ end }}
+            {{ if and .Exif.Latitude.Valid .Exif.Longitude.Valid }}
+              <div>
+                <span class="text-base-content/70">Latitude:</span>
+                <span id="exif-latitude">{{ .Exif.Latitude.Float64 }}</span>
+              </div>
+              <div>
+                <span class="text-base-content/70">Longitude:</span>
+                <span id="exif-longitude">{{ .Exif.Longitude.Float64 }}</span>
+              </div>
+              <div>
+                <a
+                  id="exif-maps-link"
+                  target="_blank"
+                  class="link link-primary"
+                  href="https://maps.google.com/maps?q={{ .Exif.Latitude.Float64 }},{{ .Exif.Longitude.Float64 }}"
+                  >View on Google Maps</a
+                >
+              </div>
+            {{ end }}
+          </div>
+        </div>
       </div>
     {{ end }}
+
+    {{/* Map Card */}}
     {{ if and .Exif.Latitude.Valid .Exif.Longitude.Valid }}
-      <br />
-      <strong>Image map</strong>
-      <br />
-      <iframe
-        class="border-base-300 m-0 h-[250px] w-full rounded border"
-        src="https://maps.google.com/maps?q={{ .Exif.Latitude.Float64 }}%2C{{ .Exif.Longitude.Float64 }}&output=embed"
-      ></iframe>
-    {{ end }}
-    {{ if .Iptc.FileID }}
-      <br />
-      <strong>IPTC</strong>
-      <br />
-      <div class="w-[225px] px-1 py-px">
-        {{ if .Iptc.CreatedDate.Valid }}
-          Creation Date:
-          <span id="iptc-creation-date">{{ .Iptc.CreatedDate.Int64 }}</span>
-        {{ end }}
-        {{ if .Iptc.Creator.Valid }}
-          <br />Creator:
-          <span id="iptc-creator">{{ .Iptc.Creator.String }}</span>
-        {{ end }}
-        {{ if .Iptc.Copyright.Valid }}
-          <br />Copyright:
-          <span id="iptc-copyright">{{ .Iptc.Copyright.String }}</span>
-        {{ end }}
+      <div class="card bg-base-200 mb-3 shadow-sm">
+        <div class="card-body p-3">
+          <h3 class="card-title text-xs">Image map</h3>
+          <iframe
+            class="border-base-300 h-48 w-full rounded border"
+            src="https://maps.google.com/maps?q={{ .Exif.Latitude.Float64 }}%2C{{ .Exif.Longitude.Float64 }}&output=embed"
+          ></iframe>
+        </div>
       </div>
     {{ end }}
-    <br />
-    <strong>Links</strong>
-    <br />
-    <a href="/raw-image/{{ .File.ID }}?v={{ cacheVersion }}"
-      >Direct link to Image</a
-    >
-    <br />
-    <a href="/raw-image/{{ .File.ID }}?v={{ cacheVersion }}" download
-      >Download image</a
-    >
+
+    {{/* IPTC Card */}}
+    {{ if .Iptc.FileID }}
+      <div class="card bg-base-200 mb-3 shadow-sm">
+        <div class="card-body p-3">
+          <h3 class="card-title text-xs">IPTC</h3>
+          <div class="space-y-1">
+            {{ if .Iptc.CreatedDate.Valid }}
+              <div>
+                <span class="text-base-content/70">Creation Date:</span>
+                <span id="iptc-creation-date"
+                  >{{ .Iptc.CreatedDate.Int64 }}</span
+                >
+              </div>
+            {{ end }}
+            {{ if .Iptc.Creator.Valid }}
+              <div>
+                <span class="text-base-content/70">Creator:</span>
+                <span id="iptc-creator">{{ .Iptc.Creator.String }}</span>
+              </div>
+            {{ end }}
+            {{ if .Iptc.Copyright.Valid }}
+              <div>
+                <span class="text-base-content/70">Copyright:</span>
+                <span id="iptc-copyright">{{ .Iptc.Copyright.String }}</span>
+              </div>
+            {{ end }}
+          </div>
+        </div>
+      </div>
+    {{ end }}
+
+    {{/* Links Card */}}
+    <div class="card bg-base-200 mb-3 shadow-sm">
+      <div class="card-body p-3">
+        <h3 class="card-title text-xs">Links</h3>
+        <div class="flex flex-col gap-1">
+          <a
+            href="/raw-image/{{ .File.ID }}?v={{ cacheVersion }}"
+            class="link link-primary"
+            >Direct link to Image</a
+          >
+          <a
+            href="/raw-image/{{ .File.ID }}?v={{ cacheVersion }}"
+            download="{{ .File.Filename }}"
+            class="link link-primary"
+            >Download image</a
+          >
+        </div>
+      </div>
+    </div>
   </div>
 {{ end }}

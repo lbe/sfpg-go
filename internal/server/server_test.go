@@ -506,6 +506,27 @@ func TestTemplateRendering(t *testing.T) {
 		if rr.Code != http.StatusOK {
 			t.Errorf("Expected status OK, got %d", rr.Code)
 		}
+
+		doc, err := testutil.ParseHTML(rr.Body)
+		if err != nil {
+			t.Fatalf("Failed to parse layout HTML response: %v", err)
+		}
+
+		if testutil.FindElementByID(doc, "box_info_wrapper") == nil {
+			t.Fatal("missing #box_info_wrapper element")
+		}
+
+		if testutil.FindElementByID(doc, "mobile-info-toggle") != nil {
+			t.Fatal("unexpected #mobile-info-toggle element; drawer/checkbox mobile info pattern should not be used")
+		}
+
+		if testutil.FindElementByID(doc, "mobile_info_modal") == nil {
+			t.Fatal("missing #mobile_info_modal element")
+		}
+
+		if testutil.FindElementByID(doc, "box_info_mobile") == nil {
+			t.Fatal("missing #box_info_mobile element")
+		}
 	})
 
 	// Test rendering of gallery.html.tmpl (as a partial within layout)
@@ -535,33 +556,24 @@ func TestTemplateRendering(t *testing.T) {
 		if rr.Code != http.StatusOK {
 			t.Errorf("Expected status OK, got %d", rr.Code)
 		}
-		body, _ := io.ReadAll(rr.Body)
-		doc, err := html.Parse(strings.NewReader(string(body)))
+
+		doc, err := testutil.ParseHTML(rr.Body)
 		if err != nil {
 			t.Fatalf("Failed to parse HTML response: %v", err)
 		}
 
-		// Search for text content containing "View Test Image"
-		// Get all text content and check if it contains the expected text
-		var allText strings.Builder
-		var extractText func(*html.Node)
-		extractText = func(n *html.Node) {
-			if n.Type == html.TextNode {
-				allText.WriteString(n.Data)
-				allText.WriteString(" ")
-			}
-			for c := n.FirstChild; c != nil; c = c.NextSibling {
-				extractText(c)
-			}
+		boxGallery := testutil.FindElementByID(doc, "boxgallery")
+		if boxGallery == nil {
+			t.Fatal("missing #boxgallery element")
 		}
-		extractText(doc)
-		fullText := allText.String()
-		if !strings.Contains(fullText, "View Test Image") && !strings.Contains(fullText, "View") {
-			preview := fullText
-			if len(preview) > 200 {
-				preview = preview[:200]
-			}
-			t.Errorf("Rendered template does not contain expected text 'View Test Image'. Full text preview: %s", preview)
+
+		firstTile := testutil.FindElementByID(doc, "gallery-tile-1")
+		if firstTile == nil {
+			t.Fatal("missing #gallery-tile-1 element")
+		}
+
+		if got := testutil.GetAttr(firstTile, "hx-get"); got == "" {
+			t.Fatal("expected #gallery-tile-1 to include hx-get")
 		}
 	})
 
@@ -590,6 +602,45 @@ func TestTemplateRendering(t *testing.T) {
 		}
 		if rr.Code != http.StatusOK {
 			t.Errorf("Expected status OK, got %d", rr.Code)
+		}
+
+		doc, err := testutil.ParseHTML(rr.Body)
+		if err != nil {
+			t.Fatalf("Failed to parse infobox-folder HTML response: %v", err)
+		}
+
+		infoBox := testutil.FindElementByID(doc, "inner_box_info")
+		if infoBox == nil {
+			t.Fatal("missing #inner_box_info element")
+		}
+
+		if got := testutil.GetAttr(infoBox, "data-info-id"); got != "1" {
+			t.Fatalf("#inner_box_info data-info-id=%q, want %q", got, "1")
+		}
+
+		thumbImg := testutil.FindElementByTag(infoBox, "img")
+		if thumbImg == nil {
+			t.Fatal("missing thumbnail <img> element in infobox-folder")
+		}
+
+		if got := testutil.GetAttr(thumbImg, "src"); got == "" {
+			t.Fatal("expected folder thumbnail image to include src")
+		}
+
+		cardNode := testutil.FindElement(infoBox, func(n *html.Node) bool {
+			classAttr := testutil.GetAttr(n, "class")
+			return strings.Contains(classAttr, "card")
+		})
+		if cardNode == nil {
+			t.Fatal("expected infobox-folder to use card-based layout")
+		}
+
+		if testutil.FindElementByID(infoBox, "folder-mtime") == nil {
+			t.Fatal("missing #folder-mtime element")
+		}
+
+		if testutil.FindElementByID(infoBox, "folder-dir-count") == nil {
+			t.Fatal("missing #folder-dir-count element")
 		}
 	})
 

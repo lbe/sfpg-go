@@ -5,8 +5,8 @@
       class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"
     >
       <div>
-        <h1 class="text-3xl font-bold">System Dashboard</h1>
-        <p class="text-base-content/60 mt-1 text-sm">
+        <h1 class="text-2xl font-semibold">System Dashboard</h1>
+        <p class="text-base-content/60 mt-1 text-xs">
           Real-time performance and health metrics
         </p>
       </div>
@@ -26,7 +26,7 @@
 
     <!-- Module Status Cards -->
     <div>
-      <h2 class="mb-4 text-lg font-semibold">Module Status</h2>
+      <h2 class="mb-4 text-base font-semibold">Module Status</h2>
       <div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
         {{ range .Metrics.Modules }}
           <div class="card bg-base-200 border shadow-sm">
@@ -66,9 +66,7 @@
       <!-- Memory Stats -->
       <div class="card bg-base-200 border shadow-sm">
         <div class="card-body">
-          <h3
-            class="card-title flex items-center gap-2 text-base font-semibold"
-          >
+          <h3 class="flex items-center gap-2 text-sm font-semibold">
             <svg
               xmlns="http://www.w3.org/2000/svg"
               class="h-5 w-5"
@@ -89,26 +87,26 @@
             class="stats stats-vertical bg-base-100 lg:stats-horizontal shadow-sm"
           >
             <div class="stat">
-              <div class="stat-title">Allocated</div>
-              <div class="stat-value font-mono text-lg">
+              <div class="stat-title text-xs">Allocated</div>
+              <div class="stat-value text-base font-semibold">
                 {{ formatBytes .Metrics.Runtime.MemAlloc }}
               </div>
             </div>
             <div class="stat">
-              <div class="stat-title">Heap In Use</div>
-              <div class="stat-value font-mono text-lg">
+              <div class="stat-title text-xs">Heap In Use</div>
+              <div class="stat-value text-base font-semibold">
                 {{ formatBytes .Metrics.Runtime.MemHeapInuse }}
               </div>
             </div>
             <div class="stat">
-              <div class="stat-title">Heap Released</div>
-              <div class="stat-value font-mono text-lg">
+              <div class="stat-title text-xs">Heap Released</div>
+              <div class="stat-value text-base font-semibold">
                 {{ formatBytes .Metrics.Runtime.MemHeapReleased }}
               </div>
             </div>
             <div class="stat">
-              <div class="stat-title">Heap Objects</div>
-              <div class="stat-value font-mono text-lg">
+              <div class="stat-title text-xs">Heap Objects</div>
+              <div class="stat-value text-base font-semibold">
                 {{ formatCount .Metrics.Runtime.MemHeapObjects }}
               </div>
             </div>
@@ -119,9 +117,7 @@
       <!-- Goroutines & GC -->
       <div class="card bg-base-200 border shadow-sm">
         <div class="card-body">
-          <h3
-            class="card-title flex items-center gap-2 text-base font-semibold"
-          >
+          <h3 class="flex items-center gap-2 text-sm font-semibold">
             <svg
               xmlns="http://www.w3.org/2000/svg"
               class="h-5 w-5"
@@ -142,26 +138,26 @@
             class="stats stats-vertical bg-base-100 lg:stats-horizontal shadow-sm"
           >
             <div class="stat">
-              <div class="stat-title">Goroutines</div>
-              <div class="stat-value font-mono text-lg">
+              <div class="stat-title text-xs">Goroutines</div>
+              <div class="stat-value text-base font-semibold">
                 {{ formatCount .Metrics.Runtime.NumGoroutine }}
               </div>
             </div>
             <div class="stat">
-              <div class="stat-title">CPU Count</div>
-              <div class="stat-value font-mono text-lg">
+              <div class="stat-title text-xs">CPU Count</div>
+              <div class="stat-value text-base font-semibold">
                 {{ formatCount .Metrics.Runtime.NumCPU }}
               </div>
             </div>
             <div class="stat">
-              <div class="stat-title">Next GC</div>
-              <div class="stat-value font-mono text-lg">
+              <div class="stat-title text-xs">Next GC</div>
+              <div class="stat-value text-base font-semibold">
                 {{ formatBytes .Metrics.Runtime.NextGC }}
               </div>
             </div>
             <div class="stat">
-              <div class="stat-title">Uptime</div>
-              <div class="stat-value font-mono text-lg">
+              <div class="stat-title text-xs">Uptime</div>
+              <div class="stat-value text-base font-semibold">
                 {{ formatDuration .Metrics.Runtime.Uptime }}
               </div>
             </div>
@@ -172,18 +168,18 @@
 
     <!-- WriteBatcher Stats -->
     <div>
-      <h2 class="mb-4 text-lg font-semibold">Write Batcher</h2>
+      <h2 class="mb-4 text-base font-semibold">Write Batcher</h2>
       <div class="card bg-base-200 border shadow-sm">
         <div class="card-body">
           <div
             class="stats stats-vertical bg-base-100 lg:stats-horizontal shadow-sm"
           >
             <div class="stat">
-              <div class="stat-title">Pending</div>
-              <div class="stat-value font-mono text-2xl">
+              <div class="stat-title text-xs">Pending</div>
+              <div class="stat-value text-lg font-semibold">
                 {{ formatCount .Metrics.WriteBatcher.PendingCount }}
               </div>
-              <div class="stat-desc">
+              <div class="stat-desc text-xs">
                 of
                 {{ formatCount .Metrics.WriteBatcher.ChannelSize }}
               </div>
@@ -194,24 +190,24 @@
               ></progress>
             </div>
             <div class="stat">
-              <div class="stat-title">Total Flushed</div>
-              <div class="stat-value font-mono text-2xl">
+              <div class="stat-title text-xs">Total Flushed</div>
+              <div class="stat-value text-lg font-semibold">
                 {{ formatCount .Metrics.WriteBatcher.TotalFlushed }}
               </div>
             </div>
             <div class="stat">
-              <div class="stat-title">Errors</div>
+              <div class="stat-title text-xs">Errors</div>
               <div
                 class="stat-value {{ if gt .Metrics.WriteBatcher.TotalErrors 0 }}
                   text-error
-                {{ end }} font-mono text-2xl"
+                {{ end }} text-lg font-semibold"
               >
                 {{ formatCount .Metrics.WriteBatcher.TotalErrors }}
               </div>
             </div>
             <div class="stat">
-              <div class="stat-title">Batch Size</div>
-              <div class="stat-value font-mono text-2xl">
+              <div class="stat-title text-xs">Batch Size</div>
+              <div class="stat-value text-lg font-semibold">
                 {{ formatCount .Metrics.WriteBatcher.MaxBatchSize }}
               </div>
             </div>
@@ -225,9 +221,7 @@
       <!-- Worker Pool Stats -->
       <div class="card bg-base-200 border shadow-sm">
         <div class="card-body">
-          <h3
-            class="card-title flex items-center gap-2 text-base font-semibold"
-          >
+          <h3 class="flex items-center gap-2 text-sm font-semibold">
             <svg
               xmlns="http://www.w3.org/2000/svg"
               class="h-5 w-5"
@@ -248,30 +242,30 @@
             class="stats stats-vertical bg-base-100 lg:stats-horizontal shadow-sm"
           >
             <div class="stat">
-              <div class="stat-title">Running Workers</div>
-              <div class="stat-value font-mono text-lg">
+              <div class="stat-title text-xs">Running Workers</div>
+              <div class="stat-value text-base font-semibold">
                 {{ formatCount .Metrics.WorkerPool.RunningWorkers }} /
                 {{ formatCount .Metrics.WorkerPool.MaxWorkers }}
               </div>
             </div>
             <div class="stat">
-              <div class="stat-title">Completed Tasks</div>
-              <div class="stat-value font-mono text-lg">
+              <div class="stat-title text-xs">Completed Tasks</div>
+              <div class="stat-value text-base font-semibold">
                 {{ formatCount .Metrics.WorkerPool.CompletedTasks }}
               </div>
             </div>
             <div class="stat">
-              <div class="stat-title">Successful</div>
-              <div class="stat-value text-success font-mono text-lg">
+              <div class="stat-title text-xs">Successful</div>
+              <div class="stat-value text-success text-base font-semibold">
                 {{ formatCount .Metrics.WorkerPool.SuccessfulTasks }}
               </div>
             </div>
             <div class="stat">
-              <div class="stat-title">Failed</div>
+              <div class="stat-title text-xs">Failed</div>
               <div
                 class="stat-value {{ if gt .Metrics.WorkerPool.FailedTasks 0 }}
                   text-error
-                {{ end }} font-mono text-lg"
+                {{ end }} text-base font-semibold"
               >
                 {{ formatCount .Metrics.WorkerPool.FailedTasks }}
               </div>
@@ -283,9 +277,7 @@
       <!-- Queue Stats -->
       <div class="card bg-base-200 border shadow-sm">
         <div class="card-body">
-          <h3
-            class="card-title flex items-center gap-2 text-base font-semibold"
-          >
+          <h3 class="flex items-center gap-2 text-sm font-semibold">
             <svg
               xmlns="http://www.w3.org/2000/svg"
               class="h-5 w-5"
@@ -304,11 +296,11 @@
           </h3>
           <div class="stats stats-vertical bg-base-100 shadow-sm">
             <div class="stat">
-              <div class="stat-title">Queued Items</div>
-              <div class="stat-value font-mono text-3xl">
+              <div class="stat-title text-xs">Queued Items</div>
+              <div class="stat-value text-lg font-semibold">
                 {{ formatCount .Metrics.QueueLength }}
               </div>
-              <div class="stat-desc">
+              <div class="stat-desc text-xs">
                 of {{ formatCount .Metrics.QueueCapacity }} items
               </div>
               <progress
@@ -322,14 +314,14 @@
             class="stats stats-vertical bg-base-100 sm:stats-horizontal shadow-sm"
           >
             <div class="stat">
-              <div class="stat-title">Utilization</div>
-              <div class="stat-value font-mono text-lg">
+              <div class="stat-title text-xs">Utilization</div>
+              <div class="stat-value text-base font-semibold">
                 {{ queueUtilizationPercent .Metrics.QueueLength .Metrics.QueueCapacity }}%
               </div>
             </div>
             <div class="stat">
-              <div class="stat-title">Available</div>
-              <div class="stat-value font-mono text-lg">
+              <div class="stat-title text-xs">Available</div>
+              <div class="stat-value text-base font-semibold">
                 {{ formatCount (sub .Metrics.QueueCapacity .Metrics.QueueLength) }}
               </div>
             </div>
@@ -340,39 +332,39 @@
 
     <!-- File Processing Stats -->
     <div>
-      <h2 class="mb-4 text-lg font-semibold">File Processing</h2>
+      <h2 class="mb-4 text-base font-semibold">File Processing</h2>
       <div class="card bg-base-200 border shadow-sm">
         <div class="card-body">
           <div
             class="stats stats-vertical bg-base-100 lg:stats-horizontal shadow-sm"
           >
             <div class="stat">
-              <div class="stat-title">Total Found</div>
-              <div class="stat-value font-mono text-xl">
+              <div class="stat-title text-xs">Total Found</div>
+              <div class="stat-value text-base font-semibold">
                 {{ formatCount .Metrics.FileProcessing.TotalFound }}
               </div>
             </div>
             <div class="stat">
-              <div class="stat-title">Existing</div>
-              <div class="stat-value text-warning font-mono text-xl">
+              <div class="stat-title text-xs">Existing</div>
+              <div class="stat-value text-warning text-base font-semibold">
                 {{ formatCount .Metrics.FileProcessing.AlreadyExisting }}
               </div>
             </div>
             <div class="stat">
-              <div class="stat-title">New</div>
-              <div class="stat-value text-success font-mono text-xl">
+              <div class="stat-title text-xs">New</div>
+              <div class="stat-value text-success text-base font-semibold">
                 {{ formatCount .Metrics.FileProcessing.NewlyInserted }}
               </div>
             </div>
             <div class="stat">
-              <div class="stat-title">Invalid</div>
-              <div class="stat-value text-error font-mono text-xl">
+              <div class="stat-title text-xs">Invalid</div>
+              <div class="stat-value text-error text-base font-semibold">
                 {{ formatCount .Metrics.FileProcessing.SkippedInvalid }}
               </div>
             </div>
             <div class="stat">
-              <div class="stat-title">In Flight</div>
-              <div class="stat-value text-primary font-mono text-xl">
+              <div class="stat-title text-xs">In Flight</div>
+              <div class="stat-value text-primary text-base font-semibold">
                 {{ formatCount .Metrics.FileProcessing.InFlight }}
               </div>
             </div>
@@ -416,30 +408,30 @@
             class="stats stats-vertical bg-base-100 sm:stats-horizontal shadow-sm"
           >
             <div class="stat">
-              <div class="stat-title">Scheduled</div>
-              <div class="stat-value font-mono text-lg">
+              <div class="stat-title text-xs">Scheduled</div>
+              <div class="stat-value text-base font-semibold">
                 {{ formatCount .Metrics.CachePreload.TasksScheduled }}
               </div>
             </div>
             <div class="stat">
-              <div class="stat-title">Completed</div>
-              <div class="stat-value text-success font-mono text-lg">
+              <div class="stat-title text-xs">Completed</div>
+              <div class="stat-value text-success text-base font-semibold">
                 {{ formatCount .Metrics.CachePreload.TasksCompleted }}
               </div>
             </div>
             <div class="stat">
-              <div class="stat-title">Failed</div>
+              <div class="stat-title text-xs">Failed</div>
               <div
                 class="stat-value {{ if gt .Metrics.CachePreload.TasksFailed 0 }}
                   text-error
-                {{ end }} font-mono text-lg"
+                {{ end }} text-base font-semibold"
               >
                 {{ formatCount .Metrics.CachePreload.TasksFailed }}
               </div>
             </div>
             <div class="stat">
-              <div class="stat-title">Skipped</div>
-              <div class="stat-value font-mono text-lg">
+              <div class="stat-title text-xs">Skipped</div>
+              <div class="stat-value text-base font-semibold">
                 {{ formatCount .Metrics.CachePreload.TasksSkipped }}
               </div>
             </div>
@@ -480,26 +472,26 @@
             class="stats stats-vertical bg-base-100 sm:stats-horizontal shadow-sm"
           >
             <div class="stat">
-              <div class="stat-title">Size</div>
-              <div class="stat-value font-mono text-lg">
+              <div class="stat-title text-xs">Size</div>
+              <div class="stat-value text-base font-semibold">
                 {{ formatBytesInt64 .Metrics.HTTPCache.SizeBytes }}
               </div>
             </div>
             <div class="stat">
-              <div class="stat-title">Max Total</div>
-              <div class="stat-value font-mono text-lg">
+              <div class="stat-title text-xs">Max Total</div>
+              <div class="stat-value text-base font-semibold">
                 {{ formatBytesInt64 .Metrics.HTTPCache.MaxTotalSize }}
               </div>
             </div>
             <div class="stat">
-              <div class="stat-title">Max Entry</div>
-              <div class="stat-value font-mono text-lg">
+              <div class="stat-title text-xs">Max Entry</div>
+              <div class="stat-value text-base font-semibold">
                 {{ formatBytesInt64 .Metrics.HTTPCache.MaxEntrySize }}
               </div>
             </div>
             <div class="stat">
-              <div class="stat-title">Utilization</div>
-              <div class="stat-value font-mono text-lg">
+              <div class="stat-title text-xs">Utilization</div>
+              <div class="stat-value text-base font-semibold">
                 {{ httpCacheUtilizationPercent .Metrics.HTTPCache }}%
               </div>
             </div>

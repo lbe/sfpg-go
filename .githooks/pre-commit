@@ -2,9 +2,16 @@
 set -euo pipefail
 
 # Pre-commit hook:
-# 1. Run all tests (must pass)
-# 2. Check formatting with make format-check (must pass)
-# 3. Run golangci-lint with make lint (must pass)
+# 1. Validate templates (must pass)
+# 2. Run all tests (must pass)
+# 3. Check formatting with make format-check (must pass)
+# 4. Run golangci-lint with make lint (must pass)
+
+echo "[pre-commit] validating templates..."
+if ! make validate-templates; then
+  echo "[pre-commit] ❌ Template validation failed. Commit aborted."
+  exit 1
+fi
 
 echo "[pre-commit] running tests..."
 if ! make test-all; then

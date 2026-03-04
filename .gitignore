@@ -190,5 +190,8 @@ bin/*
 # exclude serena files
 .serena/*
 
-# exclude .cursor 
+# exclude .cursor
 .cursor/*
+
+# exclude gendemoimage in ./cmd
+cmd/gendemoimage*/*
