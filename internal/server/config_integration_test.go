@@ -24,6 +24,7 @@ import (
 	"github.com/lbe/sfpg-go/internal/getopt"
 	"github.com/lbe/sfpg-go/internal/queue"
 	"github.com/lbe/sfpg-go/internal/server/config"
+	"github.com/lbe/sfpg-go/web"
 )
 
 // extractCSRFTokenFromConfig extracts the CSRF token from the config form in the HTML response.
@@ -2127,4 +2128,288 @@ func TestConfigImport_PrecedenceIntegration(t *testing.T) {
 	if newConfig.ListenerPort != 9999 {
 		t.Errorf("Expected port 9999 from import, got %d", newConfig.ListenerPort)
 	}
+}
+
+// TestDBConfig_HTTPCacheDisableActuallyDisablesCaching verifies that setting
+// enable_http_cache=false in the database is honored during app startup.
+// This test exposes a timing bug where cache initialization happens before DB config is loaded.
+// This test is expected to FAIL initially (RED phase) to prove the defect exists.
+func TestDBConfig_HTTPCacheDisableActuallyDisablesCaching(t *testing.T) {
+	tempDir := t.TempDir()
+	ss := "test-session-secret"
+	t.Setenv("SEPG_SESSION_SECRET", ss)
+
+	// Pre-populate database with enable_http_cache=false BEFORE creating app
+	// (simulates config saved in previous run)
+	{
+		preApp := New(getopt.Opt{}, "x.y.z")
+		preApp.setRootDir(&tempDir)
+		preApp.setDB()
+
+		cpcRw, err := preApp.dbRwPool.Get()
+		if err != nil {
+			t.Fatalf("failed to get RW connection: %v", err)
+		}
+
+		now := time.Now().Unix()
+		err = cpcRw.Queries.UpsertConfigValueOnly(context.Background(), gallerydb.UpsertConfigValueOnlyParams{
+			Key:       "enable_http_cache",
+			Value:     "false",
+			CreatedAt: now,
+			UpdatedAt: now,
+		})
+		cpcRw.Close()
+		preApp.dbRwPool.Put(cpcRw)
+		if err != nil {
+			t.Fatalf("failed to set DB config: %v", err)
+		}
+		preApp.Shutdown()
+	}
+
+	// Now create app as if starting fresh (simulates app restart)
+	// The bug: initializeHTTPCache() is called before loadConfig() in startup sequence
+	app := New(getopt.Opt{}, "x.y.z")
+	app.setRootDir(&tempDir)
+	app.setDB()
+
+	// Load config from database (this is where enable_http_cache=false should be picked up)
+	app.config = config.DefaultConfig()
+	cpcRw, err := app.dbRwPool.Get()
+	if err != nil {
+		t.Fatalf("failed to get RW connection: %v", err)
+	}
+	defer app.dbRwPool.Put(cpcRw)
+
+	err = app.config.LoadFromDatabase(context.Background(), cpcRw.Queries)
+	if err != nil {
+		t.Fatalf("failed to load config from DB: %v", err)
+	}
+
+	// Verify DB config was loaded
+	if app.config.EnableHTTPCache {
+		t.Fatalf("expected EnableHTTPCache to be false from DB, got true")
+	}
+
+	// Now initialize cache (as done in Run())
+	// The bug: if initializeHTTPCache() was already called earlier with defaults,
+	// the DB config is ignored
+	app.initializeHTTPCache()
+
+	// The actual bug test: cache should NOT be initialized when DB says disabled
+	// This will FAIL (RED) if cache was initialized during setDB() before config load
+	if app.cacheMW != nil {
+		t.Errorf("expected cacheMW to be nil when enable_http_cache=false in DB, but it was initialized - this indicates cache init happened before DB config was loaded")
+	}
+}
+
+// TestDBConfig_ListenerPortChangeRequiresRestart verifies that changing
+// listener_port via config handlers properly sets the restart required flag.
+// This test is expected to FAIL initially (RED phase) to prove the defect exists.
+func TestDBConfig_ListenerPortChangeRequiresRestart(t *testing.T) {
+	app := CreateApp(t, true)
+	defer app.Shutdown()
+
+	// Set initial port in config
+	app.configMu.Lock()
+	app.config.ListenerPort = 8081
+	app.configMu.Unlock()
+
+	// Build handlers (includes SetRestartRequired callback)
+	if err := app.buildHandlers(web.FS); err != nil {
+		t.Fatalf("buildHandlers failed: %v", err)
+	}
+
+	// Verify restart flag starts as false
+	app.restartMu.RLock()
+	if app.restartRequired {
+		t.Fatal("expected restartRequired to be false initially")
+	}
+	app.restartMu.RUnlock()
+
+	// Simulate config change via handler
+	ts := httptest.NewServer(app.getRouter())
+	defer ts.Close()
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("failed to create cookie jar: %v", err)
+	}
+	client := &http.Client{Jar: jar}
+
+	// Login as admin
+	loginAsAdmin(t, client, ts.URL)
+
+	// Extract CSRF token from config page
+	csrfToken := extractCSRFTokenFromConfig(t, client, ts.URL)
+
+	// POST config change (change port from 8081 to 9090)
+	formData := url.Values{}
+	formData.Set("csrf_token", csrfToken)
+	formData.Set("listener_port", "9090")
+
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/config", strings.NewReader(formData.Encode()))
+	if err != nil {
+		t.Fatalf("failed to create POST request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", ts.URL)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("POST /config failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 after config update, got %d", resp.StatusCode)
+	}
+
+	// Verify restart flag is now set
+	app.restartMu.RLock()
+	restartRequired := app.restartRequired
+	app.restartMu.RUnlock()
+
+	if !restartRequired {
+		t.Errorf("expected restartRequired to be true after port change, got false")
+	}
+}
+
+// TestDBConfig_EnvAndCLIOverrideDBValues verifies that the config precedence
+// hierarchy (CLI > Env > DB > Defaults) is properly enforced for enable_http_cache.
+// This test is expected to FAIL initially (RED phase) to prove the defect exists.
+func TestDBConfig_EnvAndCLIOverrideDBValues(t *testing.T) {
+	tempDir := t.TempDir()
+	ss := "test-session-secret"
+	t.Setenv("SEPG_SESSION_SECRET", ss)
+
+	// Test Case 1: DB value should override default
+	t.Run("DB overrides default", func(t *testing.T) {
+		app := New(getopt.Opt{}, "x.y.z")
+		app.setRootDir(&tempDir)
+		app.setDB()
+
+		// Set enable_http_cache=false in database (default is true)
+		cpcRw, err := app.dbRwPool.Get()
+		if err != nil {
+			t.Fatalf("failed to get RW connection: %v", err)
+		}
+		defer app.dbRwPool.Put(cpcRw)
+
+		now := time.Now().Unix()
+		err = cpcRw.Queries.UpsertConfigValueOnly(context.Background(), gallerydb.UpsertConfigValueOnlyParams{
+			Key:       "enable_http_cache",
+			Value:     "false",
+			CreatedAt: now,
+			UpdatedAt: now,
+		})
+		if err != nil {
+			t.Fatalf("failed to set DB config: %v", err)
+		}
+
+		// Load config (should get DB value)
+		app.config = config.DefaultConfig()
+		err = app.config.LoadFromDatabase(context.Background(), cpcRw.Queries)
+		if err != nil {
+			t.Fatalf("failed to load config from DB: %v", err)
+		}
+
+		// Verify DB value overrides default
+		if app.config.EnableHTTPCache {
+			t.Errorf("expected EnableHTTPCache to be false from DB, got true")
+		}
+	})
+
+	// Test Case 2: Env should override DB
+	t.Run("Env overrides DB", func(t *testing.T) {
+		t.Setenv("SFG_HTTP_CACHE", "true") // Enable via env
+
+		// Simulate env var being parsed into Opt
+		opt := getopt.Opt{
+			EnableHTTPCache: getopt.OptBool{Bool: true, IsSet: true},
+		}
+
+		app := New(opt, "x.y.z")
+		app.setRootDir(&tempDir)
+		app.setDB()
+
+		// Set different value in database (false)
+		cpcRw, err := app.dbRwPool.Get()
+		if err != nil {
+			t.Fatalf("failed to get RW connection: %v", err)
+		}
+		defer app.dbRwPool.Put(cpcRw)
+
+		now := time.Now().Unix()
+		err = cpcRw.Queries.UpsertConfigValueOnly(context.Background(), gallerydb.UpsertConfigValueOnlyParams{
+			Key:       "enable_http_cache",
+			Value:     "false",
+			CreatedAt: now,
+			UpdatedAt: now,
+		})
+		if err != nil {
+			t.Fatalf("failed to set DB config: %v", err)
+		}
+
+		// Load config from DB first
+		app.config = config.DefaultConfig()
+		err = app.config.LoadFromDatabase(context.Background(), cpcRw.Queries)
+		if err != nil {
+			t.Fatalf("failed to load config from DB: %v", err)
+		}
+
+		// Apply opt overrides (should apply env)
+		app.config.LoadFromOpt(app.opt)
+
+		// Verify env value overrides DB
+		if !app.config.EnableHTTPCache {
+			t.Errorf("expected EnableHTTPCache to be true from env, got false")
+		}
+	})
+
+	// Test Case 3: CLI should override both Env and DB
+	t.Run("CLI overrides Env and DB", func(t *testing.T) {
+		t.Setenv("SFG_HTTP_CACHE", "false") // Disable via env
+
+		// CLI flag value (true via CLI should win)
+		opt := getopt.Opt{
+			EnableHTTPCache: getopt.OptBool{Bool: true, IsSet: true},
+		}
+
+		app := New(opt, "x.y.z")
+		app.setRootDir(&tempDir)
+		app.setDB()
+
+		// Set different value in database (false)
+		cpcRw, err := app.dbRwPool.Get()
+		if err != nil {
+			t.Fatalf("failed to get RW connection: %v", err)
+		}
+		defer app.dbRwPool.Put(cpcRw)
+
+		now := time.Now().Unix()
+		err = cpcRw.Queries.UpsertConfigValueOnly(context.Background(), gallerydb.UpsertConfigValueOnlyParams{
+			Key:       "enable_http_cache",
+			Value:     "false",
+			CreatedAt: now,
+			UpdatedAt: now,
+		})
+		if err != nil {
+			t.Fatalf("failed to set DB config: %v", err)
+		}
+
+		// Load config from DB first
+		app.config = config.DefaultConfig()
+		err = app.config.LoadFromDatabase(context.Background(), cpcRw.Queries)
+		if err != nil {
+			t.Fatalf("failed to load config from DB: %v", err)
+		}
+
+		// Apply opt overrides (should apply CLI)
+		app.config.LoadFromOpt(app.opt)
+
+		// Verify CLI value overrides both env and DB
+		if !app.config.EnableHTTPCache {
+			t.Errorf("expected EnableHTTPCache to be true from CLI, got false")
+		}
+	})
 }

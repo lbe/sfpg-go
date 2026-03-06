@@ -175,6 +175,32 @@ func createDatabasePools(ctx context.Context, roDsn, rwDsn string, cfg *config.C
 	return dbRwPool, dbRoPool, nil
 }
 
+// RecreatePoolsWithConfig closes old pools and creates new ones with the given config.
+// This is used when configuration is loaded after initial pool creation to honor
+// database-stored pool settings during startup.
+func RecreatePoolsWithConfig(ctx context.Context, dbPath string, cfg *config.Config, oldRwPool, oldRoPool *dbconnpool.DbSQLConnPool) (*dbconnpool.DbSQLConnPool, *dbconnpool.DbSQLConnPool, error) {
+	// Close old pools
+	if oldRwPool != nil {
+		if err := oldRwPool.Close(); err != nil {
+			slog.Warn("error closing old RW pool during reconfiguration", "err", err)
+		}
+	}
+	if oldRoPool != nil {
+		if err := oldRoPool.Close(); err != nil {
+			slog.Warn("error closing old RO pool during reconfiguration", "err", err)
+		}
+	}
+
+	// Create new pools with updated config
+	roDsn, rwDsn := configureDatabaseDSN(dbPath)
+	newRwPool, newRoPool, err := createDatabasePools(ctx, roDsn, rwDsn, cfg)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to recreate pools with config: %w", err)
+	}
+
+	return newRwPool, newRoPool, nil
+}
+
 func ensureRootFolderExists(ctx context.Context, cpcRw *dbconnpool.CpConn, rootDir string) error {
 	_, err := cpcRw.Queries.GetFolderIDByPath(ctx, "")
 	if err == nil {

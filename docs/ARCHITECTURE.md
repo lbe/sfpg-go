@@ -886,6 +886,59 @@ flowchart LR
 3. Database values (from `/config` page)
 4. Default values (hardcoded)
 
+### Precedence Hardening Guarantees (Mar 2026)
+
+The startup and reload paths now document and enforce an explicit contract for pool-related settings.
+
+Bug fixed:
+
+- Symptom: `DBMaxPoolSize=500` was saved in the database, but active pools stayed at `100`.
+- Root cause: `setDB()` executed before `loadConfig()`, so pools were created while `app.config` was `nil` and fell back to default pool sizing.
+- Fix: `loadConfig()` now updates `app.config` and then calls `reconfigurePoolsFromConfig()` to recreate pools when loaded values differ from effective values.
+- Prevention: dedicated precedence/startup/restart/UI regression tests plus startup diagnostics that explicitly log configured versus effective pool values.
+
+Required sequencing constraint:
+
+- `setDB()` may run before full config load to bootstrap database access.
+- `loadConfig()` must run before normal serving and must be followed by `reconfigurePoolsFromConfig()` semantics.
+- Any startup/restart path that loads or restores config must ensure pool reconciliation runs afterward.
+
+Operational reconfiguration behavior:
+
+- Triggered automatically at the end of `loadConfig()`.
+- Triggered after `-restore-last-known-good` restores configuration.
+- Triggered in fallback startup flows that synthesize defaults after config load failure.
+- If configured pool values already match effective pool values, pool recreation is skipped.
+
+Diagnostic logging for mismatch visibility:
+
+- `pool config applied`: emits configured and effective RW/RO pool values.
+- `configured/effective DB pool mismatch`: emits warning-level diagnostics when values diverge (except intentional auto min-idle behavior with `db_min_idle_connections=0`).
+- `startup config summary`: emits one low-noise startup snapshot of configured versus effective values for DB pools and other critical subsystems.
+
+Regression protections:
+
+- Step 2 pool precedence tests (`internal/server/config_pool_precedence_test.go`):
+  - `TestDBPoolPrecedence_PoolsIgnoreDatabaseConfig`
+  - `TestDBPoolPrecedence_ConfigLoadedAfterPoolCreation`
+  - Prevents regressions where pools are initialized from defaults and never reconciled.
+- Step 4 broader precedence tests (`internal/server/config_integration_test.go`):
+  - `TestIntegration_ConfigPrecedence`
+  - `TestConfigPrecedence_CLIOverridesDB`
+  - `TestConfigPrecedence_EnvOverridesDB`
+  - `TestAppConfigPrecedence_DBOverridesDefaults`
+  - Prevents precedence drift across defaults/database/env/CLI layers.
+- Step 6 startup/restart regression tests (`internal/server/config_startup_restart_regression_test.go`):
+  - `TestStartupWithDBConfig_PoolSizeHonored`
+  - `TestRestartWithModifiedDBConfig_AppliesNewValues`
+  - Prevents startup/restart paths from reintroducing stale pool sizing.
+- Step 8 UI validation tests (`internal/server/config_ui_test.go` and `internal/server/config_modal_javascript_test.go`):
+  - `TestConfigUI_FormSubmission_UpdatesDatabase`
+  - `TestConfigUI_RestartWarning_Appears`
+  - `TestConfigUI_HTMX_PartialUpdate`
+  - `TestConfigModal_JavaScript_RendersCorrectly`
+  - Prevents config UI regressions from silently breaking persistence or restart signaling.
+
 ### Configuration Schema
 
 ```mermaid
