@@ -88,6 +88,10 @@ func TestStartupWithDBConfig_PoolSizeHonored(t *testing.T) {
 	if err := app2.loadConfig(); err != nil {
 		t.Fatalf("Second app loadConfig failed: %v", err)
 	}
+	// After Step F, pool reconfiguration only happens via explicit call at startup
+	if err := app2.reconfigurePoolsFromConfig(); err != nil {
+		t.Fatalf("Second app reconfigurePoolsFromConfig failed: %v", err)
+	}
 
 	// ASSERTION: Pools should be created with database config sizes
 	// Before fix: pools would be 100/10 (hardcoded defaults)

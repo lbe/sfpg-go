@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"html"
 	"html/template"
@@ -317,16 +318,12 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 
 	// Create a copy to modify
 	newConfig := *oldConfig
-	restartRequired := false
-	restartRequiredKeys := []string{}
 
 	// Config key setters
 	configKeys := map[string]func(string) error{
 		"listener_address": func(v string) error {
 			if oldConfig.ListenerAddress != v {
 				newConfig.ListenerAddress = v
-				restartRequired = true
-				restartRequiredKeys = append(restartRequiredKeys, "listener_address")
 			}
 			return nil
 		},
@@ -337,32 +334,24 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 			}
 			if oldConfig.ListenerPort != port {
 				newConfig.ListenerPort = port
-				restartRequired = true
-				restartRequiredKeys = append(restartRequiredKeys, "listener_port")
 			}
 			return nil
 		},
 		"log_directory": func(v string) error {
 			if oldConfig.LogDirectory != v {
 				newConfig.LogDirectory = v
-				restartRequired = true
-				restartRequiredKeys = append(restartRequiredKeys, "log_directory")
 			}
 			return nil
 		},
 		"log_level": func(v string) error {
 			if oldConfig.LogLevel != v {
 				newConfig.LogLevel = v
-				restartRequired = true
-				restartRequiredKeys = append(restartRequiredKeys, "log_level")
 			}
 			return nil
 		},
 		"log_rollover": func(v string) error {
 			if oldConfig.LogRollover != v {
 				newConfig.LogRollover = v
-				restartRequired = true
-				restartRequiredKeys = append(restartRequiredKeys, "log_rollover")
 			}
 			return nil
 		},
@@ -373,8 +362,6 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 			}
 			if oldConfig.LogRetentionCount != count {
 				newConfig.LogRetentionCount = count
-				restartRequired = true
-				restartRequiredKeys = append(restartRequiredKeys, "log_retention_count")
 			}
 			return nil
 		},
@@ -389,8 +376,6 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 		"image_directory": func(v string) error {
 			if oldConfig.ImageDirectory != v {
 				newConfig.ImageDirectory = v
-				restartRequired = true
-				restartRequiredKeys = append(restartRequiredKeys, "image_directory")
 			}
 			return nil
 		},
@@ -401,8 +386,6 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 			}
 			if oldConfig.ServerCompressionEnable != enable {
 				newConfig.ServerCompressionEnable = enable
-				restartRequired = true
-				restartRequiredKeys = append(restartRequiredKeys, "server_compression_enable")
 			}
 			return nil
 		},
@@ -413,8 +396,6 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 			}
 			if oldConfig.EnableHTTPCache != enable {
 				newConfig.EnableHTTPCache = enable
-				restartRequired = true
-				restartRequiredKeys = append(restartRequiredKeys, "enable_http_cache")
 			}
 			return nil
 		},
@@ -425,8 +406,6 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 			}
 			if oldConfig.CacheMaxSize != size {
 				newConfig.CacheMaxSize = size
-				restartRequired = true
-				restartRequiredKeys = append(restartRequiredKeys, "cache_max_size")
 			}
 			return nil
 		},
@@ -437,8 +416,6 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 			}
 			if oldConfig.CacheMaxEntrySize != size {
 				newConfig.CacheMaxEntrySize = size
-				restartRequired = true
-				restartRequiredKeys = append(restartRequiredKeys, "cache_max_entry_size")
 			}
 			return nil
 		},
@@ -449,8 +426,6 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 			}
 			if oldConfig.CacheMaxTime != duration {
 				newConfig.CacheMaxTime = duration
-				restartRequired = true
-				restartRequiredKeys = append(restartRequiredKeys, "cache_max_time")
 			}
 			return nil
 		},
@@ -461,8 +436,6 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 			}
 			if oldConfig.CacheCleanupInterval != duration {
 				newConfig.CacheCleanupInterval = duration
-				restartRequired = true
-				restartRequiredKeys = append(restartRequiredKeys, "cache_cleanup_interval")
 			}
 			return nil
 		},
@@ -473,8 +446,6 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 			}
 			if oldConfig.DBMaxPoolSize != size {
 				newConfig.DBMaxPoolSize = size
-				restartRequired = true
-				restartRequiredKeys = append(restartRequiredKeys, "db_max_pool_size")
 			}
 			return nil
 		},
@@ -485,8 +456,6 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 			}
 			if oldConfig.DBMinIdleConnections != count {
 				newConfig.DBMinIdleConnections = count
-				restartRequired = true
-				restartRequiredKeys = append(restartRequiredKeys, "db_min_idle_connections")
 			}
 			return nil
 		},
@@ -497,8 +466,6 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 			}
 			if oldConfig.DBOptimizeInterval != duration {
 				newConfig.DBOptimizeInterval = duration
-				restartRequired = true
-				restartRequiredKeys = append(restartRequiredKeys, "db_optimize_interval")
 			}
 			return nil
 		},
@@ -509,8 +476,6 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 			}
 			if oldConfig.WorkerPoolMax != max {
 				newConfig.WorkerPoolMax = max
-				restartRequired = true
-				restartRequiredKeys = append(restartRequiredKeys, "worker_pool_max")
 			}
 			return nil
 		},
@@ -521,8 +486,6 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 			}
 			if oldConfig.WorkerPoolMinIdle != min {
 				newConfig.WorkerPoolMinIdle = min
-				restartRequired = true
-				restartRequiredKeys = append(restartRequiredKeys, "worker_pool_min_idle")
 			}
 			return nil
 		},
@@ -533,8 +496,6 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 			}
 			if oldConfig.WorkerPoolMaxIdleTime != duration {
 				newConfig.WorkerPoolMaxIdleTime = duration
-				restartRequired = true
-				restartRequiredKeys = append(restartRequiredKeys, "worker_pool_max_idle_time")
 			}
 			return nil
 		},
@@ -545,8 +506,6 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 			}
 			if oldConfig.QueueSize != size {
 				newConfig.QueueSize = size
-				restartRequired = true
-				restartRequiredKeys = append(restartRequiredKeys, "queue_size")
 			}
 			return nil
 		},
@@ -557,8 +516,6 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 			}
 			if oldConfig.SessionMaxAge != age {
 				newConfig.SessionMaxAge = age
-				restartRequired = true
-				restartRequiredKeys = append(restartRequiredKeys, "session_max_age")
 			}
 			return nil
 		},
@@ -569,8 +526,6 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 			}
 			if oldConfig.SessionHttpOnly != httpOnly {
 				newConfig.SessionHttpOnly = httpOnly
-				restartRequired = true
-				restartRequiredKeys = append(restartRequiredKeys, "session_http_only")
 			}
 			return nil
 		},
@@ -581,16 +536,12 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 			}
 			if oldConfig.SessionSecure != secure {
 				newConfig.SessionSecure = secure
-				restartRequired = true
-				restartRequiredKeys = append(restartRequiredKeys, "session_secure")
 			}
 			return nil
 		},
 		"session_same_site": func(v string) error {
 			if oldConfig.SessionSameSite != v {
 				newConfig.SessionSameSite = v
-				restartRequired = true
-				restartRequiredKeys = append(restartRequiredKeys, "session_same_site")
 			}
 			return nil
 		},
@@ -673,11 +624,6 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Validate config
-	if err := h.ConfigService.Validate(&newConfig); err != nil {
-		validationErrors["_global"] = err.Error()
-	}
-
 	if len(validationErrors) > 0 {
 		w.WriteHeader(http.StatusOK)
 		if err := ui.RenderTemplate(w, "config-validation-error.html.tmpl", map[string]any{
@@ -689,8 +635,20 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Save via ConfigService
-	if err := h.ConfigService.Save(h.Ctx, &newConfig); err != nil {
+	applyResult, err := config.ApplyConfig(h.Ctx, h.ConfigService, oldConfig, &newConfig)
+	if err != nil {
+		var validationErr *config.ApplyValidationError
+		if errors.As(err, &validationErr) {
+			w.WriteHeader(http.StatusOK)
+			if renderErr := ui.RenderTemplate(w, "config-validation-error.html.tmpl", map[string]any{
+				"Errors": map[string]string{"_global": validationErr.Error()},
+			}); renderErr != nil {
+				slog.Error("failed to render validation error template", "err", renderErr)
+				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			}
+			return
+		}
+
 		slog.Error("failed to save config to database", "err", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		if err := ui.RenderTemplate(w, "config-database-error.html.tmpl", nil); err != nil {
@@ -701,20 +659,20 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.UpdateConfig != nil {
-		h.UpdateConfig(&newConfig, restartRequiredKeys)
+		h.UpdateConfig(applyResult.Config, applyResult.RestartRequiredKeys)
 	}
 	if h.ApplyConfig != nil {
 		h.ApplyConfig()
 	}
 
 	// Set restart required flag if any restart-required fields changed
-	if h.SetRestartRequired != nil && restartRequired {
+	if h.SetRestartRequired != nil && applyResult.RestartRequired {
 		h.SetRestartRequired(true)
 	}
 
 	w.Header().Set("HX-Trigger", "config-saved")
 
-	if restartRequired {
+	if applyResult.RestartRequired {
 		h.executeConfigTemplate(w, h.Templates.SaveRestartAlert, "config-save-restart-alert.html.tmpl", nil)
 		w.WriteHeader(http.StatusOK)
 		return
@@ -896,27 +854,48 @@ func (h *ConfigHandlers) ImportConfigCommitHandler(w http.ResponseWriter, r *htt
 		return
 	}
 
-	// Import via ConfigService
-	if err := h.ConfigService.Import(yamlContent, h.Ctx); err != nil {
+	oldConfig, err := h.ConfigService.Load(h.Ctx)
+	if err != nil {
+		slog.Warn("failed to load current config for import", "err", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	importedConfig, err := config.BuildImportedConfig(oldConfig, yamlContent)
+	if err != nil {
 		slog.Warn("failed to import config", "err", err)
 		http.Error(w, fmt.Sprintf("Import failed: %v", err), http.StatusBadRequest)
 		return
 	}
 
-	loaded, err := h.ConfigService.Load(h.Ctx)
+	applyResult, err := config.ApplyConfig(h.Ctx, h.ConfigService, oldConfig, importedConfig)
 	if err != nil {
-		slog.Warn("failed to load config after import", "err", err)
-		http.Error(w, "Import succeeded but failed to load config", http.StatusInternalServerError)
+		var validationErr *config.ApplyValidationError
+		if errors.As(err, &validationErr) {
+			http.Error(w, fmt.Sprintf("Import failed: %v", validationErr.Error()), http.StatusBadRequest)
+			return
+		}
+
+		slog.Warn("failed to apply imported config", "err", err)
+		http.Error(w, "Import failed: unable to persist config", http.StatusInternalServerError)
 		return
 	}
+
 	if h.UpdateConfig != nil {
-		h.UpdateConfig(loaded, nil)
+		h.UpdateConfig(applyResult.Config, applyResult.RestartRequiredKeys)
 	}
 	if h.ApplyConfig != nil {
 		h.ApplyConfig()
 	}
+	if applyResult.RestartRequired && h.SetRestartRequired != nil {
+		h.SetRestartRequired(true)
+	}
 
 	w.WriteHeader(http.StatusOK)
+	if applyResult.RestartRequired {
+		h.executeConfigTemplate(w, h.Templates.SaveRestartAlert, "config-save-restart-alert.html.tmpl", nil)
+		return
+	}
 	h.executeConfigTemplate(w, h.Templates.ImportSuccessAlert, "config-import-success-alert.html.tmpl", nil)
 }
 
@@ -989,6 +968,13 @@ func (h *ConfigHandlers) RestoreLastKnownGoodHandler(w http.ResponseWriter, r *h
 		return
 	}
 
+	currentConfig, err := h.ConfigService.Load(h.Ctx)
+	if err != nil {
+		slog.Warn("failed to load current config before restore", "err", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
 	// Restore via ConfigService
 	restoredConfig, err := h.ConfigService.RestoreLastKnownGood(h.Ctx)
 	if err != nil {
@@ -997,36 +983,26 @@ func (h *ConfigHandlers) RestoreLastKnownGoodHandler(w http.ResponseWriter, r *h
 		return
 	}
 
-	// Validate restored config
-	if validateErr := h.ConfigService.Validate(restoredConfig); validateErr != nil {
-		slog.Warn("restored config is invalid", "err", validateErr)
-		http.Error(w, fmt.Sprintf("Restored config is invalid: %v", validateErr), http.StatusBadRequest)
-		return
-	}
+	applyResult, err := config.ApplyConfig(h.Ctx, h.ConfigService, currentConfig, restoredConfig)
+	if err != nil {
+		var validationErr *config.ApplyValidationError
+		if errors.As(err, &validationErr) {
+			http.Error(w, fmt.Sprintf("Restored config is invalid: %v", validationErr.Error()), http.StatusBadRequest)
+			return
+		}
 
-	// Save restored config
-	if saveErr := h.ConfigService.Save(h.Ctx, restoredConfig); saveErr != nil {
-		slog.Error("failed to save restored config", "err", saveErr)
+		slog.Error("failed to save restored config", "err", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 
 	if h.UpdateConfig != nil {
-		h.UpdateConfig(restoredConfig, nil)
+		h.UpdateConfig(applyResult.Config, applyResult.RestartRequiredKeys)
 	}
 	if h.ApplyConfig != nil {
 		h.ApplyConfig()
 	}
-
-	// Check if restart is required
-	restartRequired := false
-	currentConfig, err := h.ConfigService.Load(h.Ctx)
-	if err == nil {
-		if currentConfig.ListenerAddress != restoredConfig.ListenerAddress ||
-			currentConfig.ListenerPort != restoredConfig.ListenerPort {
-			restartRequired = true
-		}
-	}
+	restartRequired := applyResult.RestartRequired
 
 	if restartRequired && h.SetRestartRequired != nil {
 		h.SetRestartRequired(true)

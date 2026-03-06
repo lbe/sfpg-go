@@ -787,14 +787,14 @@ func TestConfigHandlers_ImportCommit_ImportError(t *testing.T) {
 	}
 
 	mockSvc := &mockConfigServiceForConfig{
-		importFunc: func(yamlContent string, ctx context.Context) error {
-			return errors.New("import error")
+		loadFunc: func(ctx context.Context) (*config.Config, error) {
+			return config.DefaultConfig(), nil
 		},
 	}
 	ch := setupTestConfigHandlers(t, mockSvc, &mockAuthServiceForConfig{}, &mockCredentialStore{})
 	ch.SessionManager.(*mockSessionManagerAuth).authenticated = true
 
-	req := httptest.NewRequest(http.MethodPost, "/config/import/commit", strings.NewReader("yaml=site_name: Test"))
+	req := httptest.NewRequest(http.MethodPost, "/config/import/commit", strings.NewReader("yaml=:"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 
@@ -804,9 +804,8 @@ func TestConfigHandlers_ImportCommit_ImportError(t *testing.T) {
 		t.Errorf("expected status 400, got %d", w.Code)
 	}
 	body := strings.TrimSpace(w.Body.String())
-	expected := "Import failed: import error"
-	if body != expected {
-		t.Errorf("expected %q error, got %s", expected, body)
+	if !strings.HasPrefix(body, "Import failed:") {
+		t.Errorf("expected Import failed error, got %s", body)
 	}
 }
 
@@ -1642,7 +1641,7 @@ func TestConfigHandlers_ImportCommit_LoadError(t *testing.T) {
 		t.Errorf("expected status 500, got %d", w.Code)
 	}
 	body := strings.TrimSpace(w.Body.String())
-	expected := "Import succeeded but failed to load config"
+	expected := "Internal Server Error"
 	if body != expected {
 		t.Errorf("expected %q error, got %s", expected, body)
 	}

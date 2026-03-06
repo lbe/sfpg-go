@@ -411,6 +411,7 @@ func (p *DbSQLConnPool) Put(cpc *CpConn) {
 
 // Close gracefully shuts down the pool and releases all resources.
 // Uses atomic CompareAndSwap to guarantee exactly-once shutdown.
+// Waits for active connections to be returned before closing the underlying pool.
 // Returns ErrPoolClosed if already closed.
 func (p *DbSQLConnPool) Close() error {
 	if !p.closed.CompareAndSwap(false, true) {
@@ -420,7 +421,13 @@ func (p *DbSQLConnPool) Close() error {
 	// Signal Monitor goroutine to stop.
 	close(p.done)
 
-	// Drain and close all idle connections.
+	// Force sql.DB to close idle connections by setting limits to 0.
+	// This helps ensure a clean shutdown.
+	p.pool.SetMaxIdleConns(0)
+	p.pool.SetMaxOpenConns(1) // Keep at least 1 to allow final operations
+	p.pool.SetConnMaxLifetime(0)
+
+	// Drain and close all idle connections from our channel.
 	for {
 		select {
 		case conn := <-p.connections:
@@ -429,10 +436,55 @@ func (p *DbSQLConnPool) Close() error {
 				p.numConnections.Add(-1)
 			}
 		default:
-			close(p.connections)
-			return p.pool.Close()
+			goto waitForActive
 		}
 	}
+
+waitForActive:
+	// Wait for all active (checked-out) connections to be returned.
+	// This prevents "database is locked: unable to close due to unfinalized statements" errors.
+	const maxWaitTime = 5 * time.Second
+	const pollInterval = 10 * time.Millisecond
+	deadline := time.Now().Add(maxWaitTime)
+
+	for time.Now().Before(deadline) {
+		activeConns := p.numConnections.Load()
+		dbStats := p.pool.Stats()
+
+		// Wait until both our pool counter and sql.DB's counter show no open connections
+		if activeConns == 0 && dbStats.OpenConnections == 0 {
+			break
+		}
+
+		if activeConns > 0 || dbStats.OpenConnections > 0 {
+			slog.Debug("waiting for active connections to be returned before closing pool",
+				"pool_active_connections", activeConns,
+				"sqldb_open_connections", dbStats.OpenConnections,
+				"sqldb_in_use", dbStats.InUse,
+				"remaining_time", time.Until(deadline).Round(time.Millisecond))
+		}
+		time.Sleep(pollInterval)
+	}
+
+	// Check final count
+	finalActive := p.numConnections.Load()
+	finalDBStats := p.pool.Stats()
+	if finalActive > 0 || finalDBStats.OpenConnections > 0 {
+		slog.Warn("closing pool with connections still outstanding",
+			"pool_active_connections", finalActive,
+			"sqldb_open_connections", finalDBStats.OpenConnections,
+			"sqldb_in_use", finalDBStats.InUse)
+	}
+
+	close(p.connections)
+
+	// Final attempt to clean up before closing: call SetMaxOpenConns(0) to force cleanup
+	p.pool.SetMaxOpenConns(0)
+
+	// Give sql.DB a moment to process the connection limit change
+	time.Sleep(50 * time.Millisecond)
+
+	return p.pool.Close()
 }
 
 // DbStats returns database/sql DBStats for the underlying sql.DB pool.
