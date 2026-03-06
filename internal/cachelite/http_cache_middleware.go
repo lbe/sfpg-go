@@ -69,6 +69,13 @@ func (hcm *HTTPCacheMiddleware) IsEnabled() bool {
 	return hcm.config.Enabled
 }
 
+// UpdatePool updates the internal pool reference. Called when database pools are reconfigured.
+func (hcm *HTTPCacheMiddleware) UpdatePool(newPool *dbconnpool.DbSQLConnPool) {
+	if newPool != nil {
+		hcm.db = newPool
+	}
+}
+
 // GetSizeBytes returns the current cache size in bytes.
 // Queries the database directly for accurate size (the atomic counter is only
 // used for runtime eviction calculations, not for reporting metrics).

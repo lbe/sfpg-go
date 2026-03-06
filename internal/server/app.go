@@ -309,6 +309,16 @@ func (app *App) setDB() {
 		panic("main")
 	}
 
+	// Log initial pool configuration for diagnosability
+	configuredMax := 100 // default when app.config is nil
+	configuredMinIdle := 10
+	if app.config != nil {
+		configuredMax = app.config.DBMaxPoolSize
+		configuredMinIdle = app.config.DBMinIdleConnections
+	}
+	slog.Info("database pools initialized")
+	app.logDBPoolConfiguredVsEffective("setDB", configuredMax, configuredMinIdle)
+
 	// Initialize unified WriteBatcher for all high-volume writes
 	// Runs in parallel with old batchers during migration
 	app.writeBatcher, err = writebatcher.New[BatchedWrite](app.ctx, writebatcher.Config[BatchedWrite]{
@@ -408,7 +418,261 @@ func (app *App) loadConfig() error {
 	app.configMu.Lock()
 	app.config = cfg
 	app.configMu.Unlock()
+
+	app.logLoadedConfigDiagnostics(cfg)
+
+	// Reconfigure pools with loaded config values to honor DB-stored pool settings
+	if reconfigErr := app.reconfigurePoolsFromConfig(); reconfigErr != nil {
+		slog.Warn("failed to reconfigure pools after loading config", "err", reconfigErr)
+		// Continue anyway - pools will use previous configuration
+	}
+
 	return err
+}
+
+// logLoadedConfigDiagnostics emits startup diagnostics for loaded configuration.
+// It keeps normal startup logs low-noise while surfacing anomalies immediately.
+func (app *App) logLoadedConfigDiagnostics(cfg *config.Config) {
+	if cfg == nil {
+		return
+	}
+
+	if err := cfg.Validate(); err != nil {
+		slog.Warn("loaded configuration failed strict validation",
+			"err", err,
+			"hint", "Review admin configuration values and ensure env/CLI overrides are valid.")
+	}
+
+	for _, warning := range cfg.ValidateGuardrails() {
+		slog.Warn("configuration guardrail warning",
+			"check", warning.Check,
+			"configured", warning.Configured,
+			"effective", warning.Effective,
+			"hint", warning.Hint)
+	}
+}
+
+// logDBPoolConfiguredVsEffective logs configured pool settings along with the
+// effective values currently applied by the active read-write/read-only pools.
+func (app *App) logDBPoolConfiguredVsEffective(source string, configuredMax, configuredMinIdle int) {
+	if app.dbRwPool == nil || app.dbRoPool == nil {
+		return
+	}
+
+	rwEffectiveMax := app.dbRwPool.Config.MaxConnections
+	rwEffectiveMinIdle := app.dbRwPool.Config.MinIdleConnections
+	roEffectiveMax := app.dbRoPool.Config.MaxConnections
+	roEffectiveMinIdle := app.dbRoPool.Config.MinIdleConnections
+
+	slog.Info("pool config applied",
+		"source", source,
+		"rw_configured_max", configuredMax,
+		"rw_effective_max", rwEffectiveMax,
+		"rw_configured_min_idle", configuredMinIdle,
+		"rw_effective_min_idle", rwEffectiveMinIdle,
+		"ro_configured_max", configuredMax,
+		"ro_effective_max", roEffectiveMax,
+		"ro_configured_min_idle", configuredMinIdle,
+		"ro_effective_min_idle", roEffectiveMinIdle)
+
+	if configuredMinIdle > configuredMax {
+		slog.Warn("invalid DB pool combination detected",
+			"configured_max", configuredMax,
+			"configured_min_idle", configuredMinIdle,
+			"hint", "Set db_min_idle_connections <= db_max_pool_size.")
+	}
+
+	if int64(configuredMax) != rwEffectiveMax || int64(configuredMinIdle) != rwEffectiveMinIdle ||
+		int64(configuredMax) != roEffectiveMax || int64(configuredMinIdle) != roEffectiveMinIdle {
+		level := slog.LevelWarn
+		hint := "Verify DB pool settings and restart if needed."
+		reason := "configured values differ from effective pool values"
+		if configuredMinIdle == 0 {
+			level = slog.LevelInfo
+			hint = "db_min_idle_connections=0 enables automatic min-idle sizing by the pool."
+			reason = "automatic min-idle sizing"
+		}
+		slog.Log(context.Background(), level, "configured/effective DB pool mismatch",
+			"source", source,
+			"reason", reason,
+			"hint", hint,
+			"rw_configured_max", configuredMax,
+			"rw_effective_max", rwEffectiveMax,
+			"rw_configured_min_idle", configuredMinIdle,
+			"rw_effective_min_idle", rwEffectiveMinIdle,
+			"ro_configured_max", configuredMax,
+			"ro_effective_max", roEffectiveMax,
+			"ro_configured_min_idle", configuredMinIdle,
+			"ro_effective_min_idle", roEffectiveMinIdle)
+	}
+}
+
+// logStartupConfigSummary emits one low-noise startup summary of configured
+// versus effective values for critical subsystems.
+func (app *App) logStartupConfigSummary(queueSize int, runDiscovery bool) {
+	app.configMu.RLock()
+	cfg := app.config
+	app.configMu.RUnlock()
+	if cfg == nil {
+		return
+	}
+
+	effectivePreload := false
+	if app.preloadManager != nil {
+		effectivePreload = app.preloadManager.IsEnabled()
+	}
+
+	rwEffectiveMax := int64(0)
+	rwEffectiveMinIdle := int64(0)
+	roEffectiveMax := int64(0)
+	roEffectiveMinIdle := int64(0)
+	if app.dbRwPool != nil {
+		rwEffectiveMax = app.dbRwPool.Config.MaxConnections
+		rwEffectiveMinIdle = app.dbRwPool.Config.MinIdleConnections
+	}
+	if app.dbRoPool != nil {
+		roEffectiveMax = app.dbRoPool.Config.MaxConnections
+		roEffectiveMinIdle = app.dbRoPool.Config.MinIdleConnections
+	}
+
+	effectiveWorkerMax := 0
+	effectiveWorkerMinIdle := 0
+	if app.pool != nil {
+		effectiveWorkerMax = app.pool.MaxWorkers
+		effectiveWorkerMinIdle = app.pool.MinWorkers
+	}
+
+	slog.Info("startup config summary",
+		"db_configured_max", cfg.DBMaxPoolSize,
+		"db_rw_effective_max", rwEffectiveMax,
+		"db_ro_effective_max", roEffectiveMax,
+		"db_configured_min_idle", cfg.DBMinIdleConnections,
+		"db_rw_effective_min_idle", rwEffectiveMinIdle,
+		"db_ro_effective_min_idle", roEffectiveMinIdle,
+		"worker_configured_max", cfg.WorkerPoolMax,
+		"worker_effective_max", effectiveWorkerMax,
+		"worker_configured_min_idle", cfg.WorkerPoolMinIdle,
+		"worker_effective_min_idle", effectiveWorkerMinIdle,
+		"queue_configured_size", cfg.QueueSize,
+		"queue_effective_size", queueSize,
+		"cache_configured_enabled", cfg.EnableHTTPCache,
+		"cache_effective_enabled", app.cacheMW != nil,
+		"preload_configured_enabled", cfg.EnableCachePreload,
+		"preload_effective_enabled", effectivePreload,
+		"discovery_configured_enabled", cfg.RunFileDiscovery,
+		"discovery_effective_enabled", runDiscovery)
+}
+
+// reconfigurePoolsFromConfig recreates database pools with the loaded configuration.
+// This must be called AFTER loadConfig() to ensure the newly loaded config values
+// (from database, YAML, or CLI/env) are applied to the connection pools.
+// This enforces the precedence: Defaults -> DB -> Env -> CLI.
+func (app *App) reconfigurePoolsFromConfig() error {
+	app.configMu.RLock()
+	if app.config == nil {
+		app.configMu.RUnlock()
+		return nil // Nothing to reconfigure
+	}
+
+	// Log old pool configuration for diagnostics
+	oldMaxConns := app.dbRwPool.Config.MaxConnections
+	oldMinIdle := app.dbRwPool.Config.MinIdleConnections
+	newMaxConns := app.config.DBMaxPoolSize
+	newMinIdle := app.config.DBMinIdleConnections
+
+	app.configMu.RUnlock()
+
+	// If settings didn't change, no reconfiguration needed
+	if oldMaxConns == int64(newMaxConns) && oldMinIdle == int64(newMinIdle) {
+		return nil
+	}
+
+	// Log the reconfiguration
+	slog.Info("reconfiguring database pools from loaded config",
+		"old_max_connections", oldMaxConns,
+		"new_max_connections", newMaxConns,
+		"old_min_idle_connections", oldMinIdle,
+		"new_min_idle_connections", newMinIdle)
+
+	// Recreate pools with new configuration
+	newRwPool, newRoPool, err := database.RecreatePoolsWithConfig(
+		app.ctx,
+		app.dbPath,
+		app.config,
+		app.dbRwPool,
+		app.dbRoPool,
+	)
+	if err != nil {
+		slog.Error("failed to recreate pools with new config", "err", err)
+		return fmt.Errorf("reconfigure pools: %w", err)
+	}
+
+	// Update pool references
+	app.dbRwPool = newRwPool
+	app.dbRoPool = newRoPool
+
+	// Reinitialize CacheStore with new pool
+	app.cacheStore = cachelite.NewSQLiteCacheStore(app.dbRwPool)
+
+	// Reinitialize ConfigService with new pool references
+	app.configService = config.NewService(app.dbRwPool, app.dbRoPool)
+
+	// Reinitialize WriteBatcher with new pool references
+	var rerr error
+	oldBatcher := app.writeBatcher
+	app.writeBatcher, rerr = writebatcher.New[BatchedWrite](app.ctx, writebatcher.Config[BatchedWrite]{
+		MaxBatchSize:  100,
+		MaxBatchBytes: 8 * 1024 * 1024,
+		FlushInterval: 200 * time.Millisecond,
+		ChannelSize:   4096,
+		SizeFunc: func(bw BatchedWrite) int64 {
+			return bw.Size()
+		},
+		BeginTx: func(ctx context.Context) (*sql.Tx, error) {
+			return app.dbRwPool.DB().BeginTx(ctx, nil)
+		},
+		Flush: app.flushBatchedWrites,
+		OnSuccess: func(batch []BatchedWrite) {
+			app.maybeEvictCacheEntries(batch)
+			cleanupBatchedWriteResources(batch)
+		},
+		OnError: func(err error, batch []BatchedWrite) {
+			slog.Error("failed to flush unified batch during pool reconfiguration",
+				"err", err)
+			cleanupBatchedWriteResources(batch)
+		},
+	})
+	if rerr != nil {
+		slog.Error("failed to recreate WriteBatcher after pool reconfiguration", "err", rerr)
+		// Continue anyway; we have new pools even if batcher recreation failed
+	} else if oldBatcher != nil {
+		// Stop old batcher if it exists
+		oldBatcher.Close()
+	}
+
+	// Update cache middleware with new pool references
+	if app.cacheMW != nil {
+		app.cacheMW.UpdatePool(app.dbRwPool)
+	}
+
+	// Reinitialize AuthService with potential new state
+	app.authService = auth.NewService(&loginStoreAdapter{app: app})
+
+	// Rebuild handlers with new pool references
+	if app.authHandlers != nil {
+		if err := app.buildHandlers(web.FS); err != nil {
+			slog.Error("failed to rebuild handlers after pool reconfiguration", "err", err)
+			return fmt.Errorf("rebuild handlers after pool reconfiguration: %w", err)
+		}
+	}
+
+	// Log configured vs effective pool values for diagnosability
+	slog.Info("database pools reconfigured successfully",
+		"max_connections", newMaxConns,
+		"min_idle_connections", newMinIdle)
+	app.logDBPoolConfiguredVsEffective("reconfigurePoolsFromConfig", newMaxConns, newMinIdle)
+
+	return nil
 }
 
 // applyConfig applies configuration values to App struct fields.
@@ -639,9 +903,16 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 		app.config = restoredConfig
 		app.configMu.Unlock()
 		slog.Info("last known good configuration restored from database")
+
+		// Reconfigure database pools with restored config values
+		if err := app.reconfigurePoolsFromConfig(); err != nil {
+			slog.Error("failed to reconfigure pools after restoring config", "err", err)
+			return fmt.Errorf("reconfigure pools after restore: %w", err)
+		}
 	} else {
 		// Load configuration with precedence: CLI/Env > Database > Defaults
 		// This must happen after setConfigDefaults() which initializes defaults in DB
+		// Note: loadConfig() automatically calls reconfigurePoolsFromConfig() at the end
 		if err := app.loadConfig(); err != nil {
 			slog.Warn("failed to load configuration", "err", err)
 			// Continue with defaults
@@ -650,6 +921,12 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 			app.configMu.Lock()
 			app.config = defaultConfig
 			app.configMu.Unlock()
+
+			// Reconfigure pools with default config
+			if err := app.reconfigurePoolsFromConfig(); err != nil {
+				slog.Error("failed to reconfigure pools with default config", "err", err)
+				return fmt.Errorf("reconfigure pools with defaults: %w", err)
+			}
 		}
 	}
 
@@ -850,6 +1127,7 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 
 	// Queue info
 	app.metricsCollector.SetQueueInfo(func() int { return app.q.Len() }, queueSize)
+	app.logStartupConfigSummary(queueSize, runDiscovery)
 
 	app.ensureSessionAndRestart()
 	if err := app.buildHandlers(web.FS); err != nil {

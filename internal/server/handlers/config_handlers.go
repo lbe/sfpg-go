@@ -707,6 +707,11 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 		h.ApplyConfig()
 	}
 
+	// Set restart required flag if any restart-required fields changed
+	if h.SetRestartRequired != nil && restartRequired {
+		h.SetRestartRequired(true)
+	}
+
 	w.Header().Set("HX-Trigger", "config-saved")
 
 	if restartRequired {

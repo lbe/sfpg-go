@@ -6,6 +6,16 @@ import (
 	"strings"
 )
 
+// GuardrailWarning represents a non-fatal configuration anomaly that should be
+// visible at startup because effective runtime behavior may differ from the
+// configured value(s).
+type GuardrailWarning struct {
+	Check      string
+	Configured string
+	Effective  string
+	Hint       string
+}
+
 // Validate validates all configuration values and returns an error if any are invalid.
 func (c *Config) Validate() error {
 	// Validate port
@@ -196,4 +206,62 @@ func (c *Config) ValidateSetting(key, value string) error {
 		return nil
 	}
 	return nil
+}
+
+// ValidateGuardrails returns non-fatal warnings for dangerous or contradictory
+// configuration combinations. These warnings are intended for startup
+// diagnostics and operator visibility.
+func (c *Config) ValidateGuardrails() []GuardrailWarning {
+	if c == nil {
+		return nil
+	}
+
+	warnings := make([]GuardrailWarning, 0)
+
+	if c.DBMinIdleConnections > c.DBMaxPoolSize {
+		warnings = append(warnings, GuardrailWarning{
+			Check:      "db_min_idle_gt_db_max_pool",
+			Configured: fmt.Sprintf("db_min_idle_connections=%d, db_max_pool_size=%d", c.DBMinIdleConnections, c.DBMaxPoolSize),
+			Effective:  "database pool reconfiguration can fail and prior pool settings may remain active",
+			Hint:       "Set db_min_idle_connections <= db_max_pool_size and restart or reload configuration.",
+		})
+	}
+
+	if c.WorkerPoolMax > 0 && c.WorkerPoolMinIdle > 0 && c.WorkerPoolMinIdle > c.WorkerPoolMax {
+		warnings = append(warnings, GuardrailWarning{
+			Check:      "worker_pool_min_idle_gt_worker_pool_max",
+			Configured: fmt.Sprintf("worker_pool_min_idle=%d, worker_pool_max=%d", c.WorkerPoolMinIdle, c.WorkerPoolMax),
+			Effective:  "worker pool initialization can use unexpected limits or fail",
+			Hint:       "Set worker_pool_min_idle <= worker_pool_max, or set one value to 0 for automatic sizing.",
+		})
+	}
+
+	if c.SessionSameSite == "None" && !c.SessionSecure {
+		warnings = append(warnings, GuardrailWarning{
+			Check:      "session_samesite_none_without_secure",
+			Configured: fmt.Sprintf("session_same_site=%q, session_secure=%t", c.SessionSameSite, c.SessionSecure),
+			Effective:  "browsers may reject the session cookie, causing repeated logins",
+			Hint:       "Set session_secure=true when using session_same_site=None.",
+		})
+	}
+
+	if c.EnableHTTPCache && c.CacheMaxSize == 0 {
+		warnings = append(warnings, GuardrailWarning{
+			Check:      "http_cache_enabled_with_zero_max_size",
+			Configured: fmt.Sprintf("enable_http_cache=%t, cache_max_size=%d", c.EnableHTTPCache, c.CacheMaxSize),
+			Effective:  "HTTP cache behaves as effectively disabled because no storage budget is available",
+			Hint:       "Set cache_max_size to a positive value (for example 524288000 for 500MB) or disable HTTP cache explicitly.",
+		})
+	}
+
+	if c.EnableHTTPCache && c.CacheMaxSize > 0 && c.CacheMaxEntrySize > c.CacheMaxSize {
+		warnings = append(warnings, GuardrailWarning{
+			Check:      "cache_entry_size_exceeds_cache_size",
+			Configured: fmt.Sprintf("cache_max_entry_size=%d, cache_max_size=%d", c.CacheMaxEntrySize, c.CacheMaxSize),
+			Effective:  "large responses can be skipped from cache because one entry exceeds total cache budget",
+			Hint:       "Set cache_max_entry_size <= cache_max_size.",
+		})
+	}
+
+	return warnings
 }

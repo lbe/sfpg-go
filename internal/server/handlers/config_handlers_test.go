@@ -1028,6 +1028,62 @@ func TestConfigHandlers_ConfigPost_SaveRestartAlert(t *testing.T) {
 	}
 }
 
+func TestConfigHandlers_ConfigPost_RestartFlagAndNotificationPath(t *testing.T) {
+	if err := ui.ParseTemplates(web.FS); err != nil {
+		t.Fatalf("ParseTemplates failed: %v", err)
+	}
+
+	var restartRequiredSet bool
+	var restartRequiredValue bool
+
+	ch := setupTestConfigHandlers(t, &mockConfigServiceForConfig{}, &mockAuthServiceForConfig{}, &mockCredentialStore{})
+	ch.SessionManager.(*mockSessionManagerAuth).authenticated = true
+	ch.SetRestartRequired = func(v bool) {
+		restartRequiredSet = true
+		restartRequiredValue = v
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/config", strings.NewReader("listener_port=8082"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+
+	ch.ConfigPost(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+	if !restartRequiredSet {
+		t.Fatal("expected SetRestartRequired to be called for restart-required config change")
+	}
+	if !restartRequiredValue {
+		t.Fatal("expected SetRestartRequired(true) for restart-required config change")
+	}
+	if got := w.Header().Get("HX-Trigger"); got != "config-saved" {
+		t.Fatalf("expected HX-Trigger config-saved, got %q", got)
+	}
+
+	doc, err := testutil.ParseHTML(w.Body)
+	if err != nil {
+		t.Fatalf("parse HTML: %v", err)
+	}
+
+	success := testutil.FindElementByID(doc, "config-success-message")
+	if success == nil {
+		t.Fatal("missing #config-success-message")
+	}
+	if got := testutil.GetTextContent(success); !strings.Contains(got, "Server restart required") {
+		t.Fatalf("expected restart-required message in success alert, got %q", got)
+	}
+
+	restartBadge := testutil.FindElementByID(doc, "config-restart-badge")
+	if restartBadge == nil {
+		t.Fatal("missing #config-restart-badge")
+	}
+	if got := testutil.GetAttr(restartBadge, "hx-swap-oob"); got != "outerHTML" {
+		t.Fatalf("expected restart badge to use OOB outerHTML swap, got %q", got)
+	}
+}
+
 func TestConfigHandlers_ConfigPost_UpdateCredentialsError(t *testing.T) {
 	if err := ui.ParseTemplates(web.FS); err != nil {
 		t.Fatalf("ParseTemplates failed: %v", err)

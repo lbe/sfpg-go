@@ -291,6 +291,21 @@ Precedence order: **Defaults** < **Database** < **Environment variables** < **CL
 
 Configuration is loaded in stages: application defaults are applied first, then values from the database override them, then environment variables take precedence, and finally command-line flags override everything. This allows flexibility in deployment while ensuring secure defaults.
 
+### Configuration Sequencing Guarantee
+
+To enforce precedence for database-dependent runtime settings (especially DB pool sizing), startup includes a reconciliation step after config load:
+
+- Bootstrap may initialize DB pools before full config is loaded.
+- `loadConfig()` then applies precedence (`Default -> DB -> Env -> CLI`).
+- `reconfigurePoolsFromConfig()` reconciles configured values with effective RW/RO pool values.
+
+This specifically prevents the historical mismatch where `DBMaxPoolSize=500` was stored in the DB but effective pools remained at default `100`.
+
+Troubleshooting tip:
+
+- Check logs for `pool config applied`, `configured/effective DB pool mismatch`, and `startup config summary`.
+- These diagnostics provide configured versus effective values so precedence or sequencing drift is visible immediately.
+
 Example:
 
 ```shell
