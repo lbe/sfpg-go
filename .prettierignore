@@ -3,6 +3,8 @@ node_modules/
 bin/
 tmp/
 bench/
+results/
+scripts/perf-test/attacks/
 zarchive/
 **/testdata/**
 internal/imagemeta
