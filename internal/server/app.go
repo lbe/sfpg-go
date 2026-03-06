@@ -421,12 +421,6 @@ func (app *App) loadConfig() error {
 
 	app.logLoadedConfigDiagnostics(cfg)
 
-	// Reconfigure pools with loaded config values to honor DB-stored pool settings
-	if reconfigErr := app.reconfigurePoolsFromConfig(); reconfigErr != nil {
-		slog.Warn("failed to reconfigure pools after loading config", "err", reconfigErr)
-		// Continue anyway - pools will use previous configuration
-	}
-
 	return err
 }
 
@@ -912,7 +906,6 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 	} else {
 		// Load configuration with precedence: CLI/Env > Database > Defaults
 		// This must happen after setConfigDefaults() which initializes defaults in DB
-		// Note: loadConfig() automatically calls reconfigurePoolsFromConfig() at the end
 		if err := app.loadConfig(); err != nil {
 			slog.Warn("failed to load configuration", "err", err)
 			// Continue with defaults
@@ -926,6 +919,11 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 			if err := app.reconfigurePoolsFromConfig(); err != nil {
 				slog.Error("failed to reconfigure pools with default config", "err", err)
 				return fmt.Errorf("reconfigure pools with defaults: %w", err)
+			}
+		} else {
+			if err := app.reconfigurePoolsFromConfig(); err != nil {
+				slog.Error("failed to reconfigure pools after loading config", "err", err)
+				return fmt.Errorf("reconfigure pools after load: %w", err)
 			}
 		}
 	}

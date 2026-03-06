@@ -69,6 +69,10 @@ func TestDBPoolPrecedence_PoolsIgnoreDatabaseConfig(t *testing.T) {
 	if err := app2.loadConfig(); err != nil { // <- Config loaded HERE (too late!)
 		t.Fatalf("Second app loadConfig failed: %v", err)
 	}
+	// After Step F, pool reconfiguration only happens at startup via explicit call
+	if err := app2.reconfigurePoolsFromConfig(); err != nil {
+		t.Fatalf("Second app reconfigurePoolsFromConfig failed: %v", err)
+	}
 
 	// ASSERTION: Pools should be created with database config sizes, but they aren't
 	if app2.dbRwPool.Config.MaxConnections != 25 {
@@ -147,6 +151,11 @@ func TestDBPoolPrecedence_ConfigLoadedAfterPoolCreation(t *testing.T) {
 	}
 	if app.config.DBMinIdleConnections != 12 {
 		t.Errorf("FAIL: app.config.DBMinIdleConnections = %d, want 12", app.config.DBMinIdleConnections)
+	}
+
+	// After Step F, pool reconfiguration must be explicitly called
+	if err := app.reconfigurePoolsFromConfig(); err != nil {
+		t.Fatalf("reconfigurePoolsFromConfig failed: %v", err)
 	}
 
 	// CRITICAL FAILURE: Pools still have hardcoded defaults despite config having custom values

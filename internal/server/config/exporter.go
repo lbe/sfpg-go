@@ -78,22 +78,11 @@ func (c *Config) ExportToYAML() (string, error) {
 // ImportFromYAML imports configuration from YAML content and saves to database.
 // Validates the YAML and rejects session-secret.
 func (c *Config) ImportFromYAML(yamlContent string, ctx context.Context, q ConfigSaver) error {
-	// Parse YAML
-	var yamlConfig yamlConfigForConfig
-	if err := yaml.Unmarshal([]byte(yamlContent), &yamlConfig); err != nil {
-		return fmt.Errorf("invalid YAML syntax: %w", err)
+	imported, err := BuildImportedConfig(c, yamlContent)
+	if err != nil {
+		return err
 	}
-
-	// Check for session-secret (reject if present)
-	var configMap map[string]any
-	if err := yaml.Unmarshal([]byte(yamlContent), &configMap); err == nil {
-		if _, hasSecret := configMap["session-secret"]; hasSecret {
-			return fmt.Errorf("session-secret cannot be imported (memory only)")
-		}
-	}
-
-	// Apply YAML to config
-	applyYAMLConfigToConfig(c, &yamlConfig)
+	*c = *imported
 
 	// Validate the imported config
 	if err := c.Validate(); err != nil {
