@@ -328,9 +328,9 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 			return nil
 		},
 		"listener_port": func(v string) error {
-			port, err := strconv.Atoi(v)
-			if err != nil {
-				return fmt.Errorf("invalid port: %w", err)
+			port, portErr := strconv.Atoi(v)
+			if portErr != nil {
+				return fmt.Errorf("invalid port: %w", portErr)
 			}
 			if oldConfig.ListenerPort != port {
 				newConfig.ListenerPort = port
@@ -356,9 +356,9 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 			return nil
 		},
 		"log_retention_count": func(v string) error {
-			count, err := strconv.Atoi(v)
-			if err != nil {
-				return fmt.Errorf("invalid retention count: %w", err)
+			count, countErr := strconv.Atoi(v)
+			if countErr != nil {
+				return fmt.Errorf("invalid retention count: %w", countErr)
 			}
 			if oldConfig.LogRetentionCount != count {
 				newConfig.LogRetentionCount = count
@@ -380,9 +380,9 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 			return nil
 		},
 		"server_compression_enable": func(v string) error {
-			enable, err := strconv.ParseBool(v)
-			if err != nil {
-				return fmt.Errorf("invalid boolean: %w", err)
+			enable, enableErr := strconv.ParseBool(v)
+			if enableErr != nil {
+				return fmt.Errorf("invalid boolean: %w", enableErr)
 			}
 			if oldConfig.ServerCompressionEnable != enable {
 				newConfig.ServerCompressionEnable = enable
@@ -390,9 +390,9 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 			return nil
 		},
 		"enable_http_cache": func(v string) error {
-			enable, err := strconv.ParseBool(v)
-			if err != nil {
-				return fmt.Errorf("invalid boolean: %w", err)
+			enable, enableErr := strconv.ParseBool(v)
+			if enableErr != nil {
+				return fmt.Errorf("invalid boolean: %w", enableErr)
 			}
 			if oldConfig.EnableHTTPCache != enable {
 				newConfig.EnableHTTPCache = enable
@@ -400,9 +400,9 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 			return nil
 		},
 		"cache_max_size": func(v string) error {
-			size, err := strconv.ParseInt(v, 10, 64)
-			if err != nil {
-				return fmt.Errorf("invalid cache max size: %w", err)
+			size, sizeErr := strconv.ParseInt(v, 10, 64)
+			if sizeErr != nil {
+				return fmt.Errorf("invalid cache max size: %w", sizeErr)
 			}
 			if oldConfig.CacheMaxSize != size {
 				newConfig.CacheMaxSize = size
@@ -410,9 +410,9 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 			return nil
 		},
 		"cache_max_entry_size": func(v string) error {
-			size, err := strconv.ParseInt(v, 10, 64)
-			if err != nil {
-				return fmt.Errorf("invalid cache max entry size: %w", err)
+			size, sizeErr := strconv.ParseInt(v, 10, 64)
+			if sizeErr != nil {
+				return fmt.Errorf("invalid cache max entry size: %w", sizeErr)
 			}
 			if oldConfig.CacheMaxEntrySize != size {
 				newConfig.CacheMaxEntrySize = size
@@ -420,9 +420,9 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 			return nil
 		},
 		"cache_max_time": func(v string) error {
-			duration, err := time.ParseDuration(v)
-			if err != nil {
-				return fmt.Errorf("invalid cache max time: %w", err)
+			duration, durationErr := time.ParseDuration(v)
+			if durationErr != nil {
+				return fmt.Errorf("invalid cache max time: %w", durationErr)
 			}
 			if oldConfig.CacheMaxTime != duration {
 				newConfig.CacheMaxTime = duration
@@ -430,9 +430,9 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 			return nil
 		},
 		"cache_cleanup_interval": func(v string) error {
-			duration, err := time.ParseDuration(v)
-			if err != nil {
-				return fmt.Errorf("invalid cache cleanup interval: %w", err)
+			duration, durationErr := time.ParseDuration(v)
+			if durationErr != nil {
+				return fmt.Errorf("invalid cache cleanup interval: %w", durationErr)
 			}
 			if oldConfig.CacheCleanupInterval != duration {
 				newConfig.CacheCleanupInterval = duration
@@ -440,9 +440,9 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 			return nil
 		},
 		"db_max_pool_size": func(v string) error {
-			size, err := strconv.Atoi(v)
-			if err != nil {
-				return fmt.Errorf("invalid db max pool size: %w", err)
+			size, sizeErr := strconv.Atoi(v)
+			if sizeErr != nil {
+				return fmt.Errorf("invalid db max pool size: %w", sizeErr)
 			}
 			if oldConfig.DBMaxPoolSize != size {
 				newConfig.DBMaxPoolSize = size
@@ -450,9 +450,9 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 			return nil
 		},
 		"db_min_idle_connections": func(v string) error {
-			count, err := strconv.Atoi(v)
-			if err != nil {
-				return fmt.Errorf("invalid db min idle connections: %w", err)
+			count, countErr := strconv.Atoi(v)
+			if countErr != nil {
+				return fmt.Errorf("invalid db min idle connections: %w", countErr)
 			}
 			if oldConfig.DBMinIdleConnections != count {
 				newConfig.DBMinIdleConnections = count
@@ -460,9 +460,9 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 			return nil
 		},
 		"db_optimize_interval": func(v string) error {
-			duration, err := time.ParseDuration(v)
-			if err != nil {
-				return fmt.Errorf("invalid db optimize interval: %w", err)
+			duration, durationErr := time.ParseDuration(v)
+			if durationErr != nil {
+				return fmt.Errorf("invalid db optimize interval: %w", durationErr)
 			}
 			if oldConfig.DBOptimizeInterval != duration {
 				newConfig.DBOptimizeInterval = duration
@@ -470,9 +470,9 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 			return nil
 		},
 		"worker_pool_max": func(v string) error {
-			max, err := strconv.Atoi(v)
-			if err != nil {
-				return fmt.Errorf("invalid worker pool max: %w", err)
+			max, maxErr := strconv.Atoi(v)
+			if maxErr != nil {
+				return fmt.Errorf("invalid worker pool max: %w", maxErr)
 			}
 			if oldConfig.WorkerPoolMax != max {
 				newConfig.WorkerPoolMax = max
@@ -480,9 +480,9 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 			return nil
 		},
 		"worker_pool_min_idle": func(v string) error {
-			min, err := strconv.Atoi(v)
-			if err != nil {
-				return fmt.Errorf("invalid worker pool min idle: %w", err)
+			min, minErr := strconv.Atoi(v)
+			if minErr != nil {
+				return fmt.Errorf("invalid worker pool min idle: %w", minErr)
 			}
 			if oldConfig.WorkerPoolMinIdle != min {
 				newConfig.WorkerPoolMinIdle = min
@@ -490,9 +490,9 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 			return nil
 		},
 		"worker_pool_max_idle_time": func(v string) error {
-			duration, err := time.ParseDuration(v)
-			if err != nil {
-				return fmt.Errorf("invalid worker pool max idle time: %w", err)
+			duration, durationErr := time.ParseDuration(v)
+			if durationErr != nil {
+				return fmt.Errorf("invalid worker pool max idle time: %w", durationErr)
 			}
 			if oldConfig.WorkerPoolMaxIdleTime != duration {
 				newConfig.WorkerPoolMaxIdleTime = duration
@@ -500,9 +500,9 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 			return nil
 		},
 		"queue_size": func(v string) error {
-			size, err := strconv.Atoi(v)
-			if err != nil {
-				return fmt.Errorf("invalid queue size: %w", err)
+			size, sizeErr := strconv.Atoi(v)
+			if sizeErr != nil {
+				return fmt.Errorf("invalid queue size: %w", sizeErr)
 			}
 			if oldConfig.QueueSize != size {
 				newConfig.QueueSize = size
@@ -510,9 +510,9 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 			return nil
 		},
 		"session_max_age": func(v string) error {
-			age, err := strconv.Atoi(v)
-			if err != nil {
-				return fmt.Errorf("invalid session max age: %w", err)
+			age, ageErr := strconv.Atoi(v)
+			if ageErr != nil {
+				return fmt.Errorf("invalid session max age: %w", ageErr)
 			}
 			if oldConfig.SessionMaxAge != age {
 				newConfig.SessionMaxAge = age
@@ -520,9 +520,9 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 			return nil
 		},
 		"session_http_only": func(v string) error {
-			httpOnly, err := strconv.ParseBool(v)
-			if err != nil {
-				return fmt.Errorf("invalid session http only: %w", err)
+			httpOnly, httpOnlyErr := strconv.ParseBool(v)
+			if httpOnlyErr != nil {
+				return fmt.Errorf("invalid session http only: %w", httpOnlyErr)
 			}
 			if oldConfig.SessionHttpOnly != httpOnly {
 				newConfig.SessionHttpOnly = httpOnly
@@ -530,9 +530,9 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 			return nil
 		},
 		"session_secure": func(v string) error {
-			secure, err := strconv.ParseBool(v)
-			if err != nil {
-				return fmt.Errorf("invalid session secure: %w", err)
+			secure, secureErr := strconv.ParseBool(v)
+			if secureErr != nil {
+				return fmt.Errorf("invalid session secure: %w", secureErr)
 			}
 			if oldConfig.SessionSecure != secure {
 				newConfig.SessionSecure = secure
@@ -546,9 +546,9 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 			return nil
 		},
 		"enable_cache_preload": func(v string) error {
-			enable, err := strconv.ParseBool(v)
-			if err != nil {
-				return fmt.Errorf("invalid boolean: %w", err)
+			enable, enableErr := strconv.ParseBool(v)
+			if enableErr != nil {
+				return fmt.Errorf("invalid boolean: %w", enableErr)
 			}
 			newConfig.EnableCachePreload = enable
 			if h.SetPreloadEnabled != nil {
@@ -557,9 +557,9 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 			return nil
 		},
 		"run_file_discovery": func(v string) error {
-			enable, err := strconv.ParseBool(v)
-			if err != nil {
-				return fmt.Errorf("invalid boolean: %w", err)
+			enable, enableErr := strconv.ParseBool(v)
+			if enableErr != nil {
+				return fmt.Errorf("invalid boolean: %w", enableErr)
 			}
 			newConfig.RunFileDiscovery = enable
 			return nil
@@ -593,8 +593,8 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 
 		if !inForm {
 			if isCheckboxField(key) && shouldProcessUncheckedCheckboxes {
-				if err := setter("false"); err != nil {
-					validationErrors[key] = err.Error()
+				if setErr := setter("false"); setErr != nil {
+					validationErrors[key] = setErr.Error()
 				}
 			}
 			continue
@@ -608,8 +608,8 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 				value = "false"
 			}
 		}
-		if err := setter(value); err != nil {
-			validationErrors[key] = err.Error()
+		if setErr := setter(value); setErr != nil {
+			validationErrors[key] = setErr.Error()
 		}
 	}
 
@@ -626,10 +626,10 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 
 	if len(validationErrors) > 0 {
 		w.WriteHeader(http.StatusOK)
-		if err := ui.RenderTemplate(w, "config-validation-error.html.tmpl", map[string]any{
+		if renderErr := ui.RenderTemplate(w, "config-validation-error.html.tmpl", map[string]any{
 			"Errors": validationErrors,
-		}); err != nil {
-			slog.Error("failed to render validation error template", "err", err)
+		}); renderErr != nil {
+			slog.Error("failed to render validation error template", "err", renderErr)
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		}
 		return

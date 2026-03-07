@@ -5,7 +5,6 @@ import (
 	"log/slog"
 
 	"github.com/lbe/sfpg-go/internal/cachelite"
-	"github.com/lbe/sfpg-go/internal/gallerydb"
 	"github.com/lbe/sfpg-go/internal/server/files"
 	"github.com/lbe/sfpg-go/internal/writebatcher"
 )
@@ -28,18 +27,6 @@ func (ba *batcherAdapter) SubmitFile(file *files.File) error {
 	if errors.Is(err, writebatcher.ErrFull) {
 		slog.Warn("unified batcher full, dropping file write",
 			"path", file.Path,
-			"pending", ba.wb.PendingCount())
-	}
-	return err
-}
-
-// SubmitInvalidFile submits an invalid file record to the unified batcher.
-func (ba *batcherAdapter) SubmitInvalidFile(params gallerydb.UpsertInvalidFileParams) error {
-	bw := BatchedWrite{InvalidFile: &params}
-	err := ba.wb.Submit(bw)
-	if errors.Is(err, writebatcher.ErrFull) {
-		slog.Warn("unified batcher full, dropping invalid file write",
-			"path", params.Path,
 			"pending", ba.wb.PendingCount())
 	}
 	return err

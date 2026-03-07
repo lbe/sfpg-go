@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/lbe/sfpg-go/internal/cachelite"
-	"github.com/lbe/sfpg-go/internal/gallerydb"
 	"github.com/lbe/sfpg-go/internal/server/files"
 	"github.com/lbe/sfpg-go/internal/thumbnail"
 )
@@ -19,7 +18,6 @@ import (
 // and cleans up resources.
 func (app *App) flushBatchedWrites(ctx context.Context, tx *sql.Tx, batch []BatchedWrite) error {
 	fileWrites := make([]*files.File, 0, len(batch))
-	invalidFileWrites := make([]gallerydb.UpsertInvalidFileParams, 0, len(batch))
 	galleryCache := make([]*cachelite.HTTPCacheEntry, 0, len(batch))
 	otherCache := make([]*cachelite.HTTPCacheEntry, 0, len(batch))
 
@@ -28,8 +26,6 @@ func (app *App) flushBatchedWrites(ctx context.Context, tx *sql.Tx, batch []Batc
 		switch {
 		case bw.File != nil:
 			fileWrites = append(fileWrites, bw.File)
-		case bw.InvalidFile != nil:
-			invalidFileWrites = append(invalidFileWrites, *bw.InvalidFile)
 		case bw.CacheEntry != nil:
 			// Maintain existing route strategy: /gallery/ separate from others
 			if strings.HasPrefix(bw.CacheEntry.Path, "/gallery/") {
@@ -46,14 +42,6 @@ func (app *App) flushBatchedWrites(ctx context.Context, tx *sql.Tx, batch []Batc
 			return fmt.Errorf("write file %s: %w", f.Path, err)
 		}
 		// Don't cleanup thumbnail here - done in OnError or after successful commit
-	}
-
-	// Process invalid files
-	q := gallerydb.New(tx)
-	for _, params := range invalidFileWrites {
-		if err := q.UpsertInvalidFile(ctx, params); err != nil {
-			return fmt.Errorf("upsert invalid file %s: %w", params.Path, err)
-		}
 	}
 
 	// Process gallery cache entries (maintain individual semantics even though batched)
@@ -95,7 +83,6 @@ func cleanupBatchedWriteResources(batch []BatchedWrite) {
 			bw.CacheEntry = nil
 		}
 		bw.File = nil
-		bw.InvalidFile = nil
 	}
 }
 

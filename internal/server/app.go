@@ -341,13 +341,11 @@ func (app *App) setDB() {
 		},
 		OnError: func(err error, batch []BatchedWrite) {
 			// Count by type for debugging
-			var filesCount, invalidFilesCount, cacheEntriesCount int
+			var filesCount, cacheEntriesCount int
 			for _, bw := range batch {
 				switch {
 				case bw.File != nil:
 					filesCount++
-				case bw.InvalidFile != nil:
-					invalidFilesCount++
 				case bw.CacheEntry != nil:
 					cacheEntriesCount++
 				}
@@ -355,7 +353,6 @@ func (app *App) setDB() {
 			slog.Error("failed to flush unified batch",
 				"err", err,
 				"files", filesCount,
-				"invalid_files", invalidFilesCount,
 				"cache_entries", cacheEntriesCount)
 
 			// Cleanup pooled resources even on error

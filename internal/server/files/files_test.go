@@ -5,7 +5,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"image"
 	"image/png"
 	"io"
@@ -1286,12 +1285,8 @@ func TestCheckIfFileModified_ReprocessesChangedInvalidFile(t *testing.T) {
 }
 
 func TestRecordInvalidFile(t *testing.T) {
-	mockUB := &mockUnifiedBatcher{
-		SubmitInvalidFileFunc: func(params gallerydb.UpsertInvalidFileParams) error {
-			return fmt.Errorf("simulate batcher full for fallback")
-		},
-	}
-	processor, _, rwPool, _ := createTestProcessor(t, mockUB)
+	// Test expects synchronous DB write behavior (no batching)
+	processor, _, rwPool, _ := createTestProcessor(t, nil)
 	ctx := context.Background()
 	path := "bad.txt"
 	mtime := int64(12345)
@@ -1301,11 +1296,12 @@ func TestRecordInvalidFile(t *testing.T) {
 		t.Fatalf("RecordInvalidFile: %v", err)
 	}
 
-	// Flush the batcher
+	// Close processor (no batch flush needed with synchronous writes)
 	if err := processor.Close(); err != nil {
 		t.Fatalf("processor Close: %v", err)
 	}
 
+	// Verify the record was written directly to DB
 	cpc, err := rwPool.Get()
 	if err != nil {
 		t.Fatalf("get rw conn: %v", err)

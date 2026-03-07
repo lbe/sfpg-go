@@ -53,7 +53,6 @@ type ImporterFactory func(conn *sql.Conn, q *gallerydb.CustomQueries) Importer
 // This avoids circular dependency (files importing server).
 type UnifiedBatcher interface {
 	SubmitFile(file *File) error
-	SubmitInvalidFile(params gallerydb.UpsertInvalidFileParams) error
 	PendingCount() int64
 }
 
@@ -197,14 +196,9 @@ func (s *fileProcessor) RecordInvalidFile(ctx context.Context, path string, mtim
 		Path: path, Mtime: mtime, Size: size, Reason: reasonVal,
 	}
 
-	if err := s.unifiedBatcher.SubmitInvalidFile(params); err == nil {
-		return nil
-	}
-
-	// Final fallback: synchronous write
 	cpcRw, getErr := s.dbRwPool.Get()
 	if getErr != nil {
-		return fmt.Errorf("get RW connection (fallback): %w", getErr)
+		return fmt.Errorf("get RW connection: %w", getErr)
 	}
 	defer s.dbRwPool.Put(cpcRw)
 	return cpcRw.Queries.UpsertInvalidFile(ctx, params)

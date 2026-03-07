@@ -64,10 +64,13 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/lbe/sfpg-go/internal/humanize"
 )
 
 // Sentinel errors returned by Submit.
@@ -212,6 +215,8 @@ func (wb *WriteBatcher[T]) appendAndMaybeFlush(ctx context.Context, batch []T, b
 	}
 	if len(batch) >= wb.cfg.MaxBatchSize ||
 		(wb.cfg.MaxBatchBytes > 0 && batchBytes >= wb.cfg.MaxBatchBytes) {
+		slog.Debug("writebatcher: flush triggered by batch size or byte limit", "batch_size", len(batch), "batch_bytes",
+			humanize.Comma(batchBytes).String())
 		wb.flush(ctx, batch)
 		return batch[:0], 0
 	}
@@ -282,6 +287,7 @@ func (wb *WriteBatcher[T]) flush(ctx context.Context, batch []T) {
 	if len(batch) == 0 {
 		return
 	}
+	t0 := time.Now()
 	n := int64(len(batch))
 	defer func() { wb.pendingCount.Add(-n) }()
 
@@ -336,6 +342,7 @@ func (wb *WriteBatcher[T]) flush(ctx context.Context, batch []T) {
 	if wb.cfg.OnSuccess != nil {
 		wb.cfg.OnSuccess(batch)
 	}
+	slog.Debug("writebatcher flush: completed", "batch_size", len(batch), "elapsed", fmt.Sprintf("%v", time.Since(t0)))
 }
 
 // copyBatch returns a new slice with the same contents as batch.

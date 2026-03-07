@@ -152,12 +152,8 @@ func TestPoolReconfiguration_NoCloseWhileActive(t *testing.T) {
 	}
 
 	// Cleanup
-	if newRwPool != nil {
-		_ = newRwPool.Close()
-	}
-	if newRoPool != nil {
-		_ = newRoPool.Close()
-	}
+	_ = newRwPool.Close()
+	_ = newRoPool.Close()
 
 	// ASSERTION: The test should pass without any "database is locked" or
 	// "unfinalized statements" errors in the logs.

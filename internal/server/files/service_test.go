@@ -23,10 +23,9 @@ import (
 )
 
 type mockUnifiedBatcher struct {
-	SubmitFileFunc        func(file *File) error
-	SubmitInvalidFileFunc func(params gallerydb.UpsertInvalidFileParams) error
-	PendingCountFunc      func() int64
-	rwPool                *dbconnpool.DbSQLConnPool // For integration tests that need real writes
+	SubmitFileFunc   func(file *File) error
+	PendingCountFunc func() int64
+	rwPool           *dbconnpool.DbSQLConnPool // For integration tests that need real writes
 }
 
 func (m *mockUnifiedBatcher) SubmitFile(file *File) error {
@@ -51,22 +50,6 @@ func (m *mockUnifiedBatcher) SubmitFile(file *File) error {
 			return err
 		}
 		return tx.Commit()
-	}
-	return nil
-}
-
-func (m *mockUnifiedBatcher) SubmitInvalidFile(params gallerydb.UpsertInvalidFileParams) error {
-	if m.SubmitInvalidFileFunc != nil {
-		return m.SubmitInvalidFileFunc(params)
-	}
-	// If rwPool is set, write synchronously (for integration tests)
-	if m.rwPool != nil {
-		cpc, err := m.rwPool.Get()
-		if err != nil {
-			return err
-		}
-		defer m.rwPool.Put(cpc)
-		return cpc.Queries.UpsertInvalidFile(context.Background(), params)
 	}
 	return nil
 }
