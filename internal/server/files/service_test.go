@@ -98,6 +98,17 @@ func createTestPoolsAndDir(t *testing.T) (roPool *dbconnpool.DbSQLConnPool, rwPo
 		t.Fatalf("close migration db: %v", closeErr)
 	}
 
+	thumbsDBPath := filepath.Join(tempDir, "thumbs.db")
+	m2, err := migrations.NewThumbsMigrator(thumbsDBPath)
+	if err != nil {
+		t.Fatalf("NewThumbsMigrator: %v", err)
+	}
+	if upErr := m2.Up(); upErr != nil && upErr != migrate.ErrNoChange {
+		m2.Close()
+		t.Fatalf("thumbs migrate up: %v", upErr)
+	}
+	m2.Close()
+
 	// Create RW pool first to set up WAL mode, then RO pool
 	rwDSN := "file:" + filepath.ToSlash(tempDB) + "?_txlock=immediate&mode=rwc"
 	rwPool, err = dbconnpool.NewDbSQLConnPool(ctx, rwDSN, dbconnpool.Config{
@@ -106,6 +117,7 @@ func createTestPoolsAndDir(t *testing.T) (roPool *dbconnpool.DbSQLConnPool, rwPo
 		MinIdleConnections: 1,
 		ReadOnly:           false,
 		QueriesFunc:        gallerydb.NewCustomQueries,
+		ThumbsDBPath:       thumbsDBPath,
 	})
 	if err != nil {
 		t.Fatalf("create RW pool: %v", err)
@@ -120,6 +132,7 @@ func createTestPoolsAndDir(t *testing.T) (roPool *dbconnpool.DbSQLConnPool, rwPo
 		MinIdleConnections: 1,
 		ReadOnly:           true,
 		QueriesFunc:        gallerydb.NewCustomQueries,
+		ThumbsDBPath:       thumbsDBPath,
 	})
 	if err != nil {
 		t.Fatalf("create RO pool: %v", err)

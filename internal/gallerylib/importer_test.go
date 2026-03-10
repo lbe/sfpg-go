@@ -3,6 +3,7 @@ package gallerylib_test
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -26,7 +27,9 @@ import (
 // setupTestDB creates a test database with migrations applied.
 // Uses production-equivalent DSN configuration from app.configureDatabaseDSN().
 func setupTestDB(t *testing.T) (*sql.DB, *gallerydb.CustomQueries, context.Context) {
-	dbfile := filepath.Join(t.TempDir(), "test_gallery.db")
+	tempDir := t.TempDir()
+	dbfile := filepath.Join(tempDir, "test_gallery.db")
+	thumbsDBPath := filepath.Join(tempDir, "thumbs.db")
 
 	// Match production DSN from app.configureDatabaseDSN()
 	mmapSize := strconv.Itoa(39 * 1024 * 1024 * 1024)
@@ -60,6 +63,19 @@ func setupTestDB(t *testing.T) (*sql.DB, *gallerydb.CustomQueries, context.Conte
 	}
 	if migErr := m.Up(); migErr != nil && migErr != migrate.ErrNoChange {
 		t.Fatal(err)
+	}
+	m2, err := migrations.NewThumbsMigrator(thumbsDBPath)
+	if err != nil {
+		t.Fatalf("NewThumbsMigrator: %v", err)
+	}
+	if thumbsErr := m2.Up(); thumbsErr != nil && thumbsErr != migrate.ErrNoChange {
+		m2.Close()
+		t.Fatalf("thumbs migrate: %v", thumbsErr)
+	}
+	m2.Close()
+	if _, attachErr := db.ExecContext(context.Background(),
+		fmt.Sprintf("ATTACH DATABASE 'file:%s' AS thumbs", filepath.ToSlash(thumbsDBPath))); attachErr != nil {
+		t.Fatalf("ATTACH thumbs: %v", attachErr)
 	}
 	ctx := context.Background()
 	q, err := gallerydb.PrepareCustomQueries(ctx, db)
@@ -277,7 +293,9 @@ func TestCreateRootFolderEntry_ContextError(t *testing.T) {
 }
 
 func TestCreateRootFolderEntry_ReadOnlyDB(t *testing.T) {
-	dbfile := filepath.Join(t.TempDir(), "test_gallery_ro.db")
+	tempDir := t.TempDir()
+	dbfile := filepath.Join(tempDir, "test_gallery_ro.db")
+	thumbsDBPath := filepath.Join(tempDir, "thumbs.db")
 
 	baseDB, err := sql.Open("sqlite3", dbfile)
 	if err != nil {
@@ -301,6 +319,15 @@ func TestCreateRootFolderEntry_ReadOnlyDB(t *testing.T) {
 	if err = baseDB.Close(); err != nil {
 		t.Fatal(err)
 	}
+	m2, err := migrations.NewThumbsMigrator(thumbsDBPath)
+	if err != nil {
+		t.Fatalf("NewThumbsMigrator: %v", err)
+	}
+	if thumbsErr := m2.Up(); thumbsErr != nil && thumbsErr != migrate.ErrNoChange {
+		m2.Close()
+		t.Fatalf("thumbs migrate: %v", thumbsErr)
+	}
+	m2.Close()
 
 	// Read-only DSN - no pragmas needed for read-only mode
 	readOnlyDSN := "file:" + filepath.ToSlash(dbfile) + "?mode=ro"
@@ -309,7 +336,10 @@ func TestCreateRootFolderEntry_ReadOnlyDB(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer roDB.Close()
-
+	if _, attachErr := roDB.ExecContext(context.Background(),
+		fmt.Sprintf("ATTACH DATABASE 'file:%s' AS thumbs", filepath.ToSlash(thumbsDBPath))); attachErr != nil {
+		t.Fatalf("ATTACH thumbs: %v", attachErr)
+	}
 	ctx := context.Background()
 	q, err := gallerydb.PrepareCustomQueries(ctx, roDB)
 	if err != nil {

@@ -64,8 +64,7 @@ type App struct {
 	cacheMW        *cachelite.HTTPCacheMiddleware
 	ctx            context.Context
 	ctxMu          sync.RWMutex // protects ctx from concurrent access (ORDER: 1)
-	dbDir          string
-	dbPath         string
+	dbPaths        database.DatabasePaths
 	dbRoPool       *dbconnpool.DbSQLConnPool
 	dbRwPool       *dbconnpool.DbSQLConnPool
 	// hqOverride allows tests to inject query behavior for handlers
@@ -303,7 +302,7 @@ func (app *App) invalidateHTTPCache() {
 // setDB initializes and configures the database using the database package.
 func (app *App) setDB() {
 	var err error
-	app.dbPath, app.dbRwPool, app.dbRoPool, err = database.Setup(app.ctx, app.rootDir, app.config)
+	app.dbPaths, app.dbRwPool, app.dbRoPool, err = database.Setup(app.ctx, app.rootDir, app.config)
 	if err != nil {
 		slog.Error("failed to setup database", "err", err)
 		panic("main")
@@ -327,7 +326,7 @@ func (app *App) setDB() {
 	}
 	defer app.dbRwPool.Put(connRW)
 	app.writeBatcher, err = writebatcher.New[BatchedWrite](app.ctx, writebatcher.Config[BatchedWrite]{
-		MaxBatchSize:  100,             // Increased for better throughput during preloading
+		MaxBatchSize:  1000,            // Increased for better throughput during preloading
 		MaxBatchBytes: 8 * 1024 * 1024, // 8MB ceiling
 		FlushInterval: 200 * time.Millisecond,
 		ChannelSize:   4096, // Larger buffer for high throughput
@@ -369,7 +368,7 @@ func (app *App) setDB() {
 		panic("failed to create unified WriteBatcher")
 	}
 	slog.Info("unified WriteBatcher initialized",
-		"max_batch_size", 100,
+		"max_batch_size", 1000,
 		"max_batch_bytes", 8*1024*1024,
 		"channel_size", 4096)
 
@@ -593,7 +592,7 @@ func (app *App) reconfigurePoolsFromConfig() error {
 	// Recreate pools with new configuration
 	newRwPool, newRoPool, err := database.RecreatePoolsWithConfig(
 		app.ctx,
-		app.dbPath,
+		app.dbPaths,
 		app.config,
 		app.dbRwPool,
 		app.dbRoPool,
@@ -624,7 +623,7 @@ func (app *App) reconfigurePoolsFromConfig() error {
 	var rerr error
 	oldBatcher := app.writeBatcher
 	app.writeBatcher, rerr = writebatcher.New[BatchedWrite](app.ctx, writebatcher.Config[BatchedWrite]{
-		MaxBatchSize:  100,
+		MaxBatchSize:  1000,
 		MaxBatchBytes: 8 * 1024 * 1024,
 		FlushInterval: 200 * time.Millisecond,
 		ChannelSize:   4096,
@@ -1158,7 +1157,7 @@ func (app *App) InitForUnlock() error {
 	app.setRootDir(nil)
 	var err error
 	// Setup database with nil config (will use defaults for pool sizes)
-	app.dbPath, app.dbRwPool, app.dbRoPool, err = database.Setup(app.ctx, app.rootDir, nil)
+	app.dbPaths, app.dbRwPool, app.dbRoPool, err = database.Setup(app.ctx, app.rootDir, nil)
 	if err != nil {
 		return fmt.Errorf("failed to setup database for unlock: %w", err)
 	}
@@ -1187,7 +1186,7 @@ func (app *App) InitForIncrementETag(opt getopt.Opt) error {
 
 	// Setup database with nil config (loads defaults)
 	var err error
-	app.dbPath, app.dbRwPool, app.dbRoPool, err = database.Setup(app.ctx, app.rootDir, nil)
+	app.dbPaths, app.dbRwPool, app.dbRoPool, err = database.Setup(app.ctx, app.rootDir, nil)
 	if err != nil {
 		return fmt.Errorf("failed to setup database for increment-etag: %w", err)
 	}

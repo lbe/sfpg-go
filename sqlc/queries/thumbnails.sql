@@ -16,22 +16,10 @@ VALUES (?, ?, ?, ?, ?, ?, ?)
            OR format     IS NOT excluded.format
 RETURNING id; 
 
--- name: UpsertThumbnailBlob :exec
-INSERT INTO thumbnail_blobs (thumbnail_id, data)
-VALUES (?, ?)
-    ON CONFLICT(thumbnail_id) 
-    DO UPDATE SET data = excluded.data
-            WHERE data IS NOT excluded.data;
-
 -- name: GetThumbnailsByFileID :one
 SELECT * 
   FROM thumbnails 
  WHERE file_id = ?;
-
--- name: GetThumbnailBlobDataByID :one 
-SELECT data
-  FROM thumbnail_blobs 
- WHERE thumbnail_id = ?;
 
 -- name: GetThumbnailExistsViewByID :one 
 SELECT found 

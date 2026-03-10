@@ -2950,8 +2950,8 @@ func TestInitForUnlock_Coverage(t *testing.T) {
 		t.Fatalf("InitForUnlock failed: %v", err)
 	}
 
-	if app.dbPath == "" {
-		t.Error("Expected dbPath to be set")
+	if app.dbPaths.Main == "" {
+		t.Error("Expected dbPaths.Main to be set")
 	}
 	if app.dbRwPool == nil {
 		t.Error("Expected dbRwPool to be set")

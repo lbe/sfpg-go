@@ -26,32 +26,42 @@ import (
 	"github.com/lbe/sfpg-go/migrations"
 )
 
+// DatabasePaths holds the file paths for both application databases.
+type DatabasePaths struct {
+	Main   string // Path to sfpg.db
+	Thumbs string // Path to thumbs.db
+}
+
 // Setup initializes the database environment:
 // 1. Sets up the directory struct
 // 2. Runs schema migrations
 // 3. Establishes connection pools (RW/RO)
 // 4. Ensures root folder entry exists
 // 5. Schedules periodic optimization
-func Setup(ctx context.Context, rootDir string, cfg *config.Config) (string, *dbconnpool.DbSQLConnPool, *dbconnpool.DbSQLConnPool, error) {
+func Setup(ctx context.Context, rootDir string, cfg *config.Config) (DatabasePaths, *dbconnpool.DbSQLConnPool, *dbconnpool.DbSQLConnPool, error) {
 	// 1. Directory Setup
 	dbDir := filepath.Join(rootDir, "DB")
 	if _, err := os.Stat(dbDir); os.IsNotExist(err) {
 		if err := os.MkdirAll(dbDir, 0o755); err != nil {
-			return "", nil, nil, fmt.Errorf("failed to create DB directory: %w", err)
+			return DatabasePaths{}, nil, nil, fmt.Errorf("failed to create DB directory: %w", err)
 		}
 	}
 	dbPath := filepath.Join(dbDir, "sfpg.db")
+	thumbsDBPath := filepath.Join(dbDir, "thumbs.db")
 
 	// 2. Migrations
 	if err := migrateDB(dbPath); err != nil {
-		return "", nil, nil, fmt.Errorf("migration failed: %w", err)
+		return DatabasePaths{}, nil, nil, fmt.Errorf("migration failed: %w", err)
+	}
+	if err := migrateBlobsDB(thumbsDBPath); err != nil {
+		return DatabasePaths{}, nil, nil, fmt.Errorf("thumbs migration failed: %w", err)
 	}
 
 	// 3. Connection Pools
 	roDsn, rwDsn := configureDatabaseDSN(dbPath)
-	dbRwPool, dbRoPool, err := createDatabasePools(ctx, roDsn, rwDsn, cfg)
+	dbRwPool, dbRoPool, err := createDatabasePools(ctx, roDsn, rwDsn, thumbsDBPath, cfg)
 	if err != nil {
-		return "", nil, nil, fmt.Errorf("pool creation failed: %w", err)
+		return DatabasePaths{}, nil, nil, fmt.Errorf("pool creation failed: %w", err)
 	}
 
 	// 4. Root Folder Check
@@ -59,17 +69,17 @@ func Setup(ctx context.Context, rootDir string, cfg *config.Config) (string, *db
 	if err != nil {
 		dbRwPool.Close()
 		dbRoPool.Close()
-		return "", nil, nil, fmt.Errorf("failed to get RW conn for root check: %w", err)
+		return DatabasePaths{}, nil, nil, fmt.Errorf("failed to get RW conn for root check: %w", err)
 	}
 	defer dbRwPool.Put(cpcRw)
 
 	if err := ensureRootFolderExists(ctx, cpcRw, rootDir); err != nil {
 		dbRwPool.Close()
 		dbRoPool.Close()
-		return "", nil, nil, fmt.Errorf("root folder check failed: %w", err)
+		return DatabasePaths{}, nil, nil, fmt.Errorf("root folder check failed: %w", err)
 	}
 
-	return dbPath, dbRwPool, dbRoPool, nil
+	return DatabasePaths{Main: dbPath, Thumbs: thumbsDBPath}, dbRwPool, dbRoPool, nil
 }
 
 func migrateDB(dbPath string) error {
@@ -103,6 +113,25 @@ func migrateDB(dbPath string) error {
 	return nil
 }
 
+func migrateBlobsDB(dbPath string) error {
+	db, err := os.OpenFile(dbPath, os.O_RDWR|os.O_CREATE, 0o666)
+	if err != nil {
+		return fmt.Errorf("failed to open thumbs database file: %w", err)
+	}
+	db.Close()
+
+	m, err := migrations.NewThumbsMigrator(dbPath)
+	if err != nil {
+		return fmt.Errorf("failed to create thumbs migrator: %w", err)
+	}
+	defer m.Close()
+
+	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
+		return fmt.Errorf("thumbs up migration failed: %w", err)
+	}
+	return nil
+}
+
 func configureDatabaseDSN(dbPath string) (roDsn, rwDsn string) {
 	mmapSize := strconv.Itoa(39 * 1024 * 1024 * 1024)
 
@@ -112,6 +141,7 @@ func configureDatabaseDSN(dbPath string) (roDsn, rwDsn string) {
 
 	// Common params for both pools (avoiding WAL mode on RO pool)
 	commonParams := []string{
+		"_pragma=cache(shared)",
 		"_pragma=cache_size(10240)",
 		"_pragma=synchronous(NORMAL)",
 		"_pragma=busy_timeout(5000)", // Keep explicit - ncruces defaults to 1 minute
@@ -132,7 +162,7 @@ func configureDatabaseDSN(dbPath string) (roDsn, rwDsn string) {
 	return
 }
 
-func createDatabasePools(ctx context.Context, roDsn, rwDsn string, cfg *config.Config) (*dbconnpool.DbSQLConnPool, *dbconnpool.DbSQLConnPool, error) {
+func createDatabasePools(ctx context.Context, roDsn, rwDsn, thumbsDBPath string, cfg *config.Config) (*dbconnpool.DbSQLConnPool, *dbconnpool.DbSQLConnPool, error) {
 	maxPoolSize := int64(100)
 	minIdleConns := int64(10)
 	if cfg != nil {
@@ -147,6 +177,7 @@ func createDatabasePools(ctx context.Context, roDsn, rwDsn string, cfg *config.C
 			MinIdleConnections: minIdleConns,
 			ReadOnly:           false,
 			QueriesFunc:        gallerydb.NewCustomQueries,
+			ThumbsDBPath:       thumbsDBPath,
 		})
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create RW pool: %w", err)
@@ -166,6 +197,7 @@ func createDatabasePools(ctx context.Context, roDsn, rwDsn string, cfg *config.C
 			MinIdleConnections: minIdleConns,
 			ReadOnly:           true,
 			QueriesFunc:        gallerydb.NewCustomQueries,
+			ThumbsDBPath:       thumbsDBPath,
 		})
 	if err != nil {
 		dbRwPool.Close()
@@ -178,7 +210,7 @@ func createDatabasePools(ctx context.Context, roDsn, rwDsn string, cfg *config.C
 // RecreatePoolsWithConfig closes old pools and creates new ones with the given config.
 // This is used when configuration is loaded after initial pool creation to honor
 // database-stored pool settings during startup.
-func RecreatePoolsWithConfig(ctx context.Context, dbPath string, cfg *config.Config, oldRwPool, oldRoPool *dbconnpool.DbSQLConnPool) (*dbconnpool.DbSQLConnPool, *dbconnpool.DbSQLConnPool, error) {
+func RecreatePoolsWithConfig(ctx context.Context, paths DatabasePaths, cfg *config.Config, oldRwPool, oldRoPool *dbconnpool.DbSQLConnPool) (*dbconnpool.DbSQLConnPool, *dbconnpool.DbSQLConnPool, error) {
 	// Close old pools
 	if oldRwPool != nil {
 		if err := oldRwPool.Close(); err != nil {
@@ -192,8 +224,8 @@ func RecreatePoolsWithConfig(ctx context.Context, dbPath string, cfg *config.Con
 	}
 
 	// Create new pools with updated config
-	roDsn, rwDsn := configureDatabaseDSN(dbPath)
-	newRwPool, newRoPool, err := createDatabasePools(ctx, roDsn, rwDsn, cfg)
+	roDsn, rwDsn := configureDatabaseDSN(paths.Main)
+	newRwPool, newRoPool, err := createDatabasePools(ctx, roDsn, rwDsn, paths.Thumbs, cfg)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to recreate pools with config: %w", err)
 	}

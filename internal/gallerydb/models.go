@@ -184,11 +184,6 @@ type Thumbnail struct {
 	UpdatedAt interface{}
 }
 
-type ThumbnailBlob struct {
-	ThumbnailID int64
-	Data        []byte
-}
-
 type ThumbnailExistsView struct {
 	Path  string
 	ID    int64

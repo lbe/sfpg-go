@@ -5,6 +5,8 @@ package gallerydb
 import (
 	"context"
 	"database/sql"
+	"fmt"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -19,17 +21,22 @@ import (
 	"github.com/lbe/sfpg-go/migrations" // Added
 )
 
-// setupTestDB creates an in-memory SQLite database for testing, applies migrations,
-// and returns a connection, a queries object, and a context.
-func setupTestDB(t *testing.T) (*sql.DB, *Queries, context.Context) {
+// setupTestDB creates a temp file SQLite database for testing, applies migrations,
+// attaches thumbs.db, and returns a connection, a queries object, and a context.
+func setupTestDB(t *testing.T) (*sql.DB, *CustomQueries, context.Context) {
 	t.Helper()
 
-	// Use in-memory database for faster tests
-	db, err := sql.Open("sqlite3", ":memory:")
+	// Use temp file database to support ATTACH for thumbs.db
+	tempDir := t.TempDir()
+	mainDBPath := filepath.Join(tempDir, "test.db")
+	thumbsDBPath := filepath.Join(tempDir, "thumbs.db")
+
+	db, err := sql.Open("sqlite3", "file:"+filepath.ToSlash(mainDBPath))
 	if err != nil {
 		t.Fatalf("failed to open test database: %v", err)
 	}
 
+	// Apply main database migrations
 	driver, err := sqlite.WithInstance(db, &sqlite.Config{})
 	if err != nil {
 		db.Close()
@@ -57,8 +64,27 @@ func setupTestDB(t *testing.T) (*sql.DB, *Queries, context.Context) {
 		}
 	}
 
+	// Apply thumbs database migrations
+	thumbsMigrator, err := migrations.NewThumbsMigrator(thumbsDBPath)
+	if err != nil {
+		db.Close()
+		t.Fatalf("failed to create thumbs migrator: %v", err)
+	}
+	if thumbsErr := thumbsMigrator.Up(); thumbsErr != nil && thumbsErr != migrate.ErrNoChange {
+		db.Close()
+		t.Fatalf("failed to apply thumbs migrations: %v", thumbsErr)
+	}
+	thumbsMigrator.Close()
+
+	// ATTACH thumbs.db
+	if _, err := db.ExecContext(context.Background(),
+		fmt.Sprintf("ATTACH DATABASE 'file:%s' AS thumbs", filepath.ToSlash(thumbsDBPath))); err != nil {
+		db.Close()
+		t.Fatalf("failed to attach thumbs: %v", err)
+	}
+
 	ctx := context.Background()
-	q, err := Prepare(ctx, db)
+	q, err := PrepareCustomQueries(ctx, db)
 	if err != nil {
 		db.Close()
 		t.Fatalf("failed to prepare queries: %v", err)
@@ -255,10 +281,7 @@ func TestThumbnailQueries(t *testing.T) {
 
 func TestViewAndCustomQueries(t *testing.T) {
 	db, q, ctx := setupTestDB(t)
-	cq, err := PrepareCustomQueries(ctx, db)
-	if err != nil {
-		t.Fatalf("PrepareCustomQueries failed: %v", err)
-	}
+	_ = db // q already contains custom queries
 
 	// 1. Setup data
 	// /gaps
@@ -350,7 +373,7 @@ func TestViewAndCustomQueries(t *testing.T) {
 	t.Run("CustomGetFolderViewThumbnailBlobDataByPath", func(t *testing.T) {
 		// Ensure tile is set
 		_ = q.UpdateFolderTileId(ctx, UpdateFolderTileIdParams{ID: subFolder.ID, TileID: sql.NullInt64{Int64: thumbID, Valid: true}})
-		retrievedData, err := cq.GetFolderViewThumbnailBlobDataByPath(ctx, "/gaps/sub")
+		retrievedData, err := q.GetFolderViewThumbnailBlobDataByPath(ctx, "/gaps/sub")
 		if err != nil {
 			t.Fatalf("GetFolderViewThumbnailBlobDataByPath failed: %v", err)
 		}
@@ -365,7 +388,7 @@ func TestViewAndCustomQueries(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		qtx := cq.WithTx(tx)
+		qtx := q.WithTx(tx)
 
 		// Insert a folder path within the transaction
 		txFolderPathID, err := qtx.UpsertFolderPathReturningID(ctx, "/tx_test")
@@ -393,7 +416,7 @@ func TestViewAndCustomQueries(t *testing.T) {
 
 	// 8. Test GetFileViewRowsByFolderPath
 	t.Run("GetFileViewRowsByFolderPath", func(t *testing.T) {
-		rows, err := cq.GetFileViewRowsByFolderPath(ctx, "/gaps/sub")
+		rows, err := q.GetFileViewRowsByFolderPath(ctx, "/gaps/sub")
 		if err != nil {
 			t.Fatalf("GetFileViewRowsByFolderPath failed: %v", err)
 		}
@@ -419,7 +442,7 @@ func TestViewAndCustomQueries(t *testing.T) {
 
 	// 9. Test GetFileViewRowsByFolderID
 	t.Run("GetFileViewRowsByFolderID", func(t *testing.T) {
-		rows, err := cq.GetFileViewRowsByFolderID(ctx, subFolder.ID)
+		rows, err := q.GetFileViewRowsByFolderID(ctx, subFolder.ID)
 		if err != nil {
 			t.Fatalf("GetFileViewRowsByFolderID failed: %v", err)
 		}
@@ -798,10 +821,8 @@ func TestLoginAttemptQueries(t *testing.T) {
 func TestGetPreloadRoutesByFolderID(t *testing.T) {
 	db, q, ctx := setupTestDB(t)
 
-	// Prepare custom queries
-	cq := &CustomQueries{
-		Queries: q,
-	}
+	// q is already *CustomQueries from setupTestDB
+	_ = db
 
 	// 1. Create folder hierarchy
 	rootPathID, err := q.UpsertFolderPathReturningID(ctx, "/root")
@@ -862,7 +883,7 @@ func TestGetPreloadRoutesByFolderID(t *testing.T) {
 
 	// 4. Test GetPreloadRoutesByFolderID for root folder (parent_id)
 	// Should return routes for child folder and files under child
-	rows, err := cq.GetPreloadRoutesByFolderID(ctx, sql.NullInt64{Int64: rootFolder.ID, Valid: true})
+	rows, err := q.GetPreloadRoutesByFolderID(ctx, sql.NullInt64{Int64: rootFolder.ID, Valid: true})
 	if err != nil {
 		t.Fatalf("GetPreloadRoutesByFolderID failed: %v", err)
 	}
@@ -911,7 +932,7 @@ func TestGetPreloadRoutesByFolderID(t *testing.T) {
 	}
 
 	// 6. Test GetPreloadRoutesByFolderID for child folder
-	rows2, err := cq.GetPreloadRoutesByFolderID(ctx, sql.NullInt64{Int64: childFolder.ID, Valid: true})
+	rows2, err := q.GetPreloadRoutesByFolderID(ctx, sql.NullInt64{Int64: childFolder.ID, Valid: true})
 	if err != nil {
 		t.Fatalf("GetPreloadRoutesByFolderID for child failed: %v", err)
 	}
@@ -1836,8 +1857,25 @@ func TestNewAndClose(t *testing.T) {
 			t.Fatalf("failed to apply migrations: %v", migErr)
 		}
 
+		// Setup thumbs.db for custom queries
+		thumbsDBPath := filepath.Join(t.TempDir(), "test_thumbs.db")
+		thumbsMigrator, err := migrations.NewThumbsMigrator(thumbsDBPath)
+		if err != nil {
+			t.Fatalf("failed to create thumbs migrator: %v", err)
+		}
+		if thumbsErr := thumbsMigrator.Up(); thumbsErr != nil && thumbsErr != migrate.ErrNoChange {
+			t.Fatalf("failed to apply thumbs migrations: %v", thumbsErr)
+		}
+		thumbsMigrator.Close()
+
+		// ATTACH thumbs.db
+		if _, err := db.ExecContext(context.Background(),
+			fmt.Sprintf("ATTACH DATABASE 'file:%s' AS thumbs", filepath.ToSlash(thumbsDBPath))); err != nil {
+			t.Fatalf("failed to attach thumbs: %v", err)
+		}
+
 		ctx := context.Background()
-		q, err := Prepare(ctx, db)
+		q, err := PrepareCustomQueries(ctx, db)
 		if err != nil {
 			t.Fatalf("Prepare() failed: %v", err)
 		}
@@ -1953,5 +1991,79 @@ func TestGetGalleryStatistics(t *testing.T) {
 	}
 	if stats.MaxUpdatedAt == nil {
 		t.Errorf("Expected MaxUpdatedAt to have a value, got NULL")
+	}
+}
+
+func TestCustomQueriesThumbsDB(t *testing.T) {
+	// This test requires thumbs.db to be ATTACHed as "thumbs".
+	// setupTestDB provides that attachment.
+	_, q, ctx := setupTestDB(t)
+
+	// Create test folder
+	pathID, err := q.UpsertFolderPathReturningID(ctx, "/test")
+	if err != nil {
+		t.Fatalf("UpsertFolderPathReturningID: %v", err)
+	}
+	folder, err := q.UpsertFolderReturningFolder(ctx, UpsertFolderReturningFolderParams{
+		PathID:    pathID,
+		Name:      "test",
+		CreatedAt: time.Now().Unix(),
+		UpdatedAt: time.Now().Unix(),
+	})
+	if err != nil {
+		t.Fatalf("UpsertFolderReturningFolder: %v", err)
+	}
+
+	// Create test file
+	filePath := "/test/test.jpg"
+	filePathID, err := q.UpsertFilePathReturningID(ctx, filePath)
+	if err != nil {
+		t.Fatalf("UpsertFilePathReturningID: %v", err)
+	}
+	file, err := q.UpsertFileReturningFile(ctx, UpsertFileReturningFileParams{
+		FolderID:  sql.NullInt64{Int64: folder.ID, Valid: true},
+		PathID:    filePathID,
+		Filename:  "test.jpg",
+		Width:     sql.NullInt64{Int64: 800, Valid: true},
+		Height:    sql.NullInt64{Int64: 600, Valid: true},
+		MimeType:  sql.NullString{String: "image/jpeg", Valid: true},
+		CreatedAt: time.Now().Unix(),
+		UpdatedAt: time.Now().Unix(),
+	})
+	if err != nil {
+		t.Fatalf("UpsertFileReturningFile: %v", err)
+	}
+
+	// Create thumbnail
+	thumbID, err := q.UpsertThumbnailReturningID(ctx, UpsertThumbnailReturningIDParams{
+		FileID:    file.ID,
+		SizeLabel: "test",
+		Width:     150,
+		Height:    150,
+		Format:    "jpeg",
+		CreatedAt: time.Now().Unix(),
+		UpdatedAt: time.Now().Unix(),
+	})
+	if err != nil {
+		t.Fatalf("UpsertThumbnailReturningID: %v", err)
+	}
+
+	// Test UpsertThumbnailBlob (uses thumbs.thumbnail_blobs)
+	blobData := []byte("fake-jpeg-data")
+	err = q.UpsertThumbnailBlob(ctx, UpsertThumbnailBlobParams{
+		ThumbnailID: thumbID,
+		Data:        blobData,
+	})
+	if err != nil {
+		t.Fatalf("UpsertThumbnailBlob: %v", err)
+	}
+
+	// Test GetThumbnailBlobDataByID (uses thumbs.thumbnail_blobs)
+	got, err := q.GetThumbnailBlobDataByID(ctx, thumbID)
+	if err != nil {
+		t.Fatalf("GetThumbnailBlobDataByID: %v", err)
+	}
+	if string(got) != string(blobData) {
+		t.Errorf("blob mismatch: got %q, want %q", got, blobData)
 	}
 }

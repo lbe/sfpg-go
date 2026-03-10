@@ -202,8 +202,7 @@ func TestSetDB(t *testing.T) {
 
 	defer app.cancel()
 
-	// Set the database path and initialize DB
-	app.dbPath = filepath.Join(app.dbDir, "sfpg.db")
+	// Initialize DB (setDB will set app.dbPaths)
 	app.setDB()
 
 	// Test that both dbConnPools are operational
@@ -273,7 +272,6 @@ func TestUnlockAccount(t *testing.T) {
 
 	defer app.cancel()
 
-	app.dbPath = filepath.Join(app.dbDir, "sfpg.db")
 	app.setDB()
 	defer func() {
 		_ = app.dbRoPool.Close()
@@ -342,7 +340,6 @@ func TestUnlockAccount_NonExistent(t *testing.T) {
 
 	defer app.cancel()
 
-	app.dbPath = filepath.Join(app.dbDir, "sfpg.db")
 	app.setDB()
 	defer func() {
 		_ = app.dbRoPool.Close()

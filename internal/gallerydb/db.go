@@ -117,9 +117,6 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getLoginAttemptStmt, err = db.PrepareContext(ctx, getLoginAttempt); err != nil {
 		return nil, fmt.Errorf("error preparing query GetLoginAttempt: %w", err)
 	}
-	if q.getThumbnailBlobDataByIDStmt, err = db.PrepareContext(ctx, getThumbnailBlobDataByID); err != nil {
-		return nil, fmt.Errorf("error preparing query GetThumbnailBlobDataByID: %w", err)
-	}
 	if q.getThumbnailExistsViewByIDStmt, err = db.PrepareContext(ctx, getThumbnailExistsViewByID); err != nil {
 		return nil, fmt.Errorf("error preparing query GetThumbnailExistsViewByID: %w", err)
 	}
@@ -173,9 +170,6 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.upsertLoginAttemptStmt, err = db.PrepareContext(ctx, upsertLoginAttempt); err != nil {
 		return nil, fmt.Errorf("error preparing query UpsertLoginAttempt: %w", err)
-	}
-	if q.upsertThumbnailBlobStmt, err = db.PrepareContext(ctx, upsertThumbnailBlob); err != nil {
-		return nil, fmt.Errorf("error preparing query UpsertThumbnailBlob: %w", err)
 	}
 	if q.upsertThumbnailReturningIDStmt, err = db.PrepareContext(ctx, upsertThumbnailReturningID); err != nil {
 		return nil, fmt.Errorf("error preparing query UpsertThumbnailReturningID: %w", err)
@@ -346,11 +340,6 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getLoginAttemptStmt: %w", cerr)
 		}
 	}
-	if q.getThumbnailBlobDataByIDStmt != nil {
-		if cerr := q.getThumbnailBlobDataByIDStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing getThumbnailBlobDataByIDStmt: %w", cerr)
-		}
-	}
 	if q.getThumbnailExistsViewByIDStmt != nil {
 		if cerr := q.getThumbnailExistsViewByIDStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getThumbnailExistsViewByIDStmt: %w", cerr)
@@ -441,11 +430,6 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing upsertLoginAttemptStmt: %w", cerr)
 		}
 	}
-	if q.upsertThumbnailBlobStmt != nil {
-		if cerr := q.upsertThumbnailBlobStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing upsertThumbnailBlobStmt: %w", cerr)
-		}
-	}
 	if q.upsertThumbnailReturningIDStmt != nil {
 		if cerr := q.upsertThumbnailReturningIDStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing upsertThumbnailReturningIDStmt: %w", cerr)
@@ -531,7 +515,6 @@ type Queries struct {
 	getIPTCKeywordsStmt                       *sql.Stmt
 	getInvalidFileByPathStmt                  *sql.Stmt
 	getLoginAttemptStmt                       *sql.Stmt
-	getThumbnailBlobDataByIDStmt              *sql.Stmt
 	getThumbnailExistsViewByIDStmt            *sql.Stmt
 	getThumbnailsByFileIDStmt                 *sql.Stmt
 	getXMPPropertiesByFileStmt                *sql.Stmt
@@ -550,7 +533,6 @@ type Queries struct {
 	upsertIPTCStmt                            *sql.Stmt
 	upsertInvalidFileStmt                     *sql.Stmt
 	upsertLoginAttemptStmt                    *sql.Stmt
-	upsertThumbnailBlobStmt                   *sql.Stmt
 	upsertThumbnailReturningIDStmt            *sql.Stmt
 	upsertXMPPropertyStmt                     *sql.Stmt
 	upsertXMPRawStmt                          *sql.Stmt
@@ -591,7 +573,6 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getIPTCKeywordsStmt:                       q.getIPTCKeywordsStmt,
 		getInvalidFileByPathStmt:                  q.getInvalidFileByPathStmt,
 		getLoginAttemptStmt:                       q.getLoginAttemptStmt,
-		getThumbnailBlobDataByIDStmt:              q.getThumbnailBlobDataByIDStmt,
 		getThumbnailExistsViewByIDStmt:            q.getThumbnailExistsViewByIDStmt,
 		getThumbnailsByFileIDStmt:                 q.getThumbnailsByFileIDStmt,
 		getXMPPropertiesByFileStmt:                q.getXMPPropertiesByFileStmt,
@@ -610,7 +591,6 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		upsertIPTCStmt:                            q.upsertIPTCStmt,
 		upsertInvalidFileStmt:                     q.upsertInvalidFileStmt,
 		upsertLoginAttemptStmt:                    q.upsertLoginAttemptStmt,
-		upsertThumbnailBlobStmt:                   q.upsertThumbnailBlobStmt,
 		upsertThumbnailReturningIDStmt:            q.upsertThumbnailReturningIDStmt,
 		upsertXMPPropertyStmt:                     q.upsertXMPPropertyStmt,
 		upsertXMPRawStmt:                          q.upsertXMPRawStmt,

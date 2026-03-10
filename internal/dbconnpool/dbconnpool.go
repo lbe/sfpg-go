@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -85,6 +86,11 @@ type Config struct {
 
 	// QueriesFunc is a function to instantiate a Queries object for a new connection.
 	QueriesFunc func(db gallerydb.DBTX) *gallerydb.CustomQueries
+
+	// ThumbsDBPath is the path to the thumbnail blob database (thumbs.db).
+	// When non-empty, each new connection will ATTACH this database as "thumbs"
+	// before preparing statements, enabling cross-database queries.
+	ThumbsDBPath string
 
 	// MonitorInterval specifies how often the connection maintenance monitor should run.
 	MonitorInterval time.Duration
@@ -201,6 +207,16 @@ func (p *DbSQLConnPool) newCpConn() (*CpConn, error) {
 	if err = conn.PingContext(p.ctx); err != nil {
 		conn.Close()
 		return nil, &ConnectionError{Op: "ping", Err: err}
+	}
+
+	// ATTACH the thumbs database on this connection if configured.
+	// The attachment is connection-scoped: each *sql.Conn requires its own ATTACH.
+	if p.Config.ThumbsDBPath != "" {
+		attachSQL := fmt.Sprintf("ATTACH DATABASE 'file:%s' AS thumbs", filepath.ToSlash(p.Config.ThumbsDBPath))
+		if _, err = conn.ExecContext(p.ctx, attachSQL); err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("attach thumbs database: %w", err)
+		}
 	}
 
 	queries, err := gallerydb.PrepareCustomQueries(p.ctx, conn)

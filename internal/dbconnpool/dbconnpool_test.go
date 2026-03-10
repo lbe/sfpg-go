@@ -942,3 +942,62 @@ func TestConnectionPoolInterfaceMethods(t *testing.T) {
 		t.Errorf("Get() after Close error = %v, want ErrPoolClosed", err)
 	}
 }
+
+func TestThumbsDBAttach(t *testing.T) {
+	tempDir := t.TempDir()
+	mainDBPath := filepath.Join(tempDir, "test.db")
+	thumbsDBPath := filepath.Join(tempDir, "thumbs.db")
+
+	// Initialize main database via migration
+	mainMigrator, err := migrations.NewMigrator(mainDBPath)
+	if err != nil {
+		t.Fatalf("NewMigrator for main DB: %v", err)
+	}
+	if upErr := mainMigrator.Up(); upErr != nil && upErr != migrate.ErrNoChange {
+		mainMigrator.Close()
+		t.Fatalf("main migrate up: %v", upErr)
+	}
+	mainMigrator.Close()
+
+	// Initialize thumbs.db via migration
+	m, err := migrations.NewThumbsMigrator(thumbsDBPath)
+	if err != nil {
+		t.Fatalf("NewThumbsMigrator: %v", err)
+	}
+	if upErr := m.Up(); upErr != nil && upErr != migrate.ErrNoChange {
+		m.Close()
+		t.Fatalf("thumbs migrate up: %v", upErr)
+	}
+	m.Close()
+
+	ctx := context.Background()
+	pool, err := NewDbSQLConnPool(ctx, mainDBPath,
+		Config{
+			DriverName:         "sqlite3",
+			MaxConnections:     1,
+			MinIdleConnections: 1,
+			ThumbsDBPath:       thumbsDBPath,
+		})
+	if err != nil {
+		t.Fatalf("NewDbSQLConnPool: %v", err)
+	}
+	defer pool.Close()
+
+	cpc, err := pool.Get()
+	if err != nil {
+		t.Fatalf("pool.Get: %v", err)
+	}
+	defer pool.Put(cpc)
+
+	// Verify thumbs schema is visible
+	var name string
+	err = cpc.Conn.QueryRowContext(ctx,
+		`SELECT name FROM thumbs.sqlite_master WHERE type='table' AND name='thumbnail_blobs'`,
+	).Scan(&name)
+	if err != nil {
+		t.Fatalf("thumbs.thumbnail_blobs not visible after ATTACH: %v", err)
+	}
+	if name != "thumbnail_blobs" {
+		t.Errorf("expected thumbnail_blobs, got %q", name)
+	}
+}

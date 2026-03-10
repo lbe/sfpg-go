@@ -34,6 +34,7 @@ func TestPoolReconfiguration_NoCloseWhileActive(t *testing.T) {
 	ctx := context.Background()
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "test.db")
+	thumbsDBPath := filepath.Join(tempDir, "thumbs.db")
 
 	// Run migrations
 	db, err := sql.Open("sqlite3", "file:"+filepath.ToSlash(dbPath))
@@ -65,13 +66,17 @@ func TestPoolReconfiguration_NoCloseWhileActive(t *testing.T) {
 	}
 	db.Close()
 
+	if migErr := migrateBlobsDB(thumbsDBPath); migErr != nil {
+		t.Fatalf("migrateBlobsDB failed: %v", migErr)
+	}
+
 	// Create initial pools with default config
 	cfg := config.DefaultConfig()
 	cfg.DBMaxPoolSize = 10
 	cfg.DBMinIdleConnections = 2
 
 	roDsn, rwDsn := configureDatabaseDSN(dbPath)
-	rwPool, roPool, err := createDatabasePools(ctx, roDsn, rwDsn, cfg)
+	rwPool, roPool, err := createDatabasePools(ctx, roDsn, rwDsn, thumbsDBPath, cfg)
 	if err != nil {
 		t.Fatalf("failed to create initial pools: %v", err)
 	}
@@ -122,7 +127,7 @@ func TestPoolReconfiguration_NoCloseWhileActive(t *testing.T) {
 	newCfg.DBMinIdleConnections = 5 // Change idle connections
 
 	// RecreatePoolsWithConfig should handle active connections gracefully
-	newRwPool, newRoPool, reconfigErr := RecreatePoolsWithConfig(ctx, dbPath, newCfg, rwPool, roPool)
+	newRwPool, newRoPool, reconfigErr := RecreatePoolsWithConfig(ctx, DatabasePaths{Main: dbPath, Thumbs: thumbsDBPath}, newCfg, rwPool, roPool)
 
 	// Check if any errors occurred in the holder goroutine
 	select {

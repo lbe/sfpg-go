@@ -9,19 +9,6 @@ import (
 	"context"
 )
 
-const getThumbnailBlobDataByID = `-- name: GetThumbnailBlobDataByID :one
-SELECT data
-  FROM thumbnail_blobs 
- WHERE thumbnail_id = ?
-`
-
-func (q *Queries) GetThumbnailBlobDataByID(ctx context.Context, thumbnailID int64) ([]byte, error) {
-	row := q.queryRow(ctx, q.getThumbnailBlobDataByIDStmt, getThumbnailBlobDataByID, thumbnailID)
-	var data []byte
-	err := row.Scan(&data)
-	return data, err
-}
-
 const getThumbnailExistsViewByID = `-- name: GetThumbnailExistsViewByID :one
 SELECT found 
   FROM thumbnail_exists_view
@@ -55,24 +42,6 @@ func (q *Queries) GetThumbnailsByFileID(ctx context.Context, fileID int64) (Thum
 		&i.UpdatedAt,
 	)
 	return i, err
-}
-
-const upsertThumbnailBlob = `-- name: UpsertThumbnailBlob :exec
-INSERT INTO thumbnail_blobs (thumbnail_id, data)
-VALUES (?, ?)
-    ON CONFLICT(thumbnail_id) 
-    DO UPDATE SET data = excluded.data
-            WHERE data IS NOT excluded.data
-`
-
-type UpsertThumbnailBlobParams struct {
-	ThumbnailID int64
-	Data        []byte
-}
-
-func (q *Queries) UpsertThumbnailBlob(ctx context.Context, arg UpsertThumbnailBlobParams) error {
-	_, err := q.exec(ctx, q.upsertThumbnailBlobStmt, upsertThumbnailBlob, arg.ThumbnailID, arg.Data)
-	return err
 }
 
 const upsertThumbnailReturningID = `-- name: UpsertThumbnailReturningID :one

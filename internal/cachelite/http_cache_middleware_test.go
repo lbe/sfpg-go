@@ -34,6 +34,7 @@ func createTestDBPool(t *testing.T) *dbconnpool.DbSQLConnPool {
 
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
+	thumbsDBPath := filepath.Join(dir, "thumbs.db")
 
 	d, err := iofs.New(migrations.FS, "migrations")
 	if err != nil {
@@ -48,6 +49,16 @@ func createTestDBPool(t *testing.T) *dbconnpool.DbSQLConnPool {
 	if migErr := m.Up(); migErr != nil && migErr != migrate.ErrNoChange {
 		t.Fatalf("failed to run migrations: %v", err)
 	}
+
+	m2, err := migrations.NewThumbsMigrator(thumbsDBPath)
+	if err != nil {
+		t.Fatalf("failed to create thumbs migrator: %v", err)
+	}
+	if thumbsErr := m2.Up(); thumbsErr != nil && thumbsErr != migrate.ErrNoChange {
+		m2.Close()
+		t.Fatalf("failed to run thumbs migrations: %v", thumbsErr)
+	}
+	m2.Close()
 
 	// Match production DSN from app.configureDatabaseDSN()
 	mmapSize := strconv.Itoa(39 * 1024 * 1024 * 1024)
@@ -70,6 +81,7 @@ func createTestDBPool(t *testing.T) *dbconnpool.DbSQLConnPool {
 		MinIdleConnections: 1,
 		ReadOnly:           false,
 		QueriesFunc:        gallerydb.NewCustomQueries,
+		ThumbsDBPath:       thumbsDBPath,
 	})
 	if err != nil {
 		t.Fatalf("failed to create test DB pool: %v", err)

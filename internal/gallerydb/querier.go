@@ -61,7 +61,6 @@ type Querier interface {
 	GetIPTCKeywords(ctx context.Context, fileID int64) ([]IptcKeyword, error)
 	GetInvalidFileByPath(ctx context.Context, path string) (InvalidFile, error)
 	GetLoginAttempt(ctx context.Context, username string) (LoginAttempt, error)
-	GetThumbnailBlobDataByID(ctx context.Context, thumbnailID int64) ([]byte, error)
 	GetThumbnailExistsViewByID(ctx context.Context, id int64) (bool, error)
 	GetThumbnailsByFileID(ctx context.Context, fileID int64) (Thumbnail, error)
 	GetXMPPropertiesByFile(ctx context.Context, fileID int64) ([]XmpProperty, error)
@@ -80,7 +79,6 @@ type Querier interface {
 	UpsertIPTC(ctx context.Context, arg UpsertIPTCParams) error
 	UpsertInvalidFile(ctx context.Context, arg UpsertInvalidFileParams) error
 	UpsertLoginAttempt(ctx context.Context, arg UpsertLoginAttemptParams) error
-	UpsertThumbnailBlob(ctx context.Context, arg UpsertThumbnailBlobParams) error
 	UpsertThumbnailReturningID(ctx context.Context, arg UpsertThumbnailReturningIDParams) (int64, error)
 	UpsertXMPProperty(ctx context.Context, arg UpsertXMPPropertyParams) error
 	UpsertXMPRaw(ctx context.Context, arg UpsertXMPRawParams) error

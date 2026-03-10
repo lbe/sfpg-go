@@ -26,6 +26,7 @@ func createTestDBPoolTB(tb testing.TB) *dbconnpool.DbSQLConnPool {
 	tb.Helper()
 	dir := tb.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
+	thumbsDBPath := filepath.Join(dir, "thumbs.db")
 	d, err := iofs.New(migrations.FS, "migrations")
 	if err != nil {
 		tb.Fatalf("failed to create migrations source: %v", err)
@@ -38,6 +39,16 @@ func createTestDBPoolTB(tb testing.TB) *dbconnpool.DbSQLConnPool {
 	if migErr := m.Up(); migErr != nil && migErr != migrate.ErrNoChange {
 		tb.Fatalf("failed to apply migrations: %v", err)
 	}
+	m2, err := migrations.NewThumbsMigrator(thumbsDBPath)
+	if err != nil {
+		tb.Fatalf("failed to create thumbs migrator: %v", err)
+	}
+	if thumbsErr := m2.Up(); thumbsErr != nil && thumbsErr != migrate.ErrNoChange {
+		m2.Close()
+		tb.Fatalf("failed to run thumbs migrations: %v", thumbsErr)
+	}
+	m2.Close()
+
 	mmapSize := strconv.Itoa(39 * 1024 * 1024 * 1024)
 	params := []string{
 		"_cache_size=10240", "_pragma=cache(shared)", "_pragma=journal_mode(WAL)",
@@ -47,7 +58,8 @@ func createTestDBPoolTB(tb testing.TB) *dbconnpool.DbSQLConnPool {
 	dsn := filepath.ToSlash(dbPath) + "?" + strings.Join(params, "&")
 	pool, err := dbconnpool.NewDbSQLConnPool(context.Background(), dsn, dbconnpool.Config{
 		DriverName: "sqlite", MaxConnections: 10, MinIdleConnections: 1, ReadOnly: false,
-		QueriesFunc: gallerydb.NewCustomQueries,
+		QueriesFunc:  gallerydb.NewCustomQueries,
+		ThumbsDBPath: thumbsDBPath,
 	})
 	if err != nil {
 		tb.Fatalf("failed to create test DB pool: %v", err)

@@ -134,7 +134,9 @@ func createTestService(t *testing.T) ConfigService {
 	ctx := context.Background()
 
 	// Use a temporary file-based database so both pools share the same database
-	tempDB := filepath.Join(t.TempDir(), "test.db")
+	tempDir := t.TempDir()
+	tempDB := filepath.Join(tempDir, "test.db")
+	thumbsDBPath := filepath.Join(tempDir, "thumbs.db")
 
 	// Run migrations on the database before creating pools
 	// Use simple DSN for migrations - no pragmas needed here
@@ -167,6 +169,16 @@ func createTestService(t *testing.T) ConfigService {
 	}
 	db.Close()
 
+	m2, err := migrations.NewThumbsMigrator(thumbsDBPath)
+	if err != nil {
+		t.Fatalf("failed to create thumbs migrator: %v", err)
+	}
+	if thumbsErr := m2.Up(); thumbsErr != nil && thumbsErr != migrate.ErrNoChange {
+		m2.Close()
+		t.Fatalf("failed to run thumbs migrations: %v", thumbsErr)
+	}
+	m2.Close()
+
 	// Create database pools using file-backed database
 	// WAL mode is persistent, so it's already set from previous connections
 	roDSN := "file:" + filepath.ToSlash(tempDB) + "?mode=ro"
@@ -178,6 +190,7 @@ func createTestService(t *testing.T) ConfigService {
 		MinIdleConnections: 1,
 		ReadOnly:           true,
 		QueriesFunc:        gallerydb.NewCustomQueries,
+		ThumbsDBPath:       thumbsDBPath,
 	})
 	if err != nil {
 		t.Fatalf("failed to create RO pool: %v", err)
@@ -190,6 +203,7 @@ func createTestService(t *testing.T) ConfigService {
 		MinIdleConnections: 1,
 		ReadOnly:           false,
 		QueriesFunc:        gallerydb.NewCustomQueries,
+		ThumbsDBPath:       thumbsDBPath,
 	})
 	if err != nil {
 		t.Fatalf("failed to create RW pool: %v", err)

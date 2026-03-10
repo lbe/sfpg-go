@@ -45,8 +45,8 @@ func TestSetDirectories(t *testing.T) {
 	}
 
 	expectedDBPath := filepath.Join(dbDir, "sfpg.db")
-	if dbPath != expectedDBPath {
-		t.Errorf("expected dbPath to be %q, got %q", expectedDBPath, dbPath)
+	if dbPath.Main != expectedDBPath {
+		t.Errorf("expected dbPath.Main to be %q, got %q", expectedDBPath, dbPath.Main)
 	}
 }
 
@@ -124,7 +124,9 @@ func TestCreateDatabasePools(t *testing.T) {
 	ctx := context.Background()
 	// Use a temporary file database instead of :memory: so migrations can be applied
 	// and shared between the RO and RW pools
-	tempDB := filepath.Join(t.TempDir(), "test.db")
+	tempDir := t.TempDir()
+	tempDB := filepath.Join(tempDir, "test.db")
+	thumbsDBPath := filepath.Join(tempDir, "thumbs.db")
 
 	// Run migrations first (use simple DSN, no pragmas needed for migration)
 	db, err := sql.Open("sqlite3", "file:"+filepath.ToSlash(tempDB))
@@ -156,12 +158,17 @@ func TestCreateDatabasePools(t *testing.T) {
 	}
 	db.Close()
 
+	// Run thumbs migration (required for CustomQueries that reference thumbs.thumbnail_blobs)
+	if migErr := migrateBlobsDB(thumbsDBPath); migErr != nil {
+		t.Fatalf("migrateBlobsDB failed: %v", migErr)
+	}
+
 	// Now create the pools with the migrated database
 	// Use simple DSNs without WAL - the test just needs to verify pool creation
 	ro := "file:" + filepath.ToSlash(tempDB) + "?mode=ro"
 	rw := "file:" + filepath.ToSlash(tempDB) + "?_txlock=immediate&mode=rwc"
 
-	dbRwPool, dbRoPool, err := createDatabasePools(ctx, ro, rw, nil)
+	dbRwPool, dbRoPool, err := createDatabasePools(ctx, ro, rw, thumbsDBPath, nil)
 	if err != nil {
 		t.Fatalf("createDatabasePools failed: %v", err)
 	}
@@ -191,13 +198,17 @@ func TestEnsureRootFolderExists(t *testing.T) {
 	ctx := context.Background()
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "sfpg.db")
+	thumbsDBPath := filepath.Join(tempDir, "thumbs.db")
 
 	if err := migrateDB(dbPath); err != nil {
 		t.Fatalf("migrateDB failed: %v", err)
 	}
+	if err := migrateBlobsDB(thumbsDBPath); err != nil {
+		t.Fatalf("migrateBlobsDB failed: %v", err)
+	}
 
 	ro, rw := configureDatabaseDSN(dbPath)
-	dbRwPool, dbRoPool, err := createDatabasePools(ctx, ro, rw, nil)
+	dbRwPool, dbRoPool, err := createDatabasePools(ctx, ro, rw, thumbsDBPath, nil)
 	if err != nil {
 		t.Fatalf("createDatabasePools failed: %v", err)
 	}
@@ -229,11 +240,16 @@ func TestSchedulePeriodicOptimization_Smoke(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Plain :memory: is sufficient - this test only verifies scheduling works
+	// :memory: for main DB; thumbs.db must be file-based for ATTACH (CustomQueries need thumbs.thumbnail_blobs)
+	thumbsDBPath := filepath.Join(t.TempDir(), "thumbs.db")
+	if err := migrateBlobsDB(thumbsDBPath); err != nil {
+		t.Fatalf("migrateBlobsDB failed: %v", err)
+	}
+
 	ro := ":memory:"
 	rw := ":memory:"
 
-	dbRwPool, dbRoPool, err := createDatabasePools(ctx, ro, rw, nil)
+	dbRwPool, dbRoPool, err := createDatabasePools(ctx, ro, rw, thumbsDBPath, nil)
 	if err != nil {
 		t.Fatalf("createDatabasePools failed: %v", err)
 	}

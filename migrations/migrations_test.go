@@ -86,3 +86,32 @@ func TestMigration_AddETagConfig(t *testing.T) {
 	}
 	t.Logf("etag_version value: %s", value)
 }
+
+func TestThumbsMigration(t *testing.T) {
+	dbfile := filepath.Join(t.TempDir(), "test_thumbs.db")
+	migrator, err := NewThumbsMigrator(dbfile)
+	if err != nil {
+		t.Fatalf("NewThumbsMigrator: %v", err)
+	}
+	defer migrator.Close()
+
+	if upErr := migrator.Up(); upErr != nil && upErr.Error() != "no change" {
+		t.Fatalf("thumbs Up: %v", err)
+	}
+
+	db, err := sql.Open("sqlite3", dbfile)
+	if err != nil {
+		t.Fatalf("open thumbs db: %v", err)
+	}
+	defer db.Close()
+
+	var name string
+	err = db.QueryRowContext(context.Background(),
+		`SELECT name FROM sqlite_master WHERE type='table' AND name='thumbnail_blobs'`).Scan(&name)
+	if err != nil {
+		t.Fatalf("thumbnail_blobs table not found: %v", err)
+	}
+	if name != "thumbnail_blobs" {
+		t.Errorf("expected thumbnail_blobs, got %s", name)
+	}
+}

@@ -741,8 +741,8 @@ func TestIntegration_ConfigPersistence_LoadFromOptDoesNotOverrideWithDefaults(t 
 		t.Errorf("expected run_file_discovery='false' in DB, got '%s'", value)
 	}
 
-	// Save database path and root dir before shutdown
-	dbPath := app1.dbPath
+	// Save database paths and root dir before shutdown
+	dbPaths := app1.dbPaths
 	rootDir := app1.rootDir
 
 	// Shutdown first app
@@ -759,7 +759,7 @@ func TestIntegration_ConfigPersistence_LoadFromOptDoesNotOverrideWithDefaults(t 
 		RunFileDiscovery:  getopt.OptBool{Bool: true, IsSet: false}, // Not set - should not override DB
 	}
 	app2 := New(opt, "x.y.z")
-	app2.dbPath = dbPath
+	app2.dbPaths = dbPaths
 	app2.setRootDir(&rootDir)
 	app2.setDB()
 	app2.setConfigDefaults()
@@ -813,8 +813,8 @@ func TestIntegration_ConfigPrecedence(t *testing.T) {
 	}
 
 	// Step 2: Create new app - database value should be loaded
-	// Save DB path before shutdown
-	dbPath := app1.dbPath
+	// Save DB paths before shutdown
+	dbPaths := app1.dbPaths
 	rootDir := app1.rootDir
 	app1.Shutdown()
 
@@ -823,7 +823,7 @@ func TestIntegration_ConfigPrecedence(t *testing.T) {
 		SessionSecret: getopt.OptString{String: "this-is-a-test-secret", IsSet: true},
 	}
 	app2 := New(opt, "x.y.z")
-	app2.dbPath = dbPath
+	app2.dbPaths = dbPaths
 	app2.setRootDir(&rootDir)
 	app2.setDB()
 	app2.setConfigDefaults()
@@ -953,8 +953,8 @@ func TestIntegration_ConfigLoadsOnStartup(t *testing.T) {
 		t.Fatalf("failed to set config in DB: %v", err)
 	}
 
-	// Save DB path before shutdown
-	dbPath := app1.dbPath
+	// Save DB paths before shutdown
+	dbPaths := app1.dbPaths
 	rootDir := app1.rootDir
 	app1.Shutdown()
 
@@ -963,7 +963,7 @@ func TestIntegration_ConfigLoadsOnStartup(t *testing.T) {
 		SessionSecret: getopt.OptString{String: "this-is-a-test-secret", IsSet: true},
 	}
 	app2 := New(opt, "x.y.z")
-	app2.dbPath = dbPath
+	app2.dbPaths = dbPaths
 	app2.setRootDir(&rootDir)
 	app2.setDB()
 	app2.setConfigDefaults()
