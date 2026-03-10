@@ -766,7 +766,12 @@ func TestWriteFileInTx(t *testing.T) {
 	}
 
 	// Begin transaction and call WriteFileInTx
-	tx, err := rwPool.DB().BeginTx(ctx, nil)
+	connRW, err := rwPool.Get()
+	if err != nil {
+		t.Fatalf("Get RW conn: %v", err)
+	}
+	defer rwPool.Put(connRW)
+	tx, err := connRW.Conn.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginTx: %v", err)
 	}

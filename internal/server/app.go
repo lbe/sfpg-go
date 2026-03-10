@@ -320,7 +320,12 @@ func (app *App) setDB() {
 	app.logDBPoolConfiguredVsEffective("setDB", configuredMax, configuredMinIdle)
 
 	// Initialize unified WriteBatcher for all high-volume writes
-	// Runs in parallel with old batchers during migration
+	connRW, err := app.dbRwPool.Get()
+	if err != nil {
+		slog.Error("failed to get connection from RW pool", "err", err)
+		panic("main")
+	}
+	defer app.dbRwPool.Put(connRW)
 	app.writeBatcher, err = writebatcher.New[BatchedWrite](app.ctx, writebatcher.Config[BatchedWrite]{
 		MaxBatchSize:  100,             // Increased for better throughput during preloading
 		MaxBatchBytes: 8 * 1024 * 1024, // 8MB ceiling
@@ -330,7 +335,7 @@ func (app *App) setDB() {
 			return bw.Size()
 		},
 		BeginTx: func(ctx context.Context) (*sql.Tx, error) {
-			return app.dbRwPool.DB().BeginTx(ctx, nil)
+			return connRW.Conn.BeginTx(ctx, nil)
 		},
 		Flush: app.flushBatchedWrites,
 		OnSuccess: func(batch []BatchedWrite) {
@@ -609,6 +614,13 @@ func (app *App) reconfigurePoolsFromConfig() error {
 	app.configService = config.NewService(app.dbRwPool, app.dbRoPool)
 
 	// Reinitialize WriteBatcher with new pool references
+	connRW, err := app.dbRwPool.Get()
+	if err != nil {
+		slog.Error("failed to get connection from RW pool", "err", err)
+		panic("main")
+	}
+	defer app.dbRwPool.Put(connRW)
+
 	var rerr error
 	oldBatcher := app.writeBatcher
 	app.writeBatcher, rerr = writebatcher.New[BatchedWrite](app.ctx, writebatcher.Config[BatchedWrite]{
@@ -620,7 +632,7 @@ func (app *App) reconfigurePoolsFromConfig() error {
 			return bw.Size()
 		},
 		BeginTx: func(ctx context.Context) (*sql.Tx, error) {
-			return app.dbRwPool.DB().BeginTx(ctx, nil)
+			return connRW.Conn.BeginTx(ctx, nil)
 		},
 		Flush: app.flushBatchedWrites,
 		OnSuccess: func(batch []BatchedWrite) {
