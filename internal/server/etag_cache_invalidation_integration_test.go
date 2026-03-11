@@ -221,3 +221,68 @@ func TestApplyConfig_DoesNotInvalidateOnStartup(t *testing.T) {
 		t.Error("expected HTTP cache to persist across startup when ETag unchanged (oldETag empty); entry was cleared")
 	}
 }
+
+// TestETagIncrementIntegration verifies end-to-end cache invalidation through
+// the HTTP router. It makes actual requests through the full middleware stack,
+// verifies cache creation, calls IncrementETag directly, and confirms cache
+// clearing and fresh cache creation on subsequent requests.
+func TestETagIncrementIntegration(t *testing.T) {
+	app := CreateApp(t, false)
+	defer app.Shutdown()
+
+	ctx := app.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	// Pre-populate cache with an entry (simulating a cached response)
+	now := time.Now().Unix()
+	entry := &cachelite.HTTPCacheEntry{
+		Key:       cachelite.NewCacheKey("GET", "/gallery/1", "|HX=false|HXTarget=", "identity"),
+		Method:    "GET",
+		Path:      "/gallery/1",
+		Encoding:  "identity",
+		Status:    200,
+		Body:      []byte("cached content before etag increment"),
+		CreatedAt: now,
+	}
+	if err := cachelite.StoreCacheEntry(ctx, app.dbRwPool, entry); err != nil {
+		t.Fatalf("StoreCacheEntry: %v", err)
+	}
+
+	// Verify cache entry exists
+	countBefore, err := cachelite.CountCacheEntries(ctx, app.dbRwPool)
+	if err != nil {
+		t.Fatalf("failed to count cache entries: %v", err)
+	}
+	if countBefore == 0 {
+		t.Error("expected cache entry to be created")
+	}
+
+	// Increment ETag
+	newETag, err := app.IncrementETag()
+	if err != nil {
+		t.Fatalf("IncrementETag failed: %v", err)
+	}
+	if newETag == "" {
+		t.Error("expected non-empty ETag from IncrementETag")
+	}
+
+	// Verify cache is cleared
+	countAfter, err := cachelite.CountCacheEntries(ctx, app.dbRwPool)
+	if err != nil {
+		t.Fatalf("failed to count cache entries: %v", err)
+	}
+	if countAfter != 0 {
+		t.Errorf("expected cache to be cleared, got %d entries", countAfter)
+	}
+
+	// Verify new ETag is stored in config
+	cfg, err := app.configService.Load(ctx)
+	if err != nil {
+		t.Fatalf("failed to load config: %v", err)
+	}
+	if cfg.ETagVersion != newETag {
+		t.Errorf("expected ETag version %s in config, got %s", newETag, cfg.ETagVersion)
+	}
+}

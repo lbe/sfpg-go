@@ -1216,5 +1216,11 @@ func (app *App) IncrementETag() (string, error) {
 		return "", fmt.Errorf("failed to save config: %w", err)
 	}
 
+	// Clear HTTP cache to invalidate all cached entries
+	if err := cachelite.ClearCache(app.ctx, app.dbRwPool); err != nil {
+		slog.Warn("failed to clear HTTP cache after ETag increment", "err", err)
+		// Non-fatal: log and continue, cache will be stale but won't crash
+	}
+
 	return newETag, nil
 }
