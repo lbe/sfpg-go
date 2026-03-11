@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"database/sql" // Added for template filesystem
+	"errors"
 	"fmt"
 	"html/template"
 	"io/fs"
@@ -28,6 +29,7 @@ import (
 	"github.com/lbe/sfpg-go/internal/queue"
 	"github.com/lbe/sfpg-go/internal/scheduler"
 	"github.com/lbe/sfpg-go/internal/server/auth"
+	"github.com/lbe/sfpg-go/internal/server/cachebatch"
 	"github.com/lbe/sfpg-go/internal/server/cachepreload"
 	"github.com/lbe/sfpg-go/internal/server/config"
 	"github.com/lbe/sfpg-go/internal/server/database"
@@ -36,6 +38,7 @@ import (
 	"github.com/lbe/sfpg-go/internal/server/interfaces"
 	"github.com/lbe/sfpg-go/internal/server/logging"
 	"github.com/lbe/sfpg-go/internal/server/metrics"
+	"github.com/lbe/sfpg-go/internal/server/modulestate"
 	"github.com/lbe/sfpg-go/internal/server/session"
 	"github.com/lbe/sfpg-go/internal/server/ui"
 	"github.com/lbe/sfpg-go/internal/workerpool"
@@ -104,9 +107,11 @@ type App struct {
 	serverHandlers      *handlers.ServerHandlers
 	themeHandlers       *handlers.ThemeHandlers
 	preloadManager      *cachepreload.PreloadManager
+	batchLoadManager    *cachebatch.Manager
 	writeBatcher        *writebatcher.WriteBatcher[BatchedWrite]
-	metricsCollector    *metrics.Collector // Centralized metrics collector for dashboard
-	version             string             // Application version for display in UI and logs
+	metricsCollector    *metrics.Collector   // Centralized metrics collector for dashboard
+	moduleStateService  *modulestate.Service // DB-backed module state (discovery active, etc.)
+	version             string               // Application version for display in UI and logs
 }
 
 // New creates and initializes a new App instance. It sets up the application
@@ -390,6 +395,9 @@ func (app *App) setDB() {
 
 	// Initialize AuthService
 	app.authService = auth.NewService(&loginStoreAdapter{app: app})
+
+	// Initialize ModuleStateService (discovery active/inactive for batch load guard)
+	app.moduleStateService = modulestate.NewService(app.dbRwPool)
 
 	// Keep rebuild logic
 	if app.authHandlers != nil {
@@ -731,10 +739,62 @@ func (app *App) applyConfig() {
 	}
 }
 
-// Shutdown gracefully shuts down the application. It cancels the main context,
-// waits for background goroutines and the worker pool to finish, closes
-// database connections, and closes the log file.
+// startCacheBatchLoad attempts to start cache batch load. Returns blocked=true when
+// discovery is active (caller should return 409). Starts the run in a goroutine on success.
+func (app *App) startCacheBatchLoad() (handlers.StartCacheBatchLoadResult, error) {
+	app.ctxMu.RLock()
+	ctx := app.ctx
+	app.ctxMu.RUnlock()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	if app.moduleStateService != nil {
+		active, err := app.moduleStateService.IsActive(ctx, "discovery")
+		if err != nil {
+			return handlers.StartCacheBatchLoadResult{}, err
+		}
+		if active {
+			return handlers.StartCacheBatchLoadResult{
+				Blocked: true,
+				Message: "Cache batch load blocked: discovery active",
+			}, nil
+		}
+	}
+
+	if app.batchLoadManager == nil {
+		return handlers.StartCacheBatchLoadResult{
+			Blocked: false,
+			Message: "Cache batch load not available",
+		}, nil
+	}
+
+	mgr := app.batchLoadManager
+	go func() {
+		if err := mgr.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			slog.Warn("cache batch load run failed", "err", err)
+		}
+	}()
+
+	return handlers.StartCacheBatchLoadResult{
+		Blocked: false,
+		Message: "Cache batch load started",
+	}, nil
+}
+
+// Shutdown gracefully shuts down the application. It drains the WriteBatcher
+// first, then cancels the main context, waits for background goroutines and
+// the worker pool to finish, closes database connections, and closes the log
+// file.
 func (app *App) Shutdown() {
+	// Close WriteBatcher first so it drains and flushes pending cache writes
+	// before we cancel context or close database pools.
+	if app.writeBatcher != nil {
+		if err := app.writeBatcher.Close(); err != nil {
+			slog.Error("error closing write batcher", "err", err)
+		}
+	}
+
 	// Signal everything to stop
 	if app.cancel != nil {
 		app.cancel()
@@ -1140,6 +1200,23 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 		return fmt.Errorf("build handlers: %w", err)
 	}
 
+	// Create batch load manager and wire to metrics (requires buildHandlers for getRouter)
+	if cacheEnabled && app.moduleStateService != nil {
+		app.batchLoadManager = cachebatch.NewManager(cachebatch.Config{
+			GetQueries: func() (cachebatch.BatchLoadQueries, func()) {
+				cpc, err := app.dbRoPool.Get()
+				if err != nil {
+					return nil, nil
+				}
+				return cpc.Queries, func() { app.dbRoPool.Put(cpc) }
+			},
+			GetHandler:         app.getRouter,
+			GetETagVersion:     app.GetETagVersion,
+			ModuleStateService: app.moduleStateService,
+		})
+		app.metricsCollector.SetCacheBatchLoad(&cacheBatchLoadAdapter{m: app.batchLoadManager})
+	}
+
 	slog.Info("Calling app.Serve()")
 	if err := app.Serve(); err != nil {
 		slog.Error("server error", "err", err)
@@ -1223,4 +1300,99 @@ func (app *App) IncrementETag() (string, error) {
 	}
 
 	return newETag, nil
+}
+
+// InitForBatchLoad performs minimal initialization for cache batch load CLI.
+// Sets root dir, opens DB pools, loads config, initializes HTTP cache, builds handler
+// chain. No server start, no discovery, no worker pool.
+func (app *App) InitForBatchLoad(opt getopt.Opt) error {
+	app.setRootDir(nil)
+	app.setupBootstrapLogging()
+
+	app.setDB()
+	app.setConfigDefaults()
+	if err := app.loadConfig(); err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	if err := app.reconfigurePoolsFromConfig(); err != nil {
+		return fmt.Errorf("reconfigure pools: %w", err)
+	}
+	app.applyConfig()
+	app.initializeHTTPCache()
+
+	routes := []string{"/gallery/", "/lightbox/", "/info/folder/", "/info/image/"}
+	if app.cacheMW != nil {
+		routes = app.cacheMW.Config().CacheableRoutes
+	}
+	app.preloadManager = cachepreload.NewPreloadManager(routes, false)
+	app.preloadManager.Configure(cachepreload.PreloadConfig{
+		TaskTracker:    &cachepreload.TaskTracker{},
+		SessionTracker: &cachepreload.SessionTracker{},
+		DBRoPool:       app.dbRoPool,
+		GetQueries:     app.getHandlerQueries,
+		GetHandler:     app.getRouter,
+		GetETagVersion: app.GetETagVersion,
+		Metrics:        &cachepreload.PreloadMetrics{},
+	})
+
+	app.processingStats = &files.ProcessingStats{}
+	app.ensureSessionAndRestart()
+	if err := app.buildHandlers(web.FS); err != nil {
+		return fmt.Errorf("build handlers: %w", err)
+	}
+
+	app.configMu.RLock()
+	cacheEnabled := app.config != nil && app.config.EnableHTTPCache
+	app.configMu.RUnlock()
+
+	if cacheEnabled && app.moduleStateService != nil {
+		app.batchLoadManager = cachebatch.NewManager(cachebatch.Config{
+			GetQueries: func() (cachebatch.BatchLoadQueries, func()) {
+				cpc, err := app.dbRoPool.Get()
+				if err != nil {
+					return nil, nil
+				}
+				return cpc.Queries, func() { app.dbRoPool.Put(cpc) }
+			},
+			GetHandler:         app.getRouter,
+			GetETagVersion:     app.GetETagVersion,
+			ModuleStateService: app.moduleStateService,
+		})
+	}
+
+	return nil
+}
+
+// RunCacheBatchLoad runs the batch load and returns the exit code: 0 success, 1 error, 2 blocked.
+func (app *App) RunCacheBatchLoad() int {
+	app.ctxMu.RLock()
+	ctx := app.ctx
+	app.ctxMu.RUnlock()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	if app.batchLoadManager == nil {
+		slog.Warn("cache batch load not available (HTTP cache disabled or not initialized)")
+		return 1
+	}
+
+	err := app.batchLoadManager.Run(ctx)
+	if errors.Is(err, cachebatch.ErrDiscoveryActive) {
+		slog.Warn("cache batch load blocked", "reason", "discovery active")
+		return 2
+	}
+	if err != nil {
+		slog.Error("cache batch load failed", "err", err)
+		return 1
+	}
+
+	m := app.batchLoadManager.Metrics().Snapshot()
+	slog.Info("cache batch load completed",
+		"total", m.TargetsTotal,
+		"scheduled", m.TargetsScheduled,
+		"completed", m.TargetsCompleted,
+		"failed", m.TargetsFailed,
+		"skipped", m.TargetsSkipped)
+	return 0
 }

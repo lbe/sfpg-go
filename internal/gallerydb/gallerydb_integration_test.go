@@ -199,6 +199,35 @@ func TestFolderAndFileQueries(t *testing.T) {
 		t.Errorf("Expected mime_type to be 'image/jpeg', got %v", retrievedFile.MimeType)
 	}
 
+	// 4b. Verify GetBatchLoadTargets returns expected targets in folders-first order
+	targets, err := q.GetBatchLoadTargets(ctx)
+	if err != nil {
+		t.Fatalf("GetBatchLoadTargets failed: %v", err)
+	}
+	// Expect: gallery for root+child, info/folder for root+child, info/image for file, lightbox for file
+	// Order: gallery (0), info/folder (1), info/image (2), lightbox (3), then by path
+	wantPaths := []string{
+		"/gallery/" + fmt.Sprint(rootFolder.ID),
+		"/gallery/" + fmt.Sprint(childFolder.ID),
+		"/info/folder/" + fmt.Sprint(rootFolder.ID),
+		"/info/folder/" + fmt.Sprint(childFolder.ID),
+		"/info/image/" + fmt.Sprint(file.ID),
+		"/lightbox/" + fmt.Sprint(file.ID),
+	}
+	if len(targets) != len(wantPaths) {
+		t.Errorf("GetBatchLoadTargets: got %d targets, want %d; got=%v", len(targets), len(wantPaths), targets)
+	} else {
+		for i, w := range wantPaths {
+			if targets[i].Path != w {
+				t.Errorf("GetBatchLoadTargets[%d]: path=%q, want %q", i, targets[i].Path, w)
+			}
+			if targets[i].Htmx != "true" || targets[i].HxTarget == "" || targets[i].Encoding != "gzip" {
+				t.Errorf("GetBatchLoadTargets[%d]: unexpected metadata htmx=%q hx_target=%q encoding=%q",
+					i, targets[i].Htmx, targets[i].HxTarget, targets[i].Encoding)
+			}
+		}
+	}
+
 	// 5. Verify view using GetFileViewByID
 	// Note: GetFileViewByPath was removed from gallerydb
 	fileView, err := q.GetFileViewByID(ctx, file.ID)

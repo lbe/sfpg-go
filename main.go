@@ -70,6 +70,19 @@ func main() {
 		os.Exit(0)
 	}
 
+	// Handle --cache-batch-load flag - exit after running batch load
+	if opt.CacheBatchLoad.IsSet && opt.CacheBatchLoad.Bool {
+		app := server.New(opt, Version)
+		err := app.InitForBatchLoad(opt)
+		if err != nil {
+			slog.Error("failed to initialize app for cache batch load", "err", err)
+			os.Exit(1)
+		}
+		code := app.RunCacheBatchLoad()
+		app.Shutdown()
+		os.Exit(code)
+	}
+
 	app := server.New(opt, Version)
 	defer func() {
 		if r := recover(); r != nil {

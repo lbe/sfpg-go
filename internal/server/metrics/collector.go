@@ -158,6 +158,24 @@ type HTTPCacheSource interface {
 	GetConfig() HTTPCacheConfig
 }
 
+// CacheBatchLoadMetrics holds statistics from the cache batch load manager.
+type CacheBatchLoadMetrics struct {
+	TargetsTotal     int64     `json:"targets_total"`
+	TargetsScheduled int64     `json:"targets_scheduled"`
+	TargetsCompleted int64     `json:"targets_completed"`
+	TargetsFailed    int64     `json:"targets_failed"`
+	TargetsSkipped   int64     `json:"targets_skipped"`
+	InFlight         int64     `json:"in_flight"`
+	IsRunning        bool      `json:"is_running"`
+	LastStartedAt    time.Time `json:"last_started_at"`
+	LastFinishedAt   time.Time `json:"last_finished_at"`
+}
+
+// CacheBatchLoadSource provides metrics from the cache batch load manager.
+type CacheBatchLoadSource interface {
+	GetMetrics() CacheBatchLoadMetrics
+}
+
 // HTTPCacheConfig holds HTTP cache configuration for metrics.
 type HTTPCacheConfig struct {
 	MaxEntrySize int64
@@ -171,6 +189,7 @@ type Snapshot struct {
 	WriteBatcher   WriteBatcherMetrics   `json:"writebatcher"`
 	WorkerPool     WorkerPoolMetrics     `json:"worker_pool"`
 	CachePreload   CachePreloadMetrics   `json:"cache_preload"`
+	CacheBatchLoad CacheBatchLoadMetrics `json:"cache_batch_load"`
 	FileProcessing FileProcessingMetrics `json:"file_processing"`
 	HTTPCache      HTTPCacheMetrics      `json:"http_cache"`
 	Modules        []ModuleStatus        `json:"modules"`
@@ -185,6 +204,7 @@ type Collector struct {
 	writeBatcher     WriteBatcherSource
 	workerPool       WorkerPoolSource
 	cachePreload     CachePreloadSource
+	cacheBatchLoad   CacheBatchLoadSource
 	fileProcessor    FileProcessorSource
 	httpCache        HTTPCacheSource
 	queueLength      func() int
@@ -226,6 +246,13 @@ func (c *Collector) SetCachePreload(src CachePreloadSource) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.cachePreload = src
+}
+
+// SetCacheBatchLoad sets the CacheBatchLoad source.
+func (c *Collector) SetCacheBatchLoad(src CacheBatchLoadSource) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.cacheBatchLoad = src
 }
 
 // SetFileProcessor sets the FileProcessor source.
@@ -335,6 +362,11 @@ func (c *Collector) Collect(ctx context.Context) Snapshot {
 			TotalDuration:  cpSnapshot.TotalDuration,
 			IsEnabled:      c.cachePreload.IsEnabled(),
 		}
+	}
+
+	if c.cacheBatchLoad != nil {
+		cbSnapshot := c.cacheBatchLoad.GetMetrics()
+		snapshot.CacheBatchLoad = cbSnapshot
 	}
 
 	if c.fileProcessor != nil {

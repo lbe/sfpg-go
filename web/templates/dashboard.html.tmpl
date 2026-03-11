@@ -373,8 +373,8 @@
       </div>
     </div>
 
-    <!-- Cache Preload & HTTP Cache -->
-    <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
+    <!-- Cache Preload, Cache Batch Load & HTTP Cache -->
+    <div class="grid grid-cols-1 gap-6 lg:grid-cols-3">
       <!-- Cache Preload -->
       <div class="card bg-base-200 border shadow-sm">
         <div class="card-body">
@@ -439,6 +439,77 @@
         </div>
       </div>
 
+      <!-- Cache Batch Load -->
+      <div class="card bg-base-200 border shadow-sm">
+        <div class="card-body">
+          <div class="flex items-center justify-between">
+            <h3
+              class="card-title flex items-center gap-2 text-base font-semibold"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                class="h-5 w-5"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                />
+              </svg>
+              Cache Batch Load
+            </h3>
+            {{ if .Metrics.CacheBatchLoad.IsRunning }}
+              <span class="badge badge-success badge-sm animate-pulse"
+                >Running</span
+              >
+            {{ else }}
+              <span class="badge badge-ghost badge-sm">Idle</span>
+            {{ end }}
+          </div>
+          <div class="stats stats-vertical bg-base-100 shadow-sm">
+            <div class="stat">
+              <div class="stat-title text-xs">Progress</div>
+              <div class="stat-value text-base font-semibold">
+                {{ formatCount .Metrics.CacheBatchLoad.TargetsCompleted }} /
+                {{ formatCount .Metrics.CacheBatchLoad.TargetsScheduled }}
+              </div>
+              <div class="stat-desc text-xs">
+                {{ formatCount .Metrics.CacheBatchLoad.TargetsTotal }} total
+              </div>
+              <progress
+                class="progress progress-primary mt-2 w-full"
+                value="{{ cacheBatchLoadProgressPercent .Metrics.CacheBatchLoad }}"
+                max="100"
+              ></progress>
+            </div>
+          </div>
+          <div
+            class="stats stats-vertical bg-base-100 sm:stats-horizontal shadow-sm"
+          >
+            <div class="stat">
+              <div class="stat-title text-xs">Failed</div>
+              <div
+                class="stat-value {{ if gt .Metrics.CacheBatchLoad.TargetsFailed 0 }}
+                  text-error
+                {{ end }} text-base font-semibold"
+              >
+                {{ formatCount .Metrics.CacheBatchLoad.TargetsFailed }}
+              </div>
+            </div>
+            <div class="stat">
+              <div class="stat-title text-xs">Skipped</div>
+              <div class="stat-value text-base font-semibold">
+                {{ formatCount .Metrics.CacheBatchLoad.TargetsSkipped }}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- HTTP Cache -->
       <div class="card bg-base-200 border shadow-sm">
         <div class="card-body">
@@ -469,27 +540,33 @@
             {{ end }}
           </div>
           <div
-            class="stats stats-vertical bg-base-100 sm:stats-horizontal shadow-sm"
+            class="stats stats-vertical bg-base-100 grid w-full grid-cols-2 gap-2 shadow-sm sm:grid-cols-2"
           >
-            <div class="stat">
+            <div class="stat place-items-start py-2">
+              <div class="stat-title text-xs">Entries</div>
+              <div class="stat-value text-base font-semibold">
+                {{ formatCount .Metrics.HTTPCache.EntryCount }}
+              </div>
+            </div>
+            <div class="stat place-items-start py-2">
               <div class="stat-title text-xs">Size</div>
               <div class="stat-value text-base font-semibold">
                 {{ formatBytesInt64 .Metrics.HTTPCache.SizeBytes }}
               </div>
             </div>
-            <div class="stat">
+            <div class="stat place-items-start py-2">
               <div class="stat-title text-xs">Max Total</div>
               <div class="stat-value text-base font-semibold">
                 {{ formatBytesInt64 .Metrics.HTTPCache.MaxTotalSize }}
               </div>
             </div>
-            <div class="stat">
+            <div class="stat place-items-start py-2">
               <div class="stat-title text-xs">Max Entry</div>
               <div class="stat-value text-base font-semibold">
                 {{ formatBytesInt64 .Metrics.HTTPCache.MaxEntrySize }}
               </div>
             </div>
-            <div class="stat">
+            <div class="stat col-span-2 place-items-start py-2">
               <div class="stat-title text-xs">Utilization</div>
               <div class="stat-value text-base font-semibold">
                 {{ httpCacheUtilizationPercent .Metrics.HTTPCache }}%

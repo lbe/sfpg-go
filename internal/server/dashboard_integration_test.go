@@ -15,10 +15,6 @@ import (
 // TestDashboardPageRendering verifies the dashboard page renders correctly
 // with proper authentication and template setup.
 func TestDashboardPageRendering(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-
 	app := CreateApp(t, false)
 	defer app.Shutdown()
 
@@ -76,10 +72,6 @@ func TestDashboardPageRendering(t *testing.T) {
 
 // TestDashboardHTMXPartialEndpoint verifies the dashboard returns HTML partial for HTMX requests
 func TestDashboardHTMXPartialEndpoint(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-
 	app := CreateApp(t, false)
 	defer app.Shutdown()
 
@@ -147,10 +139,6 @@ func TestDashboardHTMXPartialEndpoint(t *testing.T) {
 // TestDashboardPollingPersistsAcrossMultipleRequests verifies that the session
 // and authentication persist across multiple HTMX polling requests.
 func TestDashboardPollingPersistsAcrossMultipleRequests(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-
 	app := CreateApp(t, false)
 	defer app.Shutdown()
 
@@ -202,10 +190,6 @@ func TestDashboardPollingPersistsAcrossMultipleRequests(t *testing.T) {
 
 // TestDashboardUnauthorized verifies unauthorized access is rejected
 func TestDashboardUnauthorized(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-
 	app := CreateApp(t, false)
 	defer app.Shutdown()
 
@@ -226,10 +210,6 @@ func TestDashboardUnauthorized(t *testing.T) {
 
 // TestMetricsCollectorWiring verifies metrics sources are properly wired
 func TestMetricsCollectorWiring(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-
 	app := CreateApp(t, false)
 	defer app.Shutdown()
 
@@ -262,10 +242,6 @@ func TestMetricsCollectorWiring(t *testing.T) {
 
 // TestDashboardMetricsWithSources verifies dashboard shows metrics from actual sources
 func TestDashboardMetricsWithSources(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-
 	app := CreateApp(t, false)
 	defer app.Shutdown()
 

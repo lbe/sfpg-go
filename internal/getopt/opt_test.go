@@ -141,6 +141,20 @@ func TestParse_CachePreloadEnvVar(t *testing.T) {
 	}
 }
 
+func TestParse_CacheBatchLoadFlag(t *testing.T) {
+	resetEnv()
+	resetFlags()
+	os.Setenv("SEPG_SESSION_SECRET", "test-secret")
+	os.Args = []string{"cmd", "-cache-batch-load"}
+	opt := Parse()
+	if !opt.CacheBatchLoad.IsSet {
+		t.Fatalf("expected CacheBatchLoad.IsSet=true when flag provided")
+	}
+	if !opt.CacheBatchLoad.Bool {
+		t.Fatalf("expected cache-batch-load true from flag, got %v", opt.CacheBatchLoad.Bool)
+	}
+}
+
 func TestParse_UnlockAccountFlag(t *testing.T) {
 	resetEnv()
 	resetFlags()

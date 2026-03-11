@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/net/html"
+
 	"github.com/lbe/sfpg-go/internal/server/ui"
 	"github.com/lbe/sfpg-go/web"
 )
@@ -35,6 +37,7 @@ func TestNewServerHandlers(t *testing.T) {
 		func() { shutdownCalled <- true },
 		func() { discoveryCalled <- true },
 		nil,
+		nil, // StartCacheBatchLoad
 		nil,
 		nil,
 	)
@@ -72,7 +75,7 @@ func TestNewServerHandlers(t *testing.T) {
 
 func TestServerShutdownPost_Unauthorized(t *testing.T) {
 	sm := &mockSessionManagerUnauthenticated{}
-	handlers := NewServerHandlers(sm, nil, nil, nil, nil, nil)
+	handlers := NewServerHandlers(sm, nil, nil, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/server/shutdown", nil)
 	rr := httptest.NewRecorder()
@@ -103,6 +106,7 @@ func TestServerShutdownPost_Authorized(t *testing.T) {
 		func() { shutdownCalled <- true },
 		nil,
 		nil,
+		nil, // StartCacheBatchLoad
 		addCommonData,
 		nil,
 	)
@@ -137,7 +141,7 @@ func TestServerShutdownPost_Authorized(t *testing.T) {
 
 func TestServerDiscoveryPost_Unauthorized(t *testing.T) {
 	sm := &mockSessionManagerUnauthenticated{}
-	handlers := NewServerHandlers(sm, nil, nil, nil, nil, nil)
+	handlers := NewServerHandlers(sm, nil, nil, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/server/discovery", nil)
 	rr := httptest.NewRecorder()
@@ -168,6 +172,7 @@ func TestServerDiscoveryPost_Authorized(t *testing.T) {
 		nil,
 		func() { discoveryCalled <- true },
 		nil,
+		nil, // StartCacheBatchLoad
 		addCommonData,
 		nil,
 	)
@@ -209,6 +214,7 @@ func TestServerDiscoveryPost_NoCommonData(t *testing.T) {
 		nil,
 		func() { discoveryCalled <- true },
 		nil,
+		nil, // StartCacheBatchLoad
 		nil, // No AddCommonTemplateData
 		nil,
 	)
@@ -229,4 +235,107 @@ func TestServerDiscoveryPost_NoCommonData(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 		t.Error("DiscoveryFunc should have been called")
 	}
+}
+
+func TestServerCacheBatchLoadPost_Unauthorized(t *testing.T) {
+	sm := &mockSessionManagerUnauthenticated{}
+	handlers := NewServerHandlers(sm, nil, nil, nil, nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/server/cache-batch-load", nil)
+	rr := httptest.NewRecorder()
+
+	handlers.ServerCacheBatchLoadPost(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("expected status %d, got %d", http.StatusUnauthorized, rr.Code)
+	}
+}
+
+func TestServerCacheBatchLoadPost_BlockedWhenDiscoveryActive(t *testing.T) {
+	if err := ui.ParseTemplates(web.FS); err != nil {
+		t.Fatalf("ParseTemplates failed: %v", err)
+	}
+
+	sm := &mockSessionManagerAuthenticated{}
+	startFunc := func() (StartCacheBatchLoadResult, error) {
+		return StartCacheBatchLoadResult{
+			Blocked: true,
+			Message: "Cache batch load blocked: discovery active",
+		}, nil
+	}
+	addCommonData := func(w http.ResponseWriter, r *http.Request, data map[string]any) map[string]any {
+		data["CSRFToken"] = "test-token"
+		return data
+	}
+
+	handlers := NewServerHandlers(sm, nil, nil, nil, startFunc, addCommonData, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/server/cache-batch-load", nil)
+	rr := httptest.NewRecorder()
+
+	handlers.ServerCacheBatchLoadPost(rr, req)
+
+	if rr.Code != http.StatusConflict {
+		t.Errorf("expected status %d, got %d", http.StatusConflict, rr.Code)
+	}
+
+	doc, err := html.Parse(strings.NewReader(rr.Body.String()))
+	if err != nil {
+		t.Fatalf("Failed to parse HTML: %v", err)
+	}
+	msg := findTextContains(doc, "discovery active")
+	if msg == "" {
+		t.Error("expected response body to contain 'discovery active'")
+	}
+}
+
+func TestServerCacheBatchLoadPost_StartsRunWhenIdle(t *testing.T) {
+	if err := ui.ParseTemplates(web.FS); err != nil {
+		t.Fatalf("ParseTemplates failed: %v", err)
+	}
+
+	sm := &mockSessionManagerAuthenticated{}
+	startFunc := func() (StartCacheBatchLoadResult, error) {
+		return StartCacheBatchLoadResult{
+			Blocked: false,
+			Message: "Cache batch load started",
+		}, nil
+	}
+	addCommonData := func(w http.ResponseWriter, r *http.Request, data map[string]any) map[string]any {
+		data["CSRFToken"] = "test-token"
+		return data
+	}
+
+	handlers := NewServerHandlers(sm, nil, nil, nil, startFunc, addCommonData, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/server/cache-batch-load", nil)
+	rr := httptest.NewRecorder()
+
+	handlers.ServerCacheBatchLoadPost(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d", http.StatusOK, rr.Code)
+	}
+
+	doc, err := html.Parse(strings.NewReader(rr.Body.String()))
+	if err != nil {
+		t.Fatalf("Failed to parse HTML: %v", err)
+	}
+	msg := findTextContains(doc, "Cache batch load started")
+	if msg == "" {
+		t.Error("expected response body to contain 'Cache batch load started'")
+	}
+}
+
+// findTextContains searches the HTML tree for a text node containing s.
+func findTextContains(n *html.Node, s string) string {
+	if n.Type == html.TextNode && strings.Contains(n.Data, s) {
+		return n.Data
+	}
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if found := findTextContains(c, s); found != "" {
+			return found
+		}
+	}
+	return ""
 }

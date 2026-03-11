@@ -44,6 +44,8 @@ func RenderPage(w io.Writer, name string, data any, partial bool) error {
 	case "discovery-started":
 		// discovery-started is a standalone notification template
 		return discoveryStartedTemplate.Execute(w, data)
+	case "cache-batch-load-started":
+		return cacheBatchLoadStartedTemplate.Execute(w, data)
 	default:
 		slog.Error("unknown page", "name", name)
 		return nil

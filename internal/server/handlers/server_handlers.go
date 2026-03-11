@@ -7,14 +7,21 @@ import (
 	"github.com/lbe/sfpg-go/internal/server/ui"
 )
 
+// StartCacheBatchLoadResult describes the result of attempting to start cache batch load.
+type StartCacheBatchLoadResult struct {
+	Blocked bool   // true if discovery is active
+	Message string // toast message
+}
+
 // ServerHandlers holds dependencies for server management handlers.
 type ServerHandlers struct {
 	sessionManager SessionManager
 
 	// Server control functions
-	ShutdownFunc   func()
-	DiscoveryFunc  func()
-	StatsResetFunc func()
+	ShutdownFunc        func()
+	DiscoveryFunc       func()
+	StatsResetFunc      func()
+	StartCacheBatchLoad func() (StartCacheBatchLoadResult, error)
 
 	// Template helpers
 	AddCommonTemplateData func(http.ResponseWriter, *http.Request, map[string]any) map[string]any
@@ -27,6 +34,7 @@ func NewServerHandlers(
 	shutdownFunc func(),
 	discoveryFunc func(),
 	statsResetFunc func(),
+	startCacheBatchLoad func() (StartCacheBatchLoadResult, error),
 	addCommonTemplateData func(http.ResponseWriter, *http.Request, map[string]any) map[string]any,
 	serverError func(http.ResponseWriter, *http.Request, error),
 ) *ServerHandlers {
@@ -35,6 +43,7 @@ func NewServerHandlers(
 		ShutdownFunc:          shutdownFunc,
 		DiscoveryFunc:         discoveryFunc,
 		StatsResetFunc:        statsResetFunc,
+		StartCacheBatchLoad:   startCacheBatchLoad,
 		AddCommonTemplateData: addCommonTemplateData,
 		ServerError:           serverError,
 	}
@@ -112,5 +121,51 @@ func (h *ServerHandlers) ServerDiscoveryPost(w http.ResponseWriter, r *http.Requ
 	if err := ui.RenderPage(w, "discovery-started", data, false); err != nil {
 		slog.Error("failed to render discovery started notification", "err", err)
 		w.Write([]byte("File discovery started"))
+	}
+}
+
+// ServerCacheBatchLoadPost handles POST /server/cache-batch-load requests.
+// Requires authentication. Blocks if discovery is active (returns 409). Otherwise
+// starts batch load in a goroutine and returns success toast.
+func (h *ServerHandlers) ServerCacheBatchLoadPost(w http.ResponseWriter, r *http.Request) {
+	if !h.sessionManager.IsAuthenticated(r) {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if h.StartCacheBatchLoad == nil {
+		http.Error(w, "Cache batch load not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	result, err := h.StartCacheBatchLoad()
+	if err != nil {
+		slog.Error("cache batch load start failed", "err", err)
+		if h.ServerError != nil {
+			h.ServerError(w, r, err)
+		}
+		return
+	}
+
+	status := http.StatusOK
+	alertClass := "alert-success"
+	if result.Blocked {
+		status = http.StatusConflict
+		alertClass = "alert-warning"
+	}
+
+	data := map[string]any{
+		"Message":    result.Message,
+		"AlertClass": alertClass,
+	}
+	if h.AddCommonTemplateData != nil {
+		data = h.AddCommonTemplateData(w, r, data)
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
+	if err := ui.RenderPage(w, "cache-batch-load-started", data, false); err != nil {
+		slog.Error("failed to render cache batch load toast", "err", err)
+		w.Write([]byte(result.Message))
 	}
 }

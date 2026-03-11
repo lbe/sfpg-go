@@ -58,6 +58,7 @@ var (
 	dashboardPartialTemplate        *template.Template
 	serverShutdownTemplate          *template.Template
 	discoveryStartedTemplate        *template.Template
+	cacheBatchLoadStartedTemplate   *template.Template
 	shutdownModalTemplate           *template.Template
 	themeModalTemplate              *template.Template
 	funcMap                         template.FuncMap
@@ -167,6 +168,17 @@ func ParseTemplates(templateFS fs.FS) (err error) {
 			}
 			return int(float64(cache.SizeBytes) / float64(cache.MaxTotalSize) * 100)
 		},
+		"cacheBatchLoadProgressPercent": func(cbl metrics.CacheBatchLoadMetrics) int {
+			scheduled := cbl.TargetsScheduled
+			if scheduled == 0 {
+				return 0
+			}
+			done := cbl.TargetsCompleted + cbl.TargetsFailed
+			if done >= scheduled {
+				return 100
+			}
+			return int(float64(done) / float64(scheduled) * 100)
+		},
 		"cacheVersion": GetCacheVersion,
 	}
 
@@ -241,6 +253,9 @@ func ParseTemplates(templateFS fs.FS) (err error) {
 
 	discoveryStartedTemplate = template.Must(template.New("discovery-started.html.tmpl").Funcs(funcMap).
 		ParseFS(templateFS, "templates/discovery-started.html.tmpl"))
+
+	cacheBatchLoadStartedTemplate = template.Must(template.New("cache-batch-load-started.html.tmpl").Funcs(funcMap).
+		ParseFS(templateFS, "templates/cache-batch-load-started.html.tmpl"))
 
 	shutdownModalTemplate = template.Must(template.New("shutdown-modal.html.tmpl").Funcs(funcMap).
 		ParseFS(templateFS, "templates/shutdown-modal.html.tmpl"))

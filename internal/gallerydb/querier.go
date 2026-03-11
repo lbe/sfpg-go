@@ -61,12 +61,14 @@ type Querier interface {
 	GetIPTCKeywords(ctx context.Context, fileID int64) ([]IptcKeyword, error)
 	GetInvalidFileByPath(ctx context.Context, path string) (InvalidFile, error)
 	GetLoginAttempt(ctx context.Context, username string) (LoginAttempt, error)
+	GetModuleState(ctx context.Context, name string) (ModuleState, error)
 	GetThumbnailExistsViewByID(ctx context.Context, id int64) (bool, error)
 	GetThumbnailsByFileID(ctx context.Context, fileID int64) (Thumbnail, error)
 	GetXMPPropertiesByFile(ctx context.Context, fileID int64) ([]XmpProperty, error)
 	GetXMPRaw(ctx context.Context, fileID int64) (XmpRaw, error)
 	HttpCacheExistsByKey(ctx context.Context, key string) (int64, error)
 	InsertIPTCKeyword(ctx context.Context, arg InsertIPTCKeywordParams) error
+	SetModuleState(ctx context.Context, arg SetModuleStateParams) error
 	UnlockAccount(ctx context.Context, username string) error
 	UpdateFolderTileId(ctx context.Context, arg UpdateFolderTileIdParams) error
 	UpsertConfigValueOnly(ctx context.Context, arg UpsertConfigValueOnlyParams) error

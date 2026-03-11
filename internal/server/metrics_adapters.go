@@ -1,7 +1,10 @@
 package server
 
 import (
+	"time"
+
 	"github.com/lbe/sfpg-go/internal/cachelite"
+	"github.com/lbe/sfpg-go/internal/server/cachebatch"
 	"github.com/lbe/sfpg-go/internal/server/cachepreload"
 	"github.com/lbe/sfpg-go/internal/server/files"
 	"github.com/lbe/sfpg-go/internal/server/metrics"
@@ -72,6 +75,26 @@ func (a *cachePreloadAdapter) GetMetrics() metrics.CachePreloadSnapshot {
 
 func (a *cachePreloadAdapter) IsEnabled() bool {
 	return a.pm.IsEnabled()
+}
+
+// cacheBatchLoadAdapter adapts *cachebatch.Manager to metrics.CacheBatchLoadSource.
+type cacheBatchLoadAdapter struct {
+	m *cachebatch.Manager
+}
+
+func (a *cacheBatchLoadAdapter) GetMetrics() metrics.CacheBatchLoadMetrics {
+	s := a.m.Metrics().Snapshot()
+	return metrics.CacheBatchLoadMetrics{
+		TargetsTotal:     s.TargetsTotal,
+		TargetsScheduled: s.TargetsScheduled,
+		TargetsCompleted: s.TargetsCompleted,
+		TargetsFailed:    s.TargetsFailed,
+		TargetsSkipped:   s.TargetsSkipped,
+		InFlight:         s.InFlight,
+		IsRunning:        s.IsRunning != 0,
+		LastStartedAt:    time.Unix(s.LastStartedAt, 0),
+		LastFinishedAt:   time.Unix(s.LastFinishedAt, 0),
+	}
 }
 
 // httpCacheAdapter adapts *cachelite.HTTPCacheMiddleware to metrics.HTTPCacheSource.

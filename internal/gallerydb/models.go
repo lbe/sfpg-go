@@ -163,6 +163,13 @@ type LoginAttempt struct {
 	LastAttemptAt  int64
 }
 
+type ModuleState struct {
+	Name           string
+	IsActive       int64
+	LastStartedAt  sql.NullInt64
+	LastFinishedAt sql.NullInt64
+}
+
 type QcFilePathSubsetFileName struct {
 	Filename string
 	Path     string

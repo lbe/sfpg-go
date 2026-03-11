@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"sort"
@@ -73,5 +74,57 @@ func TestWalkImageDir_EnqueuesOnlySupportedNonZeroImages(t *testing.T) {
 	// Ensure sender accounting returned to zero
 	if app.qSendersActive.Load() != 0 {
 		t.Fatalf("qSendersActive not zero after walk: %d", app.qSendersActive.Load())
+	}
+
+	// Discovery lifecycle: after walk completes, module_state discovery should be inactive
+	if app.moduleStateService != nil {
+		active, err := app.moduleStateService.IsActive(context.Background(), "discovery")
+		if err != nil {
+			t.Fatalf("IsActive(discovery) error: %v", err)
+		}
+		if active {
+			t.Error("discovery should be inactive after walkImageDir completes")
+		}
+	}
+}
+
+// TestWalkImageDir_UpdatesModuleState verifies discovery sets module_state active during
+// walk and inactive when complete.
+func TestWalkImageDir_UpdatesModuleState(t *testing.T) {
+	t.Setenv("SEPG_SESSION_SECRET", "test-secret")
+
+	app := CreateApp(t, true) // start pool so discovery can process
+	defer app.Shutdown()
+
+	// Create a file so discovery has work to do
+	p := filepath.Join(app.imagesDir, "test.jpg")
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(p, []byte{1, 2, 3, 4, 5}, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	if app.moduleStateService == nil {
+		t.Fatal("moduleStateService not initialized")
+	}
+
+	// Start discovery in goroutine
+	done := make(chan struct{})
+	go func() {
+		app.walkImageDir()
+		close(done)
+	}()
+
+	// Wait for walk to complete
+	<-done
+
+	// After completion, discovery should be inactive
+	active, err := app.moduleStateService.IsActive(context.Background(), "discovery")
+	if err != nil {
+		t.Fatalf("IsActive after done: %v", err)
+	}
+	if active {
+		t.Error("discovery should be inactive after walk completes")
 	}
 }

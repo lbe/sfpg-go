@@ -14,15 +14,15 @@ func TestIncrementETag_ClearsCache(t *testing.T) {
 
 	// Pre-populate cache with an entry
 	entry := &cachelite.HTTPCacheEntry{
-		Key:    "GET:/gallery/1?|HX=false|HXTarget=|Theme=dark|gzip",
-		Method:  "GET",
-		Path:    "/gallery/1",
-		Encoding: "gzip",
-		Status:   200,
-		ETag:    sql.NullString{String: "\"old-etag-123\"", Valid: true},
-		Body:     []byte("<html>test</html>"),
+		Key:           "GET:/gallery/1?|HX=false|HXTarget=|Theme=dark|gzip",
+		Method:        "GET",
+		Path:          "/gallery/1",
+		Encoding:      "gzip",
+		Status:        200,
+		ETag:          sql.NullString{String: "\"old-etag-123\"", Valid: true},
+		Body:          []byte("<html>test</html>"),
 		ContentLength: sql.NullInt64{Int64: 19, Valid: true},
-		CreatedAt: time.Now().Unix(),
+		CreatedAt:     time.Now().Unix(),
 	}
 	err := cachelite.StoreCacheEntry(app.ctx, app.dbRwPool, entry)
 	if err != nil {

@@ -217,6 +217,7 @@ func (app *App) buildHandlers(templateFS fs.FS) error {
 		app.Shutdown,
 		app.walkImageDir,
 		app.processingStats.Reset,
+		app.startCacheBatchLoad,
 		app.addCommonTemplateData,
 		app.serverError,
 	)
@@ -808,11 +809,28 @@ func (app *App) unlockAccountFromTask(ctx context.Context, username string) erro
 
 // walkImageDir starts a background process to recursively scan the images directory.
 // It delegates to files.WalkImageDir with app-specific deps.
+// Updates module_state for "discovery" so batch load can guard against concurrent discovery.
 func (app *App) walkImageDir() {
+	app.ctxMu.RLock()
+	ctx := app.ctx
+	app.ctxMu.RUnlock()
+
+	if app.moduleStateService != nil {
+		if err := app.moduleStateService.SetActive(ctx, "discovery", true); err != nil {
+			slog.Error("failed to set discovery active in module_state", "err", err)
+		}
+		defer func() {
+			// Use Background so finish is persisted even if app ctx is cancelled
+			if err := app.moduleStateService.SetActive(context.Background(), "discovery", false); err != nil {
+				slog.Error("failed to set discovery inactive in module_state", "err", err)
+			}
+		}()
+	}
+
 	files.WalkImageDir(&files.WalkDeps{
 		Wg:             &app.wg,
 		QSendersActive: &app.qSendersActive,
-		Ctx:            app.ctx,
+		Ctx:            ctx,
 		ImagesDir:      app.imagesDir,
 		Q:              app.q,
 	})

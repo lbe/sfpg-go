@@ -698,6 +698,13 @@ graph TB
 - Skips if client sends `X-Preload: skip` header
 - Prevents thundering herd on first access
 
+**Known Limitation - Default Theme Only:**
+
+Cache warm paths (preload and batch load) use internal requests that do not carry a
+theme cookie. As a result, only the default theme is warmed. Users who select a
+non-default theme will experience cache misses for the first request to each
+resource until they are naturally populated by actual user traffic.
+
 ### Client-Side Caching
 
 ```mermaid

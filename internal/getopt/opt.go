@@ -48,6 +48,7 @@ type Opt struct {
 	UnlockAccount        OptString // Username to unlock (empty string if not set)
 	RestoreLastKnownGood OptBool   // Restore last known good configuration from database on startup
 	IncrementETag        OptBool   // Increment application-wide ETag version on startup
+	CacheBatchLoad       OptBool   // Run cache batch load and exit (CLI one-shot)
 }
 
 // defaultOpt returns an Opt with all zero values (no defaults).
@@ -315,6 +316,7 @@ func applyCLIFlags(opt *Opt) error {
 	cachePreload := fs.Bool("cache-preload", false, "Enable cache preloading when folders are opened")
 	unlockAccount := fs.String("unlock-account", "", "Unlock a locked account by username")
 	incrementETag := fs.Bool("increment-etag", false, "Increment application-wide ETag version on startup")
+	cacheBatchLoad := fs.Bool("cache-batch-load", false, "Run cache batch load (warm HTTP cache) and exit")
 
 	if err := fs.Parse(os.Args[1:]); err != nil {
 		return err
@@ -354,6 +356,9 @@ func applyCLIFlags(opt *Opt) error {
 		case "increment-etag":
 			opt.IncrementETag.Bool = *incrementETag
 			opt.IncrementETag.IsSet = true
+		case "cache-batch-load":
+			opt.CacheBatchLoad.Bool = *cacheBatchLoad
+			opt.CacheBatchLoad.IsSet = true
 		}
 	})
 

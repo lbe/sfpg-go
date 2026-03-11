@@ -231,6 +231,50 @@ func TestFuncMap_WriteBatcherQueuePercent(t *testing.T) {
 	}
 }
 
+// TestFuncMap_CacheBatchLoadProgressPercent tests the cacheBatchLoadProgressPercent function
+func TestFuncMap_CacheBatchLoadProgressPercent(t *testing.T) {
+	if err := ParseTemplates(web.FS); err != nil {
+		t.Fatalf("ParseTemplates failed: %v", err)
+	}
+
+	tests := []struct {
+		name     string
+		cbl      metrics.CacheBatchLoadMetrics
+		expected int
+	}{
+		{
+			name:     "50% done",
+			cbl:      metrics.CacheBatchLoadMetrics{TargetsScheduled: 100, TargetsCompleted: 50, TargetsFailed: 0},
+			expected: 50,
+		},
+		{
+			name:     "100% done",
+			cbl:      metrics.CacheBatchLoadMetrics{TargetsScheduled: 100, TargetsCompleted: 95, TargetsFailed: 5},
+			expected: 100,
+		},
+		{
+			name:     "zero scheduled",
+			cbl:      metrics.CacheBatchLoadMetrics{TargetsScheduled: 0},
+			expected: 0,
+		},
+		{
+			name:     "no progress",
+			cbl:      metrics.CacheBatchLoadMetrics{TargetsScheduled: 50, TargetsCompleted: 0, TargetsFailed: 0},
+			expected: 0,
+		},
+	}
+
+	fn := funcMap["cacheBatchLoadProgressPercent"].(func(metrics.CacheBatchLoadMetrics) int)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := fn(tt.cbl)
+			if result != tt.expected {
+				t.Errorf("cacheBatchLoadProgressPercent(%+v) = %d, want %d", tt.cbl, result, tt.expected)
+			}
+		})
+	}
+}
+
 // TestFuncMap_QueueUtilizationPercent tests the queueUtilizationPercent function
 func TestFuncMap_QueueUtilizationPercent(t *testing.T) {
 	// Initialize templates to populate funcMap

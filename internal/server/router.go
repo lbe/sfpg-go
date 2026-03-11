@@ -65,6 +65,7 @@ func (app *App) getRouter() http.Handler {
 	// Server management routes (protected by authentication)
 	mux.Handle("POST /server/shutdown", app.authMiddleware(http.HandlerFunc(app.serverHandlers.ServerShutdownPost)))
 	mux.Handle("POST /server/discovery", app.authMiddleware(http.HandlerFunc(app.serverHandlers.ServerDiscoveryPost)))
+	mux.Handle("POST /server/cache-batch-load", app.authMiddleware(http.HandlerFunc(app.serverHandlers.ServerCacheBatchLoadPost)))
 
 	mux.Handle("GET /", http.HandlerFunc(app.healthHandlers.RootRedirect))
 

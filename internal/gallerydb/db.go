@@ -117,6 +117,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getLoginAttemptStmt, err = db.PrepareContext(ctx, getLoginAttempt); err != nil {
 		return nil, fmt.Errorf("error preparing query GetLoginAttempt: %w", err)
 	}
+	if q.getModuleStateStmt, err = db.PrepareContext(ctx, getModuleState); err != nil {
+		return nil, fmt.Errorf("error preparing query GetModuleState: %w", err)
+	}
 	if q.getThumbnailExistsViewByIDStmt, err = db.PrepareContext(ctx, getThumbnailExistsViewByID); err != nil {
 		return nil, fmt.Errorf("error preparing query GetThumbnailExistsViewByID: %w", err)
 	}
@@ -134,6 +137,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.insertIPTCKeywordStmt, err = db.PrepareContext(ctx, insertIPTCKeyword); err != nil {
 		return nil, fmt.Errorf("error preparing query InsertIPTCKeyword: %w", err)
+	}
+	if q.setModuleStateStmt, err = db.PrepareContext(ctx, setModuleState); err != nil {
+		return nil, fmt.Errorf("error preparing query SetModuleState: %w", err)
 	}
 	if q.unlockAccountStmt, err = db.PrepareContext(ctx, unlockAccount); err != nil {
 		return nil, fmt.Errorf("error preparing query UnlockAccount: %w", err)
@@ -340,6 +346,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getLoginAttemptStmt: %w", cerr)
 		}
 	}
+	if q.getModuleStateStmt != nil {
+		if cerr := q.getModuleStateStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getModuleStateStmt: %w", cerr)
+		}
+	}
 	if q.getThumbnailExistsViewByIDStmt != nil {
 		if cerr := q.getThumbnailExistsViewByIDStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getThumbnailExistsViewByIDStmt: %w", cerr)
@@ -368,6 +379,11 @@ func (q *Queries) Close() error {
 	if q.insertIPTCKeywordStmt != nil {
 		if cerr := q.insertIPTCKeywordStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing insertIPTCKeywordStmt: %w", cerr)
+		}
+	}
+	if q.setModuleStateStmt != nil {
+		if cerr := q.setModuleStateStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing setModuleStateStmt: %w", cerr)
 		}
 	}
 	if q.unlockAccountStmt != nil {
@@ -515,12 +531,14 @@ type Queries struct {
 	getIPTCKeywordsStmt                       *sql.Stmt
 	getInvalidFileByPathStmt                  *sql.Stmt
 	getLoginAttemptStmt                       *sql.Stmt
+	getModuleStateStmt                        *sql.Stmt
 	getThumbnailExistsViewByIDStmt            *sql.Stmt
 	getThumbnailsByFileIDStmt                 *sql.Stmt
 	getXMPPropertiesByFileStmt                *sql.Stmt
 	getXMPRawStmt                             *sql.Stmt
 	httpCacheExistsByKeyStmt                  *sql.Stmt
 	insertIPTCKeywordStmt                     *sql.Stmt
+	setModuleStateStmt                        *sql.Stmt
 	unlockAccountStmt                         *sql.Stmt
 	updateFolderTileIdStmt                    *sql.Stmt
 	upsertConfigValueOnlyStmt                 *sql.Stmt
@@ -573,12 +591,14 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getIPTCKeywordsStmt:                       q.getIPTCKeywordsStmt,
 		getInvalidFileByPathStmt:                  q.getInvalidFileByPathStmt,
 		getLoginAttemptStmt:                       q.getLoginAttemptStmt,
+		getModuleStateStmt:                        q.getModuleStateStmt,
 		getThumbnailExistsViewByIDStmt:            q.getThumbnailExistsViewByIDStmt,
 		getThumbnailsByFileIDStmt:                 q.getThumbnailsByFileIDStmt,
 		getXMPPropertiesByFileStmt:                q.getXMPPropertiesByFileStmt,
 		getXMPRawStmt:                             q.getXMPRawStmt,
 		httpCacheExistsByKeyStmt:                  q.httpCacheExistsByKeyStmt,
 		insertIPTCKeywordStmt:                     q.insertIPTCKeywordStmt,
+		setModuleStateStmt:                        q.setModuleStateStmt,
 		unlockAccountStmt:                         q.unlockAccountStmt,
 		updateFolderTileIdStmt:                    q.updateFolderTileIdStmt,
 		upsertConfigValueOnlyStmt:                 q.upsertConfigValueOnlyStmt,

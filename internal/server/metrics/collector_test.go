@@ -52,6 +52,15 @@ func (m *mockFileProcessor) GetStats() FileProcessingMetrics {
 	return m.stats
 }
 
+// mockCacheBatchLoad is a mock implementation of CacheBatchLoadSource for testing.
+type mockCacheBatchLoad struct {
+	metrics CacheBatchLoadMetrics
+}
+
+func (m *mockCacheBatchLoad) GetMetrics() CacheBatchLoadMetrics {
+	return m.metrics
+}
+
 // mockHTTPCache is a mock implementation of HTTPCacheSource for testing.
 type mockHTTPCache struct {
 	enabled   bool
@@ -115,6 +124,17 @@ func TestCollector_SetCachePreload(t *testing.T) {
 
 	if c.cachePreload != mock {
 		t.Error("CachePreload not set correctly")
+	}
+}
+
+func TestCollector_SetCacheBatchLoad(t *testing.T) {
+	c := NewCollector()
+	mock := &mockCacheBatchLoad{metrics: CacheBatchLoadMetrics{TargetsTotal: 100}}
+
+	c.SetCacheBatchLoad(mock)
+
+	if c.cacheBatchLoad != mock {
+		t.Error("CacheBatchLoad not set correctly")
 	}
 }
 
@@ -316,6 +336,40 @@ func TestCollector_Collect(t *testing.T) {
 		t.Error("CachePreload.IsEnabled should be true")
 	}
 
+	cbl := &mockCacheBatchLoad{
+		metrics: CacheBatchLoadMetrics{
+			TargetsTotal:     200,
+			TargetsScheduled: 150,
+			TargetsCompleted: 100,
+			TargetsFailed:    5,
+			TargetsSkipped:   50,
+			InFlight:         45,
+			IsRunning:        true,
+		},
+	}
+	c.SetCacheBatchLoad(cbl)
+	snapshot = c.Collect(ctx)
+
+	// Verify CacheBatchLoad metrics
+	if snapshot.CacheBatchLoad.TargetsTotal != 200 {
+		t.Errorf("CacheBatchLoad.TargetsTotal = %d, want 200", snapshot.CacheBatchLoad.TargetsTotal)
+	}
+	if snapshot.CacheBatchLoad.TargetsScheduled != 150 {
+		t.Errorf("CacheBatchLoad.TargetsScheduled = %d, want 150", snapshot.CacheBatchLoad.TargetsScheduled)
+	}
+	if snapshot.CacheBatchLoad.TargetsCompleted != 100 {
+		t.Errorf("CacheBatchLoad.TargetsCompleted = %d, want 100", snapshot.CacheBatchLoad.TargetsCompleted)
+	}
+	if snapshot.CacheBatchLoad.TargetsFailed != 5 {
+		t.Errorf("CacheBatchLoad.TargetsFailed = %d, want 5", snapshot.CacheBatchLoad.TargetsFailed)
+	}
+	if snapshot.CacheBatchLoad.TargetsSkipped != 50 {
+		t.Errorf("CacheBatchLoad.TargetsSkipped = %d, want 50", snapshot.CacheBatchLoad.TargetsSkipped)
+	}
+	if !snapshot.CacheBatchLoad.IsRunning {
+		t.Error("CacheBatchLoad.IsRunning should be true")
+	}
+
 	// Verify FileProcessing metrics
 	if snapshot.FileProcessing.TotalFound != 1000 {
 		t.Errorf("FileProcessing.TotalFound = %d, want 1000", snapshot.FileProcessing.TotalFound)
@@ -406,6 +460,42 @@ func TestFormatDuration(t *testing.T) {
 		if result != tt.expected {
 			t.Errorf("FormatDuration(%v) = %s, want %s", tt.d, result, tt.expected)
 		}
+	}
+}
+
+func TestCollector_Collect_WithCacheBatchLoadSource(t *testing.T) {
+	c := NewCollector()
+	ctx := context.Background()
+
+	cbl := &mockCacheBatchLoad{
+		metrics: CacheBatchLoadMetrics{
+			TargetsTotal:     500,
+			TargetsScheduled: 400,
+			TargetsCompleted: 300,
+			TargetsFailed:    10,
+			TargetsSkipped:   100,
+			InFlight:         90,
+			IsRunning:        false,
+		},
+	}
+	c.SetCacheBatchLoad(cbl)
+
+	snapshot := c.Collect(ctx)
+
+	if snapshot.CacheBatchLoad.TargetsTotal != 500 {
+		t.Errorf("TargetsTotal = %d, want 500", snapshot.CacheBatchLoad.TargetsTotal)
+	}
+	if snapshot.CacheBatchLoad.TargetsCompleted != 300 {
+		t.Errorf("TargetsCompleted = %d, want 300", snapshot.CacheBatchLoad.TargetsCompleted)
+	}
+	if snapshot.CacheBatchLoad.TargetsFailed != 10 {
+		t.Errorf("TargetsFailed = %d, want 10", snapshot.CacheBatchLoad.TargetsFailed)
+	}
+	if snapshot.CacheBatchLoad.TargetsSkipped != 100 {
+		t.Errorf("TargetsSkipped = %d, want 100", snapshot.CacheBatchLoad.TargetsSkipped)
+	}
+	if snapshot.CacheBatchLoad.IsRunning {
+		t.Error("IsRunning should be false")
 	}
 }
 
