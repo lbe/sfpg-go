@@ -620,6 +620,9 @@ func (app *App) reconfigurePoolsFromConfig() error {
 	// Reinitialize ConfigService with new pool references
 	app.configService = config.NewService(app.dbRwPool, app.dbRoPool)
 
+	// Reinitialize ModuleStateService with new pool (used by walkImageDir for discovery state)
+	app.moduleStateService = modulestate.NewService(app.dbRwPool)
+
 	// Reinitialize WriteBatcher with new pool references
 	connRW, err := app.dbRwPool.Get()
 	if err != nil {
