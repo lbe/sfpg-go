@@ -222,7 +222,7 @@ func setupTestGalleryHandlers(t *testing.T, hq interfaces.HandlerQueries) *Galle
 		func(*dbconnpool.CpConn) interfaces.HandlerQueries { return hq },
 		func(*dbconnpool.CpConn) MetadataQueries { return mockMetadataQueries{} },
 		func() string { return "test-etag" },
-		func(w http.ResponseWriter, r *http.Request, data map[string]any) map[string]any {
+		func(w http.ResponseWriter, r *http.Request, data map[string]any, _ bool) map[string]any {
 			if data == nil {
 				data = make(map[string]any)
 			}

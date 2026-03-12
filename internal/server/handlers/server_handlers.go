@@ -24,7 +24,7 @@ type ServerHandlers struct {
 	StartCacheBatchLoad func() (StartCacheBatchLoadResult, error)
 
 	// Template helpers
-	AddCommonTemplateData func(http.ResponseWriter, *http.Request, map[string]any) map[string]any
+	AddCommonTemplateData func(http.ResponseWriter, *http.Request, map[string]any, bool) map[string]any
 	ServerError           func(http.ResponseWriter, *http.Request, error)
 }
 
@@ -35,7 +35,7 @@ func NewServerHandlers(
 	discoveryFunc func(),
 	statsResetFunc func(),
 	startCacheBatchLoad func() (StartCacheBatchLoadResult, error),
-	addCommonTemplateData func(http.ResponseWriter, *http.Request, map[string]any) map[string]any,
+	addCommonTemplateData func(http.ResponseWriter, *http.Request, map[string]any, bool) map[string]any,
 	serverError func(http.ResponseWriter, *http.Request, error),
 ) *ServerHandlers {
 	return &ServerHandlers{
@@ -64,7 +64,7 @@ func (h *ServerHandlers) ServerShutdownPost(w http.ResponseWriter, r *http.Reque
 	}
 
 	if h.AddCommonTemplateData != nil {
-		data = h.AddCommonTemplateData(w, r, data)
+		data = h.AddCommonTemplateData(w, r, data, false)
 	}
 
 	// Render the shutdown page
@@ -115,7 +115,7 @@ func (h *ServerHandlers) ServerDiscoveryPost(w http.ResponseWriter, r *http.Requ
 	}
 
 	if h.AddCommonTemplateData != nil {
-		data = h.AddCommonTemplateData(w, r, data)
+		data = h.AddCommonTemplateData(w, r, data, true)
 	}
 
 	if err := ui.RenderPage(w, "discovery-started", data, false); err != nil {
@@ -159,7 +159,7 @@ func (h *ServerHandlers) ServerCacheBatchLoadPost(w http.ResponseWriter, r *http
 		"AlertClass": alertClass,
 	}
 	if h.AddCommonTemplateData != nil {
-		data = h.AddCommonTemplateData(w, r, data)
+		data = h.AddCommonTemplateData(w, r, data, true)
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

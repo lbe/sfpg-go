@@ -104,7 +104,7 @@ func setupTestConfigHandlers(t *testing.T, mockSvc config.ConfigService, mockAut
 	ch.SetPreloadEnabled = func(bool) {}
 	ch.SetRestartRequired = func(bool) {}
 	ch.GetRestartCh = func() chan struct{} { return make(chan struct{}, 1) }
-	ch.AddCommonTemplateData = func(w http.ResponseWriter, r *http.Request, data map[string]any) map[string]any {
+	ch.AddCommonTemplateData = func(w http.ResponseWriter, r *http.Request, data map[string]any, _ bool) map[string]any {
 		if data == nil {
 			data = make(map[string]any)
 		}

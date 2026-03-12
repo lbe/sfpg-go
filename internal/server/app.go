@@ -112,6 +112,11 @@ type App struct {
 	metricsCollector    *metrics.Collector   // Centralized metrics collector for dashboard
 	moduleStateService  *modulestate.Service // DB-backed module state (discovery active, etc.)
 	version             string               // Application version for display in UI and logs
+
+	// Gallery stats cache for about modal (invalidated when discovery runs)
+	galleryStatsMu    sync.RWMutex
+	galleryStatsCache *GalleryStats
+	galleryStatsAt    int64 // LastStartedAt when cache was computed; 0 = invalid
 }
 
 // New creates and initializes a new App instance. It sets up the application
@@ -851,6 +856,32 @@ func (app *App) Shutdown() {
 	}
 }
 
+// refreshGalleryStatsCache runs getGalleryStatistics, updates the in-memory cache,
+// and returns the stats. Uses discoveryLastStartedAt as the cache key.
+func (app *App) refreshGalleryStatsCache(ctx context.Context, discoveryLastStartedAt int64) (GalleryStats, error) {
+	stats, err := app.getGalleryStatistics(ctx)
+	if err != nil {
+		return GalleryStats{}, err
+	}
+	app.galleryStatsMu.Lock()
+	app.galleryStatsCache = &stats
+	app.galleryStatsAt = discoveryLastStartedAt
+	app.galleryStatsMu.Unlock()
+	return stats, nil
+}
+
+// getGalleryStatsCached returns cached stats if valid for current discoveryLastStartedAt.
+// If invalid or stale, returns nil and caller should call refreshGalleryStatsCache.
+func (app *App) getGalleryStatsCached(discoveryLastStartedAt int64) *GalleryStats {
+	app.galleryStatsMu.RLock()
+	defer app.galleryStatsMu.RUnlock()
+	if app.galleryStatsCache == nil || app.galleryStatsAt != discoveryLastStartedAt {
+		return nil
+	}
+	copy := *app.galleryStatsCache
+	return &copy
+}
+
 // MemoryReclaimerConfig holds the configuration for the memory reclaimer.
 type MemoryReclaimerConfig struct {
 	InitialDelay  time.Duration
@@ -1054,6 +1085,18 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 	}
 	if runDiscovery {
 		go app.walkImageDir()
+	} else if app.moduleStateService != nil {
+		go func() {
+			app.ctxMu.RLock()
+			ctx := app.ctx
+			app.ctxMu.RUnlock()
+			lastStarted, ok, _ := app.moduleStateService.GetLastStartedAt(ctx, "discovery")
+			if ok {
+				app.refreshGalleryStatsCache(ctx, lastStarted)
+			} else {
+				app.refreshGalleryStatsCache(ctx, 0)
+			}
+		}()
 	}
 
 	// Use config values for worker pool, with defaults if config not loaded yet

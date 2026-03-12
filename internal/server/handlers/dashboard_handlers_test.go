@@ -81,7 +81,7 @@ func TestDashboardHandlers_DashboardGet_Authorized(t *testing.T) {
 
 	collector := &mockCollector{snapshot: snapshot}
 
-	addCommonData := func(w http.ResponseWriter, r *http.Request, data map[string]any) map[string]any {
+	addCommonData := func(w http.ResponseWriter, r *http.Request, data map[string]any, _ bool) map[string]any {
 		data["IsAuthenticated"] = true
 		return data
 	}
@@ -136,7 +136,7 @@ func TestDashboardHandlers_DashboardGet_HTMXPartial(t *testing.T) {
 
 	collector := &mockCollector{snapshot: snapshot}
 
-	addCommonData := func(w http.ResponseWriter, r *http.Request, data map[string]any) map[string]any {
+	addCommonData := func(w http.ResponseWriter, r *http.Request, data map[string]any, _ bool) map[string]any {
 		data["IsAuthenticated"] = true
 		return data
 	}

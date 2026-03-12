@@ -1663,7 +1663,7 @@ func TestAddCommonTemplateData_Additional(t *testing.T) {
 	req := httptest.NewRequest("GET", "/test", nil)
 	rr := httptest.NewRecorder()
 
-	result := app.addCommonTemplateData(rr, req, data)
+	result := app.addCommonTemplateData(rr, req, data, false)
 
 	// addCommonTemplateData adds IsAuthenticated and CSRFToken
 	if _, ok := result["IsAuthenticated"]; !ok {
@@ -1671,6 +1671,92 @@ func TestAddCommonTemplateData_Additional(t *testing.T) {
 	}
 	if _, ok := result["CSRFToken"]; !ok {
 		t.Error("Expected CSRFToken in template data")
+	}
+}
+
+// TestAddCommonTemplateData_PartialSkipsGalleryStats tests that when partial=true,
+// addCommonTemplateData does NOT fetch GalleryStats (expensive DB query).
+// Partials (HTMX swaps, modals, toasts) don't include the about modal.
+func TestAddCommonTemplateData_PartialSkipsGalleryStats(t *testing.T) {
+	app := CreateApp(t, false)
+	defer app.Shutdown()
+
+	data := make(map[string]any)
+	req := httptest.NewRequest("GET", "/test", nil)
+	rr := httptest.NewRecorder()
+
+	result := app.addCommonTemplateData(rr, req, data, true)
+
+	// Still adds cheap common data
+	if _, ok := result["IsAuthenticated"]; !ok {
+		t.Error("Expected IsAuthenticated in template data")
+	}
+	if _, ok := result["Theme"]; !ok {
+		t.Error("Expected Theme in template data")
+	}
+	// GalleryStats must NOT be present when partial=true (avoids expensive getGalleryStatistics)
+	if _, ok := result["GalleryStats"]; ok {
+		t.Error("Expected GalleryStats to be absent when partial=true (should skip expensive DB query)")
+	}
+}
+
+// TestRefreshGalleryStatsCache_AndGetCached tests that refreshGalleryStatsCache populates
+// the cache and getGalleryStatsCached returns it when LastStartedAt matches.
+func TestRefreshGalleryStatsCache_AndGetCached(t *testing.T) {
+	app := CreateApp(t, false)
+	defer app.Shutdown()
+
+	ctx := context.Background()
+	lastStarted := int64(12345)
+
+	stats, err := app.refreshGalleryStatsCache(ctx, lastStarted)
+	if err != nil {
+		t.Fatalf("refreshGalleryStatsCache: %v", err)
+	}
+	if stats.Folders == "" && stats.Images == "" {
+		t.Error("expected non-empty stats from refreshGalleryStatsCache")
+	}
+
+	cached := app.getGalleryStatsCached(lastStarted)
+	if cached == nil {
+		t.Fatal("expected cached stats when LastStartedAt matches")
+	}
+	if cached.Folders != stats.Folders || cached.Images != stats.Images {
+		t.Error("cached stats should match refresh result")
+	}
+}
+
+// TestGetGalleryStatsCached_ReturnsNilWhenStale tests that getGalleryStatsCached
+// returns nil when LastStartedAt differs from cached.
+func TestGetGalleryStatsCached_ReturnsNilWhenStale(t *testing.T) {
+	app := CreateApp(t, false)
+	defer app.Shutdown()
+
+	ctx := context.Background()
+	_, err := app.refreshGalleryStatsCache(ctx, 11111)
+	if err != nil {
+		t.Fatalf("refreshGalleryStatsCache: %v", err)
+	}
+
+	if got := app.getGalleryStatsCached(22222); got != nil {
+		t.Error("expected nil when LastStartedAt differs")
+	}
+}
+
+// TestAddCommonTemplateData_FullPageIncludesGalleryStats tests that when partial=false,
+// addCommonTemplateData includes GalleryStats for the about modal.
+func TestAddCommonTemplateData_FullPageIncludesGalleryStats(t *testing.T) {
+	app := CreateApp(t, false)
+	defer app.Shutdown()
+
+	data := make(map[string]any)
+	req := httptest.NewRequest("GET", "/test", nil)
+	rr := httptest.NewRecorder()
+
+	result := app.addCommonTemplateData(rr, req, data, false)
+
+	if _, ok := result["GalleryStats"]; !ok {
+		t.Error("Expected GalleryStats when partial=false (full page has about modal)")
 	}
 }
 
@@ -2183,7 +2269,7 @@ func TestAddCommonTemplateData_EdgeCases(t *testing.T) {
 		req := httptest.NewRequest("GET", "/test", nil)
 		rr := httptest.NewRecorder()
 
-		result := app.addCommonTemplateData(rr, req, nil)
+		result := app.addCommonTemplateData(rr, req, nil, false)
 
 		if result == nil {
 			t.Error("Expected non-nil result")
@@ -3901,7 +3987,7 @@ func TestAddCommonTemplateData_Complete(t *testing.T) {
 	req := httptest.NewRequest("GET", "/", nil)
 
 	data := make(map[string]any)
-	result := app.addCommonTemplateData(rr, req, data)
+	result := app.addCommonTemplateData(rr, req, data, false)
 	if result == nil {
 		t.Error("Expected non-nil template data result")
 	}
@@ -4354,7 +4440,7 @@ func TestAddCommonTemplateData_AboutModal(t *testing.T) {
 
 	// Call addCommonTemplateData which is used for pages that include the about-modal
 	data := make(map[string]any)
-	result := app.addCommonTemplateData(rr, req, data)
+	result := app.addCommonTemplateData(rr, req, data, false)
 
 	// Verify Version is present and is a string
 	if version, ok := result["Version"].(string); !ok {

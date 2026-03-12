@@ -58,7 +58,7 @@ type ConfigHandlers struct {
 	GetRestartCh        func() chan struct{}
 
 	// Helpers
-	AddCommonTemplateData func(http.ResponseWriter, *http.Request, map[string]any) map[string]any
+	AddCommonTemplateData func(http.ResponseWriter, *http.Request, map[string]any, bool) map[string]any
 	ServerError           func(http.ResponseWriter, *http.Request, error)
 }
 
@@ -242,7 +242,7 @@ func (h *ConfigHandlers) ConfigGet(w http.ResponseWriter, r *http.Request) {
 		data["Category"] = category
 	}
 
-	data = h.AddCommonTemplateData(w, r, data)
+	data = h.AddCommonTemplateData(w, r, data, true)
 
 	// Render modal template
 	if err := ui.RenderTemplate(w, "config-modal.html.tmpl", data); err != nil {

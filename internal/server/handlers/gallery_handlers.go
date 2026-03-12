@@ -144,7 +144,7 @@ type GalleryHandlers struct {
 	GetETagVersion func() string
 
 	// Template and error helpers
-	AddCommonTemplateData func(http.ResponseWriter, *http.Request, map[string]any) map[string]any
+	AddCommonTemplateData func(http.ResponseWriter, *http.Request, map[string]any, bool) map[string]any
 	ServerError           func(http.ResponseWriter, *http.Request, error)
 
 	// Optional: cache preload service
@@ -160,7 +160,7 @@ func NewGalleryHandlers(
 	getHandlerQueries func(*dbconnpool.CpConn) interfaces.HandlerQueries,
 	getMetadataQueries func(*dbconnpool.CpConn) MetadataQueries,
 	getETagVersion func() string,
-	addCommonTemplateData func(http.ResponseWriter, *http.Request, map[string]any) map[string]any,
+	addCommonTemplateData func(http.ResponseWriter, *http.Request, map[string]any, bool) map[string]any,
 	serverError func(http.ResponseWriter, *http.Request, error),
 ) *GalleryHandlers {
 	return &GalleryHandlers{
@@ -334,7 +334,7 @@ func (h *GalleryHandlers) GalleryByID(w http.ResponseWriter, r *http.Request) {
 		"IsImageView": gd.IsImageView,
 		"Thumbs":      gd.Thumbs,
 	}
-	data = h.AddCommonTemplateData(w, r, data)
+	data = h.AddCommonTemplateData(w, r, data, isHTMX)
 	if err := ui.RenderPage(w, "gallery", data, isHTMX); err != nil {
 		h.ServerError(w, r, err)
 		return
@@ -394,7 +394,7 @@ func (h *GalleryHandlers) ImageByID(w http.ResponseWriter, r *http.Request) {
 		"CacheVersion": time.Now().Unix(),
 		"ImageCount":   1,
 	}
-	data = h.AddCommonTemplateData(w, r, data)
+	data = h.AddCommonTemplateData(w, r, data, false)
 	if err := ui.RenderPage(w, "image", data, false); err != nil {
 		h.ServerError(w, r, err)
 	}

@@ -14,7 +14,7 @@ import (
 // TestNewThemeHandlers verifies the constructor properly sets all dependencies
 func TestNewThemeHandlers(t *testing.T) {
 	getConfig := config.DefaultConfig
-	addCommonData := func(w http.ResponseWriter, r *http.Request, data map[string]any) map[string]any {
+	addCommonData := func(w http.ResponseWriter, r *http.Request, data map[string]any, _ bool) map[string]any {
 		return data
 	}
 	renderModal := func(w http.ResponseWriter, data any) error {
@@ -354,7 +354,7 @@ func TestThemeHandlers_ThemeModalHandler_NoRenderer(t *testing.T) {
 	getConfig := func() *config.Config {
 		return defaultConfig
 	}
-	addCommonData := func(w http.ResponseWriter, r *http.Request, data map[string]any) map[string]any {
+	addCommonData := func(w http.ResponseWriter, r *http.Request, data map[string]any, _ bool) map[string]any {
 		return data
 	}
 
@@ -377,7 +377,7 @@ func TestThemeHandlers_ThemeModalHandler_RendererError(t *testing.T) {
 	getConfig := func() *config.Config {
 		return defaultConfig
 	}
-	addCommonData := func(w http.ResponseWriter, r *http.Request, data map[string]any) map[string]any {
+	addCommonData := func(w http.ResponseWriter, r *http.Request, data map[string]any, _ bool) map[string]any {
 		return data
 	}
 
@@ -418,7 +418,7 @@ func TestThemeHandlers_ThemeModalHandler_WithCookie(t *testing.T) {
 	}
 
 	addCommonDataCalled := false
-	addCommonData := func(w http.ResponseWriter, r *http.Request, data map[string]any) map[string]any {
+	addCommonData := func(w http.ResponseWriter, r *http.Request, data map[string]any, _ bool) map[string]any {
 		addCommonDataCalled = true
 		data["IsAuthenticated"] = false
 		data["CSRFToken"] = "test-token"
@@ -485,7 +485,7 @@ func TestThemeHandlers_ThemeModalHandler_InvalidCookie(t *testing.T) {
 	getConfig := func() *config.Config {
 		return defaultConfig
 	}
-	addCommonData := func(w http.ResponseWriter, r *http.Request, data map[string]any) map[string]any {
+	addCommonData := func(w http.ResponseWriter, r *http.Request, data map[string]any, _ bool) map[string]any {
 		return data
 	}
 
@@ -520,7 +520,7 @@ func TestThemeHandlers_ThemeModalHandler_NoCookie(t *testing.T) {
 	getConfig := func() *config.Config {
 		return defaultConfig
 	}
-	addCommonData := func(w http.ResponseWriter, r *http.Request, data map[string]any) map[string]any {
+	addCommonData := func(w http.ResponseWriter, r *http.Request, data map[string]any, _ bool) map[string]any {
 		return data
 	}
 
@@ -553,7 +553,7 @@ func TestThemeHandlers_ThemeModalHandler_AddCommonDataIntegration(t *testing.T) 
 	}
 
 	var receivedData map[string]any
-	addCommonData := func(w http.ResponseWriter, r *http.Request, data map[string]any) map[string]any {
+	addCommonData := func(w http.ResponseWriter, r *http.Request, data map[string]any, _ bool) map[string]any {
 		receivedData = data
 		data["IsAuthenticated"] = true
 		data["CSRFToken"] = "csrf-token-123"

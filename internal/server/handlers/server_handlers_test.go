@@ -96,7 +96,7 @@ func TestServerShutdownPost_Authorized(t *testing.T) {
 	sm := &mockSessionManagerAuthenticated{}
 	shutdownCalled := make(chan bool, 1)
 
-	addCommonData := func(w http.ResponseWriter, r *http.Request, data map[string]any) map[string]any {
+	addCommonData := func(w http.ResponseWriter, r *http.Request, data map[string]any, _ bool) map[string]any {
 		data["CSRFToken"] = "test-token"
 		return data
 	}
@@ -162,7 +162,7 @@ func TestServerDiscoveryPost_Authorized(t *testing.T) {
 	sm := &mockSessionManagerAuthenticated{}
 	discoveryCalled := make(chan bool, 1)
 
-	addCommonData := func(w http.ResponseWriter, r *http.Request, data map[string]any) map[string]any {
+	addCommonData := func(w http.ResponseWriter, r *http.Request, data map[string]any, _ bool) map[string]any {
 		data["CSRFToken"] = "test-token"
 		return data
 	}
@@ -263,7 +263,7 @@ func TestServerCacheBatchLoadPost_BlockedWhenDiscoveryActive(t *testing.T) {
 			Message: "Cache batch load blocked: discovery active",
 		}, nil
 	}
-	addCommonData := func(w http.ResponseWriter, r *http.Request, data map[string]any) map[string]any {
+	addCommonData := func(w http.ResponseWriter, r *http.Request, data map[string]any, _ bool) map[string]any {
 		data["CSRFToken"] = "test-token"
 		return data
 	}
@@ -301,7 +301,7 @@ func TestServerCacheBatchLoadPost_StartsRunWhenIdle(t *testing.T) {
 			Message: "Cache batch load started",
 		}, nil
 	}
-	addCommonData := func(w http.ResponseWriter, r *http.Request, data map[string]any) map[string]any {
+	addCommonData := func(w http.ResponseWriter, r *http.Request, data map[string]any, _ bool) map[string]any {
 		data["CSRFToken"] = "test-token"
 		return data
 	}

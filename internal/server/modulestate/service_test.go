@@ -145,3 +145,75 @@ func TestService_SetActive_Toggle(t *testing.T) {
 		t.Fatal("expected inactive after SetActive(false)")
 	}
 }
+
+func TestService_GetLastStartedAt_AfterSetActiveTrue(t *testing.T) {
+	pool, cleanup := setupModuleStatePool(t)
+	defer cleanup()
+
+	svc := NewService(pool)
+	ctx := context.Background()
+
+	if err := svc.SetActive(ctx, "discovery", true); err != nil {
+		t.Fatalf("SetActive(true) error: %v", err)
+	}
+
+	lastStarted, ok, err := svc.GetLastStartedAt(ctx, "discovery")
+	if err != nil {
+		t.Fatalf("GetLastStartedAt error: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected ok=true after SetActive(true)")
+	}
+	if lastStarted <= 0 {
+		t.Fatalf("expected non-zero lastStarted, got %d", lastStarted)
+	}
+}
+
+func TestService_GetLastStartedAt_AfterSetActiveFalse(t *testing.T) {
+	pool, cleanup := setupModuleStatePool(t)
+	defer cleanup()
+
+	svc := NewService(pool)
+	ctx := context.Background()
+
+	if err := svc.SetActive(ctx, "discovery", true); err != nil {
+		t.Fatalf("SetActive(true) error: %v", err)
+	}
+	afterTrue, _, err := svc.GetLastStartedAt(ctx, "discovery")
+	if err != nil {
+		t.Fatalf("GetLastStartedAt after true: %v", err)
+	}
+
+	if setErr := svc.SetActive(ctx, "discovery", false); setErr != nil {
+		t.Fatalf("SetActive(false) error: %v", setErr)
+	}
+	afterFalse, ok, err := svc.GetLastStartedAt(ctx, "discovery")
+	if err != nil {
+		t.Fatalf("GetLastStartedAt after false: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected ok=true after SetActive(false), last_started_at is unchanged")
+	}
+	if afterFalse != afterTrue {
+		t.Fatalf("lastStarted should be unchanged: got %d, want %d", afterFalse, afterTrue)
+	}
+}
+
+func TestService_GetLastStartedAt_NoRow(t *testing.T) {
+	pool, cleanup := setupModuleStatePool(t)
+	defer cleanup()
+
+	svc := NewService(pool)
+	ctx := context.Background()
+
+	lastStarted, ok, err := svc.GetLastStartedAt(ctx, "nonexistent")
+	if err != nil {
+		t.Fatalf("GetLastStartedAt error: %v", err)
+	}
+	if ok {
+		t.Fatal("expected ok=false for module with no row")
+	}
+	if lastStarted != 0 {
+		t.Fatalf("expected lastStarted=0 for no row, got %d", lastStarted)
+	}
+}

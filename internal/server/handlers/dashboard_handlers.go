@@ -15,7 +15,7 @@ type DashboardHandlers struct {
 	collector      MetricsCollector
 
 	// Template helpers
-	AddCommonTemplateData func(http.ResponseWriter, *http.Request, map[string]any) map[string]any
+	AddCommonTemplateData func(http.ResponseWriter, *http.Request, map[string]any, bool) map[string]any
 	ServerError           func(http.ResponseWriter, *http.Request, error)
 }
 
@@ -33,7 +33,7 @@ type MetricsCollector interface {
 func NewDashboardHandlers(
 	sessionManager SessionManager,
 	collector MetricsCollector,
-	addCommonTemplateData func(http.ResponseWriter, *http.Request, map[string]any) map[string]any,
+	addCommonTemplateData func(http.ResponseWriter, *http.Request, map[string]any, bool) map[string]any,
 	serverError func(http.ResponseWriter, *http.Request, error),
 ) *DashboardHandlers {
 	return &DashboardHandlers{
@@ -60,14 +60,14 @@ func (h *DashboardHandlers) DashboardGet(w http.ResponseWriter, r *http.Request)
 		"PageName": "dashboard",
 	}
 
-	if h.AddCommonTemplateData != nil {
-		data = h.AddCommonTemplateData(w, r, data)
-	}
-
-	// Detect HTMX request for partial rendering
+	// Detect HTMX request for partial rendering (must be before AddCommonTemplateData for partial param)
 	hxRequest := r.Header.Get("HX-Request") == "true"
 	hxTarget := r.Header.Get("HX-Target")
 	isHTMX := hxRequest && hxTarget == "dashboard-container"
+
+	if h.AddCommonTemplateData != nil {
+		data = h.AddCommonTemplateData(w, r, data, isHTMX)
+	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	// Vary on HTMX headers so the browser does not serve a cached partial for a full page request

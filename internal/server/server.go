@@ -560,22 +560,48 @@ func (app *App) addAuthToTemplateData(r *http.Request, data map[string]any) map[
 	return template.AddAuthToData(data, app.isAuthenticated(r))
 }
 
-// addCommonTemplateData adds common template data (auth state, CSRF token, theme, and gallery statistics) to template data map
-// This is used for pages that include modals which need the CSRF token
-// Delegates to template.AddCommonData and adds theme and version
-func (app *App) addCommonTemplateData(w http.ResponseWriter, r *http.Request, data map[string]any) map[string]any {
+// addCommonTemplateData adds common template data (auth state, CSRF token, theme, and gallery statistics) to template data map.
+// When partial is true, skips GalleryStats (expensive getGalleryStatistics) since partials (HTMX swaps, modals, toasts)
+// don't include the about modal. Full pages need GalleryStats for the about modal in the layout.
+func (app *App) addCommonTemplateData(w http.ResponseWriter, r *http.Request, data map[string]any, partial bool) map[string]any {
 	data = template.AddCommonData(data, app.isAuthenticated(r), app.ensureCsrfToken(w, r))
 	data["Theme"] = app.getEffectiveTheme(r)
 	data["Version"] = app.version
 
-	// Add gallery statistics for the about modal
-	stats, err := app.getGalleryStatistics(r.Context())
-	if err != nil {
-		slog.Warn("failed to get gallery statistics", "err", err)
-		// Set zero values on error
-		data["GalleryStats"] = GalleryStats{}
-	} else {
-		data["GalleryStats"] = stats
+	if !partial {
+		// Add gallery statistics for the about modal (full pages only)
+		if app.moduleStateService == nil {
+			stats, err := app.getGalleryStatistics(r.Context())
+			if err != nil {
+				slog.Warn("failed to get gallery statistics", "err", err)
+				data["GalleryStats"] = GalleryStats{}
+			} else {
+				data["GalleryStats"] = stats
+			}
+		} else {
+			ctx := r.Context()
+			isActive, _ := app.moduleStateService.IsActive(ctx, "discovery")
+			lastStarted, _, _ := app.moduleStateService.GetLastStartedAt(ctx, "discovery")
+			if isActive {
+				if cached := app.getGalleryStatsCached(lastStarted); cached != nil {
+					data["GalleryStats"] = *cached
+				} else {
+					data["GalleryStats"] = GalleryStats{}
+				}
+			} else {
+				if cached := app.getGalleryStatsCached(lastStarted); cached != nil {
+					data["GalleryStats"] = *cached
+				} else {
+					stats, err := app.refreshGalleryStatsCache(ctx, lastStarted)
+					if err != nil {
+						slog.Warn("failed to get gallery statistics", "err", err)
+						data["GalleryStats"] = GalleryStats{}
+					} else {
+						data["GalleryStats"] = stats
+					}
+				}
+			}
+		}
 	}
 
 	return data
@@ -834,4 +860,11 @@ func (app *App) walkImageDir() {
 		ImagesDir:      app.imagesDir,
 		Q:              app.q,
 	})
+
+	// Refresh gallery stats cache after discovery completes (covers both startup and server menu)
+	if app.moduleStateService != nil {
+		if lastStarted, ok, _ := app.moduleStateService.GetLastStartedAt(ctx, "discovery"); ok {
+			app.refreshGalleryStatsCache(ctx, lastStarted)
+		}
+	}
 }
