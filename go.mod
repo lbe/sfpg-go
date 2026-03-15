@@ -10,7 +10,7 @@ require (
 	github.com/evanoberholster/imagemeta v0.0.0-00010101000000-000000000000
 	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/gorilla/sessions v1.4.0
-	github.com/ncruces/go-sqlite3 v0.30.5
+	github.com/ncruces/go-sqlite3 v0.32.0
 	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646
 	github.com/phsym/console-slog v0.3.1
 	github.com/pkg/profile v1.7.0
