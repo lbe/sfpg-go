@@ -3154,15 +3154,6 @@ func TestBuildHandlers_Coverage(t *testing.T) {
 	}
 }
 
-// TestSchedulePeriodicOptimization_Coverage tests periodic optimization scheduling
-func TestSchedulePeriodicOptimization_Coverage(t *testing.T) {
-	app := CreateApp(t, true)
-	defer app.Shutdown()
-
-	// Should not panic
-	app.schedulePeriodicOptimization()
-}
-
 // TestLogProfileLocation_Coverage tests profile location logging
 func TestLogProfileLocation_Coverage(t *testing.T) {
 	app := CreateApp(t, false)
@@ -3693,19 +3684,6 @@ func TestShutdown_Coverage(t *testing.T) {
 	// Note: Can't directly test Shutdown() twice due to channel closure
 	// Shutdown is already tested implicitly by all other tests via defer app.Shutdown()
 	t.Skip("Shutdown tested implicitly through defer cleanup in all tests")
-}
-
-// TestSchedulePeriodicOptimization_WithScheduler tests optimization scheduling
-func TestSchedulePeriodicOptimization_WithScheduler(t *testing.T) {
-	app := CreateApp(t, true)
-	defer app.Shutdown()
-
-	// Should not panic
-	app.schedulePeriodicOptimization()
-
-	// Call multiple times
-	app.schedulePeriodicOptimization()
-	app.schedulePeriodicOptimization()
 }
 
 // TestConditionalMiddleware_WriteHeader_Idempotent tests WriteHeader idempotence

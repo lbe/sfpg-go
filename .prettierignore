@@ -3,7 +3,7 @@ node_modules/
 bin/
 tmp/
 bench/
-results/
+results*/
 scripts/perf-test/attacks/
 zarchive/
 **/testdata/**

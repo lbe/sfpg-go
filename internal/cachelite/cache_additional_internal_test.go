@@ -205,7 +205,8 @@ func TestCacheConfig_IsCacheablePath(t *testing.T) {
 func TestHTTPCacheMiddleware_Config(t *testing.T) {
 	db := createTestDBPoolInternal(t)
 	cfg := CacheConfig{MaxTotalSize: 123}
-	mw := NewHTTPCacheMiddleware(db, cfg, nil, nil)
+	dummySubmit := func(entry *HTTPCacheEntry) {}
+	mw := NewHTTPCacheMiddlewareForTest(db, cfg, nil, dummySubmit)
 
 	got := mw.Config()
 	if got.MaxTotalSize != cfg.MaxTotalSize {
@@ -233,7 +234,8 @@ func TestParseGalleryFolderID(t *testing.T) {
 func TestGetSessionIDForPreload(t *testing.T) {
 	db := createTestDBPoolInternal(t)
 	cfg := CacheConfig{SessionCookieName: "session"}
-	mw := NewHTTPCacheMiddleware(db, cfg, nil, nil)
+	dummySubmit := func(entry *HTTPCacheEntry) {}
+	mw := NewHTTPCacheMiddlewareForTest(db, cfg, nil, dummySubmit)
 
 	req := httptest.NewRequest(http.MethodGet, "/gallery/1", nil)
 	req.RemoteAddr = "10.0.0.1:1234"
@@ -261,7 +263,8 @@ func TestMaybeTriggerGalleryPreload(t *testing.T) {
 			}
 		},
 	}
-	mw := NewHTTPCacheMiddleware(db, cfg, nil, nil)
+	dummySubmit := func(entry *HTTPCacheEntry) {}
+	mw := NewHTTPCacheMiddlewareForTest(db, cfg, nil, dummySubmit)
 
 	req := httptest.NewRequest(http.MethodGet, "/gallery/42", nil)
 	req.Header.Set("Accept-Encoding", "gzip")
@@ -291,7 +294,8 @@ func TestEvictIfNeeded_Branches(t *testing.T) {
 	db := createTestDBPoolInternal(t)
 	ctx := context.Background()
 
-	mw := NewHTTPCacheMiddleware(db, CacheConfig{MaxTotalSize: 0}, nil, nil)
+	dummySubmit := func(entry *HTTPCacheEntry) {}
+	mw := NewHTTPCacheMiddlewareForTest(db, CacheConfig{MaxTotalSize: 0}, nil, dummySubmit)
 	freed, err := mw.evictIfNeeded(ctx, 10)
 	if err != nil {
 		t.Fatalf("evictIfNeeded no budget: %v", err)
@@ -302,7 +306,8 @@ func TestEvictIfNeeded_Branches(t *testing.T) {
 
 	counter := &atomic.Int64{}
 	counter.Store(5)
-	mw = NewHTTPCacheMiddleware(db, CacheConfig{MaxTotalSize: 100}, counter, nil)
+	dummySubmit2 := func(entry *HTTPCacheEntry) {}
+	mw = NewHTTPCacheMiddlewareForTest(db, CacheConfig{MaxTotalSize: 100}, counter, dummySubmit2)
 	freed, err = mw.evictIfNeeded(ctx, 10)
 	if err != nil {
 		t.Fatalf("evictIfNeeded with counter: %v", err)
@@ -319,7 +324,8 @@ func TestEvictIfNeeded_EvictError(t *testing.T) {
 
 	counter := &atomic.Int64{}
 	counter.Store(50)
-	mw := NewHTTPCacheMiddleware(db, CacheConfig{MaxTotalSize: 1}, counter, nil)
+	dummySubmit := func(entry *HTTPCacheEntry) {}
+	mw := NewHTTPCacheMiddlewareForTest(db, CacheConfig{MaxTotalSize: 1}, counter, dummySubmit)
 
 	if _, err := mw.evictIfNeeded(ctx, 10); err == nil {
 		t.Fatal("expected eviction error with canceled context")

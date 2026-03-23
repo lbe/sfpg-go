@@ -92,7 +92,9 @@ func TestCheckCache_ReturnsStoredEntry_Internal(t *testing.T) {
 		t.Fatalf("failed to store entry: %v", err)
 	}
 
-	mw := NewHTTPCacheMiddleware(db, CacheConfig{MaxTotalSize: 1}, nil, nil)
+	// Dummy submit function for internal tests (not used since we test internal methods directly)
+	dummySubmit := func(entry *HTTPCacheEntry) {}
+	mw := NewHTTPCacheMiddlewareForTest(db, CacheConfig{MaxTotalSize: 1}, nil, dummySubmit)
 	got, err := mw.checkCache(ctx, "check-key")
 	if err != nil {
 		t.Fatalf("checkCache returned error: %v", err)
@@ -157,7 +159,9 @@ func TestEvictIfNeeded_EvictsWhenOverBudget_Internal(t *testing.T) {
 		t.Fatalf("failed to store entry: %v", err)
 	}
 
-	mw := NewHTTPCacheMiddleware(db, CacheConfig{MaxTotalSize: 1}, nil, nil)
+	// Dummy submit function for internal tests (not used since we test internal methods directly)
+	dummySubmit := func(entry *HTTPCacheEntry) {}
+	mw := NewHTTPCacheMiddlewareForTest(db, CacheConfig{MaxTotalSize: 1}, nil, dummySubmit)
 
 	if _, err := mw.evictIfNeeded(ctx, 2); err != nil {
 		t.Fatalf("evictIfNeeded returned error: %v", err)

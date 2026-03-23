@@ -117,6 +117,8 @@ type App struct {
 	galleryStatsMu    sync.RWMutex
 	galleryStatsCache *GalleryStats
 	galleryStatsAt    int64 // LastStartedAt when cache was computed; 0 = invalid
+
+	staleCacheDropInFlight atomic.Bool
 }
 
 // New creates and initializes a new App instance. It sets up the application
@@ -284,7 +286,7 @@ func (app *App) initializeHTTPCache() {
 		submitFunc = app.submitCacheWrite
 	}
 	app.cacheMW = cachelite.NewHTTPCacheMiddleware(
-		app.dbRwPool,
+		app.dbRoPool,
 		cfg,
 		&app.cacheSizeBytes,
 		submitFunc,
@@ -304,9 +306,44 @@ func (app *App) invalidateHTTPCache() {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if err := cachelite.ClearCache(ctx, app.dbRwPool); err != nil {
+	if err := cachelite.RotateCacheTable(ctx, app.dbRwPool); err != nil {
 		slog.Error("failed to invalidate HTTP cache", "err", err)
+		return
 	}
+	app.cacheSizeBytes.Store(0)
+}
+
+func (app *App) scheduleStaleCacheDrop(trigger string) {
+	if app.dbRwPool == nil {
+		return
+	}
+	if !app.staleCacheDropInFlight.CompareAndSwap(false, true) {
+		return
+	}
+
+	go func() {
+		defer app.staleCacheDropInFlight.Store(false)
+
+		app.ctxMu.RLock()
+		ctx := app.ctx
+		app.ctxMu.RUnlock()
+		if ctx == nil {
+			ctx = context.Background()
+		}
+
+		dropped, err := cachelite.DropStaleCacheTableIfExists(ctx, app.dbRwPool)
+		if err != nil {
+			slog.Warn("failed to drop stale HTTP cache table", "trigger", trigger, "err", err)
+			return
+		}
+		if !dropped {
+			return
+		}
+		// Note: WAL checkpointing is now handled by writebatcher's OnAfterCommit callback
+		// which runs every 5 minutes or when WAL file exceeds 2GB. This avoids race
+		// conditions with writebatcher's active transactions.
+		slog.Info("stale HTTP cache table dropped", "trigger", trigger)
+	}()
 }
 
 // setDB initializes and configures the database using the database package.
@@ -335,11 +372,17 @@ func (app *App) setDB() {
 		panic("main")
 	}
 	defer app.dbRwPool.Put(connRW)
-	app.writeBatcher, err = writebatcher.New[BatchedWrite](app.ctx, writebatcher.Config[BatchedWrite]{
-		MaxBatchSize:  1000,            // Increased for better throughput during preloading
-		MaxBatchBytes: 8 * 1024 * 1024, // 8MB ceiling
-		FlushInterval: 200 * time.Millisecond,
-		ChannelSize:   4096, // Larger buffer for high throughput
+
+	maxBatchSize := 10000                   // Increased for better throughput during preloading
+	maxBatchBytes := int64(8 * 1024 * 1024) // 8 MB ceiling
+	flushInterval := 50 * time.Millisecond  // Reduced for faster memory release during batch load
+	channelSize := 4096                     // Larger buffer to handle bursts during preload and discovery
+
+	app.writeBatcher, err = writebatcher.New(app.ctx, writebatcher.Config[BatchedWrite]{
+		MaxBatchSize:  maxBatchSize,
+		MaxBatchBytes: maxBatchBytes,
+		FlushInterval: flushInterval,
+		ChannelSize:   channelSize,
 		SizeFunc: func(bw BatchedWrite) int64 {
 			return bw.Size()
 		},
@@ -372,15 +415,18 @@ func (app *App) setDB() {
 			// Cleanup pooled resources even on error
 			cleanupBatchedWriteResources(batch)
 		},
+		OnAfterCommit:       app.walCheckpointAfterCommit,
+		MaintenanceInterval: 5 * time.Minute,
 	})
 	if err != nil {
 		slog.Error("failed to create unified WriteBatcher", "err", err)
 		panic("failed to create unified WriteBatcher")
 	}
 	slog.Info("unified WriteBatcher initialized",
-		"max_batch_size", 1000,
-		"max_batch_bytes", 8*1024*1024,
-		"channel_size", 4096)
+		"max_batch_size", maxBatchSize,
+		"max_batch_bytes", maxBatchBytes,
+		"flush_interval_ms", flushInterval.Milliseconds(),
+		"channel_size", channelSize)
 
 	// Initialize CacheStore using the RW pool
 	app.cacheStore = cachelite.NewSQLiteCacheStore(app.dbRwPool)
@@ -392,8 +438,6 @@ func (app *App) setDB() {
 	} else {
 		slog.Warn("Failed to initialize cache size counter", "err", err)
 	}
-
-	app.schedulePeriodicOptimization()
 
 	// Initialize ConfigService after database pools are created
 	app.configService = config.NewService(app.dbRwPool, app.dbRoPool)
@@ -414,9 +458,91 @@ func (app *App) setDB() {
 	}
 }
 
-// schedulePeriodicOptimization delegates to the database package.
-func (app *App) schedulePeriodicOptimization() {
-	database.ScheduleOptimization(app.ctx, app.dbRwPool, &app.wg)
+// walCheckpointAfterCommit is called by writebatcher after each successful commit
+// and by the maintenance timer (every 5 minutes).
+// It checks WAL file size and checkpoints if > 2GB or if 5 minutes have elapsed.
+// It also runs PRAGMA optimize every 1 hour.
+// This runs in the writebatcher's worker goroutine, ensuring no active transactions.
+func (app *App) walCheckpointAfterCommit(ctx context.Context, lastWalCheckpointTime time.Time, lastOptimizeTime time.Time, totalCommitted int64) {
+	const walSizeThreshold = 2 * 1024 * 1024 * 1024 // 2GB
+
+	// Check WAL file size
+	walPath := app.dbPaths.Main + "-wal"
+	info, err := os.Stat(walPath)
+	if err != nil {
+		// If file doesn't exist or can't be accessed, skip size check
+		if !os.IsNotExist(err) {
+			slog.Warn("failed to stat WAL file", "path", walPath, "err", err)
+		}
+	} else if info.Size() > walSizeThreshold {
+		slog.Info("WAL file exceeds threshold, forcing checkpoint",
+			"path", walPath,
+			"size_bytes", info.Size(),
+			"size_gb", float64(info.Size())/1024/1024/1024)
+		if err := app.performWALCheckpoint(ctx); err != nil {
+			slog.Error("WAL checkpoint failed", "err", err)
+		}
+		return
+	}
+
+	// Time-based WAL checkpoint: every 5 minutes since last checkpoint
+	// lastWalCheckpointTime is zero when called from flush (skip time check)
+	// lastWalCheckpointTime is set when called from maintenance timer (check 5 min elapsed)
+	if !lastWalCheckpointTime.IsZero() && time.Since(lastWalCheckpointTime) >= 5*time.Minute {
+		slog.Info("WAL checkpoint: 5 minutes elapsed since last checkpoint",
+			"last_checkpoint", lastWalCheckpointTime.Format(time.RFC3339))
+		if err := app.performWALCheckpoint(ctx); err != nil {
+			slog.Error("WAL checkpoint failed", "err", err)
+		}
+	}
+
+	// PRAGMA optimize: every 1 hour since last optimize
+	// lastOptimizeTime is zero when called from flush (skip check)
+	// lastOptimizeTime is set when called from maintenance timer (check 1 hour elapsed)
+	if !lastOptimizeTime.IsZero() && time.Since(lastOptimizeTime) >= 1*time.Hour {
+		slog.Info("PRAGMA optimize: 1 hour elapsed since last optimize",
+			"last_optimize", lastOptimizeTime.Format(time.RFC3339))
+		cpc, err := app.dbRwPool.Get()
+		if err != nil {
+			slog.Error("failed to get connection for PRAGMA optimize", "err", err)
+			return
+		}
+		cpc.PragmaOptimize(ctx)
+		app.dbRwPool.Put(cpc)
+	}
+}
+
+// performWALCheckpoint executes a WAL checkpoint using TRUNCATE mode.
+// TRUNCATE actually frees the WAL space (vs PASSIVE or RESTART).
+// Must be called with no active transactions.
+func (app *App) performWALCheckpoint(ctx context.Context) error {
+	cpc, err := app.dbRwPool.Get()
+	if err != nil {
+		return fmt.Errorf("failed to get connection: %w", err)
+	}
+	defer app.dbRwPool.Put(cpc)
+
+	// TRUNCATE actually frees the WAL space
+	result, err := cpc.Conn.QueryContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)")
+	if err != nil {
+		return fmt.Errorf("wal checkpoint failed: %w", err)
+	}
+	defer result.Close()
+
+	// Parse result: wal_frames|wal_frames_checkpointed|wal_frames_in_log
+	if result.Next() {
+		var walFrames, checkpointed, inLog int
+		if err := result.Scan(&walFrames, &checkpointed, &inLog); err != nil {
+			slog.Warn("failed to parse wal_checkpoint result", "err", err)
+		} else {
+			slog.Debug("WAL checkpoint completed",
+				"wal_frames", walFrames,
+				"checkpointed", checkpointed,
+				"in_log", inLog)
+		}
+	}
+
+	return nil
 }
 
 // setConfigDefaults delegates to the config package.
@@ -659,6 +785,8 @@ func (app *App) reconfigurePoolsFromConfig() error {
 				"err", err)
 			cleanupBatchedWriteResources(batch)
 		},
+		OnAfterCommit:       app.walCheckpointAfterCommit,
+		MaintenanceInterval: 5 * time.Minute,
 	})
 	if rerr != nil {
 		slog.Error("failed to recreate WriteBatcher after pool reconfiguration", "err", rerr)
@@ -1032,6 +1160,7 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 
 	// Apply config to app fields
 	app.applyConfig()
+	app.scheduleStaleCacheDrop("run-startup")
 
 	// Initialize HTTP cache middleware after config is loaded
 	app.initializeHTTPCache()
@@ -1339,10 +1468,12 @@ func (app *App) IncrementETag() (string, error) {
 		return "", fmt.Errorf("failed to save config: %w", err)
 	}
 
-	// Clear HTTP cache to invalidate all cached entries
-	if err := cachelite.ClearCache(app.ctx, app.dbRwPool); err != nil {
-		slog.Warn("failed to clear HTTP cache after ETag increment", "err", err)
+	// Rotate HTTP cache table to invalidate all cached entries quickly.
+	if err := cachelite.RotateCacheTable(app.ctx, app.dbRwPool); err != nil {
+		slog.Warn("failed to rotate HTTP cache after ETag increment", "err", err)
 		// Non-fatal: log and continue, cache will be stale but won't crash
+	} else {
+		app.cacheSizeBytes.Store(0)
 	}
 
 	return newETag, nil

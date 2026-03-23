@@ -335,6 +335,7 @@ func (app *App) Serve() error {
 			return fmt.Errorf("build handlers: %w", err)
 		}
 	}
+	app.scheduleStaleCacheDrop("serve-startup")
 
 	for {
 		mux := app.getRouter()
@@ -389,6 +390,7 @@ func (app *App) Serve() error {
 			app.restartRequired = false
 			// Apply config to app state (log level, directories, etc.)
 			app.applyConfig()
+			app.scheduleStaleCacheDrop("server-restart")
 			slog.Info("server shutdown complete, restarting with updated configuration...")
 			continue // Restart the server loop - will read updated address/port from app.config on next iteration
 		case <-app.ctx.Done():
@@ -867,4 +869,5 @@ func (app *App) walkImageDir() {
 			app.refreshGalleryStatsCache(ctx, lastStarted)
 		}
 	}
+	app.scheduleStaleCacheDrop("discovery-complete")
 }

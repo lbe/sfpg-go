@@ -5,6 +5,7 @@ package server
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,6 +16,41 @@ import (
 	"github.com/lbe/sfpg-go/internal/getopt"
 	"github.com/lbe/sfpg-go/internal/server/ui"
 )
+
+func tableExists(ctx context.Context, app *App, tableName string) (bool, error) {
+	cpc, err := app.dbRwPool.Get()
+	if err != nil {
+		return false, fmt.Errorf("failed to get rw pool connection: %w", err)
+	}
+	defer app.dbRwPool.Put(cpc)
+
+	row := cpc.Conn.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?)`, tableName)
+	var exists int64
+	if err := row.Scan(&exists); err != nil {
+		return false, fmt.Errorf("scan table exists query failed: %w", err)
+	}
+	return exists == 1, nil
+}
+
+func waitForTableExistence(t *testing.T, ctx context.Context, app *App, tableName string, wantExists bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		exists, err := tableExists(ctx, app, tableName)
+		if err != nil {
+			t.Fatalf("tableExists(%s): %v", tableName, err)
+		}
+		if exists == wantExists {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	final, err := tableExists(ctx, app, tableName)
+	if err != nil {
+		t.Fatalf("tableExists(%s): %v", tableName, err)
+	}
+	t.Fatalf("timed out waiting for table %s existence=%v, got %v", tableName, wantExists, final)
+}
 
 // TestETagIncrement_InvalidatesHTTPCache verifies that when ConfigIncrementETag
 // is called, the HTTP cache is cleared so stale responses are not served.
@@ -33,7 +69,7 @@ func TestETagIncrement_InvalidatesHTTPCache(t *testing.T) {
 	// Populate HTTP cache with an entry
 	now := time.Now().Unix()
 	entry := &cachelite.HTTPCacheEntry{
-		Key:       cachelite.NewCacheKey("GET", "/gallery/test", "|HX=false|HXTarget=", "identity"),
+		Key:       cachelite.NewCacheKey(cachelite.CacheKeyParams{Method: "GET", Path: "/gallery/test", Encoding: "identity"}),
 		Method:    "GET",
 		Path:      "/gallery/test",
 		Encoding:  "identity",
@@ -77,6 +113,14 @@ func TestETagIncrement_InvalidatesHTTPCache(t *testing.T) {
 	if storedAfter != nil {
 		t.Error("expected HTTP cache to be cleared after ETag increment, but entry still exists")
 	}
+
+	rotatedExists, err := tableExists(ctx, app, "http_cache_to_be_dropped")
+	if err != nil {
+		t.Fatalf("tableExists(http_cache_to_be_dropped): %v", err)
+	}
+	if !rotatedExists {
+		t.Fatal("expected rotated stale cache table http_cache_to_be_dropped to exist after ETag invalidation")
+	}
 }
 
 // TestApplyConfig_InvalidatesCacheWhenETagChanges verifies that applyConfig clears
@@ -103,7 +147,7 @@ func TestApplyConfig_InvalidatesCacheWhenETagChanges(t *testing.T) {
 	// Populate HTTP cache
 	now := time.Now().Unix()
 	entry := &cachelite.HTTPCacheEntry{
-		Key:       cachelite.NewCacheKey("GET", "/gallery/x", "|HX=false|HXTarget=", "identity"),
+		Key:       cachelite.NewCacheKey(cachelite.CacheKeyParams{Method: "GET", Path: "/gallery/x", Encoding: "identity"}),
 		Method:    "GET",
 		Path:      "/gallery/x",
 		Encoding:  "identity",
@@ -128,6 +172,14 @@ func TestApplyConfig_InvalidatesCacheWhenETagChanges(t *testing.T) {
 	}
 	if storedAfter != nil {
 		t.Error("expected HTTP cache to be cleared when ETag changed in applyConfig, but entry still exists")
+	}
+
+	rotatedExists, err := tableExists(ctx, app, "http_cache_to_be_dropped")
+	if err != nil {
+		t.Fatalf("tableExists(http_cache_to_be_dropped): %v", err)
+	}
+	if !rotatedExists {
+		t.Fatal("expected rotated stale cache table http_cache_to_be_dropped to exist after applyConfig ETag invalidation")
 	}
 }
 
@@ -154,7 +206,7 @@ func TestApplyConfig_DoesNotInvalidateWhenETagUnchanged(t *testing.T) {
 
 	now := time.Now().Unix()
 	entry := &cachelite.HTTPCacheEntry{
-		Key:       cachelite.NewCacheKey("GET", "/gallery/y", "|HX=false|HXTarget=", "identity"),
+		Key:       cachelite.NewCacheKey(cachelite.CacheKeyParams{Method: "GET", Path: "/gallery/y", Encoding: "identity"}),
 		Method:    "GET",
 		Path:      "/gallery/y",
 		Encoding:  "identity",
@@ -199,7 +251,7 @@ func TestApplyConfig_DoesNotInvalidateOnStartup(t *testing.T) {
 	// Populate HTTP cache (e.g. from previous run)
 	now := time.Now().Unix()
 	entry := &cachelite.HTTPCacheEntry{
-		Key:       cachelite.NewCacheKey("GET", "/gallery/z", "|HX=false|HXTarget=", "identity"),
+		Key:       cachelite.NewCacheKey(cachelite.CacheKeyParams{Method: "GET", Path: "/gallery/z", Encoding: "identity"}),
 		Method:    "GET",
 		Path:      "/gallery/z",
 		Encoding:  "identity",
@@ -238,7 +290,7 @@ func TestETagIncrementIntegration(t *testing.T) {
 	// Pre-populate cache with an entry (simulating a cached response)
 	now := time.Now().Unix()
 	entry := &cachelite.HTTPCacheEntry{
-		Key:       cachelite.NewCacheKey("GET", "/gallery/1", "|HX=false|HXTarget=", "identity"),
+		Key:       cachelite.NewCacheKey(cachelite.CacheKeyParams{Method: "GET", Path: "/gallery/1", Encoding: "identity"}),
 		Method:    "GET",
 		Path:      "/gallery/1",
 		Encoding:  "identity",
@@ -285,4 +337,37 @@ func TestETagIncrementIntegration(t *testing.T) {
 	if cfg.ETagVersion != newETag {
 		t.Errorf("expected ETag version %s in config, got %s", newETag, cfg.ETagVersion)
 	}
+}
+
+// TestWalkImageDir_DropsStaleCacheTable verifies deferred stale cache table cleanup
+// after discovery completes.
+func TestWalkImageDir_DropsStaleCacheTable(t *testing.T) {
+	app := CreateApp(t, false)
+	defer app.Shutdown()
+
+	ctx := app.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	cpc, err := app.dbRwPool.Get()
+	if err != nil {
+		t.Fatalf("failed to get rw pool connection: %v", err)
+	}
+	_, err = cpc.Conn.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS http_cache_to_be_dropped (id INTEGER PRIMARY KEY, body BLOB)`)
+	app.dbRwPool.Put(cpc)
+	if err != nil {
+		t.Fatalf("failed to create http_cache_to_be_dropped: %v", err)
+	}
+
+	beforeExists, err := tableExists(ctx, app, "http_cache_to_be_dropped")
+	if err != nil {
+		t.Fatalf("tableExists before walkImageDir: %v", err)
+	}
+	if !beforeExists {
+		t.Fatal("expected stale table to exist before walkImageDir")
+	}
+
+	app.walkImageDir()
+	waitForTableExistence(t, ctx, app, "http_cache_to_be_dropped", false)
 }

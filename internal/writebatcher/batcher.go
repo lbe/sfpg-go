@@ -94,35 +94,47 @@ type OnErrorFunc[T any] func(err error, batch []T)
 // passed as a slice; the caller must not retain it as it may be reused.
 type OnSuccessFunc[T any] func(batch []T)
 
+// OnAfterCommitFunc is called after a successful commit, before the next batch.
+// No transaction is active, making it safe for operations like WAL checkpointing
+// or PRAGMA optimize that require no active transactions.
+// Receives the context, time of last WAL checkpoint, time of last PRAGMA optimize, and total committed count.
+type OnAfterCommitFunc[T any] func(ctx context.Context, lastWalCheckpointTime time.Time, lastOptimizeTime time.Time, totalCommitted int64)
+
 // Config holds all parameters for a WriteBatcher. BeginTx and Flush are
 // required; other fields have defaults (MaxBatchSize 50, FlushInterval 200ms,
 // ChannelSize 1024).
 type Config[T any] struct {
-	BeginTx       func(ctx context.Context) (*sql.Tx, error) // how to start a tx
-	Flush         FlushFunc[T]                               // business logic
-	OnError       OnErrorFunc[T]                             // called on flush failure (nil = log only)
-	OnSuccess     OnSuccessFunc[T]                           // called after successful commit
-	MaxBatchSize  int                                        // flush at this count (default 50)
-	FlushInterval time.Duration                              // flush after this duration (default 200ms)
-	ChannelSize   int                                        // buffered channel capacity (default 1024)
-	SizeFunc      func(T) int64                              // returns byte cost of an item (nil = size tracking disabled)
-	MaxBatchBytes int64                                      // flush when cumulative batch bytes >= this (0 = no byte limit)
+	BeginTx             func(ctx context.Context) (*sql.Tx, error) // how to start a tx
+	Flush               FlushFunc[T]                               // business logic
+	OnError             OnErrorFunc[T]                             // called on flush failure (nil = log only)
+	OnSuccess           OnSuccessFunc[T]                           // called after successful commit
+	OnAfterCommit       OnAfterCommitFunc[T]                       // called after commit, no tx active
+	MaxBatchSize        int                                        // flush at this count (default 50)
+	FlushInterval       time.Duration                              // flush after this duration (default 200ms)
+	MaintenanceInterval time.Duration                              // run OnAfterCommit periodically (0 = disabled)
+	ChannelSize         int                                        // buffered channel capacity (default 1024)
+	SizeFunc            func(T) int64                              // returns byte cost of an item (nil = size tracking disabled)
+	MaxBatchBytes       int64                                      // flush when cumulative batch bytes >= this (0 = no byte limit)
 }
 
 // WriteBatcher collects items of type T and flushes them in batched transactions
 // through a single background worker. A WriteBatcher must be created using New
 // and should not be copied after first use. The zero value is not usable.
 type WriteBatcher[T any] struct {
-	cfg          Config[T]
-	ch           chan T
-	done         chan struct{} // closed when worker exits
-	ctx          context.Context
-	cancel       context.CancelFunc
-	mu           sync.Mutex
-	closed       bool
-	pendingCount atomic.Int64 // number of items not yet flushed (Submit +1, flush -len(batch))
-	totalFlushed atomic.Int64
-	totalErrors  atomic.Int64
+	cfg                   Config[T]
+	ch                    chan T
+	done                  chan struct{} // closed when worker exits
+	ctx                   context.Context
+	cancel                context.CancelFunc
+	mu                    sync.Mutex
+	closed                bool
+	pendingCount          atomic.Int64 // number of items not yet flushed (Submit +1, flush -len(batch))
+	totalFlushed          atomic.Int64
+	totalErrors           atomic.Int64
+	totalCommitted        atomic.Int64 // total items successfully committed
+	lastCommitTime        atomic.Value // time.Time of last successful commit
+	lastWalCheckpointTime atomic.Value // time.Time of last WAL checkpoint
+	lastOptimizeTime      atomic.Value // time.Time of last PRAGMA optimize
 }
 
 // Stats holds statistics about the WriteBatcher.
@@ -213,11 +225,12 @@ func (wb *WriteBatcher[T]) appendAndMaybeFlush(ctx context.Context, batch []T, b
 	if wb.cfg.SizeFunc != nil {
 		batchBytes += wb.cfg.SizeFunc(item)
 	}
-	if len(batch) >= wb.cfg.MaxBatchSize ||
-		(wb.cfg.MaxBatchBytes > 0 && batchBytes >= wb.cfg.MaxBatchBytes) {
-		slog.Debug("writebatcher: flush triggered by batch size or byte limit", "batch_size", len(batch), "batch_bytes",
-			humanize.Comma(batchBytes).String())
-		wb.flush(ctx, batch)
+	if len(batch) >= wb.cfg.MaxBatchSize {
+		wb.flush(ctx, batch, batchBytes, "size_limit")
+		return batch[:0], 0
+	}
+	if wb.cfg.MaxBatchBytes > 0 && batchBytes >= wb.cfg.MaxBatchBytes {
+		wb.flush(ctx, batch, batchBytes, "byte_limit")
 		return batch[:0], 0
 	}
 	return batch, batchBytes
@@ -229,39 +242,67 @@ func (wb *WriteBatcher[T]) worker() {
 	batch := make([]T, 0, wb.cfg.MaxBatchSize)
 	var batchBytes int64
 
-	timer := time.NewTimer(wb.cfg.FlushInterval)
-	if !timer.Stop() {
-		<-timer.C
+	flushTimer := time.NewTimer(wb.cfg.FlushInterval)
+	if !flushTimer.Stop() {
+		<-flushTimer.C
 	}
-	defer timer.Stop()
+	defer flushTimer.Stop()
+
+	// Maintenance timer for periodic tasks (WAL checkpoint, optimization)
+	// Always create the timer, but only use it if MaintenanceInterval > 0
+	var maintenanceTimer *time.Timer
+	if wb.cfg.MaintenanceInterval > 0 {
+		maintenanceTimer = time.NewTimer(wb.cfg.MaintenanceInterval)
+		defer maintenanceTimer.Stop()
+	} else {
+		// Create a timer that never fires if maintenance is disabled
+		maintenanceTimer = time.NewTimer(time.Hour * 24 * 365) // 1 year
+		maintenanceTimer.Stop()
+		defer maintenanceTimer.Stop()
+	}
 
 	for {
 		select {
 		case item, ok := <-wb.ch:
 			if !ok {
 				if len(batch) > 0 {
-					wb.flush(wb.ctx, batch)
+					wb.flush(wb.ctx, batch, batchBytes, "close")
 				}
 				return
 			}
 
 			batch, batchBytes = wb.appendAndMaybeFlush(wb.ctx, batch, batchBytes, item)
 			if len(batch) == 0 {
-				if !timer.Stop() {
+				if !flushTimer.Stop() {
 					select {
-					case <-timer.C:
+					case <-flushTimer.C:
 					default:
 					}
 				}
 			} else if len(batch) == 1 {
-				timer.Reset(wb.cfg.FlushInterval)
+				flushTimer.Reset(wb.cfg.FlushInterval)
 			}
 
-		case <-timer.C:
+		case <-flushTimer.C:
 			if len(batch) > 0 {
-				wb.flush(wb.ctx, batch)
+				wb.flush(wb.ctx, batch, batchBytes, "timeout")
 				batch = batch[:0]
 				batchBytes = 0
+			}
+
+		case <-maintenanceTimer.C:
+			// Only run maintenance if enabled (interval > 0)
+			if wb.cfg.MaintenanceInterval > 0 && wb.cfg.OnAfterCommit != nil {
+				lastWalCheckpoint, _ := wb.lastWalCheckpointTime.Load().(time.Time)
+				lastOptimize, _ := wb.lastOptimizeTime.Load().(time.Time)
+				totalCommitted := wb.totalCommitted.Load()
+				wb.cfg.OnAfterCommit(wb.ctx, lastWalCheckpoint, lastOptimize, totalCommitted)
+
+				// Update both times after running maintenance callback
+				now := time.Now()
+				wb.lastWalCheckpointTime.Store(now)
+				wb.lastOptimizeTime.Store(now)
+				maintenanceTimer.Reset(wb.cfg.MaintenanceInterval)
 			}
 
 		case <-wb.ctx.Done():
@@ -270,12 +311,16 @@ func (wb *WriteBatcher[T]) worker() {
 				select {
 				case item, ok := <-wb.ch:
 					if !ok {
-						wb.flush(wb.ctx, batch)
+						if len(batch) > 0 {
+							wb.flush(wb.ctx, batch, batchBytes, "shutdown")
+						}
 						return
 					}
 					batch, batchBytes = wb.appendAndMaybeFlush(wb.ctx, batch, batchBytes, item)
 				default:
-					wb.flush(wb.ctx, batch)
+					if len(batch) > 0 {
+						wb.flush(wb.ctx, batch, batchBytes, "shutdown")
+					}
 					return
 				}
 			}
@@ -283,7 +328,7 @@ func (wb *WriteBatcher[T]) worker() {
 	}
 }
 
-func (wb *WriteBatcher[T]) flush(ctx context.Context, batch []T) {
+func (wb *WriteBatcher[T]) flush(ctx context.Context, batch []T, batchBytes int64, reason string) {
 	if len(batch) == 0 {
 		return
 	}
@@ -338,11 +383,24 @@ func (wb *WriteBatcher[T]) flush(ctx context.Context, batch []T) {
 		return
 	}
 
+	// Transaction successfully committed - update stats and run maintenance callback
+	now := time.Now()
 	wb.totalFlushed.Add(n)
+	wb.totalCommitted.Add(n)
+	wb.lastCommitTime.Store(now)
+
 	if wb.cfg.OnSuccess != nil {
 		wb.cfg.OnSuccess(batch)
 	}
-	slog.Debug("writebatcher flush: completed", "batch_size", len(batch), "elapsed", fmt.Sprintf("%v", time.Since(t0)))
+
+	// Call OnAfterCommit for WAL checkpointing/optimization (no transaction active).
+	// Pass zero times to skip time-based checks - only size-based checks run from flush.
+	// Time-based checks are handled by the maintenance timer.
+	if wb.cfg.OnAfterCommit != nil {
+		wb.cfg.OnAfterCommit(wb.ctx, time.Time{}, time.Time{}, wb.totalCommitted.Load())
+	}
+
+	slog.Debug("writebatcher flush: completed", "trigger", reason, "batch_size", len(batch), "batch_bytes", humanize.Comma(batchBytes).String(), "elapsed", fmt.Sprintf("%v", time.Since(t0)))
 }
 
 // copyBatch returns a new slice with the same contents as batch.
@@ -369,17 +427,19 @@ func (wb *WriteBatcher[T]) Submit(item T) error {
 		wb.mu.Unlock()
 		return ErrClosed
 	}
-	wb.mu.Unlock()
 
+	var err error
 	select {
 	case wb.ch <- item:
 		wb.pendingCount.Add(1)
-		return nil
+		err = nil
 	case <-wb.ctx.Done():
-		return ErrClosed
+		err = ErrClosed
 	default:
-		return ErrFull
+		err = ErrFull
 	}
+	wb.mu.Unlock()
+	return err
 }
 
 // PendingCount returns the number of items currently enqueued or in the current

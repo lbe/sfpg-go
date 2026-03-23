@@ -35,42 +35,51 @@ func TestNormalizeAcceptEncoding(t *testing.T) {
 // TestNewCacheKey tests the cache key generation
 func TestNewCacheKey(t *testing.T) {
 	tests := []struct {
-		name     string
-		method   string
-		path     string
-		query    string
-		encoding string
-		want     string
+		name   string
+		params cachelite.CacheKeyParams
+		want   string
 	}{
 		{
-			name:     "GET request with gzip",
-			method:   "GET",
-			path:     "/api/data",
-			query:    "id=1",
-			encoding: "gzip",
-			want:     "GET:/api/data?id=1|gzip",
+			name: "GET request with gzip",
+			params: cachelite.CacheKeyParams{
+				Method:   "GET",
+				Path:     "/api/data",
+				Query:    "id=1",
+				HTMX:     cachelite.HTMXParams{},
+				Theme:    "dark",
+				Encoding: "gzip",
+			},
+			want: "GET:/api/data?id=1|Theme=dark|gzip",
 		},
 		{
-			name:     "POST request with brotli",
-			method:   "POST",
-			path:     "/upload",
-			query:    "",
-			encoding: "br",
-			want:     "POST:/upload?|br",
+			name: "POST request with brotli",
+			params: cachelite.CacheKeyParams{
+				Method:   "POST",
+				Path:     "/upload",
+				Query:    "",
+				HTMX:     cachelite.HTMXParams{},
+				Theme:    "dark",
+				Encoding: "br",
+			},
+			want: "POST:/upload?|Theme=dark|br",
 		},
 		{
-			name:     "HEAD request no encoding",
-			method:   "HEAD",
-			path:     "/status",
-			query:    "v=2",
-			encoding: "identity",
-			want:     "HEAD:/status?v=2|identity",
+			name: "HEAD request no encoding",
+			params: cachelite.CacheKeyParams{
+				Method:   "HEAD",
+				Path:     "/status",
+				Query:    "v=2",
+				HTMX:     cachelite.HTMXParams{},
+				Theme:    "dark",
+				Encoding: "identity",
+			},
+			want: "HEAD:/status?v=2|Theme=dark|identity",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := cachelite.NewCacheKey(tt.method, tt.path, tt.query, tt.encoding)
+			got := cachelite.NewCacheKey(tt.params)
 			if got != tt.want {
 				t.Errorf("NewCacheKey() = %q, want %q", got, tt.want)
 			}

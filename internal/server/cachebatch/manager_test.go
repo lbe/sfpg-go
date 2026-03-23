@@ -6,8 +6,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/lbe/sfpg-go/internal/cachelite"
 	"github.com/lbe/sfpg-go/internal/gallerydb"
-	"github.com/lbe/sfpg-go/internal/server/cachepreload"
 )
 
 type mockQueries struct {
@@ -81,7 +81,17 @@ func TestManager_Run_SkipsCachedEntries(t *testing.T) {
 	targets := []gallerydb.BatchLoadTarget{
 		{Path: "/gallery/1", Htmx: "true", HxTarget: "gallery-content", Encoding: "gzip"},
 	}
-	cacheKey := cachepreload.GenerateCacheKeyWithHX("GET", "/gallery/1", "v=v1", "true", "gallery-content", "gzip")
+	cacheKey := cachelite.NewCacheKey(cachelite.CacheKeyParams{
+		Method: "GET",
+		Path:   "/gallery/1",
+		Query:  "v=v1",
+		HTMX: cachelite.HTMXParams{
+			Request:   "true",
+			Target:    "gallery-content",
+			IsVariant: true,
+		},
+		Encoding: "gzip",
+	})
 	exists := map[string]bool{cacheKey: true}
 	q := &mockQueries{targets: targets, existsByKey: exists}
 
