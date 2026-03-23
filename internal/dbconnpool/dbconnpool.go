@@ -151,6 +151,9 @@ type DbSQLConnPool struct {
 	// Config holds the pool's configuration.
 	Config Config
 
+	// name is "RO" or "RW" for diagnostics in log messages.
+	name string
+
 	// ctx manages connection lifecycles and cancellation.
 	ctx context.Context
 
@@ -300,8 +303,15 @@ func NewDbSQLConnPool(
 		)
 	}
 
+	// Determine pool name from ReadOnly config for diagnostics
+	poolName := "RW"
+	if config.ReadOnly {
+		poolName = "RO"
+	}
+
 	return &DbSQLConnPool{
 		Config:               config,
+		name:                 poolName,
 		ctx:                  ctx,
 		pool:                 db,
 		connections:          make(chan *CpConn, config.MaxConnections),
@@ -331,7 +341,7 @@ var ct_get, ct_put atomic.Int64
 // Returns ErrPoolClosed if pool has been closed.
 func (p *DbSQLConnPool) Get() (*CpConn, error) {
 	ct_get.Add(1)
-	slog.Debug("Get connection", "total_gets", ct_get.Load(), "num_connections", p.numConnections.Load(), "idle_connections", len(p.connections))
+	slog.Debug("Get connection", "pool", p.name, "total_gets", ct_get.Load(), "num_connections", p.numConnections.Load(), "idle_connections", len(p.connections))
 retry:
 	if p.closed.Load() {
 		return nil, ErrPoolClosed
@@ -344,6 +354,7 @@ retry:
 			if err := cpc.Conn.PingContext(p.ctx); err != nil {
 				slog.Warn(
 					"Idle connection failed ping, closing and retrying",
+					"pool", p.name,
 					"error", err,
 				)
 				cpc.Close()
@@ -360,11 +371,12 @@ retry:
 		cpc, err := p.newCpConn()
 		if err != nil {
 			p.numConnections.Add(-1)
-			slog.Warn("Failed to create new connection", "error", err)
+			slog.Warn("Failed to create new connection", "pool", p.name, "error", err)
 			return nil, err
 		}
 		slog.Debug(
 			"New connection created",
+			"pool", p.name,
 			"num_connections", p.numConnections.Load(),
 		)
 		return cpc, nil
@@ -377,6 +389,7 @@ retry:
 			if err := cpc.Conn.PingContext(p.ctx); err != nil {
 				slog.Warn(
 					"Blocked-wait connection failed ping, closing and retrying",
+					"pool", p.name,
 					"error", err,
 				)
 				cpc.Close()
@@ -397,7 +410,7 @@ retry:
 // Safe to call with nil (no-op).
 func (p *DbSQLConnPool) Put(cpc *CpConn) {
 	ct_put.Add(1)
-	slog.Debug("Put connection", "total_puts", ct_put.Load(), "num_connections", p.numConnections.Load(), "idle_connections", len(p.connections))
+	slog.Debug("Put connection", "pool", p.name, "total_puts", ct_put.Load(), "num_connections", p.numConnections.Load(), "idle_connections", len(p.connections))
 
 	if cpc == nil {
 		return
@@ -407,7 +420,7 @@ func (p *DbSQLConnPool) Put(cpc *CpConn) {
 		p.numConnections.Add(-1)
 		if err := cpc.Close(); err != nil {
 			slog.Error(
-				"Error closing connection in closed pool", "err", err,
+				"Error closing connection in closed pool", "pool", p.name, "err", err,
 			)
 		}
 		return
@@ -474,6 +487,7 @@ waitForActive:
 
 		if activeConns > 0 || dbStats.OpenConnections > 0 {
 			slog.Debug("waiting for active connections to be returned before closing pool",
+				"pool", p.name,
 				"pool_active_connections", activeConns,
 				"sqldb_open_connections", dbStats.OpenConnections,
 				"sqldb_in_use", dbStats.InUse,
@@ -487,6 +501,7 @@ waitForActive:
 	finalDBStats := p.pool.Stats()
 	if finalActive > 0 || finalDBStats.OpenConnections > 0 {
 		slog.Warn("closing pool with connections still outstanding",
+			"pool", p.name,
 			"pool_active_connections", finalActive,
 			"sqldb_open_connections", finalDBStats.OpenConnections,
 			"sqldb_in_use", finalDBStats.InUse)
@@ -558,6 +573,7 @@ func (p *DbSQLConnPool) Monitor() {
 			if deficit > 0 {
 				slog.Debug(
 					"Monitor: growing pool",
+					"pool", p.name,
 					"deficit", deficit,
 					"current_idle", currentIdle,
 					"current_open", currentOpen,
@@ -572,6 +588,7 @@ func (p *DbSQLConnPool) Monitor() {
 				if err != nil {
 					slog.Error(
 						"Monitor: failed to create connection",
+						"pool", p.name,
 						"error", err,
 					)
 					p.numConnections.Add(-1)

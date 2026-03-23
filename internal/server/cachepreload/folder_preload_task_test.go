@@ -205,7 +205,17 @@ func TestFolderPreloadTask_SkipsAlreadyCachedRoutes(t *testing.T) {
 	// This route should be skipped during preload
 	etagVersion := "v1"
 	query := fmt.Sprintf("v=%s", etagVersion)
-	cacheKeyInfo := GenerateCacheKeyWithHX("GET", "/info/image/42", query, "true", "box_info", "gzip")
+	cacheKeyInfo := cachelite.NewCacheKey(cachelite.CacheKeyParams{
+		Method: "GET",
+		Path:   "/info/image/42",
+		Query:  query,
+		HTMX: cachelite.HTMXParams{
+			Request:   "true",
+			Target:    "box_info",
+			IsVariant: true,
+		},
+		Encoding: "gzip",
+	})
 	now := time.Now().Unix()
 	cachedEntry := &cachelite.HTTPCacheEntry{
 		Key:           cacheKeyInfo,

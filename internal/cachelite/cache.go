@@ -14,6 +14,47 @@ import (
 	"github.com/lbe/sfpg-go/internal/gallerydb"
 )
 
+var httpCacheIndexDropStatements = []string{
+	"DROP INDEX IF EXISTS idx_http_cache_key",
+	"DROP INDEX IF EXISTS idx_http_cache_path",
+	"DROP INDEX IF EXISTS idx_http_cache_encoding",
+	"DROP INDEX IF EXISTS idx_http_cache_created",
+	"DROP INDEX IF EXISTS idx_http_cache_expires",
+	"DROP INDEX IF EXISTS idx_http_cache_content_length",
+}
+
+var httpCacheIndexCreateStatements = []string{
+	"CREATE INDEX IF NOT EXISTS idx_http_cache_key ON http_cache(key)",
+	"CREATE INDEX IF NOT EXISTS idx_http_cache_path ON http_cache(path)",
+	"CREATE INDEX IF NOT EXISTS idx_http_cache_encoding ON http_cache(encoding)",
+	"CREATE INDEX IF NOT EXISTS idx_http_cache_created ON http_cache(created_at)",
+	"CREATE INDEX IF NOT EXISTS idx_http_cache_expires ON http_cache(expires_at)",
+	"CREATE INDEX IF NOT EXISTS idx_http_cache_content_length ON http_cache(content_length)",
+}
+
+const rotateDropStaleTableSQL = "DROP TABLE IF EXISTS http_cache_to_be_dropped"
+const rotateRenameActiveTableSQL = "ALTER TABLE http_cache RENAME TO http_cache_to_be_dropped"
+const rotateCreateActiveTableSQL = `
+CREATE TABLE IF NOT EXISTS http_cache (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  key                 TEXT NOT NULL UNIQUE,
+  method              TEXT NOT NULL,
+  path                TEXT NOT NULL,
+  query_string        TEXT,
+  encoding            TEXT NOT NULL,
+  status              INTEGER NOT NULL,
+  content_type        TEXT,
+  cache_control       TEXT,
+  etag                TEXT,
+  last_modified       TEXT,
+  vary                TEXT,
+  body                BLOB NOT NULL,
+  content_length      INTEGER,
+  created_at          INTEGER NOT NULL,
+  expires_at          INTEGER,
+  content_encoding    TEXT
+)`
+
 // HTTPCacheEntry represents a cached HTTP response.
 type HTTPCacheEntry struct {
 	ID              int64
@@ -97,18 +138,16 @@ func NormalizeAcceptEncoding(acceptEncoding string) string {
 	return "identity"
 }
 
-// NewCacheKey generates a composite cache key from request components.
-// Format: "METHOD:/path?query|encoding".
-func NewCacheKey(method, path, query, encoding string) string {
-	return fmt.Sprintf("%s:%s?%s|%s", method, path, query, encoding)
-}
-
 // GetCacheEntry retrieves a cache entry by key from the database.
 // Returns nil if not found or expired (query already filters expired).
 func GetCacheEntry(ctx context.Context, db *dbconnpool.DbSQLConnPool, key string) (*HTTPCacheEntry, error) {
-	queries := gallerydb.New(db.DB())
+	cpc, err := db.Get()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get connection: %w", err)
+	}
+	defer db.Put(cpc)
 
-	result, err := queries.GetHttpCacheByKey(ctx, key)
+	result, err := cpc.Queries.GetHttpCacheByKey(ctx, key)
 	if err != nil {
 		return nil, err
 	}
@@ -136,9 +175,13 @@ func GetCacheEntry(ctx context.Context, db *dbconnpool.DbSQLConnPool, key string
 
 // StoreCacheEntry inserts or updates a cache entry in the database.
 func StoreCacheEntry(ctx context.Context, db *dbconnpool.DbSQLConnPool, entry *HTTPCacheEntry) error {
-	queries := gallerydb.New(db.DB())
+	cpc, err := db.Get()
+	if err != nil {
+		return fmt.Errorf("failed to get connection: %w", err)
+	}
+	defer db.Put(cpc)
 
-	return queries.UpsertHttpCache(ctx, gallerydb.UpsertHttpCacheParams{
+	return cpc.Queries.UpsertHttpCache(ctx, gallerydb.UpsertHttpCacheParams{
 		Key:             entry.Key,
 		Method:          entry.Method,
 		Path:            entry.Path,
@@ -246,23 +289,100 @@ func StoreCacheEntryBatch(ctx context.Context, db *dbconnpool.DbSQLConnPool, ent
 
 // DeleteCacheEntry removes a single cache entry by key.
 func DeleteCacheEntry(ctx context.Context, db *dbconnpool.DbSQLConnPool, key string) error {
-	queries := gallerydb.New(db.DB())
-	return queries.DeleteHttpCacheByKey(ctx, key)
+	cpc, err := db.Get()
+	if err != nil {
+		return fmt.Errorf("failed to get connection: %w", err)
+	}
+	defer db.Put(cpc)
+	return cpc.Queries.DeleteHttpCacheByKey(ctx, key)
 }
 
 // ClearCache deletes all cache entries from the database.
 func ClearCache(ctx context.Context, db *dbconnpool.DbSQLConnPool) error {
-	queries := gallerydb.New(db.DB())
-	return queries.ClearHttpCache(ctx)
+	cpc, err := db.Get()
+	if err != nil {
+		return fmt.Errorf("failed to get connection: %w", err)
+	}
+	defer db.Put(cpc)
+	return cpc.Queries.ClearHttpCache(ctx)
+}
+
+// RotateCacheTable atomically swaps out http_cache by renaming the current table,
+// recreating a fresh http_cache table, and rebuilding its indexes.
+func RotateCacheTable(ctx context.Context, db *dbconnpool.DbSQLConnPool) error {
+	cpc, err := db.Get()
+	if err != nil {
+		return fmt.Errorf("failed to get connection: %w", err)
+	}
+	defer db.Put(cpc)
+
+	tx, err := cpc.Conn.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin rotation transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, rotateDropStaleTableSQL); err != nil {
+		return fmt.Errorf("drop previous stale cache table: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, rotateRenameActiveTableSQL); err != nil {
+		return fmt.Errorf("rename http_cache to stale table: %w", err)
+	}
+	for _, stmt := range httpCacheIndexDropStatements {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("drop stale cache index failed (%s): %w", stmt, err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, rotateCreateActiveTableSQL); err != nil {
+		return fmt.Errorf("create fresh http_cache table: %w", err)
+	}
+	for _, stmt := range httpCacheIndexCreateStatements {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("create cache index failed (%s): %w", stmt, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit cache table rotation: %w", err)
+	}
+	return nil
+}
+
+// DropStaleCacheTableIfExists removes the deferred stale cache table.
+// Returns true when a stale table was present and dropped.
+func DropStaleCacheTableIfExists(ctx context.Context, db *dbconnpool.DbSQLConnPool) (bool, error) {
+	cpc, err := db.Get()
+	if err != nil {
+		return false, fmt.Errorf("failed to get connection: %w", err)
+	}
+	defer db.Put(cpc)
+
+	row := cpc.Conn.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'http_cache_to_be_dropped')`)
+	var exists int64
+	if err := row.Scan(&exists); err != nil {
+		return false, fmt.Errorf("check stale cache table existence: %w", err)
+	}
+	if exists == 0 {
+		return false, nil
+	}
+
+	if _, err := cpc.Conn.ExecContext(ctx, rotateDropStaleTableSQL); err != nil {
+		return false, fmt.Errorf("drop stale cache table: %w", err)
+	}
+	return true, nil
 }
 
 // EvictLRU removes oldest cache entries until at least targetFreeBytes are available.
 // Uses LRU (Least Recently Used) strategy based on created_at timestamp.
 // Returns the actual number of bytes freed.
 func EvictLRU(ctx context.Context, db *dbconnpool.DbSQLConnPool, targetFreeBytes int64) (int64, error) {
-	queries := gallerydb.New(db.DB())
+	cpc, err := db.Get()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get connection: %w", err)
+	}
+	defer db.Put(cpc)
 
-	oldest, err := queries.GetHttpCacheOldestCreated(ctx, 1000)
+	oldest, err := cpc.Queries.GetHttpCacheOldestCreated(ctx, 1000)
 	if err != nil {
 		return 0, fmt.Errorf("GetHttpCacheOldestCreated failed: %w", err)
 	}
@@ -273,7 +393,7 @@ func EvictLRU(ctx context.Context, db *dbconnpool.DbSQLConnPool, targetFreeBytes
 			break
 		}
 
-		if err := queries.DeleteHttpCacheByID(ctx, row.ID); err != nil {
+		if err := cpc.Queries.DeleteHttpCacheByID(ctx, row.ID); err != nil {
 			return freedBytes, fmt.Errorf("DeleteHttpCacheByID failed: %w", err)
 		}
 
@@ -288,9 +408,13 @@ func EvictLRU(ctx context.Context, db *dbconnpool.DbSQLConnPool, targetFreeBytes
 
 // GetCacheSizeBytes returns the total size of all cache entries in bytes.
 func GetCacheSizeBytes(ctx context.Context, db *dbconnpool.DbSQLConnPool) (int64, error) {
-	queries := gallerydb.New(db.DB())
+	cpc, err := db.Get()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get connection: %w", err)
+	}
+	defer db.Put(cpc)
 
-	result, err := queries.GetHttpCacheSizeBytes(ctx)
+	result, err := cpc.Queries.GetHttpCacheSizeBytes(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -307,15 +431,23 @@ func GetCacheSizeBytes(ctx context.Context, db *dbconnpool.DbSQLConnPool) (int64
 
 // CountCacheEntries returns the number of entries in the cache.
 func CountCacheEntries(ctx context.Context, db *dbconnpool.DbSQLConnPool) (int64, error) {
-	queries := gallerydb.New(db.DB())
-	return queries.CountHttpCacheEntries(ctx)
+	cpc, err := db.Get()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get connection: %w", err)
+	}
+	defer db.Put(cpc)
+	return cpc.Queries.CountHttpCacheEntries(ctx)
 }
 
 // CleanupExpired removes all expired cache entries from the database.
 func CleanupExpired(ctx context.Context, db *dbconnpool.DbSQLConnPool) (int64, error) {
-	queries := gallerydb.New(db.DB())
+	cpc, err := db.Get()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get connection: %w", err)
+	}
+	defer db.Put(cpc)
 
-	err := queries.DeleteHttpCacheExpired(ctx)
+	err = cpc.Queries.DeleteHttpCacheExpired(ctx)
 	// sqlc does not return affected rows; return 1 to signal attempt.
 	return 1, err
 }

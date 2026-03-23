@@ -1,12 +1,29 @@
 package server
 
 import (
+	"context"
 	"database/sql"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/lbe/sfpg-go/internal/cachelite"
 )
+
+func testTableExists(ctx context.Context, app *App, tableName string) (bool, error) {
+	cpc, err := app.dbRwPool.Get()
+	if err != nil {
+		return false, fmt.Errorf("failed to get rw pool connection: %w", err)
+	}
+	defer app.dbRwPool.Put(cpc)
+
+	row := cpc.Conn.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?)`, tableName)
+	var exists int64
+	if err := row.Scan(&exists); err != nil {
+		return false, fmt.Errorf("scan table exists query failed: %w", err)
+	}
+	return exists == 1, nil
+}
 
 func TestIncrementETag_ClearsCache(t *testing.T) {
 	app := CreateApp(t, false)
@@ -54,5 +71,13 @@ func TestIncrementETag_ClearsCache(t *testing.T) {
 	}
 	if countAfter != 0 {
 		t.Errorf("expected 0 cache entries after increment, got %d", countAfter)
+	}
+
+	staleExists, err := testTableExists(app.ctx, app, "http_cache_to_be_dropped")
+	if err != nil {
+		t.Fatalf("table existence check failed: %v", err)
+	}
+	if !staleExists {
+		t.Fatal("expected stale table to exist after ETag rotation")
 	}
 }

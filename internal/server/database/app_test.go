@@ -6,9 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
-	"time"
 
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/sqlite"
@@ -234,33 +232,4 @@ func TestEnsureRootFolderExists(t *testing.T) {
 	if id == 0 {
 		t.Fatalf("root folder id invalid: %d", id)
 	}
-}
-
-func TestSchedulePeriodicOptimization_Smoke(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// :memory: for main DB; thumbs.db must be file-based for ATTACH (CustomQueries need thumbs.thumbnail_blobs)
-	thumbsDBPath := filepath.Join(t.TempDir(), "thumbs.db")
-	if err := migrateBlobsDB(thumbsDBPath); err != nil {
-		t.Fatalf("migrateBlobsDB failed: %v", err)
-	}
-
-	ro := ":memory:"
-	rw := ":memory:"
-
-	dbRwPool, dbRoPool, err := createDatabasePools(ctx, ro, rw, thumbsDBPath, nil)
-	if err != nil {
-		t.Fatalf("createDatabasePools failed: %v", err)
-	}
-	defer func() {
-		_ = dbRoPool.Close()
-		_ = dbRwPool.Close()
-	}()
-
-	var wg sync.WaitGroup
-	ScheduleOptimization(ctx, dbRwPool, &wg)
-	time.Sleep(50 * time.Millisecond)
-	cancel()
-	wg.Wait() // Wait for goroutine to exit
 }

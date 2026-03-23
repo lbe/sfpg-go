@@ -182,7 +182,7 @@ func TestCachePreloadAdapter_IsEnabled(t *testing.T) {
 func TestHTTPCacheAdapter_IsEnabled(t *testing.T) {
 	t.Run("returns true when cache is enabled", func(t *testing.T) {
 		var sizeCounter atomic.Int64
-		cache := cachelite.NewHTTPCacheMiddleware(nil, cachelite.CacheConfig{
+		cache := cachelite.NewHTTPCacheMiddlewareForTest(nil, cachelite.CacheConfig{
 			MaxEntrySize: 100_000,
 			MaxTotalSize: 1_000_000,
 			Enabled:      true,
@@ -197,7 +197,7 @@ func TestHTTPCacheAdapter_IsEnabled(t *testing.T) {
 
 	t.Run("returns false when cache is disabled", func(t *testing.T) {
 		var sizeCounter atomic.Int64
-		cache := cachelite.NewHTTPCacheMiddleware(nil, cachelite.CacheConfig{
+		cache := cachelite.NewHTTPCacheMiddlewareForTest(nil, cachelite.CacheConfig{
 			MaxEntrySize: 100_000,
 			MaxTotalSize: 1_000_000,
 			Enabled:      false,
@@ -227,7 +227,7 @@ func TestHTTPCacheAdapter_GetEntryCount(t *testing.T) {
 func TestHTTPCacheAdapter_GetConfig(t *testing.T) {
 	t.Run("returns cache configuration", func(t *testing.T) {
 		var sizeCounter atomic.Int64
-		cache := cachelite.NewHTTPCacheMiddleware(nil, cachelite.CacheConfig{
+		cache := cachelite.NewHTTPCacheMiddlewareForTest(nil, cachelite.CacheConfig{
 			MaxEntrySize: 100_000,
 			MaxTotalSize: 1_000_000,
 			Enabled:      true,

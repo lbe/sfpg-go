@@ -3,7 +3,6 @@ package cachelite
 import (
 	"context"
 	"database/sql"
-	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -19,6 +18,7 @@ type HTTPCacheMiddleware struct {
 	config      CacheConfig
 	sizeCounter *atomic.Int64         // Shared atomic counter for cache size
 	submitFunc  func(*HTTPCacheEntry) // Optional custom submit function
+	syncMode    bool                  // If true, submitFunc is called directly (for tests)
 }
 
 // cacheCapturingWriter buffers response data for caching.
@@ -51,11 +51,32 @@ func (ccw *cacheCapturingWriter) Write(p []byte) (int, error) {
 
 // NewHTTPCacheMiddleware constructs the cache middleware with a custom submit function instead of a queue.
 func NewHTTPCacheMiddleware(db *dbconnpool.DbSQLConnPool, cfg CacheConfig, sizeCounter *atomic.Int64, submit func(*HTTPCacheEntry)) *HTTPCacheMiddleware {
+	// In production, submitFunc is mandatory
+	if submit == nil {
+		panic("HTTPCacheMiddleware: submitFunc is required in production - use unified batcher")
+	}
 	return &HTTPCacheMiddleware{
 		db:          db,
 		config:      cfg,
 		sizeCounter: sizeCounter,
 		submitFunc:  submit,
+	}
+}
+
+// NewHTTPCacheMiddlewareForTest creates middleware without production guard for testing.
+// Tests can use this to bypass the panic on nil submitFunc.
+func NewHTTPCacheMiddlewareForTest(
+	db *dbconnpool.DbSQLConnPool,
+	cfg CacheConfig,
+	sizeCounter *atomic.Int64,
+	submitFunc func(*HTTPCacheEntry), // test-only: accepts nil submitFunc
+) *HTTPCacheMiddleware {
+	return &HTTPCacheMiddleware{
+		db:          db,
+		config:      cfg,
+		sizeCounter: sizeCounter,
+		submitFunc:  submitFunc,
+		syncMode:    true,
 	}
 }
 
@@ -183,14 +204,6 @@ func (hcm *HTTPCacheMiddleware) Middleware(next http.Handler) http.Handler {
 			return
 		}
 
-		encoding := NormalizeAcceptEncoding(r.Header.Get("Accept-Encoding"))
-		// Distinguish HTMX partials from full-page responses (e.g. folder tile vs breadcrumb)
-		htmx := r.Header.Get("HX-Request")
-		if htmx == "" {
-			htmx = "false"
-		}
-		hxTarget := r.Header.Get("HX-Target")
-		query := r.URL.RawQuery
 		// Get theme from cookie for cache key - theme affects rendered page
 		theme := "dark" // default
 		if cookie, err := r.Cookie("theme"); err == nil && cookie.Value != "" {
@@ -198,7 +211,8 @@ func (hcm *HTTPCacheMiddleware) Middleware(next http.Handler) http.Handler {
 		}
 		// HX-Target distinguishes folder tile (gallery-content) from boosted link (empty/body)
 		// Theme is included so different themes are cached separately
-		cacheKey := NewCacheKey(r.Method, r.URL.Path, query+"|HX="+htmx+"|HXTarget="+hxTarget+"|Theme="+theme, encoding)
+		params := NewCacheKeyForRequest(r, theme)
+		cacheKey := NewCacheKey(params)
 
 		// Check cache for existing entry
 		entry, err := hcm.checkCache(r.Context(), cacheKey)
@@ -298,8 +312,8 @@ func (hcm *HTTPCacheMiddleware) Middleware(next http.Handler) http.Handler {
 		newEntry.Key = cacheKey
 		newEntry.Method = r.Method
 		newEntry.Path = r.URL.Path
-		newEntry.QueryString = sql.NullString{String: query, Valid: query != ""}
-		newEntry.Encoding = encoding
+		newEntry.QueryString = sql.NullString{String: params.Query, Valid: params.Query != ""}
+		newEntry.Encoding = params.Encoding
 		newEntry.Status = int64(buf.statusCode)
 		newEntry.ContentType = sql.NullString{String: buf.Header().Get("Content-Type"), Valid: buf.Header().Get("Content-Type") != ""}
 		newEntry.ContentEncoding = sql.NullString{String: contentEncoding, Valid: contentEncoding != ""}
@@ -313,22 +327,12 @@ func (hcm *HTTPCacheMiddleware) Middleware(next http.Handler) http.Handler {
 		newEntry.CreatedAt = now
 		newEntry.ExpiresAt = expiresAt
 
-		// Queue cache write asynchronously
-		if hcm.submitFunc != nil {
-			// NEW PATH: Use unified batcher
-			go hcm.submitFunc(newEntry)
+		// Queue cache write asynchronously via unified batcher
+		// submitFunc is always set in production (enforced by NewHTTPCacheMiddleware)
+		if hcm.syncMode {
+			hcm.submitFunc(newEntry)
 		} else {
-			// Synchronous path (usually for tests)
-			if _, err := hcm.evictIfNeeded(r.Context(), bodySize); err != nil {
-				slog.Warn("Cache eviction failed (sync)", "err", err)
-			}
-			if err := StoreCacheEntry(r.Context(), hcm.db, newEntry); err != nil {
-				slog.Warn("Synchronous cache store failed", "key", cacheKey, "err", err)
-			} else if hcm.sizeCounter != nil {
-				hcm.sizeCounter.Add(bodySize)
-			}
-			// Return entry to pool after synchronous store
-			PutHTTPCacheEntry(newEntry)
+			go hcm.submitFunc(newEntry)
 		}
 	})
 }

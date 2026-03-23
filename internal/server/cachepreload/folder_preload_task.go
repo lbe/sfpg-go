@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lbe/sfpg-go/internal/cachelite"
 	"github.com/lbe/sfpg-go/internal/dbconnpool"
 	"github.com/lbe/sfpg-go/internal/gallerydb"
 	"github.com/lbe/sfpg-go/internal/scheduler"
@@ -24,37 +25,19 @@ func isCacheablePath(path string, routes []string) bool {
 	return false
 }
 
-// variantForPath returns (hxTarget, defaultEncoding) for preload. HTMX paths get
-// defaultEncoding "gzip" only when PreferredEncoding is not set; otherwise the task
-// uses PreferredEncoding (from the triggering request). Full-page paths use identity.
-func variantForPath(path string) (hxTarget string, defaultEncoding string) {
-	if strings.HasPrefix(path, "/info/image/") || strings.HasPrefix(path, "/info/folder/") {
-		return "box_info", "gzip"
-	}
-	if strings.HasPrefix(path, "/lightbox/") {
-		return "lightbox_content", "gzip"
-	}
-	if strings.HasPrefix(path, "/gallery/") {
-		return "gallery-content", "gzip"
-	}
-	return "", "identity"
-}
-
 // FolderPreloadTask checks a folder's contents and schedules individual preload tasks.
 // It respects CacheableRoutes and uses TaskTracker for deduplication.
-// PreferredEncoding is the normalized Accept-Encoding from the request that triggered
-// this preload; HTMX-variant preloads use it so cache keys match that client.
 type FolderPreloadTask struct {
-	FolderID          int64
-	SessionID         string
-	ETagVersion       string
-	PreferredEncoding string // from triggering request's Accept-Encoding (normalized)
-	CacheableRoutes   []string
-	DBRoPool          *dbconnpool.DbSQLConnPool
-	TaskTracker       *TaskTracker
-	Scheduler         *scheduler.Scheduler
-	RequestConfig     InternalRequestConfig
-	Metrics           *PreloadMetrics
+	FolderID          int64                     // folder to preload (direct children only)
+	SessionID         string                    // for task cancellation when user navigates away
+	ETagVersion       string                    // cache-busting query (e.g. "v=20260201-01")
+	PreferredEncoding string                    // from triggering request's Accept-Encoding (normalized); HTMX preloads use it so keys match that client
+	CacheableRoutes   []string                  // route prefixes that are cacheable (e.g. "/gallery/", "/info/")
+	DBRoPool          *dbconnpool.DbSQLConnPool // read-only pool for GetPreloadRoutesByFolderID
+	TaskTracker       *TaskTracker              // deduplication; TryClaimTask before scheduling
+	Scheduler         *scheduler.Scheduler      // schedules per-path PreloadTask
+	RequestConfig     InternalRequestConfig     // handler and ETag version for internal requests
+	Metrics           *PreloadMetrics           // optional; records skipped/scheduled
 	GetQueries        func(*dbconnpool.CpConn) interfaces.HandlerQueries
 }
 
@@ -109,19 +92,15 @@ func (t *FolderPreloadTask) Run(ctx context.Context) error {
 
 // schedulePreload checks cache existence and TaskTracker, then schedules a PreloadTask if needed.
 // For HTMX paths the encoding comes from PreferredEncoding (triggering request's
-// Accept-Encoding); otherwise from variantForPath. Returns true if a task was scheduled.
+// Accept-Encoding); otherwise from cachelite.VariantForPath. Returns true if a task was scheduled.
 func (t *FolderPreloadTask) schedulePreload(ctx context.Context, path, query string, queries *gallerydb.CustomQueries) bool {
-	hxTarget, defaultEncoding := variantForPath(path)
+	hxTarget, defaultEncoding := cachelite.VariantForPath(path)
 	encoding := defaultEncoding
 	if hxTarget != "" && t.PreferredEncoding != "" {
 		encoding = t.PreferredEncoding
 	}
-	var cacheKey string
-	if hxTarget != "" {
-		cacheKey = GenerateCacheKeyWithHX("GET", path, query, "true", hxTarget, encoding)
-	} else {
-		cacheKey = GenerateCacheKey("GET", path, query, encoding)
-	}
+	params := cachelite.NewCacheKeyForPreload(path, query, encoding, "", hxTarget != "")
+	cacheKey := cachelite.NewCacheKey(params)
 
 	// Check if cache entry already exists (lightweight check, no body loaded)
 	exists, err := queries.HttpCacheExistsByKey(ctx, cacheKey)
@@ -133,15 +112,10 @@ func (t *FolderPreloadTask) schedulePreload(ctx context.Context, path, query str
 		return false
 	}
 
-	if t.TaskTracker.IsTaskPending(cacheKey) {
+	if !t.TaskTracker.TryClaimTask(cacheKey) {
 		if t.Metrics != nil {
-			t.Metrics.RecordSkipped("deduplicated")
+			t.Metrics.RecordSkipped("already_claimed")
 		}
-		return false
-	}
-
-	taskID := fmt.Sprintf("%s-%d", t.SessionID, time.Now().UnixNano())
-	if !t.TaskTracker.RegisterTask(cacheKey, t.SessionID, taskID) {
 		return false
 	}
 

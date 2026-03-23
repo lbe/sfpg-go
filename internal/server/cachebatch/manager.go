@@ -1,3 +1,6 @@
+// Package cachebatch provides batch cache loading with bounded concurrency.
+// It warms the HTTP cache for gallery, info box, and lightbox routes, skips
+// already-cached entries, and blocks when discovery is active.
 package cachebatch
 
 import (
@@ -9,20 +12,23 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/lbe/sfpg-go/internal/cachelite"
 	"github.com/lbe/sfpg-go/internal/gallerydb"
 	"github.com/lbe/sfpg-go/internal/server/cachepreload"
 )
 
 const (
-	defaultMaxWorkers = 8
-	defaultQueueSize  = 1000
+	defaultMaxWorkers = 8    // max concurrent batch load workers
+	defaultQueueSize  = 1000 // job queue capacity
+	throttleDelay     = 50 * time.Millisecond
 )
 
 // Manager runs batch cache load with bounded concurrency.
 type Manager struct {
-	running atomic.Bool
-	config  Config
-	metrics *Metrics
+	running     atomic.Bool
+	config      Config
+	metrics     *Metrics
+	isThrottled bool
 }
 
 // NewManager creates a new BatchLoadManager.
@@ -102,6 +108,11 @@ func (m *Manager) Run(ctx context.Context) error {
 	jobs := make(chan job, queueSize)
 	var wg sync.WaitGroup
 
+	// Function to calculate pending queue depth
+	pendingCount := func() int {
+		return len(jobs)
+	}
+
 	for i := 0; i < maxWorkers; i++ {
 		wg.Add(1)
 		go func() {
@@ -114,7 +125,41 @@ func (m *Manager) Run(ctx context.Context) error {
 
 	queryStr := "v=" + etagVersion
 	for _, t := range targets {
-		cacheKey := cachepreload.GenerateCacheKeyWithHX("GET", t.Path, queryStr, t.Htmx, t.HxTarget, t.Encoding)
+		// Check backpressure and throttle if needed
+		utilization := float64(pendingCount()) / float64(queueSize)
+		if utilization > 0.95 {
+			metrics.RecordBackpressureSkipped()
+			slog.Debug("batch load: skipping target due to high backpressure",
+				"utilization", utilization, "path", t.Path)
+			continue
+		}
+
+		// Throttle scheduling when queue is moderately full
+		if utilization > 0.8 {
+			m.metrics.RecordThrottled()
+			if !m.isThrottled {
+				m.isThrottled = true
+				slog.Debug("batch load: throttling scheduling due to queue utilization",
+					"utilization", utilization, "threshold", "0.8")
+			}
+			time.Sleep(throttleDelay)
+			// Reset throttled flag after delay
+			m.isThrottled = false
+		}
+
+		params := cachelite.CacheKeyParams{
+			Method: "GET",
+			Path:   t.Path,
+			Query:  queryStr,
+			HTMX: cachelite.HTMXParams{
+				Request:   t.Htmx,
+				Target:    t.HxTarget,
+				IsVariant: t.Htmx != "false",
+			},
+			Theme:    "dark", // Default theme for batch load
+			Encoding: t.Encoding,
+		}
+		cacheKey := cachelite.NewCacheKey(params)
 		exists, err := queries.HttpCacheExistsByKey(ctx, cacheKey)
 		if err != nil {
 			slog.Warn("batch load: HttpCacheExistsByKey failed", "path", t.Path, "err", err)

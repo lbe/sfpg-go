@@ -125,8 +125,12 @@ func TestServerShutdownPost_Authorized(t *testing.T) {
 		t.Errorf("expected Content-Type text/html, got %s", contentType)
 	}
 
-	body := rr.Body.String()
-	if !strings.Contains(body, "Shutting Down") {
+	doc, err := html.Parse(strings.NewReader(rr.Body.String()))
+	if err != nil {
+		t.Fatalf("failed to parse HTML: %v", err)
+	}
+	msg := findTextContains(doc, "Shutting Down")
+	if msg == "" {
 		t.Error("response body should contain 'Shutting Down'")
 	}
 
@@ -191,9 +195,17 @@ func TestServerDiscoveryPost_Authorized(t *testing.T) {
 		t.Errorf("expected Content-Type text/html, got %s", contentType)
 	}
 
-	body := rr.Body.String()
-	if !strings.Contains(body, "discovery") && !strings.Contains(body, "started") {
-		t.Error("response body should contain discovery started message")
+	doc, err := html.Parse(strings.NewReader(rr.Body.String()))
+	if err != nil {
+		t.Fatalf("failed to parse HTML: %v", err)
+	}
+
+	// Check for discovery message in body
+	hasDiscovery := findTextContains(doc, "discovery")
+	hasStarted := findTextContains(doc, "started")
+
+	if hasDiscovery == "" || hasStarted == "" {
+		t.Error("response body should contain discovery and started message")
 	}
 
 	// Discovery should be called
@@ -201,7 +213,7 @@ func TestServerDiscoveryPost_Authorized(t *testing.T) {
 	case <-discoveryCalled:
 		// Good
 	case <-time.After(100 * time.Millisecond):
-		t.Error("DiscoveryFunc was not called")
+		t.Error("DiscoveryFunc should have been called")
 	}
 }
 

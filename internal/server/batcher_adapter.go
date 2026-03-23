@@ -9,10 +9,17 @@ import (
 	"github.com/lbe/sfpg-go/internal/writebatcher"
 )
 
+// batchWriter is the minimal interface batcherAdapter needs from WriteBatcher.
+// Using an interface here allows tests to inject a fake without a live worker goroutine.
+type batchWriter interface {
+	Submit(BatchedWrite) error
+	PendingCount() int64
+}
+
 // batcherAdapter adapts WriteBatcher[BatchedWrite] to files.UnifiedBatcher interface.
 // This breaks the circular dependency between server and files packages.
 type batcherAdapter struct {
-	wb *writebatcher.WriteBatcher[BatchedWrite]
+	wb batchWriter
 }
 
 // newBatcherAdapter creates an adapter for the unified WriteBatcher.

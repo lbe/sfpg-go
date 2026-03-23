@@ -51,3 +51,11 @@ func (t *TaskTracker) CancelSessionTasks(sessionID string) []string {
 	})
 	return taskIDs
 }
+
+// TryClaimTask attempts to claim a cache key for processing.
+// Returns true if the key was successfully claimed, false if it's already claimed.
+// This method is thread-safe and ensures only one goroutine processes a given cache key.
+func (t *TaskTracker) TryClaimTask(cacheKey string) bool {
+	// Try to register the task
+	return t.RegisterTask(cacheKey, "", "")
+}

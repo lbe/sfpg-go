@@ -1,6 +1,8 @@
 package cachelite_test
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -8,7 +10,30 @@ import (
 	"time"
 
 	cachelite "github.com/lbe/sfpg-go/internal/cachelite"
+	"github.com/lbe/sfpg-go/internal/dbconnpool"
 )
+
+// createSyncSubmitFuncForEdgeCases creates a submit function for tests that executes synchronously.
+func createSyncSubmitFuncForEdgeCases(db *dbconnpool.DbSQLConnPool) func(*cachelite.HTTPCacheEntry) {
+	return func(entry *cachelite.HTTPCacheEntry) {
+		ctx := context.Background()
+
+		// Store entry directly (production batcher would handle eviction)
+		// For tests, we skip eviction to avoid needing access to unexported fields
+		// This is acceptable for unit tests that don't specifically test eviction behavior
+		if err := cachelite.StoreCacheEntry(ctx, db, entry); err != nil {
+			// Log errors in tests to help debugging
+			fmt.Printf("StoreCacheEntry error for key %s: %v\n", entry.Key, err)
+		}
+		cachelite.PutHTTPCacheEntry(entry)
+	}
+}
+
+// createTestMiddlewareForEdgeCases creates a test middleware with a synchronous submit function.
+func createTestMiddlewareForEdgeCases(t *testing.T, db *dbconnpool.DbSQLConnPool, cfg cachelite.CacheConfig) *cachelite.HTTPCacheMiddleware {
+	submitFunc := createSyncSubmitFuncForEdgeCases(db)
+	return cachelite.NewHTTPCacheMiddlewareForTest(db, cfg, nil, submitFunc)
+}
 
 // TestContentTypePreservation verifies that Content-Type is preserved through cache.
 func TestContentTypePreservation(t *testing.T) {
@@ -30,7 +55,7 @@ func TestContentTypePreservation(t *testing.T) {
 		CacheableRoutes: []string{"/photo.jpg", "/photo2.jpg", "/photo3.jpg", "/photo4.jpg", "/photo5.jpg", "/photo6.jpg", "/photo7.jpg", "/photo8.jpg"},
 	}
 
-	cacheMW := cachelite.NewHTTPCacheMiddleware(db, cfg, nil, nil)
+	cacheMW := createTestMiddlewareForEdgeCases(t, db, cfg)
 	mw := cacheMW.Middleware(handler)
 
 	// First request (MISS)
@@ -86,7 +111,7 @@ func TestRangeRequest_NoCompression(t *testing.T) {
 		DefaultTTL:   time.Hour,
 	}
 
-	cacheMW := cachelite.NewHTTPCacheMiddleware(db, cfg, nil, nil)
+	cacheMW := createTestMiddlewareForEdgeCases(t, db, cfg)
 	mw := cacheMW.Middleware(handler)
 
 	// Request with Range + Accept-Encoding
@@ -130,7 +155,7 @@ func TestHEADRequest_CacheHeaders(t *testing.T) {
 		DefaultTTL:   time.Hour,
 	}
 
-	cacheMW := cachelite.NewHTTPCacheMiddleware(db, cfg, nil, nil)
+	cacheMW := createTestMiddlewareForEdgeCases(t, db, cfg)
 	mw := cacheMW.Middleware(handler)
 
 	// First GET to populate cache
@@ -173,7 +198,7 @@ func TestEmptyBody(t *testing.T) {
 		DefaultTTL:   time.Hour,
 	}
 
-	cacheMW := cachelite.NewHTTPCacheMiddleware(db, cfg, nil, nil)
+	cacheMW := createTestMiddlewareForEdgeCases(t, db, cfg)
 	mw := cacheMW.Middleware(handler)
 
 	req := httptest.NewRequest("GET", "/empty", nil)
@@ -208,7 +233,7 @@ func TestSmallBody(t *testing.T) {
 		DefaultTTL:   time.Hour,
 	}
 
-	cacheMW := cachelite.NewHTTPCacheMiddleware(db, cfg, nil, nil)
+	cacheMW := createTestMiddlewareForEdgeCases(t, db, cfg)
 	mw := cacheMW.Middleware(handler)
 
 	req := httptest.NewRequest("GET", "/tiny", nil)
@@ -248,7 +273,7 @@ func TestWeakETag_304(t *testing.T) {
 		DefaultTTL:   time.Hour,
 	}
 
-	cacheMW := cachelite.NewHTTPCacheMiddleware(db, cfg, nil, nil)
+	cacheMW := createTestMiddlewareForEdgeCases(t, db, cfg)
 	mw := cacheMW.Middleware(handler)
 
 	// First request to populate cache
@@ -299,7 +324,7 @@ func TestCacheIntegrity(t *testing.T) {
 		DefaultTTL:   time.Hour,
 	}
 
-	cacheMW := cachelite.NewHTTPCacheMiddleware(db, cfg, nil, nil)
+	cacheMW := createTestMiddlewareForEdgeCases(t, db, cfg)
 	mw := cacheMW.Middleware(handler)
 
 	// First request (MISS)
@@ -347,7 +372,7 @@ func TestIdentityEncoding_NoCompression(t *testing.T) {
 		DefaultTTL:   time.Hour,
 	}
 
-	cacheMW := cachelite.NewHTTPCacheMiddleware(db, cfg, nil, nil)
+	cacheMW := createTestMiddlewareForEdgeCases(t, db, cfg)
 	mw := cacheMW.Middleware(handler)
 
 	// Request with identity encoding

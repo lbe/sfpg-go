@@ -12,6 +12,23 @@ import (
 	"github.com/lbe/sfpg-go/internal/writebatcher"
 )
 
+// fakeBatchWriter is a deterministic batchWriter for tests. It succeeds for the
+// first fullAfter calls and returns ErrFull for every subsequent call.
+type fakeBatchWriter struct {
+	calls     int
+	fullAfter int
+}
+
+func (f *fakeBatchWriter) Submit(_ BatchedWrite) error {
+	f.calls++
+	if f.calls > f.fullAfter {
+		return writebatcher.ErrFull
+	}
+	return nil
+}
+
+func (f *fakeBatchWriter) PendingCount() int64 { return int64(f.calls) }
+
 // TestBatcherAdapter_SubmitFile verifies SubmitFile behavior.
 func TestBatcherAdapter_SubmitFile(t *testing.T) {
 	t.Run("successfully submits file", func(t *testing.T) {
@@ -45,43 +62,28 @@ func TestBatcherAdapter_SubmitFile(t *testing.T) {
 	})
 
 	t.Run("returns error when batcher is full", func(t *testing.T) {
-		// Create a batcher with size 1 and submit 2 items
-		wb, writeBatcherErr := writebatcher.New[BatchedWrite](context.Background(), writebatcher.Config[BatchedWrite]{
-			BeginTx:      func(ctx context.Context) (*sql.Tx, error) { return nil, nil },
-			Flush:        func(ctx context.Context, tx *sql.Tx, batch []BatchedWrite) error { return nil },
-			MaxBatchSize: 1,
-			ChannelSize:  1,
-		})
-		if writeBatcherErr != nil {
-			t.Fatalf("New writebatcher: %v", writeBatcherErr)
-		}
-		defer wb.Close()
-		ba := newBatcherAdapter(wb)
+		// Use a fake batchWriter to avoid timing dependency on the worker goroutine.
+		// A live WriteBatcher drains items from the channel faster than the test can
+		// fill it, making it impossible to reliably trigger ErrFull.
+		fake := &fakeBatchWriter{fullAfter: 1}
+		ba := &batcherAdapter{wb: fake}
 
-		file1 := &files.File{
+		file := &files.File{
 			Path: "/test/1.jpg",
 			File: gallerydb.File{
 				Filename: "1.jpg",
 				FolderID: sql.NullInt64{Int64: 1, Valid: true},
 			},
 		}
-		file2 := &files.File{
-			Path: "/test/2.jpg",
-			File: gallerydb.File{
-				Filename: "2.jpg",
-				FolderID: sql.NullInt64{Int64: 1, Valid: true},
-			},
-		}
 
 		// First submit should succeed
-		if err := ba.SubmitFile(file1); err != nil {
+		if err := ba.SubmitFile(file); err != nil {
 			t.Fatalf("first SubmitFile failed: %v", err)
 		}
 
-		// Second submit should fail with ErrFull
-		submitErr := ba.SubmitFile(file2)
-		if !errors.Is(submitErr, writebatcher.ErrFull) {
-			t.Errorf("expected ErrFull, got %v", submitErr)
+		// Second submit should propagate ErrFull from the batcher
+		if err := ba.SubmitFile(file); !errors.Is(err, writebatcher.ErrFull) {
+			t.Errorf("expected ErrFull, got %v", err)
 		}
 	})
 }

@@ -9,13 +9,11 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/sqlite" // Import the SQLite database driver (modernc-based)
 	"github.com/golang-migrate/migrate/v4/source/iofs"
-
 	_ "github.com/ncruces/go-sqlite3/driver"
 	_ "github.com/ncruces/go-sqlite3/embed"
 
@@ -47,7 +45,13 @@ func Setup(ctx context.Context, rootDir string, cfg *config.Config) (DatabasePat
 		}
 	}
 	dbPath := filepath.Join(dbDir, "sfpg.db")
-	thumbsDBPath := filepath.Join(dbDir, "thumbs.db")
+	thumbsDir := filepath.Join(dbDir, "thumbs")
+	if _, err := os.Stat(thumbsDir); os.IsNotExist(err) {
+		if err := os.MkdirAll(thumbsDir, 0o755); err != nil {
+			return DatabasePaths{}, nil, nil, fmt.Errorf("failed to create thumbs DB directory: %w", err)
+		}
+	}
+	thumbsDBPath := filepath.Join(thumbsDir, "thumbs.db")
 
 	// 2. Migrations
 	if err := migrateDB(dbPath); err != nil {
@@ -250,25 +254,4 @@ func ensureRootFolderExists(ctx context.Context, cpcRw *dbconnpool.CpConn, rootD
 	imp := &gallerylib.Importer{Q: cpcRw.Queries}
 	_, err = imp.CreateRootFolderEntry(ctx, rootMtime)
 	return err
-}
-
-func ScheduleOptimization(ctx context.Context, pool *dbconnpool.DbSQLConnPool, wg *sync.WaitGroup) {
-	wg.Go(func() {
-		ticker := time.NewTicker(time.Hour)
-		defer ticker.Stop() // Ensure ticker is stopped on exit
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				cpcRw, err := pool.Get()
-				if err != nil {
-					slog.Error("failed to get RW DB connection from pool for optimizer", "err", err)
-					continue
-				}
-				cpcRw.PragmaOptimize(ctx)
-				pool.Put(cpcRw)
-			}
-		}
-	})
 }
