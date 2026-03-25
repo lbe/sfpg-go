@@ -58,7 +58,7 @@
            remove .hidden from #info_box_spinner
            add .htmx-request to #info_box_spinner
 
-           fetch `/info/image/${infoId}?v={{ cacheVersion }}` as html put result into #box_info
+           fetch `/info/image/${infoId}?v={{ cacheVersion }}` with headers: {"HX-Request": "true", "HX-Target": "box_info"} put result into #box_info
             call updateScaled()
 
            remove .htmx-request from #info_box_spinner
@@ -451,9 +451,7 @@
                 remove @disabled from #slideshow-btn
                 remove @disabled from #info-btn
                 remove @disabled from #lightbox-actual-size-btn
-                log &apos;Penultimate step: storing current image count HTML&apos;
                 set window.galleryCountHTML to #image-count-display.innerHTML
-                log &apos;Lightbox opened&apos;
               on resizeMe call resizeLightbox()
               on closeModal
                 set my.style.left to &apos;&apos;

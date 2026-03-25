@@ -386,6 +386,25 @@ func initVM(hsCode string) (*goja.Runtime, error) {
 					return { valid: false, error: '_hyperscript not loaded' };
 				}
 				hs.parse(code);
+
+				// Validate fetch command conversion types
+				// The fetch command in Hyperscript only supports specific response type conversions
+				var fetchAsPattern = /fetch\s+(.+?)\s+as\s+(\w+)/g;
+				var match;
+				var validFetchTypes = ['text', 'json', 'arraybuffer', 'blob', 'response'];
+
+				while ((match = fetchAsPattern.exec(code)) !== null) {
+					var conversionType = match[2];
+					if (!validFetchTypes.includes(conversionType)) {
+						return {
+							valid: false,
+							error: 'Invalid fetch conversion type: "' + conversionType + '". ' +
+							       'Valid types for fetch: ' + validFetchTypes.join(', ') + '. ' +
+							       'Tip: For HTML content, use "put result into" without the "as" clause.'
+						};
+					}
+				}
+
 				return { valid: true, error: '' };
 			} catch (e) {
 				return { valid: false, error: e.message || String(e) };

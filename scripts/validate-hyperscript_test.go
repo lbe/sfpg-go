@@ -2,6 +2,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -440,4 +441,164 @@ func extractHyperscriptFromString(filename, content string) ([]HyperscriptSource
 	tmpFile.Close()
 
 	return extractHyperscript(tmpFile.Name())
+}
+
+// TestValidateFetchConversion_ValidTypes tests valid fetch conversion types
+func TestValidateFetchConversion_ValidTypes(t *testing.T) {
+	validTypes := []string{"text", "json", "arraybuffer", "blob", "response"}
+
+	for _, convType := range validTypes {
+		t.Run(convType, func(t *testing.T) {
+			content := fmt.Sprintf(`<script type="text/hyperscript">
+def test()
+	fetch "/api/data" as %s put result into #output
+end
+</script>`, convType)
+
+			sources, err := extractHyperscriptFromString("test.html", content)
+			if err != nil {
+				t.Fatalf("extractHyperscript failed: %v", err)
+			}
+
+			if len(sources) != 1 {
+				t.Fatalf("expected 1 source, got %d", len(sources))
+			}
+
+			// Initialize VM and validate
+			hsCode, err := loadHyperscript("")
+			if err != nil {
+				t.Fatalf("loadHyperscript failed: %v", err)
+			}
+
+			vm, err := initVM(hsCode)
+			if err != nil {
+				t.Fatalf("initVM failed: %v", err)
+			}
+
+			result := validateHyperscript(vm, sources[0])
+			if !result.Valid {
+				t.Errorf("fetch with 'as %s' should be valid, but got error: %s", convType, result.Error)
+			}
+		})
+	}
+}
+
+// TestValidateFetchConversion_InvalidHTML tests the specific "html" conversion type bug
+func TestValidateFetchConversion_InvalidHTML(t *testing.T) {
+	content := `<script type="text/hyperscript">
+def lightboxNav(imgUrl, infoId)
+	fetch "/info/image/${infoId}" as html put result into #box_info
+end
+</script>`
+
+	sources, err := extractHyperscriptFromString("test.html", content)
+	if err != nil {
+		t.Fatalf("extractHyperscript failed: %v", err)
+	}
+
+	if len(sources) != 1 {
+		t.Fatalf("expected 1 source, got %d", len(sources))
+	}
+
+	// Initialize VM and validate
+	hsCode, err := loadHyperscript("")
+	if err != nil {
+		t.Fatalf("loadHyperscript failed: %v", err)
+	}
+
+	vm, err := initVM(hsCode)
+	if err != nil {
+		t.Fatalf("initVM failed: %v", err)
+	}
+
+	result := validateHyperscript(vm, sources[0])
+	if result.Valid {
+		t.Error("fetch with 'as html' should be invalid, but validation passed")
+	}
+
+	if !strings.Contains(result.Error, "html") {
+		t.Errorf("error message should mention 'html', got: %s", result.Error)
+	}
+
+	if !strings.Contains(result.Error, "Valid types for fetch") {
+		t.Errorf("error message should list valid types, got: %s", result.Error)
+	}
+}
+
+// TestValidateFetchConversion_InvalidString tests other invalid conversion types
+func TestValidateFetchConversion_InvalidString(t *testing.T) {
+	invalidTypes := []string{"html", "String", "Number", "xml", "csv"}
+
+	for _, convType := range invalidTypes {
+		t.Run(convType, func(t *testing.T) {
+			content := fmt.Sprintf(`<script type="text/hyperscript">
+def test()
+	fetch "/api/data" as %s put result into #output
+end
+</script>`, convType)
+
+			sources, err := extractHyperscriptFromString("test.html", content)
+			if err != nil {
+				t.Fatalf("extractHyperscript failed: %v", err)
+			}
+
+			if len(sources) != 1 {
+				t.Fatalf("expected 1 source, got %d", len(sources))
+			}
+
+			// Initialize VM and validate
+			hsCode, err := loadHyperscript("")
+			if err != nil {
+				t.Fatalf("loadHyperscript failed: %v", err)
+			}
+
+			vm, err := initVM(hsCode)
+			if err != nil {
+				t.Fatalf("initVM failed: %v", err)
+			}
+
+			result := validateHyperscript(vm, sources[0])
+			if result.Valid {
+				t.Errorf("fetch with 'as %s' should be invalid, but validation passed", convType)
+			}
+
+			if !strings.Contains(result.Error, convType) {
+				t.Errorf("error message should mention '%s', got: %s", convType, result.Error)
+			}
+		})
+	}
+}
+
+// TestValidateFetchConversion_NoAsClause tests fetch without conversion type (should pass)
+func TestValidateFetchConversion_NoAsClause(t *testing.T) {
+	content := `<script type="text/hyperscript">
+def test()
+	fetch "/api/data" put result into #output
+end
+</script>`
+
+	sources, err := extractHyperscriptFromString("test.html", content)
+	if err != nil {
+		t.Fatalf("extractHyperscript failed: %v", err)
+	}
+
+	if len(sources) != 1 {
+		t.Fatalf("expected 1 source, got %d", len(sources))
+	}
+
+	// Initialize VM and validate
+	hsCode, err := loadHyperscript("")
+	if err != nil {
+		t.Fatalf("loadHyperscript failed: %v", err)
+	}
+
+	vm, err := initVM(hsCode)
+	if err != nil {
+		t.Fatalf("initVM failed: %v", err)
+	}
+
+	result := validateHyperscript(vm, sources[0])
+	if !result.Valid {
+		t.Errorf("fetch without 'as' clause should be valid, but got error: %s", result.Error)
+	}
 }

@@ -206,3 +206,5 @@ cmd/gendemoimage*/*
 
 # exclude git worktrees
 .worktrees/*
+
+.playwright-mcp
