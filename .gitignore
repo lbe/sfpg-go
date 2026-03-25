@@ -139,8 +139,8 @@ Images.off2/*
 Images*/*
 
 # exclude executable file
-sfpg*
-sepg*
+./sfpg*
+./sepg*
 
 # exclude performance test results (machine-specific, regenerable)
 results*/
