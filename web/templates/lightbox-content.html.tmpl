@@ -152,9 +152,9 @@
             class="block h-full w-full"
             {{ if .HasPrev }}
               hx-get="/lightbox/{{ .PrevIndex }}?v={{ cacheVersion }}"
-              hx-target="#lightbox_content"
-              hx-swap="innerHTML" title="Previous" _="on click call
-              lightboxNav('/raw-image/{{ .PrevIndex }}', '{{ .PrevIndex }}')"
+              hx-target="#lightbox_content" hx-swap="innerHTML" title="Previous"
+              _="on click call lightboxNav('/raw-image/{{ .PrevIndex }}',
+              '{{ .PrevIndex }}')"
             {{ end }}
           ></a>
         </div>
@@ -168,9 +168,9 @@
             class="block h-full w-full"
             {{ if .HasNext }}
               hx-get="/lightbox/{{ .NextIndex }}?v={{ cacheVersion }}"
-              hx-target="#lightbox_content"
-              hx-swap="innerHTML" title="Next" _="on click call
-              lightboxNav('/raw-image/{{ .NextIndex }}', '{{ .NextIndex }}')"
+              hx-target="#lightbox_content" hx-swap="innerHTML" title="Next"
+              _="on click call lightboxNav('/raw-image/{{ .NextIndex }}',
+              '{{ .NextIndex }}')"
             {{ end }}
           ></a>
         </div>

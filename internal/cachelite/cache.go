@@ -376,6 +376,12 @@ func DropStaleCacheTableIfExists(ctx context.Context, db *dbconnpool.DbSQLConnPo
 // Uses LRU (Least Recently Used) strategy based on created_at timestamp.
 // Returns the actual number of bytes freed.
 func EvictLRU(ctx context.Context, db *dbconnpool.DbSQLConnPool, targetFreeBytes int64) (int64, error) {
+	// Check for already-canceled context before starting database operations.
+	// This prevents panics in database/sql when rows.Next() is called with a canceled context.
+	if err := ctx.Err(); err != nil {
+		return 0, fmt.Errorf("context canceled before eviction: %w", err)
+	}
+
 	cpc, err := db.Get()
 	if err != nil {
 		return 0, fmt.Errorf("failed to get connection: %w", err)
@@ -408,6 +414,11 @@ func EvictLRU(ctx context.Context, db *dbconnpool.DbSQLConnPool, targetFreeBytes
 
 // GetCacheSizeBytes returns the total size of all cache entries in bytes.
 func GetCacheSizeBytes(ctx context.Context, db *dbconnpool.DbSQLConnPool) (int64, error) {
+	// Check for already-canceled context before starting database operations.
+	if err := ctx.Err(); err != nil {
+		return 0, fmt.Errorf("context canceled: %w", err)
+	}
+
 	cpc, err := db.Get()
 	if err != nil {
 		return 0, fmt.Errorf("failed to get connection: %w", err)

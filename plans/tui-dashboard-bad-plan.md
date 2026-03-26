@@ -5,6 +5,7 @@
 This plan creates a standalone TUI (Terminal User Interface) dashboard executable located in `./cmd/sfpg-dashboard/` that displays real-time system metrics from the running SFPG server.
 
 **Architecture**: The TUI is an HTTP client that:
+
 - Connects to the running SFPG server
 - Uses the same session-based authentication as the web dashboard
 - Polls the `/dashboard` endpoint
@@ -12,6 +13,7 @@ This plan creates a standalone TUI (Terminal User Interface) dashboard executabl
 - Displays metrics in a terminal interface
 
 **Why this approach:**
+
 - Reuses existing authentication mechanism
 - Reuses existing `/dashboard` endpoint
 - No security bypasses
@@ -43,9 +45,11 @@ This plan creates a standalone TUI (Terminal User Interface) dashboard executabl
 ## Files to Create
 
 ### `./cmd/sfpg-dashboard/main.go`
+
 **Purpose**: Entry point for TUI dashboard executable
 
 **Structure**:
+
 ```go
 package main
 
@@ -99,9 +103,11 @@ func getServerURL() string {
 ```
 
 ### `internal/tui/client.go`
+
 **Purpose**: HTTP client for dashboard API authentication and data retrieval
 
 **Key Components**:
+
 ```go
 package tui
 
@@ -140,9 +146,11 @@ func (c *DashboardClient) GetDashboardHTML() (string, error)
 ```
 
 ### `internal/tui/parser.go`
+
 **Purpose**: Parse HTML response from /dashboard and extract metrics
 
 **Key Components**:
+
 ```go
 package tui
 
@@ -191,9 +199,11 @@ func parseCountString(s string) (int64, error)
 **CRITICAL**: Uses `golang.org/x/net/html` for parsing. NO `strings.Contains`.
 
 ### `internal/tui/tui.go`
+
 **Purpose**: BubbleTea program initialization and main model
 
 **Key Components**:
+
 ```go
 package tui
 
@@ -243,9 +253,11 @@ func Run(client *DashboardClient, sessionCookie *http.Cookie) error
 ```
 
 ### `internal/tui/update.go`
+
 **Purpose**: Event handling logic
 
 **Key Components**:
+
 ```go
 package tui
 
@@ -284,9 +296,11 @@ func (m Model) switchView(v View) Model
 ```
 
 ### `internal/tui/view.go`
+
 **Purpose**: All rendering logic using LipGloss
 
 **Key Components**:
+
 ```go
 package tui
 
@@ -324,6 +338,7 @@ func formatCount(count int64) string
 ```
 
 ### `internal/tui/styles.go`
+
 **Purpose**: LipGloss style definitions
 
 ```go
@@ -360,6 +375,7 @@ func getStatusBadge(status string) string
 ```
 
 ### `internal/tui/keys.go`
+
 **Purpose**: Key binding definitions
 
 ```go
@@ -398,6 +414,7 @@ func (k KeyMap) FullHelp() [][]key.Binding
 ### Test Files (Written FIRST)
 
 #### `internal/tui/client_test.go`
+
 ```go
 package tui
 
@@ -489,6 +506,7 @@ func TestGetDashboard(t *testing.T) {
 ```
 
 #### `internal/tui/parser_test.go`
+
 ```go
 package tui
 
@@ -566,6 +584,7 @@ func TestParseCountString(t *testing.T) {
 ```
 
 #### `internal/tui/update_test.go`
+
 ```go
 package tui
 
@@ -614,6 +633,7 @@ func TestModelUpdateKeyMsgQuit(t *testing.T) {
 ```
 
 #### `internal/tui/view_test.go`
+
 ```go
 package tui
 
@@ -661,18 +681,21 @@ func TestFormatBytes(t *testing.T) {
 ## Implementation Phases (TDD-Compliant)
 
 ### Phase 1: Foundation (Tests FIRST)
+
 1. Write `client_test.go` → FAIL
 2. Implement `client.go` → PASS
 3. Write `parser_test.go` → FAIL
 4. Implement `parser.go` → PASS
 
 ### Phase 2: Core Model (Tests FIRST)
+
 1. Write `tui_test.go` (NewModel, Init) → FAIL
 2. Implement `tui.go` → PASS
 3. Write `update_test.go` → FAIL
 4. Implement `update.go` → PASS
 
 ### Phase 3: View Rendering (Tests FIRST)
+
 1. Write `view_test.go` → FAIL
 2. Implement `view.go` → PASS
 3. Write `styles_test.go` → FAIL
@@ -680,10 +703,12 @@ func TestFormatBytes(t *testing.T) {
 5. Implement `keys.go`
 
 ### Phase 4: Main Executable
+
 1. Create `./cmd/sfpg-dashboard/main.go`
 2. Build and test
 
 ### Phase 5: Integration Testing
+
 1. Run all tests: `go test ./... -v`
 2. Build: `go build ./cmd/sfpg-dashboard/`
 3. Manual testing against running server
@@ -730,6 +755,7 @@ golang.org/x/net v0.20.0
 **CRITICAL RULE**: Use `golang.org/x/net/html` for all parsing. NO `strings.Contains`.
 
 **Example parsing function**:
+
 ```go
 func findElementByID(n *html.Node, id string) *html.Node {
     var f func(*html.Node) *html.Node
@@ -791,6 +817,7 @@ func findElementByClass(n *html.Node, class string) []*html.Node {
 ## Verification
 
 ### Automated Tests
+
 ```bash
 # Run all TUI tests
 go test ./internal/tui/... -v
@@ -800,6 +827,7 @@ go test ./internal/tui/... -race
 ```
 
 ### Manual Testing
+
 ```bash
 # Build
 go build -o /tmp/sfpg-dashboard ./cmd/sfpg-dashboard/
@@ -820,6 +848,7 @@ go build -o /tmp/sfpg-dashboard ./cmd/sfpg-dashboard/
 ## Success Criteria
 
 ### Functional
+
 - [x] Connects to running server via HTTP
 - [x] Authenticates using same mechanism as web dashboard
 - [x] Polls /dashboard endpoint with session cookie
@@ -830,6 +859,7 @@ go build -o /tmp/sfpg-dashboard ./cmd/sfpg-dashboard/
 - [x] Graceful exit
 
 ### Quality (CLAUDE.md Compliance)
+
 - [x] Tests written FIRST (TDD)
 - [x] All tests pass
 - [x] NO `strings.Contains` on HTML bodies
