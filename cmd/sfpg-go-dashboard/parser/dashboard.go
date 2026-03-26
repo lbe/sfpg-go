@@ -178,8 +178,8 @@ type DashboardMetrics struct {
 // ParseDashboard parses the dashboard HTML from the given reader and
 // extracts all metrics into a DashboardMetrics struct.
 //
-// The HTML must contain a #dashboard-container element with stat-title
-// and stat-value elements following the DaisyUI stats pattern.
+// The HTML must contain a #dashboard-container element with stat-value
+// elements that have specific IDs for each metric.
 //
 // Returns ErrDashboardNotFound if the dashboard container is not present.
 //
@@ -294,76 +294,48 @@ func parseModuleCard(card *html.Node) ModuleStatus {
 	return module
 }
 
-// extractStatValue extracts a stat value by its title from the container.
-func extractStatValue(container *html.Node, statTitle string) string {
-	statTitles := testutil.FindAllElements(container, func(n *html.Node) bool {
-		classes := strings.Fields(testutil.GetAttr(n, "class"))
-		isStatTitle := false
-		for _, c := range classes {
-			if c == "stat-title" {
-				isStatTitle = true
-				break
-			}
-		}
-		return isStatTitle && strings.Contains(testutil.GetTextContent(n), statTitle)
-	})
-
-	for _, titleEl := range statTitles {
-		parent := titleEl.Parent
-		if parent == nil {
-			continue
-		}
-		valueEl := testutil.FindElementByClass(parent, "stat-value")
-		if valueEl != nil {
-			return strings.TrimSpace(testutil.GetTextContent(valueEl))
-		}
+// extractTextByID finds an element by ID and returns its trimmed text content.
+func extractTextByID(container *html.Node, id string) string {
+	el := testutil.FindElementByID(container, id)
+	if el == nil {
+		return ""
 	}
-	return ""
+	return strings.TrimSpace(testutil.GetTextContent(el))
 }
 
 // extractMemoryStats extracts memory statistics into the metrics struct.
 func extractMemoryStats(container *html.Node, m *DashboardMetrics) {
-	m.Memory.Allocated = extractStatValue(container, "Allocated")
-	m.Memory.HeapInUse = extractStatValue(container, "Heap In Use")
-	m.Memory.HeapReleased = extractStatValue(container, "Heap Released")
-	m.Memory.HeapObjects = extractStatValue(container, "Heap Objects")
+	m.Memory.Allocated = extractTextByID(container, "mem-allocated")
+	m.Memory.HeapInUse = extractTextByID(container, "mem-heap-in-use")
+	m.Memory.HeapReleased = extractTextByID(container, "mem-heap-released")
+	m.Memory.HeapObjects = extractTextByID(container, "mem-heap-objects")
 }
 
 // extractRuntimeStats extracts runtime statistics into the metrics struct.
 func extractRuntimeStats(container *html.Node, m *DashboardMetrics) {
-	m.Runtime.Goroutines = extractStatValue(container, "Goroutines")
-	m.Runtime.CPUCount = extractStatValue(container, "CPU Count")
-	m.Runtime.NextGC = extractStatValue(container, "Next GC")
-	m.Runtime.Uptime = extractStatValue(container, "Uptime")
+	m.Runtime.Goroutines = extractTextByID(container, "runtime-goroutines")
+	m.Runtime.CPUCount = extractTextByID(container, "runtime-cpu-count")
+	m.Runtime.NextGC = extractTextByID(container, "runtime-next-gc")
+	m.Runtime.Uptime = extractTextByID(container, "runtime-uptime")
 }
 
 // extractWriteBatcherStats extracts write batcher statistics into the metrics struct.
 func extractWriteBatcherStats(container *html.Node, m *DashboardMetrics) {
-	m.WriteBatcher.Pending = extractStatValue(container, "Pending")
-	m.WriteBatcher.TotalFlushed = extractStatValue(container, "Total Flushed")
-	m.WriteBatcher.TotalErrors = extractStatValue(container, "Errors")
-	m.WriteBatcher.BatchSize = extractStatValue(container, "Batch Size")
+	m.WriteBatcher.Pending = extractTextByID(container, "wb-pending")
+	m.WriteBatcher.TotalFlushed = extractTextByID(container, "wb-flushed")
+	m.WriteBatcher.TotalErrors = extractTextByID(container, "wb-errors")
+	m.WriteBatcher.BatchSize = extractTextByID(container, "wb-batch-size")
 
-	// Extract channel size from stat-desc "of X"
-	statDescs := testutil.FindAllElements(container, func(n *html.Node) bool {
-		classes := strings.Fields(testutil.GetAttr(n, "class"))
-		for _, c := range classes {
-			if c == "stat-desc" {
-				return true
-			}
-		}
-		return false
-	})
-
-	for _, desc := range statDescs {
-		text := testutil.GetTextContent(desc)
-		if strings.Contains(text, "of") && desc.Parent != nil {
-			titleEl := testutil.FindElementByClass(desc.Parent, "stat-title")
-			if titleEl != nil && strings.Contains(testutil.GetTextContent(titleEl), "Pending") {
-				parts := strings.Fields(text)
-				if len(parts) >= 2 {
-					m.WriteBatcher.ChannelSize = parts[1]
-				}
+	// Extract channel size from wb-channel-size-desc "of X"
+	descEl := testutil.FindElementByID(container, "wb-channel-size-desc")
+	if descEl != nil {
+		text := testutil.GetTextContent(descEl)
+		// Format: "of X" where X is the number
+		parts := strings.Fields(text)
+		for i, p := range parts {
+			if p == "of" && i+1 < len(parts) {
+				m.WriteBatcher.ChannelSize = parts[i+1]
+				break
 			}
 		}
 	}
@@ -371,12 +343,12 @@ func extractWriteBatcherStats(container *html.Node, m *DashboardMetrics) {
 
 // extractWorkerPoolStats extracts worker pool statistics into the metrics struct.
 func extractWorkerPoolStats(container *html.Node, m *DashboardMetrics) {
-	m.WorkerPool.CompletedTasks = extractStatValue(container, "Completed Tasks")
-	m.WorkerPool.Successful = extractStatValue(container, "Successful")
-	m.WorkerPool.Failed = extractStatValue(container, "Failed")
+	m.WorkerPool.CompletedTasks = extractTextByID(container, "wp-completed")
+	m.WorkerPool.Successful = extractTextByID(container, "wp-successful")
+	m.WorkerPool.Failed = extractTextByID(container, "wp-failed")
 
 	// Parse "Running Workers: X/Y" format
-	runningValue := extractStatValue(container, "Running Workers")
+	runningValue := extractTextByID(container, "wp-running")
 	if runningValue != "" {
 		parts := strings.Split(runningValue, "/")
 		if len(parts) >= 2 {
@@ -390,37 +362,20 @@ func extractWorkerPoolStats(container *html.Node, m *DashboardMetrics) {
 
 // extractQueueStats extracts file queue statistics into the metrics struct.
 func extractQueueStats(container *html.Node, m *DashboardMetrics) {
-	m.Queue.Utilization = extractStatValue(container, "Utilization")
-	m.Queue.Available = extractStatValue(container, "Available")
+	m.Queue.Queued = extractTextByID(container, "queue-queued")
+	m.Queue.Utilization = extractTextByID(container, "queue-utilization")
+	m.Queue.Available = extractTextByID(container, "queue-available")
 
-	queuedValue := extractStatValue(container, "Queued Items")
-	if queuedValue != "" {
-		m.Queue.Queued = queuedValue
-	}
-
-	// Extract capacity from stat-desc "of X items"
-	statDescs := testutil.FindAllElements(container, func(n *html.Node) bool {
-		classes := strings.Fields(testutil.GetAttr(n, "class"))
-		for _, c := range classes {
-			if c == "stat-desc" {
-				return true
-			}
-		}
-		return false
-	})
-
-	for _, desc := range statDescs {
-		text := testutil.GetTextContent(desc)
-		if strings.Contains(text, "of") && strings.Contains(text, "items") && desc.Parent != nil {
-			titleEl := testutil.FindElementByClass(desc.Parent, "stat-title")
-			if titleEl != nil && strings.Contains(testutil.GetTextContent(titleEl), "Queued") {
-				parts := strings.Fields(text)
-				for i, p := range parts {
-					if p == "of" && i+1 < len(parts) {
-						m.Queue.Capacity = parts[i+1]
-						break
-					}
-				}
+	// Extract capacity from queue-capacity-desc "of X items"
+	descEl := testutil.FindElementByID(container, "queue-capacity-desc")
+	if descEl != nil {
+		text := testutil.GetTextContent(descEl)
+		// Format: "of X items"
+		parts := strings.Fields(text)
+		for i, p := range parts {
+			if p == "of" && i+1 < len(parts) {
+				m.Queue.Capacity = parts[i+1]
+				break
 			}
 		}
 	}
@@ -428,49 +383,36 @@ func extractQueueStats(container *html.Node, m *DashboardMetrics) {
 
 // extractFileProcessingStats extracts file processing statistics into the metrics struct.
 func extractFileProcessingStats(container *html.Node, m *DashboardMetrics) {
-	m.FileProcessing.TotalFound = extractStatValue(container, "Total Found")
-	m.FileProcessing.Existing = extractStatValue(container, "Existing")
-	m.FileProcessing.New = extractStatValue(container, "New")
-	m.FileProcessing.Invalid = extractStatValue(container, "Invalid")
-	m.FileProcessing.InFlight = extractStatValue(container, "In Flight")
+	m.FileProcessing.TotalFound = extractTextByID(container, "fp-total")
+	m.FileProcessing.Existing = extractTextByID(container, "fp-existing")
+	m.FileProcessing.New = extractTextByID(container, "fp-new")
+	m.FileProcessing.Invalid = extractTextByID(container, "fp-invalid")
+	m.FileProcessing.InFlight = extractTextByID(container, "fp-inflight")
 }
 
 // extractCachePreloadStats extracts cache preload statistics into the metrics struct.
 func extractCachePreloadStats(container *html.Node, m *DashboardMetrics) {
-	m.CachePreload.Scheduled = extractStatValue(container, "Scheduled")
-	m.CachePreload.Completed = extractStatValue(container, "Completed")
-	m.CachePreload.Failed = extractStatValue(container, "Failed")
-	m.CachePreload.Skipped = extractStatValue(container, "Skipped")
+	m.CachePreload.Scheduled = extractTextByID(container, "preload-scheduled")
+	m.CachePreload.Completed = extractTextByID(container, "preload-completed")
+	m.CachePreload.Failed = extractTextByID(container, "preload-failed")
+	m.CachePreload.Skipped = extractTextByID(container, "preload-skipped")
 
-	// Find "Cache Preload" card and check badge for Enabled/Disabled
-	badges := testutil.FindAllElements(container, func(n *html.Node) bool {
-		classes := testutil.GetAttr(n, "class")
-		return strings.Contains(classes, "badge")
-	})
-
-	for _, badge := range badges {
-		text := strings.TrimSpace(testutil.GetTextContent(badge))
-		if text == "Enabled" || text == "Disabled" {
-			parent := badge.Parent
-			if parent != nil {
-				titleEl := testutil.FindElementByClass(parent, "card-title")
-				if titleEl != nil && strings.Contains(testutil.GetTextContent(titleEl), "Cache Preload") {
-					m.CachePreload.IsEnabled = (text == "Enabled")
-					break
-				}
-			}
-		}
+	// Check status badge
+	statusEl := testutil.FindElementByID(container, "preload-status")
+	if statusEl != nil {
+		text := strings.TrimSpace(testutil.GetTextContent(statusEl))
+		m.CachePreload.IsEnabled = (text == "Enabled")
 	}
 }
 
 // extractCacheBatchLoadStats extracts cache batch load statistics into the metrics struct.
 // The Progress value is normalized to remove newlines, tabs, and extra whitespace.
 func extractCacheBatchLoadStats(container *html.Node, m *DashboardMetrics) {
-	m.CacheBatchLoad.Failed = extractStatValue(container, "Failed")
-	m.CacheBatchLoad.Skipped = extractStatValue(container, "Skipped")
+	m.CacheBatchLoad.Failed = extractTextByID(container, "batch-failed")
+	m.CacheBatchLoad.Skipped = extractTextByID(container, "batch-skipped")
 
 	// Extract and normalize progress value
-	progressValue := extractStatValue(container, "Progress")
+	progressValue := extractTextByID(container, "batch-progress")
 	if progressValue != "" {
 		// Normalize progress: remove newlines, tabs, collapse spaces
 		progress := progressValue
@@ -487,76 +429,37 @@ func extractCacheBatchLoadStats(container *html.Node, m *DashboardMetrics) {
 		m.CacheBatchLoad.Progress = progress
 	}
 
-	// Extract total from stat-desc
-	statDescs := testutil.FindAllElements(container, func(n *html.Node) bool {
-		classes := strings.Fields(testutil.GetAttr(n, "class"))
-		for _, c := range classes {
-			if c == "stat-desc" {
-				return true
-			}
-		}
-		return false
-	})
-
-	for _, desc := range statDescs {
-		text := testutil.GetTextContent(desc)
-		if strings.Contains(text, "total") && desc.Parent != nil {
-			titleEl := testutil.FindElementByClass(desc.Parent, "stat-title")
-			if titleEl != nil && strings.Contains(testutil.GetTextContent(titleEl), "Progress") {
-				parts := strings.Fields(text)
-				if len(parts) >= 1 {
-					m.CacheBatchLoad.Total = parts[0]
-				}
-			}
+	// Extract total from batch-total-desc
+	descEl := testutil.FindElementByID(container, "batch-total-desc")
+	if descEl != nil {
+		text := testutil.GetTextContent(descEl)
+		// Format: "X total"
+		parts := strings.Fields(text)
+		if len(parts) >= 1 {
+			m.CacheBatchLoad.Total = parts[0]
 		}
 	}
 
-	// Find "Cache Batch Load" card and check badge for Running/Idle
-	badges := testutil.FindAllElements(container, func(n *html.Node) bool {
-		classes := testutil.GetAttr(n, "class")
-		return strings.Contains(classes, "badge")
-	})
-
-	for _, badge := range badges {
-		text := strings.TrimSpace(testutil.GetTextContent(badge))
-		if text == "Running" || text == "Idle" {
-			parent := badge.Parent
-			if parent != nil {
-				titleEl := testutil.FindElementByClass(parent, "card-title")
-				if titleEl != nil && strings.Contains(testutil.GetTextContent(titleEl), "Cache Batch Load") {
-					m.CacheBatchLoad.IsRunning = (text == "Running")
-					break
-				}
-			}
-		}
+	// Check status badge
+	statusEl := testutil.FindElementByID(container, "batch-status")
+	if statusEl != nil {
+		text := strings.TrimSpace(testutil.GetTextContent(statusEl))
+		m.CacheBatchLoad.IsRunning = (text == "Running")
 	}
 }
 
 // extractHTTPCacheStats extracts HTTP cache statistics into the metrics struct.
 func extractHTTPCacheStats(container *html.Node, m *DashboardMetrics) {
-	m.HTTPCache.Entries = extractStatValue(container, "Entries")
-	m.HTTPCache.Size = extractStatValue(container, "Size")
-	m.HTTPCache.MaxTotal = extractStatValue(container, "Max Total")
-	m.HTTPCache.MaxEntry = extractStatValue(container, "Max Entry")
-	m.HTTPCache.Utilization = extractStatValue(container, "Utilization")
+	m.HTTPCache.Entries = extractTextByID(container, "http-entries")
+	m.HTTPCache.Size = extractTextByID(container, "http-size")
+	m.HTTPCache.MaxTotal = extractTextByID(container, "http-max-total")
+	m.HTTPCache.MaxEntry = extractTextByID(container, "http-max-entry")
+	m.HTTPCache.Utilization = extractTextByID(container, "http-utilization")
 
-	// Find "HTTP Cache" card and check badge for Enabled/Disabled
-	badges := testutil.FindAllElements(container, func(n *html.Node) bool {
-		classes := testutil.GetAttr(n, "class")
-		return strings.Contains(classes, "badge")
-	})
-
-	for _, badge := range badges {
-		text := strings.TrimSpace(testutil.GetTextContent(badge))
-		if text == "Enabled" || text == "Disabled" {
-			parent := badge.Parent
-			if parent != nil {
-				titleEl := testutil.FindElementByClass(parent, "card-title")
-				if titleEl != nil && strings.Contains(testutil.GetTextContent(titleEl), "HTTP Cache") {
-					m.HTTPCache.Enabled = (text == "Enabled")
-					break
-				}
-			}
-		}
+	// Check status badge
+	statusEl := testutil.FindElementByID(container, "http-status")
+	if statusEl != nil {
+		text := strings.TrimSpace(testutil.GetTextContent(statusEl))
+		m.HTTPCache.Enabled = (text == "Enabled")
 	}
 }
