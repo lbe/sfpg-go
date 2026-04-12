@@ -3,7 +3,7 @@
     "@executeautomation/playwright-mcp-server": "^1.0.12",
     "prettier": "^3.8.1",
     "prettier-plugin-go-template": "^0.0.15",
-    "prettier-plugin-sh": "^0.18.0",
+    "prettier-plugin-sh": "^0.18.1",
     "prettier-plugin-tailwindcss": "^0.7.1"
   }
 }
