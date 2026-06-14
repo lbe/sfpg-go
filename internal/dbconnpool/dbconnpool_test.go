@@ -1001,3 +1001,84 @@ func TestThumbsDBAttach(t *testing.T) {
 		t.Errorf("expected thumbnail_blobs, got %q", name)
 	}
 }
+
+func TestThumbsDBAttachPragmas(t *testing.T) {
+	tempDir := t.TempDir()
+	mainDBPath := filepath.Join(tempDir, "test.db")
+	thumbsDBPath := filepath.Join(tempDir, "thumbs.db")
+
+	// Initialize main database via migration
+	mainMigrator, err := migrations.NewMigrator(mainDBPath)
+	if err != nil {
+		t.Fatalf("NewMigrator for main DB: %v", err)
+	}
+	if upErr := mainMigrator.Up(); upErr != nil && upErr != migrate.ErrNoChange {
+		mainMigrator.Close()
+		t.Fatalf("main migrate up: %v", upErr)
+	}
+	mainMigrator.Close()
+
+	// Initialize thumbs.db via migration
+	m, err := migrations.NewThumbsMigrator(thumbsDBPath)
+	if err != nil {
+		t.Fatalf("NewThumbsMigrator: %v", err)
+	}
+	if upErr := m.Up(); upErr != nil && upErr != migrate.ErrNoChange {
+		m.Close()
+		t.Fatalf("thumbs migrate up: %v", upErr)
+	}
+	m.Close()
+
+	ctx := context.Background()
+
+	// Use a RW pool so that thumbs pragmas get applied
+	pool, err := NewDbSQLConnPool(ctx, mainDBPath,
+		Config{
+			DriverName:         "sqlite3",
+			MaxConnections:     1,
+			MinIdleConnections: 1,
+			ReadOnly:           false,
+			ThumbsDBPath:       thumbsDBPath,
+		})
+	if err != nil {
+		t.Fatalf("NewDbSQLConnPool: %v", err)
+	}
+	defer pool.Close()
+
+	cpc, err := pool.Get()
+	if err != nil {
+		t.Fatalf("pool.Get: %v", err)
+	}
+	defer pool.Put(cpc)
+
+	// Verify thumbs is in WAL mode
+	var journalMode string
+	err = cpc.Conn.QueryRowContext(ctx, `PRAGMA thumbs.journal_mode`).Scan(&journalMode)
+	if err != nil {
+		t.Fatalf("query thumbs journal_mode: %v", err)
+	}
+	if journalMode != "wal" {
+		t.Errorf("thumbs journal_mode = %q, want %q", journalMode, "wal")
+	}
+
+	// Verify thumbs has NORMAL synchronous
+	var syncMode int64
+	err = cpc.Conn.QueryRowContext(ctx, `PRAGMA thumbs.synchronous`).Scan(&syncMode)
+	if err != nil {
+		t.Fatalf("query thumbs synchronous: %v", err)
+	}
+	if syncMode != 1 {
+		t.Errorf("thumbs synchronous = %d, want %d (NORMAL)", syncMode, 1)
+	}
+
+	// Verify thumbs cache_size matches main DB setting (10240 pages)
+	var cacheSize int64
+	err = cpc.Conn.QueryRowContext(ctx, `PRAGMA thumbs.cache_size`).Scan(&cacheSize)
+	if err != nil {
+		t.Fatalf("query thumbs cache_size: %v", err)
+	}
+	// cache_size is reported in pages; positive value means pages, negative means kibibytes
+	if cacheSize != 10240 {
+		t.Errorf("thumbs cache_size = %d, want %d", cacheSize, 10240)
+	}
+}

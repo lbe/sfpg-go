@@ -220,6 +220,20 @@ func (p *DbSQLConnPool) newCpConn() (*CpConn, error) {
 			conn.Close()
 			return nil, fmt.Errorf("attach thumbs database: %w", err)
 		}
+
+		// Apply per-database pragmas to the thumbs schema, matching main DB settings.
+		// journal_mode and synchronous require a write-capable connection (they modify
+		// the database file header). On RO connections the file header already has these
+		// values set persistently by the RW pool, so we skip to avoid write-attempt errors.
+		if !p.Config.ReadOnly {
+			thumbsPragmas := `PRAGMA thumbs.journal_mode=WAL;` +
+				`PRAGMA thumbs.synchronous=NORMAL;` +
+				`PRAGMA thumbs.cache_size=10240`
+			if _, err = conn.ExecContext(p.ctx, thumbsPragmas); err != nil {
+				conn.Close()
+				return nil, fmt.Errorf("set thumbs pragmas: %w", err)
+			}
+		}
 	}
 
 	queries, err := gallerydb.PrepareCustomQueries(p.ctx, conn)
