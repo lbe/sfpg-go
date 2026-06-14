@@ -76,7 +76,7 @@ bench5:
 # Allow cross-compilation via GOOS/GOARCH
 GOOS ?= $$(go env GOOS)
 GOARCH ?= $$(go env GOARCH)
-BINARY_NAME := sfpg-$(GOOS)-$(GOARCH)
+BINARY_NAME := bin/sfpg-$(GOOS)-$(GOARCH)
 
 .PHONY: build
 build:
