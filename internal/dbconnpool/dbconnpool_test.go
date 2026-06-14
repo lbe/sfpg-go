@@ -2,7 +2,6 @@ package dbconnpool
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"log/slog"
 	"os"
@@ -11,7 +10,6 @@ import (
 	"time"
 
 	"github.com/golang-migrate/migrate/v4"
-	"github.com/golang-migrate/migrate/v4/database/sqlite"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 	_ "github.com/ncruces/go-sqlite3/driver"
 	_ "github.com/ncruces/go-sqlite3/embed"
@@ -35,41 +33,26 @@ func init() {
 }
 
 // setupTestDB creates a temporary SQLite database for testing.
-// Uses an in-memory database for faster test execution.
+// Uses migrate.NewWithSourceInstance (modernc driver), matching production
+// migrateDB, so that the pool (ncruces driver) connects to a database whose
+// schema was created by the same driver stack used in production.
 // Returns dbPath and cleanup function.
 func setupTestDB(t testing.TB) (string, func()) {
-	// Use in-memory database with a unique name to allow multiple connections
-	// Note: file:// mode is required for proper connection pooling behavior
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 
-	// Simplified DSN for test database
-	dsn := dbPath + "?_pragma=foreign_keys(true)&_pragma=synchronous(NORMAL)&_pragma=journal_mode(WAL)"
-
-	db, err := sql.Open("sqlite3", dsn)
-	if err != nil {
-		t.Fatalf("failed to create test database: %v", err)
-	}
-
-	driver, err := sqlite.WithInstance(db, &sqlite.Config{})
-	if err != nil {
-		t.Fatalf("failed to create sqlite driver instance: %v", err)
-	}
 	d, err := iofs.New(migrations.FS, "migrations")
 	if err != nil {
-		t.Fatalf("failed to create iofs source driver: %v", err)
+		t.Fatalf("failed to create iofs source: %v", err)
 	}
-	m, err := migrate.NewWithInstance("iofs", d, "sqlite", driver)
+	m, err := migrate.NewWithSourceInstance("iofs", d, "sqlite://"+filepath.ToSlash(dbPath))
 	if err != nil {
 		t.Fatalf("failed to create migrate instance: %v", err)
 	}
-	err = m.Up()
-	if err != nil && err != migrate.ErrNoChange {
+	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
 		t.Fatalf("failed to apply migrations: %v", err)
 	}
-	db.Close()
-	return dbPath, func() {
-		// Cleanup will be handled by t.TempDir()
-	}
+	m.Close()
+	return dbPath, func() {}
 }
 
 func TestNewDbSQLConnPool(t *testing.T) {
