@@ -67,7 +67,7 @@ func setupBenchmarkDB(b *testing.B, driverName string) (
 ) {
 	b.Helper()
 
-	dbPath, dbCleanup := setupTestDB(b)
+	dbPath, _, dbCleanup := setupTestDB(b)
 
 	var rwDsn, roDsn string
 	dsnParams := make(url.Values)

@@ -32,13 +32,12 @@ func init() {
 	slog.Info("dbconnpool tests starting")
 }
 
-// setupTestDB creates a temporary SQLite database for testing.
-// Uses migrate.NewWithSourceInstance (modernc driver), matching production
-// migrateDB, so that the pool (ncruces driver) connects to a database whose
-// schema was created by the same driver stack used in production.
-// Returns dbPath and cleanup function.
-func setupTestDB(t testing.TB) (string, func()) {
-	dbPath := filepath.Join(t.TempDir(), "test.db")
+// setupTestDB creates temporary main and thumbs databases for testing.
+// Migrations run via migrate.NewWithSourceInstance (modernc driver), matching
+// production migrateDB. Returns both database paths and a cleanup function.
+func setupTestDB(t testing.TB) (dbPath, thumbsDBPath string, cleanup func()) {
+	dbPath = filepath.Join(t.TempDir(), "test.db")
+	thumbsDBPath = filepath.Join(t.TempDir(), "thumbs.db")
 
 	d, err := iofs.New(migrations.FS, "migrations")
 	if err != nil {
@@ -52,7 +51,17 @@ func setupTestDB(t testing.TB) (string, func()) {
 		t.Fatalf("failed to apply migrations: %v", err)
 	}
 	m.Close()
-	return dbPath, func() {}
+
+	m2, err := migrations.NewThumbsMigrator(thumbsDBPath)
+	if err != nil {
+		t.Fatalf("failed to create thumbs migrator: %v", err)
+	}
+	if err := m2.Up(); err != nil && err != migrate.ErrNoChange {
+		m2.Close()
+		t.Fatalf("failed to apply thumbs migrations: %v", err)
+	}
+	m2.Close()
+	return dbPath, thumbsDBPath, func() {}
 }
 
 func TestNewDbSQLConnPool(t *testing.T) {
@@ -66,7 +75,6 @@ func TestNewDbSQLConnPool(t *testing.T) {
 			name: "invalid max connections",
 			config: Config{
 				MaxConnections: 0,
-				// Stmt:           map[string]string{"test": testSelectSQL},
 			},
 			wantErr:   true,
 			errString: "maxConnections must be greater than 0",
@@ -76,7 +84,6 @@ func TestNewDbSQLConnPool(t *testing.T) {
 			config: Config{
 				MaxConnections:     5,
 				MinIdleConnections: 10,
-				// Stmt:               map[string]string{"test": testSelectSQL},
 			},
 			wantErr:   true,
 			errString: "minIdleConnections (10) cannot exceed maxConnections (5)",
@@ -85,7 +92,6 @@ func TestNewDbSQLConnPool(t *testing.T) {
 			name: "valid config with defaults",
 			config: Config{
 				MaxConnections: 8,
-				// Stmt:           map[string]string{"test": testSelectSQL},
 			},
 			wantErr: false,
 		},
@@ -94,7 +100,6 @@ func TestNewDbSQLConnPool(t *testing.T) {
 			config: Config{
 				MaxConnections:     10,
 				MinIdleConnections: 2,
-				// Stmt:               map[string]string{"test": testSelectSQL},
 			},
 			wantErr: false,
 		},
@@ -102,12 +107,11 @@ func TestNewDbSQLConnPool(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dbPath, cleanup := setupTestDB(t)
-			defer cleanup()
+			dbPath, _, _ := setupTestDB(t)
 
 			ctx := context.Background()
 			// Add DriverName to the test case config
-			tt.config.DriverName = "sqlite"
+			tt.config.DriverName = "sqlite3"
 			pool, err := NewDbSQLConnPool(ctx, dbPath, tt.config)
 
 			if tt.wantErr {
@@ -143,16 +147,16 @@ func TestNewDbSQLConnPool(t *testing.T) {
 }
 
 func TestMonitor(t *testing.T) {
-	dbPath, cleanup := setupTestDB(t)
+	dbPath, thumbsDBPath, cleanup := setupTestDB(t)
 	defer cleanup()
 
 	ctx := context.Background()
 	config := Config{
-		DriverName:         "sqlite",
+		DriverName:         "sqlite3",
 		MaxConnections:     4,
 		MinIdleConnections: 2,
 		QueriesFunc:        gallerydb.NewCustomQueries,
-		// Stmt:               map[string]string{"test": testSelectSQL},
+		ThumbsDBPath:       thumbsDBPath,
 	}
 
 	pool, err := NewDbSQLConnPool(ctx, dbPath, config)
@@ -241,12 +245,12 @@ func TestMonitor(t *testing.T) {
 }
 
 func TestGet_ReturnsErrWhenClosed(t *testing.T) {
-	dbPath, cleanup := setupTestDB(t)
+	dbPath, _, cleanup := setupTestDB(t)
 	defer cleanup()
 
 	ctx := context.Background()
 	config := Config{
-		DriverName:     "sqlite",
+		DriverName:     "sqlite3",
 		MaxConnections: 1,
 	}
 	pool, err := NewDbSQLConnPool(ctx, dbPath, config)
@@ -263,13 +267,14 @@ func TestGet_ReturnsErrWhenClosed(t *testing.T) {
 }
 
 func TestGet_RetryOnBadIdleConnection(t *testing.T) {
-	dbPath, cleanup := setupTestDB(t)
+	dbPath, thumbsDBPath, cleanup := setupTestDB(t)
 	defer cleanup()
 
 	ctx := context.Background()
 	config := Config{
-		DriverName:     "sqlite",
+		DriverName:     "sqlite3",
 		MaxConnections: 2,
+		ThumbsDBPath:   thumbsDBPath,
 	}
 	pool, err := NewDbSQLConnPool(ctx, dbPath, config)
 	if err != nil {
@@ -294,13 +299,14 @@ func TestGet_RetryOnBadIdleConnection(t *testing.T) {
 }
 
 func TestGet_ContextCanceledWhenAtCapacity(t *testing.T) {
-	dbPath, cleanup := setupTestDB(t)
+	dbPath, thumbsDBPath, cleanup := setupTestDB(t)
 	defer cleanup()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	config := Config{
-		DriverName:     "sqlite",
+		DriverName:     "sqlite3",
 		MaxConnections: 1,
+		ThumbsDBPath:   thumbsDBPath,
 	}
 	pool, err := NewDbSQLConnPool(ctx, dbPath, config)
 	if err != nil {
@@ -327,13 +333,14 @@ func TestGet_ContextCanceledWhenAtCapacity(t *testing.T) {
 }
 
 func TestPut_ClosedPoolClosesConnection(t *testing.T) {
-	dbPath, cleanup := setupTestDB(t)
+	dbPath, thumbsDBPath, cleanup := setupTestDB(t)
 	defer cleanup()
 
 	ctx := context.Background()
 	config := Config{
-		DriverName:     "sqlite",
+		DriverName:     "sqlite3",
 		MaxConnections: 1,
+		ThumbsDBPath:   thumbsDBPath,
 	}
 	pool, err := NewDbSQLConnPool(ctx, dbPath, config)
 	if err != nil {
@@ -359,12 +366,12 @@ func TestPut_ClosedPoolClosesConnection(t *testing.T) {
 }
 
 func TestClose_DoubleClose(t *testing.T) {
-	dbPath, cleanup := setupTestDB(t)
+	dbPath, _, cleanup := setupTestDB(t)
 	defer cleanup()
 
 	ctx := context.Background()
 	config := Config{
-		DriverName:     "sqlite",
+		DriverName:     "sqlite3",
 		MaxConnections: 1,
 	}
 	pool, err := NewDbSQLConnPool(ctx, dbPath, config)
@@ -383,19 +390,19 @@ func TestClose_DoubleClose(t *testing.T) {
 }
 
 func TestMonitor_Scaling(t *testing.T) {
-	dbPath, cleanup := setupTestDB(t)
+	dbPath, thumbsDBPath, cleanup := setupTestDB(t)
 	defer cleanup()
 
 	t.Run("grows pool to minIdle", func(t *testing.T) {
 		ctx := t.Context()
 
 		config := Config{
-			DriverName:         "sqlite",
+			DriverName:         "sqlite3",
 			MaxConnections:     10,
 			MinIdleConnections: 4,
 			MonitorInterval:    10 * time.Millisecond,
 			QueriesFunc:        gallerydb.NewCustomQueries,
-			// Stmt:               map[string]string{"test": testSelectSQL},
+			ThumbsDBPath:       thumbsDBPath,
 		}
 
 		pool, err := NewDbSQLConnPool(ctx, dbPath, config)
@@ -419,12 +426,12 @@ func TestMonitor_Scaling(t *testing.T) {
 		ctx := t.Context()
 
 		config := Config{
-			DriverName:         "sqlite",
+			DriverName:         "sqlite3",
 			MaxConnections:     10,
 			MinIdleConnections: 2,
 			MonitorInterval:    20 * time.Millisecond,
 			QueriesFunc:        gallerydb.NewCustomQueries,
-			// Stmt:               map[string]string{"test": testSelectSQL},
+			ThumbsDBPath:       thumbsDBPath,
 		}
 
 		pool, err := NewDbSQLConnPool(ctx, dbPath, config)
@@ -463,16 +470,16 @@ func TestMonitor_Scaling(t *testing.T) {
 }
 
 func TestGet(t *testing.T) {
-	dbPath, cleanup := setupTestDB(t)
+	dbPath, thumbsDBPath, cleanup := setupTestDB(t)
 	defer cleanup()
 
 	ctx := context.Background()
 	config := Config{
-		DriverName:         "sqlite",
+		DriverName:         "sqlite3",
 		MaxConnections:     2,
 		MinIdleConnections: 1,
 		QueriesFunc:        gallerydb.NewCustomQueries,
-		// Stmt:               map[string]string{"test": testSelectSQL},
+		ThumbsDBPath:       thumbsDBPath,
 	}
 
 	pool, err := NewDbSQLConnPool(ctx, dbPath, config)
@@ -572,16 +579,16 @@ func TestGet(t *testing.T) {
 }
 
 func TestPut(t *testing.T) {
-	dbPath, cleanup := setupTestDB(t)
+	dbPath, thumbsDBPath, cleanup := setupTestDB(t)
 	defer cleanup()
 
 	ctx := context.Background()
 	config := Config{
-		DriverName:         "sqlite",
+		DriverName:         "sqlite3",
 		MaxConnections:     2,
 		MinIdleConnections: 1,
 		QueriesFunc:        gallerydb.NewCustomQueries,
-		// Stmt:               map[string]string{"test": testSelectSQL},
+		ThumbsDBPath:       thumbsDBPath,
 	}
 
 	pool, err := NewDbSQLConnPool(ctx, dbPath, config)
@@ -644,16 +651,16 @@ func TestPut(t *testing.T) {
 }
 
 func TestConcurrency(t *testing.T) {
-	dbPath, cleanup := setupTestDB(t)
+	dbPath, thumbsDBPath, cleanup := setupTestDB(t)
 	defer cleanup()
 
 	ctx := context.Background()
 	config := Config{
-		DriverName:         "sqlite",
+		DriverName:         "sqlite3",
 		MaxConnections:     5,
 		MinIdleConnections: 2,
 		QueriesFunc:        gallerydb.NewCustomQueries,
-		// Stmt:               map[string]string{"test": testSelectSQL},
+		ThumbsDBPath:       thumbsDBPath,
 	}
 
 	pool, err := NewDbSQLConnPool(ctx, dbPath, config)
@@ -709,15 +716,16 @@ func TestConcurrency(t *testing.T) {
 }
 
 func TestPragmaOptimize(t *testing.T) {
-	dbPath, cleanup := setupTestDB(t)
+	dbPath, thumbsDBPath, cleanup := setupTestDB(t)
 	defer cleanup()
 
 	ctx := context.Background()
 	config := Config{
-		DriverName:         "sqlite",
+		DriverName:         "sqlite3",
 		MaxConnections:     2,
 		MinIdleConnections: 1,
 		QueriesFunc:        gallerydb.NewCustomQueries,
+		ThumbsDBPath:       thumbsDBPath,
 	}
 
 	pool, err := NewDbSQLConnPool(ctx, dbPath, config)
@@ -738,12 +746,12 @@ func TestPragmaOptimize(t *testing.T) {
 }
 
 func TestDB(t *testing.T) {
-	dbPath, cleanup := setupTestDB(t)
+	dbPath, _, cleanup := setupTestDB(t)
 	defer cleanup()
 
 	ctx := context.Background()
 	config := Config{
-		DriverName:         "sqlite",
+		DriverName:         "sqlite3",
 		MaxConnections:     2,
 		MinIdleConnections: 1,
 		QueriesFunc:        gallerydb.NewCustomQueries,
@@ -767,12 +775,12 @@ func TestDB(t *testing.T) {
 }
 
 func TestDbStats(t *testing.T) {
-	dbPath, cleanup := setupTestDB(t)
+	dbPath, _, cleanup := setupTestDB(t)
 	defer cleanup()
 
 	ctx := context.Background()
 	config := Config{
-		DriverName:         "sqlite",
+		DriverName:         "sqlite3",
 		MaxConnections:     2,
 		MinIdleConnections: 1,
 		QueriesFunc:        gallerydb.NewCustomQueries,
@@ -818,13 +826,14 @@ func TestConnectionError(t *testing.T) {
 // This test documents Phase 2a of the handler dependency refactor.
 func TestConnectionPoolInterface(t *testing.T) {
 	ctx := context.Background()
-	dbPath, _ := setupTestDB(t)
+	dbPath, thumbsDBPath, _ := setupTestDB(t)
 
 	pool, err := NewDbSQLConnPool(ctx, dbPath, Config{
-		DriverName:         "sqlite",
+		DriverName:         "sqlite3",
 		MaxConnections:     5,
 		MinIdleConnections: 1,
 		QueriesFunc:        func(db gallerydb.DBTX) *gallerydb.CustomQueries { return nil },
+		ThumbsDBPath:       thumbsDBPath,
 	})
 	if err != nil {
 		t.Fatalf("failed to create pool: %v", err)
@@ -863,13 +872,14 @@ func TestConnectionPoolInterface(t *testing.T) {
 // TestConnectionPoolInterfaceMethods verifies each method of the ConnectionPool interface.
 func TestConnectionPoolInterfaceMethods(t *testing.T) {
 	ctx := context.Background()
-	dbPath, _ := setupTestDB(t)
+	dbPath, thumbsDBPath, _ := setupTestDB(t)
 
 	pool, err := NewDbSQLConnPool(ctx, dbPath, Config{
-		DriverName:         "sqlite",
+		DriverName:         "sqlite3",
 		MaxConnections:     3,
 		MinIdleConnections: 1,
 		QueriesFunc:        func(db gallerydb.DBTX) *gallerydb.CustomQueries { return nil },
+		ThumbsDBPath:       thumbsDBPath,
 	})
 	if err != nil {
 		t.Fatalf("failed to create pool: %v", err)
