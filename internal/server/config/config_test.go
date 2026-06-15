@@ -280,6 +280,9 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.DBMinIdleConnections != 10 {
 		t.Errorf("expected DBMinIdleConnections to be 10, got %d", cfg.DBMinIdleConnections)
 	}
+	if cfg.DBPoolMonitorInterval != 1*time.Minute {
+		t.Errorf("expected DBPoolMonitorInterval to be 1m, got %v", cfg.DBPoolMonitorInterval)
+	}
 
 	// Verify cache settings
 	if cfg.CacheMaxSize != 500*1024*1024 {

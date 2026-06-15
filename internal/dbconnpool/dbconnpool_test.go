@@ -47,7 +47,7 @@ func setupTestDB(t testing.TB) (dbPath, thumbsDBPath string, cleanup func()) {
 	if err != nil {
 		t.Fatalf("failed to create migrate instance: %v", err)
 	}
-	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
+	if err = m.Up(); err != nil && err != migrate.ErrNoChange {
 		t.Fatalf("failed to apply migrations: %v", err)
 	}
 	m.Close()
@@ -56,7 +56,7 @@ func setupTestDB(t testing.TB) (dbPath, thumbsDBPath string, cleanup func()) {
 	if err != nil {
 		t.Fatalf("failed to create thumbs migrator: %v", err)
 	}
-	if err := m2.Up(); err != nil && err != migrate.ErrNoChange {
+	if err = m2.Up(); err != nil && err != migrate.ErrNoChange {
 		m2.Close()
 		t.Fatalf("failed to apply thumbs migrations: %v", err)
 	}
@@ -222,7 +222,7 @@ func TestMonitor(t *testing.T) {
 		}
 		poolWithCancel.Put(cpc)
 
-		go poolWithCancel.Monitor()
+		go poolWithCancel.monitor()
 		cancel() // Cancel immediately
 
 		// Monitor should have stopped, connection count should remain the same
@@ -400,7 +400,7 @@ func TestMonitor_Scaling(t *testing.T) {
 			DriverName:         "sqlite3",
 			MaxConnections:     10,
 			MinIdleConnections: 4,
-			MonitorInterval:    10 * time.Millisecond,
+			MonitorInterval:    200 * time.Millisecond,
 			QueriesFunc:        gallerydb.NewCustomQueries,
 			ThumbsDBPath:       thumbsDBPath,
 		}
@@ -411,10 +411,10 @@ func TestMonitor_Scaling(t *testing.T) {
 		}
 		defer pool.Close()
 
-		go pool.Monitor()
+		// Monitor auto-starts because MonitorInterval > 0
 
 		// Wait for the monitor to create connections
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(300 * time.Millisecond)
 
 		idleCount := pool.NumIdleConnections()
 		if idleCount < int(config.MinIdleConnections) {
@@ -429,7 +429,7 @@ func TestMonitor_Scaling(t *testing.T) {
 			DriverName:         "sqlite3",
 			MaxConnections:     10,
 			MinIdleConnections: 2,
-			MonitorInterval:    20 * time.Millisecond,
+			MonitorInterval:    200 * time.Millisecond,
 			QueriesFunc:        gallerydb.NewCustomQueries,
 			ThumbsDBPath:       thumbsDBPath,
 		}
@@ -457,16 +457,68 @@ func TestMonitor_Scaling(t *testing.T) {
 			t.Fatalf("pre-condition failed: expected 5 idle connections, got %d", pool.NumIdleConnections())
 		}
 
-		go pool.Monitor()
+		// Monitor auto-starts because MonitorInterval > 0
 
 		// Wait for the monitor to close connections
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(300 * time.Millisecond)
 
 		idleCount := pool.NumIdleConnections()
 		if idleCount > int(config.MinIdleConnections) {
 			t.Errorf("pool did not shrink to minIdleConnections. got %d, want %d", idleCount, config.MinIdleConnections)
 		}
 	})
+}
+
+func TestMonitor_StartsAutomatically(t *testing.T) {
+	dbPath, thumbsDBPath, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := t.Context()
+	config := Config{
+		DriverName:         "sqlite3",
+		MaxConnections:     10,
+		MinIdleConnections: 2,
+		MonitorInterval:    200 * time.Millisecond,
+		QueriesFunc:        gallerydb.NewCustomQueries,
+		ThumbsDBPath:       thumbsDBPath,
+	}
+
+	pool, err := NewDbSQLConnPool(ctx, dbPath, config)
+	if err != nil {
+		t.Fatalf("failed to create pool: %v", err)
+	}
+	defer pool.Close()
+
+	// Fill 8 idle connections (6 above minIdle=2)
+	conns := make([]*CpConn, 8)
+	for i := range 8 {
+		c, err := pool.Get()
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		conns[i] = c
+	}
+	for _, c := range conns {
+		pool.Put(c)
+	}
+
+	if pool.NumIdleConnections() != 8 {
+		t.Fatalf("pre-condition: expected 8 idle connections, got %d",
+			pool.NumIdleConnections())
+	}
+
+	// Monitor should be auto-started (MonitorInterval=10ms > 0).
+	// Must NOT call pool.monitor() explicitly — that's the wiring we're testing.
+	// Wait for Monitor to drain all excess down to minIdle (2).
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if pool.NumIdleConnections() <= 2 {
+			return // success
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("Monitor did not drain excess idle connections within timeout: got %d idle, want <= 2",
+		pool.NumIdleConnections())
 }
 
 func TestGet(t *testing.T) {
@@ -668,7 +720,7 @@ func TestConcurrency(t *testing.T) {
 		t.Fatalf("failed to create pool: %v", err)
 	}
 
-	go pool.Monitor()
+	go pool.monitor()
 
 	t.Run("concurrent get and put", func(t *testing.T) {
 		const numGoroutines = 10

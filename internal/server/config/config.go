@@ -91,6 +91,7 @@ type Config struct {
 	WorkerPoolMax           int // 0 means auto-calculate
 	WorkerPoolMinIdle       int // 0 means auto-calculate
 	WorkerPoolMaxIdleTime   time.Duration
+	DBPoolMonitorInterval   time.Duration
 	QueueSize               int
 	EnableCachePreload      bool // Pre-load HTTP cache when folders are opened (runtime, no restart)
 	// MaxHTTPCacheEntryInsertPerTransaction is the max number of cache entries to insert in one transaction (batch size). Default: 10.
@@ -140,6 +141,7 @@ func DefaultConfig() *Config {
 		WorkerPoolMax:                         0, // Auto-calculate
 		WorkerPoolMinIdle:                     0, // Auto-calculate
 		WorkerPoolMaxIdleTime:                 10 * time.Second,
+		DBPoolMonitorInterval:                 1 * time.Minute,
 		QueueSize:                             10000,
 		EnableCachePreload:                    true,
 		MaxHTTPCacheEntryInsertPerTransaction: 10,
@@ -194,6 +196,7 @@ func (c *Config) RecoverFromCorruption(defaults *Config) {
 	c.WorkerPoolMax = defaults.WorkerPoolMax
 	c.WorkerPoolMinIdle = defaults.WorkerPoolMinIdle
 	c.WorkerPoolMaxIdleTime = defaults.WorkerPoolMaxIdleTime
+	c.DBPoolMonitorInterval = defaults.DBPoolMonitorInterval
 	c.QueueSize = defaults.QueueSize
 	c.EnableCachePreload = defaults.EnableCachePreload
 	c.MaxHTTPCacheEntryInsertPerTransaction = defaults.MaxHTTPCacheEntryInsertPerTransaction

@@ -57,6 +57,7 @@ func (c *Config) ExportToYAML() (string, error) {
 	configMap["worker-pool-max"] = c.WorkerPoolMax
 	configMap["worker-pool-min-idle"] = c.WorkerPoolMinIdle
 	configMap["worker-pool-max-idle-time"] = c.WorkerPoolMaxIdleTime.String()
+	configMap["db-pool-monitor-interval"] = c.DBPoolMonitorInterval.String()
 	configMap["queue-size"] = c.QueueSize
 	configMap["enable-cache-preload"] = c.EnableCachePreload
 	configMap["max-http-cache-entry-insert-per-transaction"] = c.MaxHTTPCacheEntryInsertPerTransaction
@@ -299,6 +300,9 @@ func (c *Config) IdentifyChanges(other *Config) []string {
 	if c.WorkerPoolMaxIdleTime != other.WorkerPoolMaxIdleTime {
 		changes = append(changes, "worker-pool-max-idle-time")
 	}
+	if c.DBPoolMonitorInterval != other.DBPoolMonitorInterval {
+		changes = append(changes, "db-pool-monitor-interval")
+	}
 	if c.QueueSize != other.QueueSize {
 		changes = append(changes, "queue-size")
 	}
@@ -397,6 +401,9 @@ func (c *Config) MergeDefaults(defaults *Config) {
 	}
 	if c.WorkerPoolMaxIdleTime == 0 {
 		c.WorkerPoolMaxIdleTime = defaults.WorkerPoolMaxIdleTime
+	}
+	if c.DBPoolMonitorInterval == 0 {
+		c.DBPoolMonitorInterval = defaults.DBPoolMonitorInterval
 	}
 	if c.QueueSize == 0 {
 		c.QueueSize = defaults.QueueSize

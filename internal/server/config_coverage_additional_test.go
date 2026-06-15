@@ -160,6 +160,7 @@ func TestConfigIdentifyChanges_Comprehensive(t *testing.T) {
 			{"worker_pool_max", func(c *Config) { c.WorkerPoolMax = 20 }, "worker-pool-max"},
 			{"worker_pool_min_idle", func(c *Config) { c.WorkerPoolMinIdle = 5 }, "worker-pool-min-idle"},
 			{"worker_pool_max_idle_time", func(c *Config) { c.WorkerPoolMaxIdleTime = 20 * time.Second }, "worker-pool-max-idle-time"},
+			{"db_pool_monitor_interval", func(c *Config) { c.DBPoolMonitorInterval = 30 * time.Second }, "db-pool-monitor-interval"},
 			{"queue_size", func(c *Config) { c.QueueSize = 5000 }, "queue-size"},
 			{"run_file_discovery", func(c *Config) { c.RunFileDiscovery = false }, "discover"},
 		}

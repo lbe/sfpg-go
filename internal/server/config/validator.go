@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // GuardrailWarning represents a non-fatal configuration anomaly that should be
@@ -76,6 +77,11 @@ func (c *Config) Validate() error {
 	}
 	if c.DBMinIdleConnections > c.DBMaxPoolSize {
 		return fmt.Errorf("database min idle connections (%d) cannot exceed max pool size (%d)", c.DBMinIdleConnections, c.DBMaxPoolSize)
+	}
+
+	// Validate db pool monitor interval
+	if c.DBPoolMonitorInterval < 0 {
+		return fmt.Errorf("db pool monitor interval must be non-negative, got %v", c.DBPoolMonitorInterval)
 	}
 
 	// Validate worker pool (0 means auto, so only validate if set)
@@ -192,6 +198,14 @@ func (c *Config) ValidateSetting(key, value string) error {
 		// Check if it exceeds max (if both are set)
 		if c.WorkerPoolMax > 0 && min > 0 && min > c.WorkerPoolMax {
 			return fmt.Errorf("worker pool min idle (%d) cannot exceed max (%d)", min, c.WorkerPoolMax)
+		}
+	case "db_pool_monitor_interval":
+		duration, err := time.ParseDuration(value)
+		if err != nil {
+			return fmt.Errorf("invalid db pool monitor interval %q: %w", value, err)
+		}
+		if duration < 0 {
+			return fmt.Errorf("db pool monitor interval must be non-negative, got %v", duration)
 		}
 	case "queue_size":
 		size, err := strconv.Atoi(value)

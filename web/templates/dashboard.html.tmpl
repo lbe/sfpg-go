@@ -88,25 +88,37 @@
           >
             <div class="stat">
               <div class="stat-title text-xs">Allocated</div>
-              <div id="mem-allocated" class="stat-value text-base font-semibold">
+              <div
+                id="mem-allocated"
+                class="stat-value text-base font-semibold"
+              >
                 {{ formatBytes .Metrics.Runtime.MemAlloc }}
               </div>
             </div>
             <div class="stat">
               <div class="stat-title text-xs">Heap In Use</div>
-              <div id="mem-heap-in-use" class="stat-value text-base font-semibold">
+              <div
+                id="mem-heap-in-use"
+                class="stat-value text-base font-semibold"
+              >
                 {{ formatBytes .Metrics.Runtime.MemHeapInuse }}
               </div>
             </div>
             <div class="stat">
               <div class="stat-title text-xs">Heap Released</div>
-              <div id="mem-heap-released" class="stat-value text-base font-semibold">
+              <div
+                id="mem-heap-released"
+                class="stat-value text-base font-semibold"
+              >
                 {{ formatBytes .Metrics.Runtime.MemHeapReleased }}
               </div>
             </div>
             <div class="stat">
               <div class="stat-title text-xs">Heap Objects</div>
-              <div id="mem-heap-objects" class="stat-value text-base font-semibold">
+              <div
+                id="mem-heap-objects"
+                class="stat-value text-base font-semibold"
+              >
                 {{ formatCount .Metrics.Runtime.MemHeapObjects }}
               </div>
             </div>
@@ -139,25 +151,37 @@
           >
             <div class="stat">
               <div class="stat-title text-xs">Goroutines</div>
-              <div id="runtime-goroutines" class="stat-value text-base font-semibold">
+              <div
+                id="runtime-goroutines"
+                class="stat-value text-base font-semibold"
+              >
                 {{ formatCount .Metrics.Runtime.NumGoroutine }}
               </div>
             </div>
             <div class="stat">
               <div class="stat-title text-xs">CPU Count</div>
-              <div id="runtime-cpu-count" class="stat-value text-base font-semibold">
+              <div
+                id="runtime-cpu-count"
+                class="stat-value text-base font-semibold"
+              >
                 {{ formatCount .Metrics.Runtime.NumCPU }}
               </div>
             </div>
             <div class="stat">
               <div class="stat-title text-xs">Next GC</div>
-              <div id="runtime-next-gc" class="stat-value text-base font-semibold">
+              <div
+                id="runtime-next-gc"
+                class="stat-value text-base font-semibold"
+              >
                 {{ formatBytes .Metrics.Runtime.NextGC }}
               </div>
             </div>
             <div class="stat">
               <div class="stat-title text-xs">Uptime</div>
-              <div id="runtime-uptime" class="stat-value text-base font-semibold">
+              <div
+                id="runtime-uptime"
+                class="stat-value text-base font-semibold"
+              >
                 {{ formatDuration .Metrics.Runtime.Uptime }}
               </div>
             </div>
@@ -257,7 +281,10 @@
             </div>
             <div class="stat">
               <div class="stat-title text-xs">Successful</div>
-              <div id="wp-successful" class="stat-value text-success text-base font-semibold">
+              <div
+                id="wp-successful"
+                class="stat-value text-success text-base font-semibold"
+              >
                 {{ formatCount .Metrics.WorkerPool.SuccessfulTasks }}
               </div>
             </div>
@@ -317,13 +344,19 @@
           >
             <div class="stat">
               <div class="stat-title text-xs">Utilization</div>
-              <div id="queue-utilization" class="stat-value text-base font-semibold">
+              <div
+                id="queue-utilization"
+                class="stat-value text-base font-semibold"
+              >
                 {{ queueUtilizationPercent .Metrics.QueueLength .Metrics.QueueCapacity }}%
               </div>
             </div>
             <div class="stat">
               <div class="stat-title text-xs">Available</div>
-              <div id="queue-available" class="stat-value text-base font-semibold">
+              <div
+                id="queue-available"
+                class="stat-value text-base font-semibold"
+              >
                 {{ formatCount (sub .Metrics.QueueCapacity .Metrics.QueueLength) }}
               </div>
             </div>
@@ -348,25 +381,37 @@
             </div>
             <div class="stat">
               <div class="stat-title text-xs">Existing</div>
-              <div id="fp-existing" class="stat-value text-warning text-base font-semibold">
+              <div
+                id="fp-existing"
+                class="stat-value text-warning text-base font-semibold"
+              >
                 {{ formatCount .Metrics.FileProcessing.AlreadyExisting }}
               </div>
             </div>
             <div class="stat">
               <div class="stat-title text-xs">New</div>
-              <div id="fp-new" class="stat-value text-success text-base font-semibold">
+              <div
+                id="fp-new"
+                class="stat-value text-success text-base font-semibold"
+              >
                 {{ formatCount .Metrics.FileProcessing.NewlyInserted }}
               </div>
             </div>
             <div class="stat">
               <div class="stat-title text-xs">Invalid</div>
-              <div id="fp-invalid" class="stat-value text-error text-base font-semibold">
+              <div
+                id="fp-invalid"
+                class="stat-value text-error text-base font-semibold"
+              >
                 {{ formatCount .Metrics.FileProcessing.SkippedInvalid }}
               </div>
             </div>
             <div class="stat">
               <div class="stat-title text-xs">In Flight</div>
-              <div id="fp-inflight" class="stat-value text-primary text-base font-semibold">
+              <div
+                id="fp-inflight"
+                class="stat-value text-primary text-base font-semibold"
+              >
                 {{ formatCount .Metrics.FileProcessing.InFlight }}
               </div>
             </div>
@@ -402,9 +447,13 @@
               Cache Preload
             </h3>
             {{ if .Metrics.CachePreload.IsEnabled }}
-              <span id="preload-status" class="badge badge-success badge-sm">Enabled</span>
+              <span id="preload-status" class="badge badge-success badge-sm"
+                >Enabled</span
+              >
             {{ else }}
-              <span id="preload-status" class="badge badge-ghost badge-sm">Disabled</span>
+              <span id="preload-status" class="badge badge-ghost badge-sm"
+                >Disabled</span
+              >
             {{ end }}
           </div>
           <div
@@ -412,13 +461,19 @@
           >
             <div class="stat">
               <div class="stat-title text-xs">Scheduled</div>
-              <div id="preload-scheduled" class="stat-value text-base font-semibold">
+              <div
+                id="preload-scheduled"
+                class="stat-value text-base font-semibold"
+              >
                 {{ formatCount .Metrics.CachePreload.TasksScheduled }}
               </div>
             </div>
             <div class="stat">
               <div class="stat-title text-xs">Completed</div>
-              <div id="preload-completed" class="stat-value text-success text-base font-semibold">
+              <div
+                id="preload-completed"
+                class="stat-value text-success text-base font-semibold"
+              >
                 {{ formatCount .Metrics.CachePreload.TasksCompleted }}
               </div>
             </div>
@@ -435,7 +490,10 @@
             </div>
             <div class="stat">
               <div class="stat-title text-xs">Skipped</div>
-              <div id="preload-skipped" class="stat-value text-base font-semibold">
+              <div
+                id="preload-skipped"
+                class="stat-value text-base font-semibold"
+              >
                 {{ formatCount .Metrics.CachePreload.TasksSkipped }}
               </div>
             </div>
@@ -468,17 +526,24 @@
               Cache Batch Load
             </h3>
             {{ if .Metrics.CacheBatchLoad.IsRunning }}
-              <span id="batch-status" class="badge badge-success badge-sm animate-pulse"
+              <span
+                id="batch-status"
+                class="badge badge-success badge-sm animate-pulse"
                 >Running</span
               >
             {{ else }}
-              <span id="batch-status" class="badge badge-ghost badge-sm">Idle</span>
+              <span id="batch-status" class="badge badge-ghost badge-sm"
+                >Idle</span
+              >
             {{ end }}
           </div>
           <div class="stats stats-vertical bg-base-100 shadow-sm">
             <div class="stat">
               <div class="stat-title text-xs">Progress</div>
-              <div id="batch-progress" class="stat-value text-base font-semibold">
+              <div
+                id="batch-progress"
+                class="stat-value text-base font-semibold"
+              >
                 {{ formatCount .Metrics.CacheBatchLoad.TargetsCompleted }} /
                 {{ formatCount .Metrics.CacheBatchLoad.TargetsScheduled }}
               </div>
@@ -508,7 +573,10 @@
             </div>
             <div class="stat">
               <div class="stat-title text-xs">Skipped</div>
-              <div id="batch-skipped" class="stat-value text-base font-semibold">
+              <div
+                id="batch-skipped"
+                class="stat-value text-base font-semibold"
+              >
                 {{ formatCount .Metrics.CacheBatchLoad.TargetsSkipped }}
               </div>
             </div>
@@ -541,9 +609,13 @@
               HTTP Cache
             </h3>
             {{ if .Metrics.HTTPCache.Enabled }}
-              <span id="http-status" class="badge badge-success badge-sm">Enabled</span>
+              <span id="http-status" class="badge badge-success badge-sm"
+                >Enabled</span
+              >
             {{ else }}
-              <span id="http-status" class="badge badge-ghost badge-sm">Disabled</span>
+              <span id="http-status" class="badge badge-ghost badge-sm"
+                >Disabled</span
+              >
             {{ end }}
           </div>
           <div
@@ -563,19 +635,28 @@
             </div>
             <div class="stat place-items-start py-2">
               <div class="stat-title text-xs">Max Total</div>
-              <div id="http-max-total" class="stat-value text-base font-semibold">
+              <div
+                id="http-max-total"
+                class="stat-value text-base font-semibold"
+              >
                 {{ formatBytesInt64 .Metrics.HTTPCache.MaxTotalSize }}
               </div>
             </div>
             <div class="stat place-items-start py-2">
               <div class="stat-title text-xs">Max Entry</div>
-              <div id="http-max-entry" class="stat-value text-base font-semibold">
+              <div
+                id="http-max-entry"
+                class="stat-value text-base font-semibold"
+              >
                 {{ formatBytesInt64 .Metrics.HTTPCache.MaxEntrySize }}
               </div>
             </div>
             <div class="stat col-span-2 place-items-start py-2">
               <div class="stat-title text-xs">Utilization</div>
-              <div id="http-utilization" class="stat-value text-base font-semibold">
+              <div
+                id="http-utilization"
+                class="stat-value text-base font-semibold"
+              >
                 {{ httpCacheUtilizationPercent .Metrics.HTTPCache }}%
               </div>
             </div>

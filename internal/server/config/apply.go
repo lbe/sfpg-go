@@ -94,6 +94,11 @@ func BuildImportedConfig(base *Config, yamlContent string) (*Config, error) {
 			return nil, fmt.Errorf("invalid worker pool max idle time: %w", err)
 		}
 	}
+	if yamlCfg.DBPoolMonitorInterval != nil {
+		if _, err := time.ParseDuration(*yamlCfg.DBPoolMonitorInterval); err != nil {
+			return nil, fmt.Errorf("invalid db pool monitor interval: %w", err)
+		}
+	}
 
 	candidate := *base
 	applyYAMLConfigToConfig(&candidate, &yamlCfg)
@@ -219,6 +224,9 @@ func restartRequiredKeys(current, candidate *Config) []string {
 	}
 	if current.WorkerPoolMaxIdleTime != candidate.WorkerPoolMaxIdleTime {
 		keys = append(keys, "worker_pool_max_idle_time")
+	}
+	if current.DBPoolMonitorInterval != candidate.DBPoolMonitorInterval {
+		keys = append(keys, "db_pool_monitor_interval")
 	}
 	if current.QueueSize != candidate.QueueSize {
 		keys = append(keys, "queue_size")

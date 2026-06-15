@@ -92,6 +92,7 @@ func (c *Config) ToMap() map[string]string {
 	m["worker_pool_max"] = strconv.Itoa(c.WorkerPoolMax)
 	m["worker_pool_min_idle"] = strconv.Itoa(c.WorkerPoolMinIdle)
 	m["worker_pool_max_idle_time"] = c.WorkerPoolMaxIdleTime.String()
+	m["db_pool_monitor_interval"] = c.DBPoolMonitorInterval.String()
 	m["queue_size"] = strconv.Itoa(c.QueueSize)
 	m["enable_cache_preload"] = strconv.FormatBool(c.EnableCachePreload)
 	m["max_http_cache_entry_insert_per_transaction"] = strconv.Itoa(c.MaxHTTPCacheEntryInsertPerTransaction)

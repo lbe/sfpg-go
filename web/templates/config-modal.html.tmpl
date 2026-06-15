@@ -388,7 +388,7 @@
                                      'site_name', 'image_directory', 'current_theme',
                                      'session_max_age', 'session_http_only', 'session_secure', 'session_same_site',
                                      'enable_http_cache', 'enable_cache_preload', 'cache_max_size', 'cache_max_entry_size', 'cache_max_time', 'cache_cleanup_interval',
-                                     'db_max_pool_size', 'db_min_idle_connections', 'db_optimize_interval',
+                                     'db_max_pool_size', 'db_min_idle_connections', 'db_optimize_interval', 'db_pool_monitor_interval',
                                      'worker_pool_max', 'worker_pool_min_idle', 'worker_pool_max_idle_time', 'queue_size',
                                      'run_file_discovery']
                 
@@ -638,7 +638,7 @@
     if badge is not null
       if badge.textContent == 'Restart Required' and badge.classList.contains('hidden') == false and badge.classList.contains('restart-modal-shown') == false
         wait 100ms
-        set configFields to ['listener_address', 'listener_port', 'server_compression_enable', 'log_directory', 'log_level', 'log_rollover', 'log_retention_count', 'site_name', 'image_directory', 'current_theme', 'session_max_age', 'session_http_only', 'session_secure', 'session_same_site', 'enable_http_cache', 'enable_cache_preload', 'cache_max_size', 'cache_max_entry_size', 'cache_max_time', 'cache_cleanup_interval', 'db_max_pool_size', 'db_min_idle_connections', 'db_optimize_interval', 'worker_pool_max', 'worker_pool_min_idle', 'worker_pool_max_idle_time', 'queue_size', 'run_file_discovery']
+        set configFields to ['listener_address', 'listener_port', 'server_compression_enable', 'log_directory', 'log_level', 'log_rollover', 'log_retention_count', 'site_name', 'image_directory', 'current_theme', 'session_max_age', 'session_http_only', 'session_secure', 'session_same_site', 'enable_http_cache', 'enable_cache_preload', 'cache_max_size', 'cache_max_entry_size', 'cache_max_time', 'cache_cleanup_interval', 'db_max_pool_size', 'db_min_idle_connections', 'db_optimize_interval', 'db_pool_monitor_interval', 'worker_pool_max', 'worker_pool_min_idle', 'worker_pool_max_idle_time', 'queue_size', 'run_file_discovery']
         call buildConfigDiff(configFields, #restart-diff-content, true)
         wait 200ms
         set #restart-diff-modal.checked to true
@@ -1695,6 +1695,26 @@
         <span class="label-text-alt"
           >How often to run SQLite OPTIMIZE (e.g., 1h = 1 hour). Restart
           required.</span
+        >
+      </label>
+    </div>
+
+    <div class="form-control mb-4">
+      <label class="label">
+        <span class="label-text font-semibold">DB Pool Monitor Interval</span>
+      </label>
+      <input
+        type="text"
+        name="db_pool_monitor_interval"
+        data-requires-restart="true"
+        placeholder="1m"
+        class="input input-bordered w-32"
+        value="{{ if .Config }}{{ .Config.DBPoolMonitorInterval }}{{ end }}"
+      />
+      <label class="label">
+        <span class="label-text-alt"
+          >How often the pool monitor runs to grow/shrink connections (e.g., 1m
+          = 1 minute). Restart required.</span
         >
       </label>
     </div>

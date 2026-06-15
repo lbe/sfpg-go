@@ -300,10 +300,6 @@ func NewDbSQLConnPool(
 		)
 	}
 
-	if config.MonitorInterval <= 0 {
-		config.MonitorInterval = 1 * time.Minute
-	}
-
 	healthCheck := max(config.HealthCheckThreshold, 0)
 	if healthCheck == 0 && config.HealthCheckThreshold == 0 {
 		// User didn't set it — apply default
@@ -323,7 +319,7 @@ func NewDbSQLConnPool(
 		poolName = "RO"
 	}
 
-	return &DbSQLConnPool{
+	p := &DbSQLConnPool{
 		Config:               config,
 		name:                 poolName,
 		ctx:                  ctx,
@@ -334,7 +330,14 @@ func NewDbSQLConnPool(
 		monitorInterval:      config.MonitorInterval,
 		healthCheckThreshold: healthCheck,
 		done:                 make(chan struct{}),
-	}, nil
+	}
+
+	// Auto-start monitor if interval is configured.
+	if p.monitorInterval > 0 {
+		go p.monitor()
+	}
+
+	return p, nil
 }
 
 // DB returns the underlying *sql.DB instance. This method should be used with
@@ -547,14 +550,18 @@ func (p *DbSQLConnPool) NumConnections() int64 {
 	return p.numConnections.Load()
 }
 
-// Monitor maintains the pool's connection count within configured bounds.
+// monitor maintains the pool's connection count within configured bounds.
 // Running as a goroutine, it periodically:
 //   - Creates connections up to the full deficit if idle < minIdleConnections
-//   - Closes one excess idle connection per tick if idle > minIdleConnections
+//   - Closes all excess idle connections per tick if idle > minIdleConnections
 //
 // Exits when context is cancelled or done channel is closed.
-func (p *DbSQLConnPool) Monitor() {
-	ticker := time.NewTicker(p.monitorInterval)
+func (p *DbSQLConnPool) monitor() {
+	interval := p.monitorInterval
+	if interval <= 0 {
+		interval = 1 * time.Minute // safety net
+	}
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	for {
@@ -616,14 +623,16 @@ func (p *DbSQLConnPool) Monitor() {
 				}
 			}
 
-			// Shrink: remove one excess idle connection per tick.
+			// Shrink: drain all excess idle connections down to minIdle in one tick.
 			currentIdle = int64(len(p.connections))
-			if currentIdle > p.minIdleConnections {
+			excess := currentIdle - p.minIdleConnections
+			for i := int64(0); i < excess; i++ {
 				select {
 				case cpc := <-p.connections:
 					cpc.Close()
 					p.numConnections.Add(-1)
 				default:
+					return // channel empty, nothing more to drain
 				}
 			}
 		}

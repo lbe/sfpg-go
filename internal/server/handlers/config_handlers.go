@@ -499,6 +499,16 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 			}
 			return nil
 		},
+		"db_pool_monitor_interval": func(v string) error {
+			duration, durationErr := time.ParseDuration(v)
+			if durationErr != nil {
+				return fmt.Errorf("invalid db pool monitor interval: %w", durationErr)
+			}
+			if oldConfig.DBPoolMonitorInterval != duration {
+				newConfig.DBPoolMonitorInterval = duration
+			}
+			return nil
+		},
 		"queue_size": func(v string) error {
 			size, sizeErr := strconv.Atoi(v)
 			if sizeErr != nil {

@@ -198,6 +198,12 @@ func (c *Config) SetValueFromString(key, value string) error {
 			return fmt.Errorf("invalid worker pool max idle time %q: %w", value, err)
 		}
 		c.WorkerPoolMaxIdleTime = duration
+	case "db_pool_monitor_interval":
+		duration, err := time.ParseDuration(value)
+		if err != nil {
+			return fmt.Errorf("invalid db pool monitor interval %q: %w", value, err)
+		}
+		c.DBPoolMonitorInterval = duration
 	case "queue_size":
 		size, err := strconv.Atoi(value)
 		if err != nil {
@@ -333,6 +339,7 @@ type yamlConfigForConfig struct {
 	WorkerPoolMax                         *int      `yaml:"worker-pool-max"`
 	WorkerPoolMinIdle                     *int      `yaml:"worker-pool-min-idle"`
 	WorkerPoolMaxIdleTime                 *string   `yaml:"worker-pool-max-idle-time"`
+	DBPoolMonitorInterval                 *string   `yaml:"db-pool-monitor-interval"`
 	QueueSize                             *int      `yaml:"queue-size"`
 	EnableCachePreload                    *bool     `yaml:"enable-cache-preload"`
 	MaxHTTPCacheEntryInsertPerTransaction *int      `yaml:"max-http-cache-entry-insert-per-transaction"`
@@ -457,6 +464,14 @@ func applyYAMLConfigToConfig(c *Config, cfg *yamlConfigForConfig) {
 			c.WorkerPoolMaxIdleTime = duration
 		} else {
 			slog.Warn("invalid worker-pool-max-idle-time duration", "value", *cfg.WorkerPoolMaxIdleTime, "err", err)
+		}
+	}
+	if cfg.DBPoolMonitorInterval != nil {
+		duration, err := time.ParseDuration(*cfg.DBPoolMonitorInterval)
+		if err == nil {
+			c.DBPoolMonitorInterval = duration
+		} else {
+			slog.Warn("invalid db-pool-monitor-interval duration", "value", *cfg.DBPoolMonitorInterval, "err", err)
 		}
 	}
 	if cfg.QueueSize != nil {

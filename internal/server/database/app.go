@@ -169,9 +169,11 @@ func configureDatabaseDSN(dbPath string) (roDsn, rwDsn string) {
 func createDatabasePools(ctx context.Context, roDsn, rwDsn, thumbsDBPath string, cfg *config.Config) (*dbconnpool.DbSQLConnPool, *dbconnpool.DbSQLConnPool, error) {
 	maxPoolSize := int64(100)
 	minIdleConns := int64(10)
+	monitorInterval := time.Duration(0)
 	if cfg != nil {
 		maxPoolSize = int64(cfg.DBMaxPoolSize)
 		minIdleConns = int64(cfg.DBMinIdleConnections)
+		monitorInterval = cfg.DBPoolMonitorInterval
 	}
 
 	dbRwPool, err := dbconnpool.NewDbSQLConnPool(ctx, rwDsn,
@@ -179,6 +181,7 @@ func createDatabasePools(ctx context.Context, roDsn, rwDsn, thumbsDBPath string,
 			DriverName:         "sqlite3",
 			MaxConnections:     maxPoolSize,
 			MinIdleConnections: minIdleConns,
+			MonitorInterval:    monitorInterval,
 			ReadOnly:           false,
 			QueriesFunc:        gallerydb.NewCustomQueries,
 			ThumbsDBPath:       thumbsDBPath,
@@ -199,6 +202,7 @@ func createDatabasePools(ctx context.Context, roDsn, rwDsn, thumbsDBPath string,
 			DriverName:         "sqlite3",
 			MaxConnections:     maxPoolSize,
 			MinIdleConnections: minIdleConns,
+			MonitorInterval:    monitorInterval,
 			ReadOnly:           true,
 			QueriesFunc:        gallerydb.NewCustomQueries,
 			ThumbsDBPath:       thumbsDBPath,
