@@ -274,7 +274,7 @@ func (m Model) renderModules() string {
 			statusIcon = "●"
 		}
 
-		b.WriteString(fmt.Sprintf("%s %s %s", statusIcon, mod.Name, statusStyle.Render(mod.Status)))
+		fmt.Fprintf(&b, "%s %s %s", statusIcon, mod.Name, statusStyle.Render(mod.Status))
 	}
 	b.WriteString("\n")
 	return b.String()

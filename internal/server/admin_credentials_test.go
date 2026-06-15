@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	_ "github.com/ncruces/go-sqlite3/driver"
-	_ "github.com/ncruces/go-sqlite3/embed"
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/lbe/sfpg-go/internal/testutil"
