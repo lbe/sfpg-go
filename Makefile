@@ -77,13 +77,15 @@ bench5:
 GOOS ?= $$(go env GOOS)
 GOARCH ?= $$(go env GOARCH)
 BINARY_NAME := bin/sfpg-$(GOOS)-$(GOARCH)
+BINARY_NAME2 := bin/sfpg-dashboard-$(GOOS)-$(GOARCH)
 
 .PHONY: build
 build:
 	# Build the application binary (respects GOOS/GOARCH for cross-compilation)
 	go generate ./...
 	GOOS=$(GOOS) GOARCH=$(GOARCH) go build -v -o $(BINARY_NAME) .
-
+	GOOS=$(GOOS) GOARCH=$(GOARCH) go build -v -o $(BINARY_NAME2) ./cmd/sfpg-go-dashboard/.
+ 
 .PHONY: run
 run: build
 	# Run the application (requires SEPG_SESSION_SECRET)
