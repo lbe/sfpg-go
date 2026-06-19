@@ -1,7 +1,7 @@
 # SFPG Architecture Documentation
 
-**Version:** 1.0
-**Last Updated:** 2026-02-10
+**Version:** 1.2
+**Last Updated:** 2026-06-19
 **Application:** Simple Fast Photo Gallery (SFPG)
 
 ## Table of Contents
@@ -35,13 +35,14 @@ SFPG (Simple Fast Photo Gallery) is a high-performance, self-hosted photo galler
 
 | Component            | Technology                                      |
 | -------------------- | ----------------------------------------------- |
-| **Language**         | Go 1.23+                                        |
+| **Language**         | Go 1.26+                                        |
 | **Database**         | SQLite (with separate read/write pools)         |
 | **Web Framework**    | net/http (standard library)                     |
 | **UI**               | HTMX + Go html/template                         |
 | **Image Processing** | standard library (image, image/jpeg, image/png) |
 | **Metadata**         | imagemeta (EXIF, IPTC, XMP)                     |
 | **HTTP Cache**       | Custom SQLite-backed cache with async eviction  |
+| **Write Overflow**   | Persistent on-disk FIFO queue (`dque`)          |
 
 ### Architecture Principles
 
@@ -76,15 +77,15 @@ graph TB
 
     subgraph "Background Workers"
         FileWorkerPool[File Worker Pool]
-        CacheWorker[Cache Write Worker]
+        CacheWorker[Unified WriteBatcher<br/>File metadata + cache writes]
         PreloadWorker[Cache Preload Worker]
         Scheduler[Task Scheduler]
     end
 
     subgraph "Data Layer"
         SQLite[(SQLite Database)]
-        ROConn[(Read-Only Pool<br/>10 connections)]
-        RWConn[(Read-Write Pool<br/>2 connections)]
+        ROConn[(Read-Only Pool<br/>configurable size)]
+        RWConn[(Read-Write Pool<br/>configurable size)]
     end
 
     subgraph "File System"
@@ -158,22 +159,35 @@ sequenceDiagram
 
 The application is organized into domain-driven packages under `internal/`:
 
-| Package          | Purpose                             | Key Exports                       |
-| ---------------- | ----------------------------------- | --------------------------------- |
-| **server**       | HTTP server, routing, orchestration | `App`, handlers, middleware       |
-| **cachelite**    | HTTP response caching               | `HTTPCacheMiddleware`, `EvictLRU` |
-| **workerpool**   | Concurrent task processing          | `Pool`, `Worker`                  |
-| **scheduler**    | Cron-like task scheduling           | `Scheduler`, `Task` interface     |
-| **queue**        | Thread-safe deque                   | `Queue`                           |
-| **writebatcher** | Batch database operations           | `Batcher`                         |
-| **dbconnpool**   | SQLite connection pools             | `DbSQLConnPool`                   |
-| **gallerydb**    | Database queries (sqlc)             | `Queries`, models                 |
-| **thumbnail**    | Thumbnail generation                | `Generator`                       |
-| **imagemeta**    | EXIF/IPTC/XMP extraction            | Metadata parsers                  |
-| **files**        | File processing pipeline            | `FileProcessor`                   |
-| **config**       | Configuration management            | `ConfigService`                   |
-| **session**      | Session & CSRF management           | `SessionManager`                  |
-| **log**          | Structured logging                  | `Logger`                          |
+| Package             | Purpose                                | Key Exports                       |
+| ------------------- | -------------------------------------- | --------------------------------- |
+| **server**          | HTTP server, routing, orchestration    | `App`, handlers, middleware       |
+| **cachelite**       | HTTP response caching                  | `HTTPCacheMiddleware`, `EvictLRU` |
+| **workerpool**      | Concurrent task processing             | `Pool`, `Worker`                  |
+| **scheduler**       | Cron-like task scheduling              | `Scheduler`, `Task` interface     |
+| **queue**           | Thread-safe deque                      | `Queue`                           |
+| **writebatcher**    | Batch database operations              | `WriteBatcher`, `Config`          |
+| **dque**            | Persistent on-disk FIFO overflow queue | `New`, `Queue`                    |
+| **flock**           | Cross-platform file locking            | `Flock`                           |
+| **errors**          | Error sentinels for dque               | `ErrXxx` sentinels                |
+| **dbconnpool**      | SQLite connection pools                | `DbSQLConnPool`                   |
+| **gallerydb**       | Database queries (sqlc)                | `Queries`, `CustomQueries`        |
+| **gallerylib**      | File import / path-chain upserts       | `Importer`                        |
+| **thumbnail**       | Thumbnail generation                   | `Generator`                       |
+| **imagemeta**       | EXIF/IPTC/XMP extraction               | Metadata parsers                  |
+| **files**           | File processing pipeline               | `FileProcessor`                   |
+| **config**          | Configuration management               | `ConfigService`                   |
+| **session**         | Session & CSRF management              | `SessionManager`                  |
+| **multihandler**    | Multi-handler structured logging       | `MultiHandler`                    |
+| **profiler**        | Optional CPU/mem/block profiling       | `Start`                           |
+| **coords**          | Geographic coordinate parsing          | `Parse`                           |
+| **humanize**        | Human-readable formatting              | formatters                        |
+| **log**             | Structured logging                     | `Logger`                          |
+| **gensyncpool**     | Reset-enforcing `sync.Pool` wrappers   | `NewPool`                         |
+| **getopt**          | Config from flags/env/YAML             | config loader                     |
+| **parallelwalkdir** | Concurrent directory scanning          | `WalkFunc`                        |
+| **testutil**        | Shared test helpers                    | `Equals`, `HTMLContains`          |
+| **gen-test-files**  | Synthetic test file generation         | `Generate`                        |
 
 ### Component Diagram
 
@@ -195,7 +209,7 @@ graph TB
         WorkerPool[workerpool.Pool]
         CacheMW[cachelite.HTTPCacheMiddleware]
         Scheduler[scheduler.Scheduler]
-        WriteBatcher[writebatcher.Batcher]
+        WriteBatcher[writebatcher.WriteBatcher]
     end
 
     subgraph "Data Access"
@@ -227,21 +241,42 @@ graph TB
 The application uses a **single unified WriteBatcher** at the App level that handles all high-volume database writes. This architecture eliminates SQLite lock contention by ensuring that only one component is attempting to write to the database at any given time, while still allowing high throughput through efficient batching.
 
 - **File metadata:** Complete file records including path chain, EXIF, and thumbnails.
-- **Invalid file tracking:** Records of non-processible or corrupted files for UI tracking.
 - **HTTP cache entries:** Full HTTP responses cached with route-specific strategies.
 
 **Benefits:**
 
-- **Reduced Lock Contention:** One writer instead of three competing for the SQLite exclusive lock.
+- **Reduced Lock Contention:** File-metadata and cache writes share one batched writer instead of competing for the SQLite exclusive lock (invalid-file records are written directly to the RW pool as failures occur).
 - **Improved Throughput:** Batching reduces transaction overhead and filesystem syncs.
 - **Memory Safety:** Batches are bounded by both count and total memory volume (bytes).
 - **Graceful Degradation:** Automatic cleanup of pooled resources (HTTP bodies, thumbnails) on both successful flush and failure.
+- **Burst Absorption:** When the in-memory channel fills, excess writes spill to a persistent on-disk queue (`dque`) instead of being dropped, so preload/discovery bursts are fully absorbed.
+- **Crash Recovery:** Pending overflow writes persist across process restarts and are flushed on the next startup.
+
+**Persistent Overflow Queue (`dque`):**
+
+When the WriteBatcher's in-memory channel is full and `DQueDirPath` is configured, `Submit` overflows items to `dque` — a generic, segment-backed on-disk FIFO stored in `<db>-dque/` (sibling to the SQLite database). Each overflow increments `OverflowCount`/`pendingCount` and signals a buffer-1 `dqNotify` channel. The worker's main `select` gains a `dqNotify` case and a drain loop that:
+
+- Pulls items from `dque` and flushes them in `MaxBatchSize` batches **during** the drain (trigger reason `size_limit`), not only after.
+- Interleaves channel items with `dque` items so new channel submissions are never starved during a drain.
+- Drains `dque` on context cancel, channel close, and `Close()` so no items are lost on shutdown.
+
+Crash recovery: `New()` seeds `pendingCount` from the existing `dque` size, and when the recovered queue exceeds the channel capacity it buffers items locally before starting the worker (to avoid startup deadlock). `overflowMu` guards the overflow path and `overflowWG` plus `Close` acquiring `mu`-then-`overflowMu` guarantee in-flight overflow `Submit`s finish before `Close` drains, so concurrent `Submit`-during-`Close` loses nothing. `dque` acquires a `flock` on its directory, so reconfiguration closes the old batcher before creating a new one to release the lock.
+
+To make `BatchedWrite` items persistable, `BatchedWrite` and `files.File` implement `GobEncode`/`GobDecode` via gob-safe wire structs (separately encoding the `File` and `CacheEntry` blobs, and replacing the un-exported `*bytes.Buffer` thumbnail with raw `[]byte`). An `init()` registers `int64` and `sql.Null*` types stored inside sqlc-generated `interface{}` fields.
+
+**Write-Path Throughput Optimizations:**
+
+- **Prepared-statement threading:** `BeginTx` borrows a pooled connection, captures its prepared `*gallerydb.CustomQueries` (`app.batcherQueries`), and `flushBatchedWrites` calls `WithTx(tx)` to propagate all prepared statements onto the transaction. Every statement reuses its compiled plan instead of recompiling raw SQL per call. (`TestPreparedStatementsRoutingInvariant` pins this routing.)
+- **Intra-batch memoization:** One `gallerylib.Importer` is constructed per batch and reused across all files. Its `folderCache` (path → folder ID) eliminates repeated per-segment `GetFolderByPath` queries in `UpsertPathChain`, and `tiledDirs` skips redundant folder-tile view queries and tile-chain updates for subsequent files in the same directory.
+- **Skip guaranteed no-op deletes:** The processor records `File.HadInvalidEntry`; `WriteFileInTx` only issues `DeleteInvalidFileByPath` when a row actually existed, removing a per-file no-op round-trip during fresh preloads.
 
 **Implementation Details:**
 
-- **[internal/server/batched_write.go](internal/server/batched_write.go)**: Defines the `BatchedWrite` union type and its memory estimation logic.
-- **[internal/server/batched_write_flush.go](internal/server/batched_write_flush.go)**: Contains the unified transactional flush logic and resource cleanup.
-- **[internal/server/batcher_adapter.go](internal/server/batcher_adapter.go)**: Implements the adapter pattern to break circular dependencies between `server` and `files` packages.
+- **[internal/server/batched_write.go](internal/server/batched_write.go)**: Defines the `BatchedWrite` union type (`File` and `CacheEntry` variants), its memory estimation logic, and `GobEncode`/`GobDecode` for persistence in `dque`.
+- **[internal/server/batched_write_flush.go](internal/server/batched_write_flush.go)**: Contains the unified transactional flush logic, prepared-statement threading (`WithTx`), per-batch `Importer` construction, and resource cleanup.
+- **[internal/server/batcher_adapter.go](internal/server/batcher_adapter.go)**: Implements the adapter pattern to break circular dependencies between `server` and `files` packages; returns `ErrClosed` when the batcher is nil.
+- **[internal/server/files/gob.go](internal/server/files/gob.go)**: `GobEncode`/`GobDecode` for `files.File` (handles the `*bytes.Buffer` thumbnail as raw `[]byte`).
+- **[internal/gallerylib/importer.go](internal/gallerylib/importer.go)**: File import logic with per-batch `folderCache`/`tiledDirs` memoization.
 - **[internal/server/files/service.go](internal/server/files/service.go)**: Consumes the batcher via the `UnifiedBatcher` interface.
 
 ### Database Architecture
@@ -256,8 +291,8 @@ graph TB
     end
 
     subgraph "Connection Pools"
-        RO[Read-Only Pool<br/>10 connections<br/>WAL mode]
-        RW[Read-Write Pool<br/>2 connections<br/>Serialized writes]
+        RO[Read-Only Pool<br/>configurable<br/>WAL mode]
+        RW[Read-Write Pool<br/>configurable<br/>serialized writes]
     end
 
     subgraph "SQLite Database"
@@ -301,9 +336,11 @@ graph TB
 
 **Pool Configuration:**
 
+Both pools share the same configurable size, controlled by the database configuration keys `db_max_pool_size` (default `100`) and `db_min_idle_connections` (default `10`), with a pool monitor interval `db_pool_monitor_interval` (default `1m`). Pool sizing is reconciled against effective values at startup/restart via `reconfigurePoolsFromConfig()`.
+
 ```go
-Read-Only Pool:  10 connections (handles most queries)
-Read-Write Pool: 2 connections  (background writes only)
+Read-Only Pool:  MaxConnections = db_max_pool_size  (query_only = true, WAL mode)
+Read-Write Pool: MaxConnections = db_max_pool_size  (journal_mode = WAL, _txlock = immediate)
 ```
 
 ### Database Schema
@@ -426,7 +463,7 @@ router.HandleFunc("/config/import", ch.ImportConfigHandler)     // Import YAML
 ```mermaid
 flowchart TD
     Start([App Start]) --> InitQueue[Initialize Queue<br/>10,000 capacity]
-    InitQueue --> CreateWorkers[Create Workers<br/>2 * CPU cores]
+    InitQueue --> CreateWorkers[Create Workers<br/>maxWorkers default: NumCPU-2]
     CreateWorkers --> Walk[Walk Images Dir]
     Walk --> Enqueue[Enqueue each file]
     Enqueue --> Workers{Workers}
@@ -448,9 +485,12 @@ flowchart TD
 **Worker Pool Configuration:**
 
 ```go
-Workers:      2 * runtime.NumCPU()  // e.g., 16 on 8-core machine
+Workers:      NumCPU - 2 (when NumCPU > 4); 2 (3-4 cores); 1 otherwise
+              // overridable via config: WorkerPoolMax / WorkerPoolMinIdle
 Queue Size:   10,000 paths
+              // overridable via config: QueueSize
 Idle Timeout: 10 seconds
+              // overridable via config: WorkerPoolMaxIdleTime
 ```
 
 ### File Processing Pipeline
@@ -1050,7 +1090,7 @@ sched.Start(ctx)  // Blocks until ctx cancelled
 
 #### writebatcher
 
-**Purpose:** Generic, transaction-batching write serializer
+**Purpose:** Generic, transaction-batching write serializer with optional persistent overflow
 
 ```go
 wb, err := writebatcher.New[MyItem](ctx, writebatcher.Config[MyItem]{
@@ -1058,6 +1098,7 @@ wb, err := writebatcher.New[MyItem](ctx, writebatcher.Config[MyItem]{
     Flush:        func(ctx context.Context, tx *sql.Tx, batch []MyItem) error { ... },
     OnSuccess:    func(batch []MyItem) { ... }, // Optional cleanup
     MaxBatchSize: 100,
+    DQueDirPath:  "/var/lib/sfpg/overflow",   // optional: persistent overflow queue
 })
 wb.Submit(item)
 ```
@@ -1067,6 +1108,32 @@ wb.Submit(item)
 - Eliminates write contention on single-writer databases like SQLite
 - Automatically flushes on size (count or bytes), interval, or Close()
 - Single background worker handles all flushes synchronously
+- When `DQueDirPath` is set, overflows the in-memory channel to `dque` (absorbs bursts, crash recovery, drain-on-close) instead of returning `ErrFull`
+
+#### dque
+
+**Purpose:** Generic, segment-backed persistent on-disk FIFO queue
+
+```go
+q, err := dque.New[Item]("name", dirPath, itemsPerSegment)
+q.Enqueue(&item)   // append
+item, err := q.Dequeue()
+q.Size()
+```
+
+**Features:**
+
+- Segment-based storage (tunable items per segment)
+- File locking via `internal/flock` (single accessor per directory)
+- Used by `writebatcher` for overflow and crash recovery
+
+#### flock
+
+**Purpose:** Minimal cross-platform file locking (flock on Unix, `LockFileEx` on Windows). Used by `dque` to ensure a single accessor per queue directory.
+
+#### gallerylib
+
+**Purpose:** File import logic — `Importer` performs path-chain upserts (folders + file record) and tracks which directories already had their folder-tile chain updated. Constructed once per write batch and reused across files so its `folderCache` and `tiledDirs` memoize across the batch.
 
 #### queue
 
@@ -1155,17 +1222,22 @@ gentestfiles.Generate(dir,
 
 ### Optimization Techniques
 
-| Technique                | Where Used       | Impact                               |
-| ------------------------ | ---------------- | ------------------------------------ |
-| **Post-flush eviction**  | HTTP cache       | Removes eviction from request path   |
-| **Atomic size tracking** | Cache            | Avoids `SELECT SUM()` on every write |
-| **Connection pooling**   | Database         | Enables concurrent reads             |
-| **Batch writes**         | File processing  | 10-100x throughput improvement       |
-| **Resource reclamation** | WriteBatcher     | Pooled objects returned on success   |
-| **Object pooling**       | Cache entries    | Reduces allocations by ~80%          |
-| **Stream processing**    | Image serving    | Low memory per request               |
-| **Cache preload**        | Gallery pages    | 50-100ms faster subsequent loads     |
-| **Index optimization**   | Database queries | 2-5x faster queries                  |
+| Technique                        | Where Used         | Impact                                            |
+| -------------------------------- | ------------------ | ------------------------------------------------- |
+| **Post-flush eviction**          | HTTP cache         | Removes eviction from request path                |
+| **Atomic size tracking**         | Cache              | Avoids `SELECT SUM()` on every write              |
+| **Connection pooling**           | Database           | Enables concurrent reads                          |
+| **Batch writes**                 | File processing    | 10-100x throughput improvement                    |
+| **Persistent overflow**          | WriteBatcher       | Absorbs bursts without dropping writes (dque)     |
+| **Crash recovery**               | WriteBatcher       | Pending writes survive process restarts (dque)    |
+| **Prepared-statement threading** | WriteBatcher flush | Reuses compiled query plans (BeginTx/WithTx)      |
+| **Intra-batch memoization**      | gallerylib         | Eliminates repeated folder/path queries per batch |
+| **Gob persistence**              | BatchedWrite/File  | Enables on-disk overflow serialization            |
+| **Resource reclamation**         | WriteBatcher       | Pooled objects returned on success                |
+| **Object pooling**               | Cache entries      | Reduces allocations by ~80%                       |
+| **Stream processing**            | Image serving      | Low memory per request                            |
+| **Cache preload**                | Gallery pages      | 50-100ms faster subsequent loads                  |
+| **Index optimization**           | Database queries   | 2-5x faster queries                               |
 
 ### Performance Timeline
 
@@ -1405,11 +1477,25 @@ sfpg-go/
 │   ├── workerpool/              # Concurrent task processing
 │   ├── scheduler/               # Task scheduling
 │   ├── queue/                   # Generic deque
-│   ├── writebatcher/            # Batch database operations
+│   ├── writebatcher/            # Batch database operations (with overflow)
+│   ├── dque/                    # Persistent on-disk FIFO overflow queue
+│   ├── flock/                   # Cross-platform file locking
+│   ├── errors/                  # Error sentinels for dque
 │   ├── dbconnpool/              # Connection pooling
 │   ├── gallerydb/               # Database queries (sqlc)
+│   ├── gallerylib/              # File import / path-chain upserts
 │   ├── thumbnail/               # Thumbnail generation
 │   ├── imagemeta/               # EXIF/IPTC/XMP extraction
+│   ├── parallelwalkdir/         # Concurrent directory scanning
+│   ├── gensyncpool/             # Reset-enforcing sync.Pool wrappers
+│   ├── getopt/                  # Config from flags/env/YAML
+│   ├── multihandler/            # Multi-handler structured logging
+│   ├── profiler/                # Optional CPU/mem/block profiling
+│   ├── coords/                  # Geographic coordinate parsing
+│   ├── humanize/                # Human-readable formatting
+│   ├── log/                     # Structured logging wrappers
+│   ├── testutil/                # Shared test helpers
+│   ├── gen-test-files/          # Synthetic test file generation
 │   ├── files/                   # File processing
 │   ├── server/                  # Web server
 │   │   ├── handlers/            # Route handlers
@@ -1446,6 +1532,6 @@ sfpg-go/
 
 ---
 
-**Document Version:** 1.1
-**Last Updated:** 2026-02-12
+**Document Version:** 1.2
+**Last Updated:** 2026-06-19
 **Maintained By:** @whgi

@@ -23,6 +23,9 @@ type WriteBatcherMetrics struct {
 	LastFlushTime time.Time `json:"last_flush_time"`
 	TotalFlushed  int64     `json:"total_flushed"`
 	TotalErrors   int64     `json:"total_errors"`
+	DQueEnabled   bool      `json:"dque_enabled"`
+	DQueSize      int       `json:"dque_size"`
+	OverflowCount int64     `json:"overflow_count"`
 }
 
 // WriteBatcherSource provides metrics from a WriteBatcher.
@@ -39,6 +42,9 @@ type WriteBatcherStats struct {
 	IsClosed      bool
 	TotalFlushed  int64
 	TotalErrors   int64
+	OverflowCount int64
+	DQueEnabled   bool
+	DQueSize      int
 }
 
 // WorkerPoolMetrics holds statistics from the worker pool.
@@ -342,6 +348,9 @@ func (c *Collector) Collect(ctx context.Context) Snapshot {
 			IsClosed:      stats.IsClosed,
 			TotalFlushed:  stats.TotalFlushed,
 			TotalErrors:   stats.TotalErrors,
+			DQueEnabled:   stats.DQueEnabled,
+			DQueSize:      stats.DQueSize,
+			OverflowCount: stats.OverflowCount,
 		}
 	}
 

@@ -208,3 +208,5 @@ cmd/gendemoimage*/*
 .worktrees/*
 
 .playwright-mcp
+
+/.pi/*

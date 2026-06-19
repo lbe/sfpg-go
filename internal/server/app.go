@@ -70,6 +70,7 @@ type App struct {
 	dbPaths        database.DatabasePaths
 	dbRoPool       *dbconnpool.DbSQLConnPool
 	dbRwPool       *dbconnpool.DbSQLConnPool
+	dqueDirPath    string
 	// hqOverride allows tests to inject query behavior for handlers
 	hqOverride interfaces.HandlerQueries
 	imagesDir  string
@@ -109,9 +110,10 @@ type App struct {
 	preloadManager      *cachepreload.PreloadManager
 	batchLoadManager    *cachebatch.Manager
 	writeBatcher        *writebatcher.WriteBatcher[BatchedWrite]
-	metricsCollector    *metrics.Collector   // Centralized metrics collector for dashboard
-	moduleStateService  *modulestate.Service // DB-backed module state (discovery active, etc.)
-	version             string               // Application version for display in UI and logs
+	batcherQueries      *gallerydb.CustomQueries // prepared queries for the in-flight writebatcher tx (set in BeginTx, read by flushBatchedWrites)
+	metricsCollector    *metrics.Collector       // Centralized metrics collector for dashboard
+	moduleStateService  *modulestate.Service     // DB-backed module state (discovery active, etc.)
+	version             string                   // Application version for display in UI and logs
 
 	// Gallery stats cache for about modal (invalidated when discovery runs)
 	galleryStatsMu    sync.RWMutex
@@ -340,7 +342,7 @@ func (app *App) scheduleStaleCacheDrop(trigger string) {
 			return
 		}
 		// Note: WAL checkpointing is now handled by writebatcher's OnAfterCommit callback
-		// which runs every 5 minutes or when WAL file exceeds 2GB. This avoids race
+		// which runs every 5 minutes or when WAL file exceeds 256MB. This avoids race
 		// conditions with writebatcher's active transactions.
 		slog.Info("stale HTTP cache table dropped", "trigger", trigger)
 	}()
@@ -355,6 +357,9 @@ func (app *App) setDB() {
 		panic("main")
 	}
 
+	// Derive dque overflow directory path from the main database path
+	app.dqueDirPath = filepath.Join(filepath.Dir(app.dbPaths.Main), filepath.Base(app.dbPaths.Main)+"-dque")
+
 	// Log initial pool configuration for diagnosability
 	configuredMax := 100 // default when app.config is nil
 	configuredMinIdle := 10
@@ -366,12 +371,9 @@ func (app *App) setDB() {
 	app.logDBPoolConfiguredVsEffective("setDB", configuredMax, configuredMinIdle)
 
 	// Initialize unified WriteBatcher for all high-volume writes
-	connRW, err := app.dbRwPool.Get()
-	if err != nil {
-		slog.Error("failed to get connection from RW pool", "err", err)
-		panic("main")
-	}
-	defer app.dbRwPool.Put(connRW)
+	// The batcher borrows a connection from the pool for each transaction
+	// (BeginTx) and returns it on completion (OnSuccess/OnError).
+	var batcherConn *dbconnpool.CpConn
 
 	maxBatchSize := 10000                   // Increased for better throughput during preloading
 	maxBatchBytes := int64(8 * 1024 * 1024) // 8 MB ceiling
@@ -379,24 +381,42 @@ func (app *App) setDB() {
 	channelSize := 4096                     // Larger buffer to handle bursts during preload and discovery
 
 	app.writeBatcher, err = writebatcher.New(app.ctx, writebatcher.Config[BatchedWrite]{
-		MaxBatchSize:  maxBatchSize,
-		MaxBatchBytes: maxBatchBytes,
-		FlushInterval: flushInterval,
-		ChannelSize:   channelSize,
+		MaxBatchSize:        maxBatchSize,
+		MaxBatchBytes:       maxBatchBytes,
+		FlushInterval:       flushInterval,
+		ChannelSize:         channelSize,
+		DQueDirPath:         app.dqueDirPath,
+		DQueItemsPerSegment: 250,
 		SizeFunc: func(bw BatchedWrite) int64 {
 			return bw.Size()
 		},
 		BeginTx: func(ctx context.Context) (*sql.Tx, error) {
-			return connRW.Conn.BeginTx(ctx, nil)
+			cpc, getErr := app.dbRwPool.Get()
+			if getErr != nil {
+				return nil, getErr
+			}
+			batcherConn = cpc
+			app.batcherQueries = cpc.Queries
+			return cpc.Conn.BeginTx(ctx, nil)
 		},
 		Flush: app.flushBatchedWrites,
 		OnSuccess: func(batch []BatchedWrite) {
+			if batcherConn != nil {
+				app.dbRwPool.Put(batcherConn)
+				batcherConn = nil
+			}
+			app.batcherQueries = nil
 			// Handle cache eviction BEFORE cleanup (needs CacheEntry data)
 			app.maybeEvictCacheEntries(batch)
 			// Then cleanup resources
 			cleanupBatchedWriteResources(batch)
 		},
 		OnError: func(err error, batch []BatchedWrite) {
+			if batcherConn != nil {
+				app.dbRwPool.Put(batcherConn)
+				batcherConn = nil
+			}
+			app.batcherQueries = nil
 			// Count by type for debugging
 			var filesCount, cacheEntriesCount int
 			for _, bw := range batch {
@@ -426,7 +446,9 @@ func (app *App) setDB() {
 		"max_batch_size", maxBatchSize,
 		"max_batch_bytes", maxBatchBytes,
 		"flush_interval_ms", flushInterval.Milliseconds(),
-		"channel_size", channelSize)
+		"channel_size", channelSize,
+		"dque_dir", app.dqueDirPath,
+		"dque_enabled", app.dqueDirPath != "")
 
 	// Initialize CacheStore using the RW pool
 	app.cacheStore = cachelite.NewSQLiteCacheStore(app.dbRwPool)
@@ -464,7 +486,7 @@ func (app *App) setDB() {
 // It also runs PRAGMA optimize every 1 hour.
 // This runs in the writebatcher's worker goroutine, ensuring no active transactions.
 func (app *App) walCheckpointAfterCommit(ctx context.Context, lastWalCheckpointTime time.Time, lastOptimizeTime time.Time, totalCommitted int64) {
-	const walSizeThreshold = 2 * 1024 * 1024 * 1024 // 2GB
+	const walSizeThreshold = 256 * 1024 * 1024 // 256MB
 
 	// Check WAL file size
 	walPath := app.dbPaths.Main + "-wal"
@@ -478,7 +500,7 @@ func (app *App) walCheckpointAfterCommit(ctx context.Context, lastWalCheckpointT
 		slog.Info("WAL file exceeds threshold, forcing checkpoint",
 			"path", walPath,
 			"size_bytes", info.Size(),
-			"size_gb", float64(info.Size())/1024/1024/1024)
+			"size_mb", float64(info.Size())/1024/1024)
 		if err := app.performWALCheckpoint(ctx); err != nil {
 			slog.Error("WAL checkpoint failed", "err", err)
 		}
@@ -755,32 +777,51 @@ func (app *App) reconfigurePoolsFromConfig() error {
 	app.moduleStateService = modulestate.NewService(app.dbRwPool)
 
 	// Reinitialize WriteBatcher with new pool references
-	connRW, err := app.dbRwPool.Get()
-	if err != nil {
-		slog.Error("failed to get connection from RW pool", "err", err)
-		panic("main")
-	}
-	defer app.dbRwPool.Put(connRW)
-
 	var rerr error
-	oldBatcher := app.writeBatcher
+	var batcherConn *dbconnpool.CpConn
+
+	// Close old batcher BEFORE creating a new one to release the dque flock.
+	// If the new batcher uses the same dque directory, it would fail to open
+	// the dque while the old one still holds the file lock.
+	if app.writeBatcher != nil {
+		app.writeBatcher.Close()
+	}
+
 	app.writeBatcher, rerr = writebatcher.New[BatchedWrite](app.ctx, writebatcher.Config[BatchedWrite]{
-		MaxBatchSize:  1000,
-		MaxBatchBytes: 8 * 1024 * 1024,
-		FlushInterval: 200 * time.Millisecond,
-		ChannelSize:   4096,
+		MaxBatchSize:        1000,
+		MaxBatchBytes:       8 * 1024 * 1024,
+		FlushInterval:       200 * time.Millisecond,
+		ChannelSize:         4096,
+		DQueDirPath:         app.dqueDirPath,
+		DQueItemsPerSegment: 250,
 		SizeFunc: func(bw BatchedWrite) int64 {
 			return bw.Size()
 		},
 		BeginTx: func(ctx context.Context) (*sql.Tx, error) {
-			return connRW.Conn.BeginTx(ctx, nil)
+			cpc, getErr := app.dbRwPool.Get()
+			if getErr != nil {
+				return nil, getErr
+			}
+			batcherConn = cpc
+			app.batcherQueries = cpc.Queries
+			return cpc.Conn.BeginTx(ctx, nil)
 		},
 		Flush: app.flushBatchedWrites,
 		OnSuccess: func(batch []BatchedWrite) {
+			if batcherConn != nil {
+				app.dbRwPool.Put(batcherConn)
+				batcherConn = nil
+			}
+			app.batcherQueries = nil
 			app.maybeEvictCacheEntries(batch)
 			cleanupBatchedWriteResources(batch)
 		},
 		OnError: func(err error, batch []BatchedWrite) {
+			if batcherConn != nil {
+				app.dbRwPool.Put(batcherConn)
+				batcherConn = nil
+			}
+			app.batcherQueries = nil
 			slog.Error("failed to flush unified batch during pool reconfiguration",
 				"err", err)
 			cleanupBatchedWriteResources(batch)
@@ -791,9 +832,6 @@ func (app *App) reconfigurePoolsFromConfig() error {
 	if rerr != nil {
 		slog.Error("failed to recreate WriteBatcher after pool reconfiguration", "err", rerr)
 		// Continue anyway; we have new pools even if batcher recreation failed
-	} else if oldBatcher != nil {
-		// Stop old batcher if it exists
-		oldBatcher.Close()
 	}
 
 	// Update cache middleware with new pool references

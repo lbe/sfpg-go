@@ -62,6 +62,12 @@ type WriteBatcherStats struct {
 	TotalErrors string
 	// BatchSize is the maximum batch size.
 	BatchSize string
+	// DQueEnabled indicates whether dque overflow is configured.
+	DQueEnabled string
+	// DQueSize is the current number of items in the dque.
+	DQueSize string
+	// OverflowCount is the total number of items that overflowed to dque.
+	OverflowCount string
 }
 
 // WorkerPoolStats contains worker pool statistics.
@@ -325,8 +331,10 @@ func extractWriteBatcherStats(container *html.Node, m *DashboardMetrics) {
 	m.WriteBatcher.TotalFlushed = extractTextByID(container, "wb-flushed")
 	m.WriteBatcher.TotalErrors = extractTextByID(container, "wb-errors")
 	m.WriteBatcher.BatchSize = extractTextByID(container, "wb-batch-size")
+	m.WriteBatcher.DQueSize = extractTextByID(container, "wb-dque-size")
+	m.WriteBatcher.OverflowCount = extractTextByID(container, "wb-dque-overflow")
 
-	// Extract channel size from wb-channel-size-desc "of X"
+	// Extract dque status from wb-dque "of X"
 	descEl := testutil.FindElementByID(container, "wb-channel-size-desc")
 	if descEl != nil {
 		text := testutil.GetTextContent(descEl)

@@ -50,7 +50,7 @@ graph TB
 
     subgraph "Background Workers"
         Pool[Worker Pool]
-        CacheQ[Cache Write Queue]
+        WriteBatcher[Unified WriteBatcher<br/>File metadata + cache writes]
         Preload[Cache Preload]
     end
 
@@ -74,8 +74,9 @@ graph TB
     ROConn --> SQLite
     RWConn --> SQLite
 
-    Handlers <--> CacheQ
-    CacheQ --> Preload
+    Handlers --> WriteBatcher
+    WriteBatcher --> RWConn
+    Handlers --> Preload
     Preload --> ROConn
 
     FileProc --> Pool
@@ -195,26 +196,25 @@ flowchart TD
 
 ## Unified WriteBatcher Architecture
 
-The unified WriteBatcher consolidates all high-volume database writes (added Feb 2026):
+The unified WriteBatcher consolidates all high-volume database writes (added Feb 2026, persistent overflow added Jun 2026):
 
 ```mermaid
 graph TB
     subgraph "Write Sources"
         FileProc[File Processor<br/>File metadata + thumbnails]
-        InvalidFile[Invalid File Tracker<br/>Failed processing records]
         CacheMW[Cache Middleware<br/>HTTP response cache]
     end
 
     subgraph "Unified Batcher"
         Adapter[Batcher Adapter<br/>UnifiedBatcher interface]
-        Queue[Write Queue<br/>Bounded: 10000 items, 10MB]
-        Worker[Background Worker<br/>Flushes periodically]
+        Channel[In-memory Channel<br/>bounded: 4096 items, 8MB]
+        DQue["On-disk Overflow Queue<br/>dque: &lt;db&gt;-dque/<br/>segment-backed FIFO"]
+        Worker[Background Worker<br/>flushes periodically + drains dque]
     end
 
     subgraph "Database"
-        Tx[Single Transaction]
+        Tx[Single Transaction<br/>prepared statements via WithTx]
         Files[Files Table]
-        Invalid[Invalid Files Table]
         Cache[HTTP Cache Table]
     end
 
@@ -225,15 +225,15 @@ graph TB
     end
 
     FileProc -->|SubmitFile| Adapter
-    InvalidFile -->|SubmitInvalidFile| Adapter
     CacheMW -->|SubmitCache| Adapter
 
-    Adapter --> Queue
-    Queue --> Worker
-    Worker --> Tx
+    Adapter --> Channel
+    Channel -->|full| DQue
+    Channel --> Worker
+    DQue -->|dqNotify wake + drain| Worker
 
+    Worker --> Tx
     Tx --> Files
-    Tx --> Invalid
     Tx --> Cache
 
     Worker --> Cleanup
@@ -243,8 +243,11 @@ graph TB
     style Adapter fill:#e1f5e1
     style Worker fill:#ffe1e1
     style Tx fill:#e1e1ff
+    style DQue fill:#e1f1ff
     style Cleanup fill:#fff4e1
 ```
+
+Invalid-file cleanup now happens inside the `File` flush path via the `HadInvalidEntry` flag (not a separate batched variant). `dque` acquires a `flock` via `internal/flock`; pending writes in `dque` survive process restarts (crash recovery) and are drained on `Close()`/context cancel.
 
 ---
 
@@ -316,8 +319,8 @@ Connection pooling and schema organization:
 ```mermaid
 graph TB
     subgraph "Connection Pools"
-        RO[Read-Only Pool<br/>10 connections]
-        RW[Read-Write Pool<br/>2 connections]
+        RO[Read-Only Pool<br/>db_max_pool_size, default 100]
+        RW[Read-Write Pool<br/>db_max_pool_size, default 100]
     end
 
     subgraph "Database File"
@@ -454,6 +457,9 @@ graph TD
         UI[ui/templates.go]
         Validation[validation/rules.go]
         WriteBatch[writebatcher/]
+        DQue[dque/]
+        Flock[flock/]
+        GalleryLib[gallerylib/importer.go]
         PathUtil[pathutil/path.go]
     end
 
@@ -485,14 +491,18 @@ graph TD
     CacheMW --> CacheSubmit
     CacheSubmit --> BatchAdapter
     BatchAdapter --> WriteBatch
+    WriteBatch --> DQue
+    DQue --> Flock
 
     GalleryH --> UI
     ConfigH --> Validation
 
     FileProc --> BatchAdapter
     FileProc --> PathUtil
+    FileProc --> GalleryLib
 
     BatchFlush --> FileProc
+    BatchFlush --> GalleryLib
     BatchFlush --> CacheMW
 
     style App fill:#f9f
@@ -502,6 +512,9 @@ graph TD
     style BatchWrite fill:#e1e1ff
     style BatchFlush fill:#e1e1ff
     style BatchAdapter fill:#e1e1ff
+    style DQue fill:#e1f1ff
+    style Flock fill:#e1f1ff
+    style GalleryLib fill:#e1f5e1
 ```
 
 ---

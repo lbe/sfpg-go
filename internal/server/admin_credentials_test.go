@@ -18,6 +18,7 @@ func TestUpdateAdminCredentials_Success(t *testing.T) {
 	defer app.Shutdown()
 
 	// Get current password hash to verify against
+	t.Parallel()
 	cpcRo, err := app.dbRoPool.Get()
 	if err != nil {
 		t.Fatalf("Failed to get DB connection: %v", err)
@@ -108,6 +109,7 @@ func TestUpdateAdminCredentials_WrongCurrentPassword(t *testing.T) {
 	defer app.Shutdown()
 
 	// Set up authenticated session with CSRF token
+	t.Parallel()
 	req := httptest.NewRequest(http.MethodPost, "/config", strings.NewReader("admin_username=newadmin&admin_current_password=wrongpassword&admin_new_password=NewPass123!&admin_confirm_password=NewPass123!"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
@@ -176,6 +178,7 @@ func TestUpdateAdminCredentials_UsernameOnly(t *testing.T) {
 	defer app.Shutdown()
 
 	// Get current password hash
+	t.Parallel()
 	cpcRo, err := app.dbRoPool.Get()
 	if err != nil {
 		t.Fatalf("Failed to get DB connection: %v", err)
@@ -251,6 +254,7 @@ func TestUpdateAdminCredentials_PasswordOnly(t *testing.T) {
 	defer app.Shutdown()
 
 	// Get current username
+	t.Parallel()
 	originalUsername, err := app.getAdminUsername()
 	if err != nil {
 		t.Fatalf("Failed to get username: %v", err)
@@ -326,6 +330,7 @@ func TestUpdateAdminCredentials_CSRFRejection(t *testing.T) {
 	defer app.Shutdown()
 
 	// Set up authenticated session but use invalid CSRF token
+	t.Parallel()
 	req := httptest.NewRequest(http.MethodPost, "/config", strings.NewReader("admin_username=newadmin&admin_current_password=admin&admin_new_password=NewPass123!&admin_confirm_password=NewPass123!&csrf_token=invalid-token"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
@@ -359,7 +364,7 @@ func TestUpdateAdminCredentials_CSRFRejection(t *testing.T) {
 func TestUpdateAdminCredentials_OtherConfigFields_NoPasswordRequired(t *testing.T) {
 	app := CreateApp(t, false)
 	defer app.Shutdown()
-	app.setDB()
+	t.Parallel()
 	if loadErr := app.loadConfig(); loadErr != nil {
 		t.Fatalf("Failed to load config: %v", loadErr)
 	}

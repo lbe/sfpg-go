@@ -311,7 +311,7 @@ func (m Model) renderMemoryRuntime() string {
 }
 
 // renderWriteBatcher renders the Write Batcher card.
-// Shows: Pending/ChannelSize, Flushed, Errors, Batch Size
+// Shows: Pending/ChannelSize, Flushed, Errors, Batch Size, DQue
 func (m Model) renderWriteBatcher() string {
 	var b strings.Builder
 
@@ -320,12 +320,19 @@ func (m Model) renderWriteBatcher() string {
 		errorsStyle = errorStyle
 	}
 
-	content := fmt.Sprintf("%s: %s/%s  %s: %s  %s: %s  %s: %s",
+	dqueLabel := "DQue:Off"
+	dqueVal := m.metrics.WriteBatcher.DQueSize + "/" + m.metrics.WriteBatcher.OverflowCount
+	if m.metrics.WriteBatcher.DQueEnabled == "Enabled" {
+		dqueLabel = "DQue:On"
+	}
+
+	content := fmt.Sprintf("%s: %s/%s  %s: %s  %s: %s  %s: %s  %s: %s",
 		labelStyle.Render("Pending"), valueStyle.Render(m.metrics.WriteBatcher.Pending),
 		valueStyle.Render(m.metrics.WriteBatcher.ChannelSize),
 		labelStyle.Render("Flushed"), valueStyle.Render(m.metrics.WriteBatcher.TotalFlushed),
 		labelStyle.Render("Errors"), errorsStyle.Render(m.metrics.WriteBatcher.TotalErrors),
 		labelStyle.Render("Batch"), valueStyle.Render(m.metrics.WriteBatcher.BatchSize),
+		labelStyle.Render(dqueLabel), valueStyle.Render(dqueVal),
 	)
 
 	b.WriteString(cardStyle.Render(titleInCardStyle.Render("Write Batcher") + "\n" + content))

@@ -13,6 +13,7 @@ import (
 	"github.com/lbe/sfpg-go/internal/gallerydb"
 	"github.com/lbe/sfpg-go/internal/getopt"
 	"github.com/lbe/sfpg-go/internal/scheduler"
+	"github.com/lbe/sfpg-go/internal/server/config"
 	"github.com/lbe/sfpg-go/internal/server/ui"
 	"github.com/lbe/sfpg-go/internal/workerpool"
 )
@@ -41,7 +42,7 @@ func TestNewWorkerPool(t *testing.T) {
 	// slog.SetDefault(slog.New(discardHandler))
 
 	ss := "this-is-a-test-secret"
-	t.Setenv("SEPG_SESSION_SECRET", ss)
+	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
 	app := New(getopt.Opt{}, "x.y.z")
 	app.pool = workerpool.NewPool(app.ctx, 0, 0, 10*time.Second)
 
@@ -72,7 +73,7 @@ func TestNewWorkerPool(t *testing.T) {
 
 // REMOVED: TestMemoryReclaimer - Slow integration test (1.81s)
 // REMOVED: func TestMemoryReclaimer(t *testing.T) {
-// REMOVED: 	t.Setenv("SEPG_SESSION_SECRET", "this-is-a-test-secret")
+// REMOVED: setenvForTest(t, "SEPG_SESSION_SECRET", "this-is-a-test-secret")
 // REMOVED: 	t.Run("triggers when idle", func(t *testing.T) {
 // REMOVED: 		app := CreateApp(t, true)
 // REMOVED: 		time.Sleep(200 * time.Millisecond) // Give some time for the worker pool to start
@@ -195,7 +196,7 @@ func TestSetDB(t *testing.T) {
 	// slog.SetDefault(slog.New(discardHandler))
 
 	ss := "this-is-a-test-secret"
-	t.Setenv("SEPG_SESSION_SECRET", ss)
+	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
 	app := New(getopt.Opt{}, "x.y.z")
 
 	app.setRootDir(&tempDir)
@@ -234,6 +235,23 @@ func TestSetDB(t *testing.T) {
 		app.dbRwPool.Put(rwConn)
 	})
 
+	t.Run("writeBatcher configured with dque overflow", func(t *testing.T) {
+		if app.writeBatcher == nil {
+			t.Fatal("writeBatcher should be initialized after setDB")
+		}
+
+		stats := app.writeBatcher.GetStats()
+		if !stats.DQueEnabled {
+			t.Error("writeBatcher.DQueEnabled is false — DQueDirPath not set in setDB()")
+		}
+
+		// Verify the dque overflow directory exists on disk
+		dqueDir := filepath.Join(filepath.Dir(app.dbPaths.Main), filepath.Base(app.dbPaths.Main)+"-dque")
+		if _, err := os.Stat(dqueDir); os.IsNotExist(err) {
+			t.Error("dque overflow directory was not created — DQueDirPath not set in setDB()")
+		}
+	})
+
 	// Close writeBatcher first to release any database connections
 	if app.writeBatcher != nil {
 		if err := app.writeBatcher.Close(); err != nil {
@@ -262,10 +280,64 @@ func TestSetDB(t *testing.T) {
 	}
 }
 
+// TestReconfigurePools_DQueWired verifies that reconfigurePoolsFromConfig
+// creates a WriteBatcher with dque overflow configured.
+func TestReconfigurePools_DQueWired(t *testing.T) {
+	tempDir := t.TempDir()
+	ss := "this-is-a-test-secret"
+	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
+	app := New(getopt.Opt{}, "x.y.z")
+	app.setRootDir(&tempDir)
+	defer app.cancel()
+
+	// Initialize DB
+	app.setDB()
+
+	// Ensure config is initialized before reconfiguration
+	app.configMu.Lock()
+	if app.config == nil {
+		app.config = config.DefaultConfig()
+	}
+	app.config.DBMaxPoolSize = 999 // different from default to trigger reconfigure
+	app.configMu.Unlock()
+
+	// Verify the new batcher has dque overflow configured after reconfigure.
+	// This also implicitly tests close-before-create ordering: once setDB is
+	// fixed to configure dque, the old batcher will hold a dque flock.
+	// If reconfigurePoolsFromConfig creates the new batcher before closing
+	// the old one, dque.NewOrOpen will fail with a flock conflict on the
+	// same directory, causing reconfigurePoolsFromConfig to return an error.
+	err := app.reconfigurePoolsFromConfig()
+	if err != nil {
+		t.Fatalf("reconfigurePoolsFromConfig failed: %v", err)
+	}
+
+	if app.writeBatcher == nil {
+		t.Fatal("writeBatcher is nil after reconfigure")
+	}
+
+	stats := app.writeBatcher.GetStats()
+	if !stats.DQueEnabled {
+		t.Error("writeBatcher.DQueEnabled is false after reconfigure — DQueDirPath not set in reconfigurePoolsFromConfig()")
+	}
+
+	dqueDir := filepath.Join(filepath.Dir(app.dbPaths.Main), filepath.Base(app.dbPaths.Main)+"-dque")
+	if _, err := os.Stat(dqueDir); os.IsNotExist(err) {
+		t.Error("dque overflow directory was not created after reconfigure — DQueDirPath not set in reconfigurePoolsFromConfig()")
+	}
+
+	// Cleanup
+	if app.writeBatcher != nil {
+		app.writeBatcher.Close()
+	}
+	app.dbRoPool.Close()
+	app.dbRwPool.Close()
+}
+
 func TestUnlockAccount(t *testing.T) {
 	tempDir := t.TempDir()
 	ss := "this-is-a-test-secret"
-	t.Setenv("SEPG_SESSION_SECRET", ss)
+	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
 	app := New(getopt.Opt{}, "x.y.z")
 
 	app.setRootDir(&tempDir)
@@ -333,7 +405,7 @@ func TestUnlockAccount(t *testing.T) {
 func TestUnlockAccount_NonExistent(t *testing.T) {
 	tempDir := t.TempDir()
 	ss := "this-is-a-test-secret"
-	t.Setenv("SEPG_SESSION_SECRET", ss)
+	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
 	app := New(getopt.Opt{}, "x.y.z")
 
 	app.setRootDir(&tempDir)
@@ -361,7 +433,7 @@ func TestApp_ImageDirectory_FromConfig_NotHardcoded(t *testing.T) {
 	customImageDir := filepath.Join(tempDir, "custom-images")
 
 	ss := "this-is-a-test-secret"
-	t.Setenv("SEPG_SESSION_SECRET", ss)
+	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
 	app := New(getopt.Opt{}, "x.y.z")
 
 	app.setRootDir(&tempDir)
@@ -437,7 +509,7 @@ func TestApp_ImageDirectory_CreatedAfterConfigLoad(t *testing.T) {
 	customImageDir := filepath.Join(tempDir, "my-images")
 
 	ss := "this-is-a-test-secret"
-	t.Setenv("SEPG_SESSION_SECRET", ss)
+	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
 	app := New(getopt.Opt{}, "x.y.z")
 
 	app.setRootDir(&tempDir)
@@ -520,7 +592,7 @@ func TestApp_ImageDirectory_CustomPath(t *testing.T) {
 	customImageDir := filepath.Join(tempDir, "photos", "gallery")
 
 	ss := "this-is-a-test-secret"
-	t.Setenv("SEPG_SESSION_SECRET", ss)
+	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
 	app := New(getopt.Opt{}, "x.y.z")
 
 	app.setRootDir(&tempDir)
@@ -599,7 +671,7 @@ func TestImageDirectoryIntegration_StartupFlow(t *testing.T) {
 	customImageDir := filepath.Join(tempDir, "custom-gallery")
 
 	ss := "this-is-a-test-secret"
-	t.Setenv("SEPG_SESSION_SECRET", ss)
+	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
 	app := New(getopt.Opt{}, "x.y.z")
 
 	app.setRootDir(&tempDir)
@@ -673,7 +745,7 @@ func TestImageDirectoryIntegration_RuntimeChange(t *testing.T) {
 	newImageDir := filepath.Join(tempDir, "new")
 
 	ss := "this-is-a-test-secret"
-	t.Setenv("SEPG_SESSION_SECRET", ss)
+	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
 	app := New(getopt.Opt{}, "x.y.z")
 
 	app.setRootDir(&tempDir)
@@ -750,7 +822,7 @@ func TestImageDirectoryIntegration_FileDiscoveryUsesConfig(t *testing.T) {
 	customImageDir := filepath.Join(tempDir, "discovery-test")
 
 	ss := "this-is-a-test-secret"
-	t.Setenv("SEPG_SESSION_SECRET", ss)
+	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
 	app := New(getopt.Opt{}, "x.y.z")
 
 	app.setRootDir(&tempDir)
@@ -815,7 +887,7 @@ func TestApplyConfig_PanicsWhenImageDirectoryUndefined(t *testing.T) {
 	tempDir := t.TempDir()
 
 	ss := "this-is-a-test-secret"
-	t.Setenv("SEPG_SESSION_SECRET", ss)
+	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
 	app := New(getopt.Opt{}, "x.y.z")
 
 	app.setRootDir(&tempDir)
@@ -877,6 +949,7 @@ func TestApplyConfig_PanicsWhenImageDirectoryUndefined(t *testing.T) {
 
 func TestApp_LoadsETagFromConfig(t *testing.T) {
 	app := CreateApp(t, false)
+	t.Parallel()
 	ctx := context.Background()
 
 	// Set custom ETag in database
@@ -886,6 +959,10 @@ func TestApp_LoadsETagFromConfig(t *testing.T) {
 	}
 	cfg.ETagVersion = "20260129-99"
 	app.configService.Save(ctx, cfg)
+
+	// Shut down the first app so its dque flock is released before
+	// creating the second app with the same root directory.
+	app.Shutdown()
 
 	// Create new app using same root directory (simulates restart, same database)
 	app2 := CreateAppWithRoot(t, false, app.rootDir)

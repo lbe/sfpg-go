@@ -15,10 +15,66 @@ import (
 	"github.com/lbe/sfpg-go/internal/gallerydb"
 )
 
+// importerQueries is the subset of *gallerydb.CustomQueries methods used by
+// Importer and by files.WriteFileInTx. Defining it as an interface lets tests
+// inject a counting spy to verify the intra-batch folder cache is actually
+// consulted (not just populated). *gallerydb.CustomQueries satisfies this
+// interface via its embedded *Queries plus its custom methods.
+type importerQueries interface {
+	UpsertFilePathReturningID(ctx context.Context, path string) (int64, error)
+	GetFolderIDByPath(ctx context.Context, path string) (int64, error)
+	GetFolderByPath(ctx context.Context, path string) (gallerydb.Folder, error)
+	UpsertFolderPathReturningID(ctx context.Context, path string) (int64, error)
+	UpsertFolderReturningFolder(ctx context.Context, arg gallerydb.UpsertFolderReturningFolderParams) (gallerydb.Folder, error)
+	UpsertFileReturningFile(ctx context.Context, arg gallerydb.UpsertFileReturningFileParams) (gallerydb.File, error)
+	GetFolderByID(ctx context.Context, id int64) (gallerydb.Folder, error)
+	UpdateFolderTileId(ctx context.Context, arg gallerydb.UpdateFolderTileIdParams) error
+	DeleteInvalidFileByPath(ctx context.Context, path string) error
+	UpsertExif(ctx context.Context, arg gallerydb.UpsertExifParams) error
+	GetThumbnailExistsViewByID(ctx context.Context, id int64) (bool, error)
+	GetFolderTileExistsViewByPath(ctx context.Context, path string) (bool, error)
+	UpsertThumbnailReturningID(ctx context.Context, arg gallerydb.UpsertThumbnailReturningIDParams) (int64, error)
+	UpsertThumbnailBlob(ctx context.Context, arg gallerydb.UpsertThumbnailBlobParams) error
+}
+
 // Importer provides methods for adding gallery content to the database.
+//
+// folderCache and tiledDirs are batch-scoped memoization state. They are
+// intentionally unexported and lazily initialized so a zero-value Importer
+// (or one constructed without them) remains safe. Construct one Importer per
+// batch and reuse it across files so the caches persist across files in the
+// same batch.
 type Importer struct {
 	Conn *sql.Conn
-	Q    *gallerydb.CustomQueries
+	Q    importerQueries
+
+	// folderCache memoizes folder path -> folder ID across the segment loop of
+	// UpsertPathChain, so repeated files in the same directory do not re-query
+	// GetFolderByPath per segment. Populated on both the find and create paths.
+	folderCache map[string]int64
+
+	// tiledDirs records directories whose folder-tile chain has already been
+	// updated in this batch, so subsequent files in the same dir skip both the
+	// GetFolderTileExistsViewByPath query and the UpdateFolderTileChain walk.
+	tiledDirs map[string]bool
+}
+
+// IsDirTiled reports whether the directory's folder-tile chain was already
+// updated in this batch. Used by files.WriteFileInTx to skip redundant tile
+// view queries and chain updates for subsequent files in the same directory.
+func (imp *Importer) IsDirTiled(dir string) bool {
+	return imp.tiledDirs != nil && imp.tiledDirs[dir]
+}
+
+// MarkDirTiled records that the directory's folder-tile chain was successfully
+// updated. Must be called only after UpdateFolderTileChain succeeds, so a dir
+// is never marked tiled when its tile update failed (which would cause later
+// files in that dir to skip a tile update they still need).
+func (imp *Importer) MarkDirTiled(dir string) {
+	if imp.tiledDirs == nil {
+		imp.tiledDirs = make(map[string]bool)
+	}
+	imp.tiledDirs[dir] = true
 }
 
 // CreateRootFolderEntry creates or retrieves the root folder record in the database.
@@ -68,29 +124,41 @@ func (imp *Importer) CreateRootFolderEntry(ctx context.Context, mtime int64) (in
 // UpsertPathChain ensures that all intermediate folders and the file record exist.
 // It returns the final file record.
 func (imp *Importer) UpsertPathChain(ctx context.Context, path string, mtime, size int64, md5 string, phash, width, height int64, mimeType string) (gallerydb.File, error) {
+	// Lazily init the folder cache so zero-value / non-batch Importers are safe.
+	if imp.folderCache == nil {
+		imp.folderCache = make(map[string]int64)
+	}
+
 	// Normalize to forward-slash form for consistent DB storage across platforms
 	path = filepath.ToSlash(filepath.Clean(path))
 
-	// Insert path record for the file path itself
+	// Insert path record for the file path itself (unique per file; not cached)
 	fpID, err := imp.Q.UpsertFilePathReturningID(ctx, path)
 	if err != nil {
 		slog.Error("error upserting file path", "path", path, "err", err)
 		return gallerydb.File{}, err
 	}
 
-	// Get or create the root folder.
-	rootFolderID, err := imp.Q.GetFolderIDByPath(ctx, "")
-	if err != nil {
-		if err == sql.ErrNoRows {
-			// No root folder exists; create it with current time as mtime
-			rootFolderID, err = imp.CreateRootFolderEntry(ctx, time.Now().Unix())
-			if err != nil {
-				return gallerydb.File{}, fmt.Errorf("failed to create root folder entries: %w", err)
+	// Get or create the root folder. Cached across files in the batch: the root
+	// folder ID is constant, so it is resolved at most once per batch.
+	var rootFolderID int64
+	if cachedRoot, ok := imp.folderCache[""]; ok {
+		rootFolderID = cachedRoot
+	} else {
+		rootFolderID, err = imp.Q.GetFolderIDByPath(ctx, "")
+		if err != nil {
+			if err == sql.ErrNoRows {
+				// No root folder exists; create it with current time as mtime
+				rootFolderID, err = imp.CreateRootFolderEntry(ctx, time.Now().Unix())
+				if err != nil {
+					return gallerydb.File{}, fmt.Errorf("failed to create root folder entries: %w", err)
+				}
+			} else {
+				// A different error occurred
+				return gallerydb.File{}, fmt.Errorf("error getting root folder ID: %w", err)
 			}
-		} else {
-			// A different error occurred
-			return gallerydb.File{}, fmt.Errorf("error getting root folder ID: %w", err)
 		}
+		imp.folderCache[""] = rootFolderID
 	}
 
 	// Now, for any other folder, its parent will be the root folder (ID 1) if it's a top-level folder.
@@ -116,6 +184,13 @@ func (imp *Importer) UpsertPathChain(ctx context.Context, path string, mtime, si
 				pathAccum += p
 			} else {
 				pathAccum += "/" + p
+			}
+
+			// Cache hit: this folder path was already resolved (found or created)
+			// earlier in this batch. Skip the GetFolderByPath query entirely.
+			if cachedID, ok := imp.folderCache[pathAccum]; ok {
+				currentParentID = sql.NullInt64{Int64: cachedID, Valid: true}
+				continue
 			}
 
 			folder, folderErr := imp.Q.GetFolderByPath(ctx, pathAccum)
@@ -148,6 +223,10 @@ func (imp *Importer) UpsertPathChain(ctx context.Context, path string, mtime, si
 					return gallerydb.File{}, fmt.Errorf("error upserting folder: %w", err)
 				}
 			}
+			// Cache on BOTH the find path (GetFolderByPath success) and the create
+			// path (UpsertFolderReturningFolder success), so the next file in a
+			// just-created folder gets a cache hit instead of re-querying.
+			imp.folderCache[pathAccum] = folder.ID
 			currentParentID = sql.NullInt64{Int64: folder.ID, Valid: true} // Update for the next iteration
 		}
 	}

@@ -78,6 +78,16 @@ func TestParseDashboard(t *testing.T) {
 		<div class="stat-title">Batch Size</div>
 		<div id="wb-batch-size" class="stat-value">10,000</div>
 	</div>
+	<div>
+		<div class="stat-title">DQue Overflow</div>
+		<div id="wb-dque" class="stat-value">
+			<span class="text-success">Enabled</span>
+		</div>
+		<div class="stat-desc">
+			<span id="wb-dque-size">12</span> queued,
+			<span id="wb-dque-overflow">5</span> overflowed
+		</div>
+	</div>
 	<!-- Worker Pool Stats -->
 	<div>
 		<div class="stat-title">Running Workers</div>
@@ -256,6 +266,12 @@ func TestParseDashboard(t *testing.T) {
 	}
 	if metrics.WriteBatcher.BatchSize != "10,000" {
 		t.Errorf("WriteBatcher.BatchSize = %q, want %q", metrics.WriteBatcher.BatchSize, "10,000")
+	}
+	if metrics.WriteBatcher.DQueSize != "12" {
+		t.Errorf("WriteBatcher.DQueSize = %q, want %q", metrics.WriteBatcher.DQueSize, "12")
+	}
+	if metrics.WriteBatcher.OverflowCount != "5" {
+		t.Errorf("WriteBatcher.OverflowCount = %q, want %q", metrics.WriteBatcher.OverflowCount, "5")
 	}
 
 	// Verify worker pool

@@ -16,7 +16,7 @@ import (
 func TestAppUsesConfigForLogDirectory(t *testing.T) {
 	tempDir := t.TempDir()
 	ss := "test-session-secret"
-	t.Setenv("SEPG_SESSION_SECRET", ss)
+	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
 
 	app := New(getopt.Opt{}, "x.y.z")
 	app.setRootDir(&tempDir)
@@ -68,7 +68,7 @@ func TestAppUsesConfigForLogDirectory(t *testing.T) {
 func TestAppUsesConfigForImageDirectory(t *testing.T) {
 	tempDir := t.TempDir()
 	ss := "test-session-secret"
-	t.Setenv("SEPG_SESSION_SECRET", ss)
+	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
 
 	app := New(getopt.Opt{}, "x.y.z")
 	app.setRootDir(&tempDir)
@@ -114,7 +114,7 @@ func TestAppUsesConfigForImageDirectory(t *testing.T) {
 func TestAppUsesConfigForLogLevel(t *testing.T) {
 	tempDir := t.TempDir()
 	ss := "test-session-secret"
-	t.Setenv("SEPG_SESSION_SECRET", ss)
+	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
 
 	app := New(getopt.Opt{}, "x.y.z")
 	app.setRootDir(&tempDir)

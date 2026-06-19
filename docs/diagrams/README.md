@@ -5,7 +5,6 @@ This directory contains Mermaid diagrams for the SFPG photo gallery application.
 ## Files
 
 - **ARCHITECTURE_DIAGRAMS.md** - Complete set of system architecture diagrams
-- **MERMAID_QUICK_START.md** - Guide for creating and editing Mermaid diagrams
 
 ## How to View
 
@@ -29,10 +28,11 @@ Visit https://mermaid.live/ and paste diagram code
 2. **Request Flow** - How HTTP requests flow through the system
 3. **Authentication Flow** - Login and session management
 4. **File Processing Pipeline** - Image discovery and processing
-5. **Cache Architecture** - HTTP cache with preload and eviction
-6. **Database Architecture** - Connection pools and schema
-7. **Configuration Flow** - Config loading and persistence
-8. **Component Dependencies** - Package dependency graph
+5. **Unified WriteBatcher Architecture** - Consolidated database write path with on-disk overflow
+6. **Cache Architecture** - HTTP cache with preload and eviction
+7. **Database Architecture** - Connection pools and schema
+8. **Configuration Flow** - Config loading and persistence
+9. **Component Dependencies** - Package dependency graph
 
 ## Contributing
 
@@ -50,6 +50,6 @@ When code changes:
 
 ## Related Documentation
 
-- [Server Architecture](../../internal/server/ARCHITECTURE.md)
-- [Interface Designs](../../Interface-Designs.md)
+- [Architecture Documentation](../ARCHITECTURE.md)
+- [Server Deep Dive](../SERVER_DEEP_DIVE.md)
 - [Main README](../../README.md)

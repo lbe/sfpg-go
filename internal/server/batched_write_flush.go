@@ -5,10 +5,12 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/lbe/sfpg-go/internal/cachelite"
+	"github.com/lbe/sfpg-go/internal/gallerylib"
 	"github.com/lbe/sfpg-go/internal/server/files"
 	"github.com/lbe/sfpg-go/internal/thumbnail"
 )
@@ -36,9 +38,20 @@ func (app *App) flushBatchedWrites(ctx context.Context, tx *sql.Tx, batch []Batc
 		}
 	}
 
-	// Process files
+	// Process files using the prepared queries threaded from BeginTx.
+	// app.batcherQueries holds the CpConn's prepared *CustomQueries (set in
+	// BeginTx); WithTx(tx) propagates all prepared statements onto the tx so
+	// every statement reuses the already-compiled plan instead of recompiling
+	// from raw SQL text on each call.
+	//
+	// ONE Importer is constructed per batch and reused across all files so its
+	// intra-batch folder cache (UpsertPathChain) and tiled-dir set persist —
+	// that is what eliminates the repeated per-segment GetFolderByPath queries
+	// and the redundant folder-tile view queries for files sharing a directory.
+	qtx := app.batcherQueries.WithTx(tx)
+	imp := &gallerylib.Importer{Q: qtx}
 	for _, f := range fileWrites {
-		if err := files.WriteFileInTx(ctx, tx, f); err != nil {
+		if err := files.WriteFileInTx(ctx, imp, f); err != nil {
 			return fmt.Errorf("write file %s: %w", f.Path, err)
 		}
 		// Don't cleanup thumbnail here - done in OnError or after successful commit
@@ -64,6 +77,29 @@ func (app *App) flushBatchedWrites(ctx context.Context, tx *sql.Tx, batch []Batc
 		if entry.ContentLength.Valid {
 			app.cacheSizeBytes.Add(entry.ContentLength.Int64)
 		}
+	}
+
+	// Log batch path stats for performance analysis
+	if len(fileWrites) > 0 {
+		maxDepth := 0
+		uniqueDirs := make(map[string]struct{}, len(fileWrites))
+		for _, f := range fileWrites {
+			dir := filepath.Dir(f.Path)
+			uniqueDirs[dir] = struct{}{}
+			if dir == "." {
+				continue
+			}
+			depth := len(strings.FieldsFunc(dir, func(c rune) bool { return c == '/' }))
+			if depth > maxDepth {
+				maxDepth = depth
+			}
+		}
+		slog.Debug("batched flush: file batch path stats",
+			"files", len(fileWrites),
+			"gallery_cache", len(galleryCache),
+			"other_cache", len(otherCache),
+			"max_depth", maxDepth,
+			"unique_dirs", len(uniqueDirs))
 	}
 
 	return nil

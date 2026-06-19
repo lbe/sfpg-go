@@ -198,7 +198,7 @@ import (
 func TestConfigModal_AdminTab_PasswordVisibilityToggles(t *testing.T) {
 	app := CreateApp(t, false)
 	defer app.Shutdown()
-	app.setDB()
+	t.Parallel()
 	if err := app.loadConfig(); err != nil {
 		t.Fatalf("Failed to load config: %v", err)
 	}
@@ -287,7 +287,7 @@ func TestConfigModal_AdminTab_PasswordVisibilityToggles(t *testing.T) {
 func TestConfigModal_AdminTab_UsernamePrepopulated(t *testing.T) {
 	app := CreateApp(t, false)
 	defer app.Shutdown()
-	app.setDB()
+	t.Parallel()
 	if err := app.loadConfig(); err != nil {
 		t.Fatalf("Failed to load config: %v", err)
 	}

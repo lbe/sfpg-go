@@ -16,6 +16,24 @@ import (
 	"github.com/lbe/sfpg-go/web"
 )
 
+// setenvForTest sets an environment variable and registers a cleanup to restore
+// the original value. Unlike t.Setenv, this does not block t.Parallel(), allowing
+// tests to use both environment configuration and parallel execution.
+func setenvForTest(tb testing.TB, key, value string) {
+	tb.Helper()
+	prev, ok := os.LookupEnv(key)
+	if err := os.Setenv(key, value); err != nil {
+		tb.Fatalf("failed to set env %s: %v", key, err)
+	}
+	tb.Cleanup(func() {
+		if ok {
+			os.Setenv(key, prev)
+		} else {
+			os.Unsetenv(key)
+		}
+	})
+}
+
 // CreateApp sets up a full, isolated application instance for testing.
 func CreateApp(t *testing.T, startPool bool) *App {
 	t.Helper()
@@ -36,20 +54,20 @@ func CreateAppWithOpt(tb testing.TB, startPool bool, opt getopt.Opt) *App {
 	tb.Helper()
 	tempDir := tb.TempDir()
 
-	// Use tb.Setenv to set default session flags for tests that don't explicitly configure them
-	// Tests that need specific values should call tb.Setenv() before calling CreateApp
-	if val, ok := os.LookupEnv("SEPG_SESSION_SECURE"); !ok {
-		tb.Setenv("SEPG_SESSION_SECURE", "false")
-	} else {
-		// Re-set to preserve the value that was set before this function was called
-		tb.Setenv("SEPG_SESSION_SECURE", val)
-	}
-	if val, ok := os.LookupEnv("SEPG_SESSION_HTTPONLY"); !ok {
-		tb.Setenv("SEPG_SESSION_HTTPONLY", "false")
-	} else {
-		// Re-set to preserve the value that was set before this function was called
-		tb.Setenv("SEPG_SESSION_HTTPONLY", val)
-	}
+	// Set default session flags without using t.Setenv (which blocks t.Parallel).
+	// Use os.Setenv + t.Cleanup instead to allow tests to use t.Parallel().
+	setenvForTest(tb, "SEPG_SESSION_SECURE", func() string {
+		if val, ok := os.LookupEnv("SEPG_SESSION_SECURE"); ok {
+			return val
+		}
+		return "false"
+	}())
+	setenvForTest(tb, "SEPG_SESSION_HTTPONLY", func() string {
+		if val, ok := os.LookupEnv("SEPG_SESSION_HTTPONLY"); ok {
+			return val
+		}
+		return "false"
+	}())
 
 	// Parse environment variables into opt if SessionSecret wasn't explicitly provided
 	// This allows tests to use t.Setenv() and have those values applied

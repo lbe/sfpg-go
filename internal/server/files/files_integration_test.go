@@ -775,8 +775,10 @@ func TestWriteFileInTx(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BeginTx: %v", err)
 	}
+	qtx := connRW.Queries.WithTx(tx)
+	imp := &gallerylib.Importer{Q: qtx}
 
-	if writeErr := WriteFileInTx(ctx, tx, file); writeErr != nil {
+	if writeErr := WriteFileInTx(ctx, imp, file); writeErr != nil {
 		_ = tx.Rollback()
 		t.Fatalf("WriteFileInTx: %v", err)
 	}

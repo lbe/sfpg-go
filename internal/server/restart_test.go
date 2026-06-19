@@ -92,12 +92,6 @@ func TestRestartServer_PreservesConnections(t *testing.T) {
 	app := CreateApp(t, false)
 	app.config = config.DefaultConfig()
 
-	// Set up database pools
-	app.setDB()
-	if app.dbRwPool == nil {
-		t.Fatal("Failed to set up database pool")
-	}
-
 	// Get a connection before restart
 	connBefore, err := app.dbRwPool.Get()
 	if err != nil {

@@ -45,7 +45,9 @@ func (m *mockUnifiedBatcher) SubmitFile(file *File) error {
 		}
 		defer tx.Rollback()
 
-		if err := WriteFileInTx(context.Background(), tx, file); err != nil {
+		qtx := cpc.Queries.WithTx(tx)
+		imp := &gallerylib.Importer{Q: qtx}
+		if err := WriteFileInTx(context.Background(), imp, file); err != nil {
 			return err
 		}
 		return tx.Commit()

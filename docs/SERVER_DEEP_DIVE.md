@@ -92,9 +92,9 @@ The `App` struct (`app.go`) is the central application context. It acts as a **m
 | `galleryHandlers` | `*handlers.GalleryHandlers` | Gallery handlers (images, folders, thumbnails, metadata).     |
 | `healthHandlers`  | `*handlers.HealthHandlers`  | Health check and version handlers.                            |
 
-**Infrastructure and orchestration state** (subset): `ctx`, `cancel`, `ctxMu`, `wg`; `dbRoPool`, `dbRwPool`; `rootDir`, `dbDir`, `dbPath`, `opt`; `config`, `configMu`; `store`, `sessionSecret`; `logger`, `scheduler`; `imagesDir`, `normalizedImagesDir`; `pool`, `q`, `qSendersActive`; `writeBatcher`, `cacheMW`; `restartRequired`, `restartMu`, `restartCh`, `httpServer`; `ImporterFactory`, `hqOverride` (test-only).
+**Infrastructure and orchestration state** (subset): `ctx`, `cancel`, `ctxMu`, `wg`; `dbRoPool`, `dbRwPool`, `dqueDirPath`; `rootDir`, `dbDir`, `dbPath`, `opt`; `config`, `configMu`; `store`, `sessionSecret`; `logger`, `scheduler`; `imagesDir`, `normalizedImagesDir`; `pool`, `q`, `qSendersActive`; `writeBatcher`, `batcherQueries` (prepared `*gallerydb.CustomQueries` threaded from `BeginTx` for use by `flushBatchedWrites`), `cacheMW`; `restartRequired`, `restartMu`, `restartCh`, `httpServer`; `ImporterFactory`, `hqOverride` (test-only).
 
-**Note on Unified WriteBatcher (Feb 2026):** The application now uses a single `writeBatcher` instance to handle all high-volume database writes (file metadata, invalid files, HTTP cache entries). This eliminates SQLite lock contention by consolidating three previously independent write paths into one batched, transactional writer.
+**Note on Unified WriteBatcher (Feb 2026, updated Jun 2026):** The application uses a single `writeBatcher` instance to handle all high-volume database writes (file metadata and HTTP cache entries), consolidating these two previously independent write paths into one batched, transactional writer. The `BatchedWrite` union has two variants: `File` (file metadata + EXIF + thumbnails) and `CacheEntry` (HTTP response cache). Invalid-file cleanup happens inside the `File` flush path via the `HadInvalidEntry` flag rather than a separate batched variant; invalid-file records themselves are written directly to the RW pool as processing failures occur (`recordInvalidFileFromPath`). When the in-memory channel fills, writes overflow to a persistent on-disk queue (`dque`, stored in `DB/sfpg.db-dque/`), which absorbs bursts and recovers pending writes across process restarts.
 
 ### Key Files
 
@@ -283,7 +283,7 @@ The file processing pipeline discovers image files, extracts metadata, generates
 
 **Component**: `workerpool.Pool` (from `internal/workerpool`)
 
-- **Configurable workers**: Default `2 * NumCPU` workers
+- **Configurable workers**: Default `NumCPU - 2` (when NumCPU > 4; `2` for 3–4 cores; `1` otherwise); overridable via config `WorkerPoolMax` / `WorkerPoolMinIdle`
 - **Queue-based**: Workers pull from shared queue
 - **Database connection sharing**: Each worker gets connection from pool
 - **Graceful shutdown**: Workers drain queue before exiting
@@ -310,38 +310,56 @@ For each file:
 8. **Unified Batcher Submission**: Submit file metadata and thumbnails to the unified WriteBatcher
 9. **Folder Tile Update**: Set folder's representative image
 
-### 4. Unified WriteBatcher (Feb 2026 Refactoring)
+### 4. Unified WriteBatcher (Feb 2026 Refactoring, updated Jun 2026)
 
 All file writes are now routed through a **single unified WriteBatcher** at the App level:
 
 **Implementation Components:**
 
-- **`internal/server/batched_write.go`**: Defines the `BatchedWrite` union type with three variants:
+- **`internal/server/batched_write.go`**: Defines the `BatchedWrite` union type with two variants:
   - `File`: Complete file metadata including EXIF and thumbnail data
-  - `InvalidFile`: Tracks files that failed processing
   - `CacheEntry`: HTTP response cache entries
-- **`internal/server/batched_write_flush.go`**: Unified flush function that processes all write types in a single transaction
-- **`internal/server/batcher_adapter.go`**: Adapter pattern that breaks circular dependency between `server` and `files` packages
+  - Also implements `GobEncode`/`GobDecode` so items can be persisted to the on-disk overflow queue (`dque`).
+- **`internal/server/batched_write_flush.go`**: Unified flush function that processes all write types in a single transaction; threads prepared statements via `WithTx(tx)` and constructs one per-batch `gallerylib.Importer`.
+- **`internal/server/batcher_adapter.go`**: Adapter pattern that breaks circular dependency between `server` and `files` packages; returns `ErrClosed` when the batcher is nil.
+- **`internal/server/files/gob.go`**: `GobEncode`/`GobDecode` for `files.File` (serializes the `*bytes.Buffer` thumbnail as raw `[]byte`).
 - **`files.UnifiedBatcher` interface**: Allows `files` package to submit writes without depending on `server`
 
 **Benefits:**
 
-- **Eliminated Lock Contention**: One writer instead of three competing for SQLite's exclusive lock
+- **Eliminated Lock Contention**: One writer instead of several competing for SQLite's exclusive lock
 - **Improved Throughput**: Batching reduces transaction overhead (from many small transactions to fewer large ones)
+- **Burst Absorption & Crash Recovery**: Excess writes overflow to `dque` (in `DB/sfpg.db-dque/`) and survive restarts
 - **Resource Cleanup**: Automatic return of pooled resources (thumbnail buffers, cache entries) after flush
 
 **Flow:**
 
 ```
-File Processor → UnifiedBatcher.SubmitFile() → WriteBatcher queue
-Cache Middleware → UnifiedBatcher.SubmitCache() → WriteBatcher queue
+File Processor → UnifiedBatcher.SubmitFile() → WriteBatcher channel
+Cache Middleware → UnifiedBatcher.SubmitCache() → WriteBatcher channel
+                                    ↓
+                       (on overflow) spill to dque (<db>-dque/)
                                     ↓
                           Background worker periodically flushes
+                          (drains channel + dque, interleaved)
                                     ↓
                     flushBatchedWrites() in single transaction
+                    (prepared statements via WithTx, per-batch Importer)
                                     ↓
                    Cleanup pooled resources (thumbnails, cache entries)
 ```
+
+#### Persistent Overflow Queue (dque)
+
+When `DQueDirPath` is configured (derived as `<db>-dque/`), a full in-memory channel causes `Submit` to overflow to `dque` rather than return `ErrFull`. Each overflow signals a buffer-1 `dqNotify` channel that wakes the worker's drain loop. The drain loop flushes `dque` items in `MaxBatchSize` batches **during** the drain, interleaves new channel items so they are not starved, and drains on context cancel / channel close / `Close()`. `overflowMu` and `overflowWG` plus the `mu`-then-`overflowMu` lock ordering in `Close()` guarantee concurrent `Submit`-during-`Close` loses nothing. `dque` holds a `flock` on its directory, so reconfiguration closes the old batcher before creating a new one.
+
+Crash recovery: on startup `New()` seeds `pendingCount` from the existing `dque` size and, if the recovered queue exceeds channel capacity, buffers items locally before starting the worker to avoid startup deadlock.
+
+#### Write-Path Throughput Optimizations
+
+- **Prepared-statement threading**: `BeginTx` borrows a pooled connection and captures its prepared `*gallerydb.CustomQueries` into `app.batcherQueries`; `flushBatchedWrites` calls `WithTx(tx)` to bind all prepared statements to the transaction so every statement reuses its compiled plan instead of recompiling raw SQL per call. (`internal/gallerydb/prepared_invariant_test.go` pins this routing.)
+- **Per-batch Importer memoization**: One `gallerylib.Importer` is constructed per batch and reused across all files. Its `folderCache` (path → folder ID) eliminates repeated per-segment `GetFolderByPath` queries in `UpsertPathChain`, and `tiledDirs` skips redundant folder-tile view queries and tile-chain updates for subsequent files in the same directory.
+- **Skip no-op invalid_files delete**: The processor records `File.HadInvalidEntry`; `WriteFileInTx` only issues `DeleteInvalidFileByPath` when a row actually existed, removing a per-file no-op round-trip during fresh preloads.
 
 ### 5. Idempotency
 
@@ -378,7 +396,8 @@ The file processing pipeline has comprehensive test coverage:
 
 - **Purpose**: Serve read-heavy web requests (gallery, image, search)
 - **Configuration**:
-  - Max open connections: `20 * NumCPU`
+  - Max open connections: `db_max_pool_size` (default `100`)
+  - Min idle connections: `db_min_idle_connections` (default `10`)
   - `PRAGMA query_only = true`
   - `PRAGMA journal_mode = WAL`
 - **WAL Mode**: Allows concurrent reads without blocking
@@ -387,9 +406,12 @@ The file processing pipeline has comprehensive test coverage:
 
 - **Purpose**: File processing, configuration updates, login
 - **Configuration**:
-  - Max open connections: `2 * NumCPU`
-  - `PRAGMA journal_mode = WAL`
+  - Max open connections: `db_max_pool_size` (default `100`, shared with RO)
+  - Min idle connections: `db_min_idle_connections` (default `10`, shared with RO)
+  - `PRAGMA journal_mode = WAL`, `_txlock = immediate`
 - **Single writer**: SQLite serializes writes, but WAL allows concurrent reads
+
+Both pools share the same configurable size and are reconciled against effective values at startup/restart via `reconfigurePoolsFromConfig()`.
 
 ### Why Separate Pools?
 
@@ -588,9 +610,9 @@ Worker N ────┘
 
 **Configuration**:
 
-- **Workers**: `2 * runtime.NumCPU()` (default)
-- **Queue size**: `10,000` paths
-- **Timeout**: `10s` idle timeout before worker exits
+- **Workers**: `NumCPU - 2` default (when NumCPU > 4; `2` for 3–4 cores; `1` otherwise); overridable via config `WorkerPoolMax` / `WorkerPoolMinIdle`
+- **Queue size**: `10,000` paths (overridable via config `QueueSize`)
+- **Timeout**: `10s` idle timeout before worker exits (overridable via `WorkerPoolMaxIdleTime`)
 
 **Benefits**:
 
@@ -707,7 +729,8 @@ ${SFPG_ROOT_DIR}/
 ├── DB/
 │   ├── sfpg.db          # SQLite database
 │   ├── sfpg.db-shm      # Shared memory (WAL)
-│   └── sfpg.db-wal      # Write-ahead log
+│   ├── sfpg.db-wal      # Write-ahead log
+│   └── sfpg.db-dque/    # Persistent write overflow queue (dque, auto-created)
 ├── Images/              # Source images (scanned)
 │   ├── folder1/
 │   └── folder2/
@@ -890,7 +913,7 @@ Defined in `app.go`:
 **Automatic**:
 
 - `PRAGMA optimize` runs every hour (scheduled in `setDB()`)
-- WAL checkpoint on shutdown
+- WAL checkpoint on shutdown and via the writebatcher `OnAfterCommit` callback, which forces a TRUNCATE checkpoint every 5 minutes or when the WAL file exceeds 256MB (lowered from 2GB). Running the checkpoint in the writebatcher worker avoids races with active transactions.
 
 **Manual**:
 
@@ -925,10 +948,13 @@ sqlite3 DB/sfpg.db "ANALYZE;"
 - **`internal/server/validation`**: Username/password validation
 - **`internal/server/interfaces`**: `HandlerQueries` and other shared interfaces
 - **`internal/gallerydb`**: Database queries (generated by sqlc)
-- **`internal/gallerylib`**: File import logic
+- **`internal/gallerylib`**: File import logic (per-batch folder/tiled-dir memoization)
 - **`internal/dbconnpool`**: Connection pool implementation
 - **`internal/workerpool`**: Worker pool implementation
-- **`internal/writebatcher`**: Batch processing for efficient database writes
+- **`internal/writebatcher`**: Batch processing for efficient database writes (with optional persistent overflow)
+- **`internal/dque`**: Persistent on-disk FIFO overflow queue used by writebatcher
+- **`internal/flock`**: Cross-platform file locking used by dque
+- **`internal/errors`**: Error sentinels used by dque
 - **`internal/queue`**: Thread-safe queue
 - **`internal/cachelite`**: SQLite-backed HTTP response cache
 - **`web`**: Embedded templates and static assets
@@ -942,5 +968,5 @@ sqlite3 DB/sfpg.db "ANALYZE;"
 
 ---
 
-**Last Updated**: February 2026  
-**Version**: Reflects unified WriteBatcher architecture (Feb 2026), domain-driven package structure (config, files, handlers, middleware, session, ui, validation, interfaces), minimal orchestrator `App`, and service interfaces (`ConfigService`, `FileProcessor`, `SessionManager`, `HandlerQueries`). Includes test reorganization with build tags for unit/integration separation.
+**Last Updated**: June 2026  
+**Version**: Reflects unified WriteBatcher architecture (Feb 2026) with persistent on-disk overflow queue (`dque`), gob serialization of `BatchedWrite`/`files.File`, prepared-statement threading (`BeginTx`/`WithTx`), per-batch `Importer` memoization, configurable DB pool sizing (`db_max_pool_size`/`db_min_idle_connections`), domain-driven package structure (config, files, handlers, middleware, session, ui, validation, interfaces), minimal orchestrator `App`, and service interfaces (`ConfigService`, `FileProcessor`, `SessionManager`, `HandlerQueries`). Includes test reorganization with build tags for unit/integration separation.

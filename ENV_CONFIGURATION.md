@@ -295,6 +295,15 @@ Environment="SEPG_SESSION_SAMESITE=Lax"
 Environment="SEPG_SESSION_SECRET=%i"
 ```
 
+## Data Directories
+
+The application creates the following runtime directories alongside the SQLite database (under `DB/` by default):
+
+- **`sfpg.db`, `sfpg.db-shm`, `sfpg.db-wal`** — the SQLite database and its WAL/shared-memory files.
+- **`sfpg.db-dque/`** — a persistent on-disk overflow queue (`dque`) auto-created next to the database. When the in-memory write channel fills during heavy preload/discovery, pending writes spill here instead of being dropped, and they are recovered automatically on the next startup (crash recovery). Back this directory up together with `DB/` to preserve in-flight pending writes.
+
+No environment variable is needed to enable the overflow queue; its location is derived from the database path.
+
 ## Logging
 
 Session configuration is logged on startup:

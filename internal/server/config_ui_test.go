@@ -60,7 +60,7 @@ func getTextContent(node *html.Node) string {
 func TestConfigUI_Navigation_Authenticated(t *testing.T) {
 	app := CreateApp(t, false)
 	defer app.Shutdown()
-	app.setDB()
+	t.Parallel()
 	if err := app.loadConfig(); err != nil {
 		t.Fatalf("Failed to load config: %v", err)
 	}
@@ -112,6 +112,7 @@ func TestConfigUI_Navigation_Unauthenticated(t *testing.T) {
 	app := CreateApp(t, false)
 	defer app.Shutdown()
 
+	t.Parallel()
 	server := httptest.NewServer(app.getRouter())
 	defer server.Close()
 
@@ -137,7 +138,7 @@ func TestConfigUI_Navigation_Unauthenticated(t *testing.T) {
 func TestConfigUI_FormDisplay_AllSettings(t *testing.T) {
 	app := CreateApp(t, false)
 	defer app.Shutdown()
-	app.setDB()
+	t.Parallel()
 	if err := app.loadConfig(); err != nil {
 		t.Fatalf("Failed to load config: %v", err)
 	}
@@ -186,7 +187,7 @@ func TestConfigUI_FormDisplay_AllSettings(t *testing.T) {
 func TestConfigUI_FormSubmission_UpdatesDatabase(t *testing.T) {
 	app := CreateApp(t, false)
 	defer app.Shutdown()
-	app.setDB()
+	t.Parallel()
 	if err := app.loadConfig(); err != nil {
 		t.Fatalf("Failed to load config: %v", err)
 	}
@@ -254,7 +255,7 @@ func TestConfigUI_FormSubmission_UpdatesDatabase(t *testing.T) {
 func TestConfigUI_RestartWarning_Appears(t *testing.T) {
 	app := CreateApp(t, false)
 	defer app.Shutdown()
-	app.setDB()
+	t.Parallel()
 	if err := app.loadConfig(); err != nil {
 		t.Fatalf("Failed to load config: %v", err)
 	}
@@ -353,7 +354,7 @@ func getCSRFTokenFromConfigPage(t *testing.T, client *http.Client, baseURL strin
 func TestConfigUI_HTMX_PartialUpdate(t *testing.T) {
 	app := CreateApp(t, false)
 	defer app.Shutdown()
-	app.setDB()
+	t.Parallel()
 	if err := app.loadConfig(); err != nil {
 		t.Fatalf("Failed to load config: %v", err)
 	}
@@ -413,7 +414,7 @@ func TestConfigUI_HTMX_PartialUpdate(t *testing.T) {
 func TestConfigUI_ExportDownload(t *testing.T) {
 	app := CreateApp(t, false)
 	defer app.Shutdown()
-	app.setDB()
+	t.Parallel()
 	if err := app.loadConfig(); err != nil {
 		t.Fatalf("Failed to load config: %v", err)
 	}
@@ -470,7 +471,7 @@ func TestConfigUI_ExportDownload(t *testing.T) {
 func TestConfigUI_ImportPreview(t *testing.T) {
 	app := CreateApp(t, false)
 	defer app.Shutdown()
-	app.setDB()
+	t.Parallel()
 	if err := app.loadConfig(); err != nil {
 		t.Fatalf("Failed to load config: %v", err)
 	}
@@ -580,7 +581,7 @@ site-name: "Preview Test"
 func TestConfigUI_LastKnownGood_ButtonVisible(t *testing.T) {
 	app := CreateApp(t, false)
 	defer app.Shutdown()
-	app.setDB()
+	t.Parallel()
 	if err := app.loadConfig(); err != nil {
 		t.Fatalf("Failed to load config: %v", err)
 	}
@@ -634,7 +635,7 @@ func TestConfigUI_LastKnownGood_ButtonVisible(t *testing.T) {
 func TestConfigModal_DisplaysETagVersion(t *testing.T) {
 	app := CreateApp(t, false)
 	defer app.Shutdown()
-	app.setDB()
+	t.Parallel()
 	ctx := app.ctx
 
 	// Set known ETag version
@@ -694,7 +695,7 @@ func TestConfigModal_DisplaysETagVersion(t *testing.T) {
 func TestConfigModal_EnableCachePreloadCheckbox(t *testing.T) {
 	app := CreateApp(t, false)
 	defer app.Shutdown()
-	app.setDB()
+	t.Parallel()
 	ctx := app.ctx
 
 	// Set EnableCachePreload to true
@@ -743,8 +744,8 @@ func TestConfigModal_EnableCachePreloadCheckbox(t *testing.T) {
 func TestConfigModal_HasIncrementETagButton(t *testing.T) {
 	app := CreateApp(t, false)
 	defer app.Shutdown()
-	app.setDB()
 
+	t.Parallel()
 	h := app.configHandlers
 
 	req := httptest.NewRequest("GET", "/config", nil)

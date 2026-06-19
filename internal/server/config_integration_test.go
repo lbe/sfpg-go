@@ -179,7 +179,7 @@ func loginAsAdmin(t *testing.T, client *http.Client, baseURL string) {
 
 // REMOVED: TestIntegration_CompleteConfigWorkflow - Slow duplicate test (0.89s)
 // REMOVED: func TestIntegration_CompleteConfigWorkflow(t *testing.T) {
-// REMOVED: 	t.Setenv("SEPG_SESSION_SECURE", "false")
+// REMOVED: setenvForTest(t, "SEPG_SESSION_SECURE", "false")
 // REMOVED: 	app := CreateApp(t, true)
 // REMOVED: 	defer app.Shutdown()
 // REMOVED:
@@ -283,10 +283,11 @@ func loginAsAdmin(t *testing.T, client *http.Client, baseURL string) {
 // verifying that changes persist correctly in the database across different configuration sections.
 // Note: This is an integration test, not E2E, as it only verifies database state, not server behavior.
 func TestIntegration_MultipleCategoryUpdates(t *testing.T) {
-	t.Setenv("SEPG_SESSION_SECURE", "false")
+	setenvForTest(t, "SEPG_SESSION_SECURE", "false")
 	app := CreateApp(t, true)
 	defer app.Shutdown()
 
+	t.Parallel()
 	ts := httptest.NewServer(app.getRouter())
 	defer ts.Close()
 
@@ -408,7 +409,7 @@ func TestIntegration_MultipleCategoryUpdates(t *testing.T) {
 // Config persistence is already tested by TestConfigSaveToDatabase (0.37s)
 // and config service tests. This test creating two full app instances was redundant.
 // REMOVED: // func TestIntegration_ConfigPersistenceAcrossRestart(t *testing.T) {
-// REMOVED: 	t.Setenv("SEPG_SESSION_SECURE", "false")
+// REMOVED: setenvForTest(t, "SEPG_SESSION_SECURE", "false")
 // REMOVED:
 // REMOVED: 	// Create first app instance
 // REMOVED: 	app1 := CreateApp(t, true)
@@ -500,7 +501,7 @@ func TestIntegration_MultipleCategoryUpdates(t *testing.T) {
 // checkboxes were not being saved to the database.
 // Note: This is an integration test, not E2E, as it only verifies database persistence, not that the server uses the values.
 // REMOVED: func TestIntegration_ConfigPersistence_BooleanValues(t *testing.T) {
-// REMOVED: 	t.Setenv("SEPG_SESSION_SECURE", "false")
+// REMOVED: setenvForTest(t, "SEPG_SESSION_SECURE", "false")
 // REMOVED:
 // REMOVED: 	// Create first app instance
 // REMOVED: 	app1 := CreateApp(t, true)
@@ -667,11 +668,12 @@ func TestIntegration_MultipleCategoryUpdates(t *testing.T) {
 // This ensures database persistence works correctly even when no CLI/env overrides are set.
 // Note: This is an integration test, not E2E, as it only verifies config loading logic, not server behavior.
 func TestIntegration_ConfigPersistence_LoadFromOptDoesNotOverrideWithDefaults(t *testing.T) {
-	t.Setenv("SEPG_SESSION_SECURE", "false")
+	setenvForTest(t, "SEPG_SESSION_SECURE", "false")
 
 	// Create first app instance
 	app1 := CreateApp(t, true)
 
+	t.Parallel()
 	ts1 := httptest.NewServer(app1.getRouter())
 	defer ts1.Close()
 
@@ -788,12 +790,13 @@ func TestIntegration_ConfigPersistence_LoadFromOptDoesNotOverrideWithDefaults(t 
 // CLI > Env > Database > Defaults. This ensures higher-priority sources override lower ones.
 // Note: This is an integration test, not E2E, as it only verifies config loading logic, not server behavior.
 func TestIntegration_ConfigPrecedence(t *testing.T) {
-	t.Setenv("SEPG_SESSION_SECURE", "false")
+	setenvForTest(t, "SEPG_SESSION_SECURE", "false")
 
 	// Step 1: Set a value in database
 	app1 := CreateApp(t, true)
 	// Note: We'll shutdown manually before creating app2, so no defer here
 
+	t.Parallel()
 	cpcRw, err := app1.dbRwPool.Get()
 	if err != nil {
 		t.Fatalf("failed to get DB connection: %v", err)
@@ -851,10 +854,11 @@ func TestIntegration_ConfigPrecedence(t *testing.T) {
 // - Last known good config can be restored
 // Note: This is an integration test, not E2E, as it only verifies database state, not server behavior.
 func TestIntegration_ErrorRecovery(t *testing.T) {
-	t.Setenv("SEPG_SESSION_SECURE", "false")
+	setenvForTest(t, "SEPG_SESSION_SECURE", "false")
 	app := CreateApp(t, true)
 	defer app.Shutdown()
 
+	t.Parallel()
 	ts := httptest.NewServer(app.getRouter())
 	defer ts.Close()
 
@@ -929,12 +933,13 @@ func TestIntegration_ErrorRecovery(t *testing.T) {
 // including values from the database, environment variables, and default values.
 // Note: This is an integration test, not E2E, as it only verifies config struct values, not server behavior.
 func TestIntegration_ConfigLoadsOnStartup(t *testing.T) {
-	t.Setenv("SEPG_SESSION_SECURE", "false")
+	setenvForTest(t, "SEPG_SESSION_SECURE", "false")
 
 	// Create app and set a config value in database
 	app1 := CreateApp(t, true)
 	// Note: We'll shutdown manually before creating app2, so no defer here
 
+	t.Parallel()
 	cpcRw, err := app1.dbRwPool.Get()
 	if err != nil {
 		t.Fatalf("failed to get DB connection: %v", err)
@@ -984,7 +989,7 @@ func TestIntegration_ConfigLoadsOnStartup(t *testing.T) {
 
 // REMOVED: TestIntegration_ConcurrentConfigUpdates - Slow duplicate test (1.17s)
 // REMOVED: func TestIntegration_ConcurrentConfigUpdates(t *testing.T) {
-// REMOVED: 	t.Setenv("SEPG_SESSION_SECURE", "false")
+// REMOVED: setenvForTest(t, "SEPG_SESSION_SECURE", "false")
 // REMOVED: 	app := CreateApp(t, true)
 // REMOVED: 	defer app.Shutdown()
 // REMOVED:
@@ -1049,7 +1054,7 @@ func TestIntegration_ConfigLoadsOnStartup(t *testing.T) {
 // they override database values. This tests the precedence: CLI/env > DB > defaults.
 // Note: This is an integration test, not E2E, as it only verifies config loading logic, not server behavior.
 // REMOVED: func TestIntegration_ConfigPersistence_CLIEnvOverridesDB(t *testing.T) {
-// REMOVED: 	t.Setenv("SEPG_SESSION_SECURE", "false")
+// REMOVED: setenvForTest(t, "SEPG_SESSION_SECURE", "false")
 // REMOVED:
 // REMOVED: 	// Create first app instance
 // REMOVED: 	app1 := CreateApp(t, true)
@@ -1142,6 +1147,7 @@ func TestSessionConfigIntegration_MaxAge(t *testing.T) {
 	defer app.Shutdown()
 
 	// Initialize config if not already loaded
+	t.Parallel()
 	app.configMu.Lock()
 	if app.config == nil {
 		app.config = config.DefaultConfig()
@@ -1166,6 +1172,7 @@ func TestSessionConfigIntegration_HttpOnly(t *testing.T) {
 	defer app.Shutdown()
 
 	// Initialize config if not already loaded
+	t.Parallel()
 	app.configMu.Lock()
 	if app.config == nil {
 		app.config = config.DefaultConfig()
@@ -1188,6 +1195,7 @@ func TestSessionConfigIntegration_Secure(t *testing.T) {
 	defer app.Shutdown()
 
 	// Initialize config if not already loaded
+	t.Parallel()
 	app.configMu.Lock()
 	if app.config == nil {
 		app.config = config.DefaultConfig()
@@ -1584,7 +1592,7 @@ func createTestImageFile(t *testing.T, imageDir string) error {
 func TestAppLoadConfigFromDatabase(t *testing.T) {
 	tempDir := t.TempDir()
 	ss := "test-session-secret"
-	t.Setenv("SEPG_SESSION_SECRET", ss)
+	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
 
 	app := New(getopt.Opt{}, "x.y.z")
 	app.setRootDir(&tempDir)
@@ -1616,7 +1624,7 @@ func TestAppLoadConfigFromDatabase(t *testing.T) {
 func TestConfigPrecedence_CLIOverridesDB(t *testing.T) {
 	tempDir := t.TempDir()
 	ss := "test-session-secret"
-	t.Setenv("SEPG_SESSION_SECRET", ss)
+	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
 
 	// Create app and initialize DB
 	app := New(getopt.Opt{}, "x.y.z")
@@ -1653,6 +1661,10 @@ func TestConfigPrecedence_CLIOverridesDB(t *testing.T) {
 		t.Errorf("expected ListenerPort to be 9090 from DB, got %d", app.config.ListenerPort)
 	}
 
+	// Close the first app to release its dque flock before creating
+	// a second app with the same root directory.
+	app.Shutdown()
+
 	// Now create app with CLI flag that should override
 	opt := getopt.Opt{
 		Port: getopt.OptInt{Int: 8080, IsSet: true},
@@ -1688,10 +1700,10 @@ func TestConfigPrecedence_CLIOverridesDB(t *testing.T) {
 func TestConfigPrecedence_EnvOverridesDB(t *testing.T) {
 	tempDir := t.TempDir()
 	ss := "test-session-secret"
-	t.Setenv("SEPG_SESSION_SECRET", ss)
+	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
 
 	// Set environment variable
-	t.Setenv("SFG_PORT", "7070")
+	setenvForTest(t, "SFG_PORT", "7070")
 
 	// Create opt manually instead of calling getopt.Parse() which conflicts with test flags
 	opt := getopt.Opt{
@@ -1741,7 +1753,7 @@ func TestConfigPrecedence_EnvOverridesDB(t *testing.T) {
 func TestAppConfigPrecedence_DBOverridesDefaults(t *testing.T) {
 	tempDir := t.TempDir()
 	ss := "test-session-secret"
-	t.Setenv("SEPG_SESSION_SECRET", ss)
+	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
 
 	app := New(getopt.Opt{}, "x.y.z")
 	app.setRootDir(&tempDir)
@@ -1782,7 +1794,7 @@ func TestAppConfigPrecedence_DBOverridesDefaults(t *testing.T) {
 func TestAppConfigAppliesToFields(t *testing.T) {
 	tempDir := t.TempDir()
 	ss := "test-session-secret"
-	t.Setenv("SEPG_SESSION_SECRET", ss)
+	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
 
 	app := New(getopt.Opt{}, "x.y.z")
 	app.setRootDir(&tempDir)
@@ -1809,7 +1821,7 @@ func TestAppConfigAppliesToFields(t *testing.T) {
 func TestAppConfigInitialization_FirstRun(t *testing.T) {
 	tempDir := t.TempDir()
 	ss := "test-session-secret"
-	t.Setenv("SEPG_SESSION_SECRET", ss)
+	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
 
 	app := New(getopt.Opt{}, "x.y.z")
 	app.setRootDir(&tempDir)
@@ -1838,7 +1850,7 @@ func TestAppConfigInitialization_FirstRun(t *testing.T) {
 func TestAppConfigInitialization_PreservesUserPassword(t *testing.T) {
 	tempDir := t.TempDir()
 	ss := "test-session-secret"
-	t.Setenv("SEPG_SESSION_SECRET", ss)
+	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
 
 	app := New(getopt.Opt{}, "x.y.z")
 	app.setRootDir(&tempDir)
@@ -1897,6 +1909,7 @@ func TestAppConfigInitialization_PreservesUserPassword(t *testing.T) {
 // TestConfigImport_Preview_ShowsDiff verifies that import preview shows diff before commit.
 func TestConfigImport_Preview_ShowsDiff(t *testing.T) {
 	app := CreateApp(t, false)
+	t.Parallel()
 	app.config = config.DefaultConfig()
 	app.config.ListenerPort = 8081
 
@@ -1922,6 +1935,7 @@ site-name: "Imported Gallery"
 // TestConfigImport_Commit_RequiresConfirmation verifies that import commit requires confirmation.
 func TestConfigImport_Commit_RequiresConfirmation(t *testing.T) {
 	app := CreateApp(t, false)
+	t.Parallel()
 	app.config = config.DefaultConfig()
 
 	newYAML := `listener-port: 9999
@@ -1939,7 +1953,7 @@ func TestConfigImport_Commit_RequiresConfirmation(t *testing.T) {
 // TestConfigImport_Commit_UpdatesDatabase verifies that import commit updates database.
 func TestConfigImport_Commit_UpdatesDatabase(t *testing.T) {
 	app := CreateApp(t, false)
-	app.setDB()
+	t.Parallel()
 	app.config = config.DefaultConfig()
 
 	newYAML := `listener-port: 9999
@@ -2005,6 +2019,7 @@ func TestConfigImport_Commit_UpdatesYAMLFile(t *testing.T) {
 // TestConfigImport_InvalidYAML verifies that invalid YAML is rejected.
 func TestConfigImport_InvalidYAML(t *testing.T) {
 	app := CreateApp(t, false)
+	t.Parallel()
 	app.config = config.DefaultConfig()
 
 	invalidYAML := `listener-port: 8081
@@ -2023,6 +2038,7 @@ func TestConfigImport_FileAccessErrors(t *testing.T) {
 	// This test would require creating inaccessible files
 	// For now, we verify the error handling concept
 	app := CreateApp(t, false)
+	t.Parallel()
 	app.config = config.DefaultConfig()
 
 	// Attempting to import from non-existent file should handle error gracefully
@@ -2033,6 +2049,7 @@ func TestConfigImport_FileAccessErrors(t *testing.T) {
 // TestConfigImport_RejectsSessionSecret verifies that session secret in import is rejected.
 func TestConfigImport_RejectsSessionSecret(t *testing.T) {
 	app := CreateApp(t, false)
+	t.Parallel()
 	app.config = config.DefaultConfig()
 
 	yamlWithSecret := `listener-port: 8081
@@ -2049,7 +2066,7 @@ session-secret: "should-not-be-imported"
 // TestConfigImport_PreservesUserPassword verifies that user/password are not overwritten by import.
 func TestConfigImport_PreservesUserPassword(t *testing.T) {
 	app := CreateApp(t, false)
-	app.setDB()
+	t.Parallel()
 	app.config = config.DefaultConfig()
 
 	// Set up existing user/password in database
@@ -2087,7 +2104,7 @@ func TestConfigImport_PreservesUserPassword(t *testing.T) {
 // TestConfigImport_PrecedenceIntegration verifies that imported YAML integrates with precedence.
 func TestConfigImport_PrecedenceIntegration(t *testing.T) {
 	app := CreateApp(t, false)
-	app.setDB()
+	t.Parallel()
 	app.config = config.DefaultConfig()
 
 	// Set value in database
@@ -2137,7 +2154,7 @@ func TestConfigImport_PrecedenceIntegration(t *testing.T) {
 func TestDBConfig_HTTPCacheDisableActuallyDisablesCaching(t *testing.T) {
 	tempDir := t.TempDir()
 	ss := "test-session-secret"
-	t.Setenv("SEPG_SESSION_SECRET", ss)
+	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
 
 	// Pre-populate database with enable_http_cache=false BEFORE creating app
 	// (simulates config saved in previous run)
@@ -2210,6 +2227,7 @@ func TestDBConfig_ListenerPortChangeRequiresRestart(t *testing.T) {
 	defer app.Shutdown()
 
 	// Set initial port in config
+	t.Parallel()
 	app.configMu.Lock()
 	app.config.ListenerPort = 8081
 	app.configMu.Unlock()
@@ -2280,13 +2298,14 @@ func TestDBConfig_ListenerPortChangeRequiresRestart(t *testing.T) {
 func TestDBConfig_EnvAndCLIOverrideDBValues(t *testing.T) {
 	tempDir := t.TempDir()
 	ss := "test-session-secret"
-	t.Setenv("SEPG_SESSION_SECRET", ss)
+	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
 
 	// Test Case 1: DB value should override default
 	t.Run("DB overrides default", func(t *testing.T) {
 		app := New(getopt.Opt{}, "x.y.z")
 		app.setRootDir(&tempDir)
 		app.setDB()
+		defer app.Shutdown()
 
 		// Set enable_http_cache=false in database (default is true)
 		cpcRw, err := app.dbRwPool.Get()
@@ -2321,7 +2340,7 @@ func TestDBConfig_EnvAndCLIOverrideDBValues(t *testing.T) {
 
 	// Test Case 2: Env should override DB
 	t.Run("Env overrides DB", func(t *testing.T) {
-		t.Setenv("SFG_HTTP_CACHE", "true") // Enable via env
+		setenvForTest(t, "SFG_HTTP_CACHE", "true") // Enable via env
 
 		// Simulate env var being parsed into Opt
 		opt := getopt.Opt{
@@ -2331,6 +2350,7 @@ func TestDBConfig_EnvAndCLIOverrideDBValues(t *testing.T) {
 		app := New(opt, "x.y.z")
 		app.setRootDir(&tempDir)
 		app.setDB()
+		defer app.Shutdown()
 
 		// Set different value in database (false)
 		cpcRw, err := app.dbRwPool.Get()
@@ -2368,7 +2388,7 @@ func TestDBConfig_EnvAndCLIOverrideDBValues(t *testing.T) {
 
 	// Test Case 3: CLI should override both Env and DB
 	t.Run("CLI overrides Env and DB", func(t *testing.T) {
-		t.Setenv("SFG_HTTP_CACHE", "false") // Disable via env
+		setenvForTest(t, "SFG_HTTP_CACHE", "false") // Disable via env
 
 		// CLI flag value (true via CLI should win)
 		opt := getopt.Opt{
@@ -2378,6 +2398,7 @@ func TestDBConfig_EnvAndCLIOverrideDBValues(t *testing.T) {
 		app := New(opt, "x.y.z")
 		app.setRootDir(&tempDir)
 		app.setDB()
+		defer app.Shutdown()
 
 		// Set different value in database (false)
 		cpcRw, err := app.dbRwPool.Get()

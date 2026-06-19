@@ -236,6 +236,26 @@
                 {{ formatCount .Metrics.WriteBatcher.MaxBatchSize }}
               </div>
             </div>
+            <div class="stat">
+              <div class="stat-title text-xs">DQue Overflow</div>
+              <div id="wb-dque" class="stat-value text-base font-semibold">
+                {{ if .Metrics.WriteBatcher.DQueEnabled }}
+                  <span class="text-success">Enabled</span>
+                {{ else }}
+                  <span class="text-warning">Off</span>
+                {{ end }}
+              </div>
+              <div class="stat-desc text-xs">
+                <span id="wb-dque-size"
+                  >{{ formatCount .Metrics.WriteBatcher.DQueSize }}</span
+                >
+                queued,
+                <span id="wb-dque-overflow"
+                  >{{ formatCount .Metrics.WriteBatcher.OverflowCount }}</span
+                >
+                overflowed
+              </div>
+            </div>
           </div>
         </div>
       </div>

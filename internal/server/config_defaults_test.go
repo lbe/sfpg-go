@@ -13,7 +13,7 @@ import (
 func TestInitializeDefaults_FirstRun(t *testing.T) {
 	tempDir := t.TempDir()
 	ss := "test-session-secret"
-	t.Setenv("SEPG_SESSION_SECRET", ss)
+	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
 
 	app := New(getopt.Opt{}, "x.y.z")
 	app.setRootDir(&tempDir)
@@ -51,7 +51,7 @@ func TestInitializeDefaults_FirstRun(t *testing.T) {
 func TestInitializeDefaults_ExistingConfig(t *testing.T) {
 	tempDir := t.TempDir()
 	ss := "test-session-secret"
-	t.Setenv("SEPG_SESSION_SECRET", ss)
+	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
 
 	app := New(getopt.Opt{}, "x.y.z")
 	app.setRootDir(&tempDir)
@@ -93,7 +93,7 @@ func TestInitializeDefaults_ExistingConfig(t *testing.T) {
 func TestInitializeDefaults_PreservesUserPassword(t *testing.T) {
 	tempDir := t.TempDir()
 	ss := "test-session-secret"
-	t.Setenv("SEPG_SESSION_SECRET", ss)
+	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
 
 	app := New(getopt.Opt{}, "x.y.z")
 	app.setRootDir(&tempDir)
@@ -155,7 +155,7 @@ func TestInitializeDefaults_PreservesUserPassword(t *testing.T) {
 func TestInitializeDefaults_OnlyMissingKeys(t *testing.T) {
 	tempDir := t.TempDir()
 	ss := "test-session-secret"
-	t.Setenv("SEPG_SESSION_SECRET", ss)
+	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
 
 	app := New(getopt.Opt{}, "x.y.z")
 	app.setRootDir(&tempDir)

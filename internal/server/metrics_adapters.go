@@ -31,6 +31,9 @@ func (a *writeBatcherAdapter) GetStats() metrics.WriteBatcherStats {
 		IsClosed:      stats.IsClosed,
 		TotalFlushed:  stats.TotalFlushed,
 		TotalErrors:   stats.TotalErrors,
+		OverflowCount: stats.OverflowCount,
+		DQueEnabled:   stats.DQueEnabled,
+		DQueSize:      stats.DQueSize,
 	}
 }
 

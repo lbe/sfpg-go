@@ -19,11 +19,12 @@ import (
 // and server restart, the server actually listens on the updated port.
 // This is a true E2E test that verifies actual server behavior, not just database state.
 func TestE2E_ConfigRestart_UsesUpdatedPort(t *testing.T) {
-	t.Setenv("SEPG_SESSION_SECURE", "false")
+	setenvForTest(t, "SEPG_SESSION_SECURE", "false")
 	app := CreateApp(t, true)
 	defer app.Shutdown()
 
 	// Set initial config
+	t.Parallel()
 	app.configMu.Lock()
 	app.config = config.DefaultConfig()
 	app.config.ListenerAddress = "127.0.0.1"
@@ -133,11 +134,12 @@ func TestE2E_ConfigRestart_UsesUpdatedPort(t *testing.T) {
 // uses compression settings from app.config, not app.opt, after configuration changes.
 // This tests that getRouter() reads from app.config dynamically.
 func TestE2E_ConfigCompression_ServerUsesConfig(t *testing.T) {
-	t.Setenv("SEPG_SESSION_SECURE", "false")
+	setenvForTest(t, "SEPG_SESSION_SECURE", "false")
 	app := CreateApp(t, false)
 	defer app.Shutdown()
 
 	// Set initial config with compression enabled
+	t.Parallel()
 	app.configMu.Lock()
 	app.config = config.DefaultConfig()
 	app.config.ServerCompressionEnable = true
@@ -233,11 +235,12 @@ func TestE2E_ConfigCompression_ServerUsesConfig(t *testing.T) {
 // TestE2E_ConfigCache_ServerUsesConfig verifies that the server actually
 // uses cache settings from app.config, not app.opt, after configuration changes.
 func TestE2E_ConfigCache_ServerUsesConfig(t *testing.T) {
-	t.Setenv("SEPG_SESSION_SECURE", "false")
+	setenvForTest(t, "SEPG_SESSION_SECURE", "false")
 	app := CreateApp(t, false)
 	defer app.Shutdown()
 
 	// Set initial config with cache enabled
+	t.Parallel()
 	app.configMu.Lock()
 	app.config = config.DefaultConfig()
 	app.config.EnableHTTPCache = true
@@ -246,6 +249,12 @@ func TestE2E_ConfigCache_ServerUsesConfig(t *testing.T) {
 	// Initialize cache middleware (normally done in createDatabasePools)
 	// We need to set up the cache middleware manually for this test
 	app.opt.EnableHTTPCache = getopt.OptBool{Bool: true, IsSet: true}
+
+	// Release the existing batcher's dque flock before recreating pools.
+	if app.writeBatcher != nil {
+		app.writeBatcher.Close()
+	}
+
 	app.setDB() // This will call createDatabasePools which initializes cache middleware
 
 	ts := httptest.NewServer(app.getRouter())

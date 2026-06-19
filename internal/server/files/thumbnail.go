@@ -105,18 +105,21 @@ func NeedsFolderTileUpdate(ctx context.Context, cpcRo *dbconnpool.CpConn, folder
 // The caller (FlushFunc) manages BeginTx/Commit/Rollback. This function only
 // executes SQL statements within the provided tx.
 //
+// imp must be backed by the same *gallerydb.CustomQueries that is bound to tx
+// (i.e. imp.Q is the WithTx(tx) view). Construct ONE imp per batch and reuse it
+// across files so imp's intra-batch folder cache and tiled-dir set persist.
+//
 // After writing, thumbnail buffers are returned to the pool. f.Thumbnail will be
 // nil on return.
-func WriteFileInTx(ctx context.Context, tx *sql.Tx, f *File) error {
-	q := gallerydb.NewCustomQueries(tx)
-	imp := &gallerylib.Importer{Conn: nil, Q: q}
+func WriteFileInTx(ctx context.Context, imp *gallerylib.Importer, f *File) error {
+	q := imp.Q
 
 	var thumb []byte
 	if f.Thumbnail != nil {
 		thumb = f.Thumbnail.Bytes()
 	}
 
-	// 1. UpsertPathChain — creates folder chain + file record
+	// 1. UpsertPathChain — creates folder chain + file record (uses imp.folderCache)
 	dbFile, err := imp.UpsertPathChain(ctx, f.Path,
 		f.File.Mtime.Int64, f.File.SizeBytes.Int64,
 		f.File.Md5.String, f.File.Phash.Int64,
@@ -128,9 +131,16 @@ func WriteFileInTx(ctx context.Context, tx *sql.Tx, f *File) error {
 	f.File.ID = dbFile.ID
 	f.File = dbFile
 
-	// 2. Clear stale invalid_files entry
-	if delErr := q.DeleteInvalidFileByPath(ctx, f.Path); delErr != nil {
-		slog.Warn("delete invalid file on success", "path", f.Path, "err", delErr)
+	// 2. Clear stale invalid_files entry.
+	// Only the file that was previously recorded invalid needs its row cleared;
+	// for never-invalid files (the common case in a fresh preload) this DELETE
+	// would be a guaranteed no-op, so skip the round-trip entirely. Preserving
+	// the delete here is correctness-critical: without it, a now-valid file
+	// would still be skipped on the next run.
+	if f.HadInvalidEntry {
+		if delErr := q.DeleteInvalidFileByPath(ctx, f.Path); delErr != nil {
+			slog.Warn("delete invalid file on success", "path", f.Path, "err", delErr)
+		}
 	}
 
 	// 3. UpsertExif if available (non-fatal)
@@ -141,22 +151,26 @@ func WriteFileInTx(ctx context.Context, tx *sql.Tx, f *File) error {
 		}
 	}
 
-	// 4. Check if thumbnail needed
-	// GetThumbnailExistsViewByID errors (other than sql.ErrNoRows) are treated
-	// as non-fatal: we set needsThumb = true and log, so a transient view error
-	// does not roll back the whole batch.
+	// 4. Check if thumbnail needed.
+	// When !f.Exists the file row is new (it did not exist before UpsertPathChain
+	// created it), and thumbnails.file_id has a NOT NULL FK to files(id) ON DELETE
+	// CASCADE with foreign_keys(true) — so a thumbnail cannot pre-exist for a
+	// brand-new file. Skip the 3-table JOIN view query entirely in that case.
+	// For re-imports (f.Exists) a thumbnail may already exist, so query the view.
 	needsThumb := true
-	exists, err := q.GetThumbnailExistsViewByID(ctx, dbFile.ID)
-	if err != nil && err != sql.ErrNoRows {
-		slog.Warn("check thumbnail exists, assuming needed", "path", f.Path, "file_id", dbFile.ID, "err", err)
-	} else if err == nil {
-		needsThumb = !exists
+	if f.Exists {
+		exists, err := q.GetThumbnailExistsViewByID(ctx, dbFile.ID)
+		if err != nil && err != sql.ErrNoRows {
+			slog.Warn("check thumbnail exists, assuming needed", "path", f.Path, "file_id", dbFile.ID, "err", err)
+		} else if err == nil {
+			needsThumb = !exists
+		}
 	}
 
 	// 5. Upsert thumbnail if needed
 	if needsThumb && len(thumb) > 0 {
 		if _, upsertErr := UpsertThumbnailTxOnly(q, ctx, dbFile.ID, thumb); upsertErr != nil {
-			return fmt.Errorf("upsert thumbnail %s: %w", f.Path, err)
+			return fmt.Errorf("upsert thumbnail %s: %w", f.Path, upsertErr)
 		}
 	}
 
@@ -166,19 +180,28 @@ func WriteFileInTx(ctx context.Context, tx *sql.Tx, f *File) error {
 		f.Thumbnail = nil
 	}
 
-	// 7. Folder tile update
+	// 7. Folder tile update.
+	// If this directory was already tiled earlier in this batch, skip both the
+	// GetFolderTileExistsViewByPath query and the UpdateFolderTileChain walk —
+	// the dir (and its ancestors, since the chain stops at the first tiled
+	// ancestor) already have tiles. Only mark the dir tiled after a successful
+	// chain update, so a failed tile update doesn't suppress a later retry.
 	dir := path.Dir(f.Path)
-	needsTile := true
-	tileExists, err := q.GetFolderTileExistsViewByPath(ctx, dir)
-	if err != nil && err != sql.ErrNoRows {
-		slog.Error("check folder tile", "path", dir, "err", err)
-	} else if err == nil {
-		needsTile = !tileExists
-	}
-	if needsTile && needsThumb && len(thumb) > 0 {
-		if err := imp.UpdateFolderTileChain(ctx, dbFile.FolderID.Int64, dbFile.ID); err != nil {
-			slog.Error("update folder tile chain", "path", f.Path, "err", err)
-			// non-fatal: don't fail the whole file for a tile
+	if !imp.IsDirTiled(dir) {
+		needsTile := true
+		tileExists, err := q.GetFolderTileExistsViewByPath(ctx, dir)
+		if err != nil && err != sql.ErrNoRows {
+			slog.Error("check folder tile", "path", dir, "err", err)
+		} else if err == nil {
+			needsTile = !tileExists
+		}
+		if needsTile && needsThumb && len(thumb) > 0 {
+			if err := imp.UpdateFolderTileChain(ctx, dbFile.FolderID.Int64, dbFile.ID); err != nil {
+				slog.Error("update folder tile chain", "path", f.Path, "err", err)
+				// non-fatal: don't fail the whole file for a tile
+			} else {
+				imp.MarkDirTiled(dir)
+			}
 		}
 	}
 

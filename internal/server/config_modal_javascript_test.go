@@ -16,7 +16,7 @@ import (
 func TestConfigModal_JavaScript_RendersCorrectly(t *testing.T) {
 	app := CreateApp(t, false)
 	defer app.Shutdown()
-	app.setDB()
+	t.Parallel()
 	if err := app.loadConfig(); err != nil {
 		t.Fatalf("Failed to load config: %v", err)
 	}

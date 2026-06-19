@@ -151,7 +151,7 @@ func TestUpsertPathChain(t *testing.T) {
 	}
 	func() {
 		defer tx.Rollback()
-		imp.Q = imp.Q.WithTx(tx)
+		imp.Q = q.WithTx(tx)
 
 		// first call should insert
 		mtime := time.Now().Unix()
@@ -195,7 +195,7 @@ func TestUpsertPathChain(t *testing.T) {
 	}
 	func() {
 		defer tx.Rollback()
-		imp.Q = imp.Q.WithTx(tx)
+		imp.Q = q.WithTx(tx)
 
 		// call again should not duplicate
 		mtime := time.Now().Unix()

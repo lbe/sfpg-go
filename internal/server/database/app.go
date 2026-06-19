@@ -151,6 +151,17 @@ func configureDatabaseDSN(dbPath string) (roDsn, rwDsn string) {
 		"_pragma=temp_store(memory)",
 		"_pragma=foreign_keys(1)",
 		"_pragma=mmap_size(" + mmapSize + ")",
+		// Disable SQLite's inline automatic WAL checkpoint at commit. The default
+		// (wal_autocheckpoint=1000 frames) runs a PASSIVE checkpoint inside Commit
+		// whenever the WAL crosses ~1000 frames. With byte_limit batches of ~8MB
+		// (~2000 frames) every commit tripped the autocheckpoint, and when any
+		// reader held the WAL the writer busy-waited up to busy_timeout (5s) —
+		// producing the 1-5s whole-second commit stalls. Instead, WAL is bounded
+		// by the explicit TRUNCATE checkpoint in walCheckpointAfterCommit (2GB
+		// size threshold or 5-minute maintenance timer), which runs in the
+		// writebatcher worker with no active transaction and so cannot contend
+		// with itself.
+		"_pragma=wal_autocheckpoint(0)",
 	}
 
 	// Read-Only DSN: simple mode=ro, no pragmas that require write

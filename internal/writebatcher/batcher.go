@@ -66,10 +66,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/lbe/sfpg-go/internal/dque"
 	"github.com/lbe/sfpg-go/internal/humanize"
 )
 
@@ -115,6 +117,19 @@ type Config[T any] struct {
 	ChannelSize         int                                        // buffered channel capacity (default 1024)
 	SizeFunc            func(T) int64                              // returns byte cost of an item (nil = size tracking disabled)
 	MaxBatchBytes       int64                                      // flush when cumulative batch bytes >= this (0 = no byte limit)
+
+	// DQueDirPath specifies a file system path for a durable queue (dque)
+	// used as disk-backed overflow storage for crash recovery. When
+	// non-empty, the batcher creates or opens a dque at this path.
+	DQueDirPath string
+
+	// DQueItemsPerSegment is the number of items per dque segment file.
+	// When zero or negative, defaults to 250.
+	DQueItemsPerSegment int
+
+	// DQueTurbo enables dque turbo mode (skips fsync for throughput).
+	// Turbo is always enabled when DQueDirPath is set; this field cannot disable it.
+	DQueTurbo bool
 }
 
 // WriteBatcher collects items of type T and flushes them in batched transactions
@@ -127,7 +142,7 @@ type WriteBatcher[T any] struct {
 	ctx                   context.Context
 	cancel                context.CancelFunc
 	mu                    sync.Mutex
-	closed                bool
+	closed                atomic.Bool
 	pendingCount          atomic.Int64 // number of items not yet flushed (Submit +1, flush -len(batch))
 	totalFlushed          atomic.Int64
 	totalErrors           atomic.Int64
@@ -135,6 +150,13 @@ type WriteBatcher[T any] struct {
 	lastCommitTime        atomic.Value // time.Time of last successful commit
 	lastWalCheckpointTime atomic.Value // time.Time of last WAL checkpoint
 	lastOptimizeTime      atomic.Value // time.Time of last PRAGMA optimize
+
+	overflowMu    sync.Mutex // guards overflowCount and dque enqueue path
+	overflowCount atomic.Int64
+	overflowWG    sync.WaitGroup // tracks in-flight overflow Submits for Close barrier
+
+	dq       *dque.DQue[T]
+	dqNotify chan struct{}
 }
 
 // Stats holds statistics about the WriteBatcher.
@@ -145,13 +167,19 @@ type Stats struct {
 	IsClosed      bool
 	TotalFlushed  int64
 	TotalErrors   int64
+	OverflowCount int64
+	DQueEnabled   bool
+	DQueSize      int
 }
 
 // GetStats returns the current statistics of the WriteBatcher.
 func (wb *WriteBatcher[T]) GetStats() Stats {
-	wb.mu.Lock()
-	isClosed := wb.closed
-	wb.mu.Unlock()
+	isClosed := wb.closed.Load()
+
+	var dqueSize int
+	if wb.dq != nil {
+		dqueSize = wb.dq.Size()
+	}
 
 	return Stats{
 		ChannelSize:   wb.cfg.ChannelSize,
@@ -160,6 +188,9 @@ func (wb *WriteBatcher[T]) GetStats() Stats {
 		IsClosed:      isClosed,
 		TotalFlushed:  wb.totalFlushed.Load(),
 		TotalErrors:   wb.totalErrors.Load(),
+		OverflowCount: wb.overflowCount.Load(),
+		DQueEnabled:   wb.dq != nil,
+		DQueSize:      dqueSize,
 	}
 }
 
@@ -203,6 +234,12 @@ func New[T any](ctx context.Context, cfg Config[T]) (*WriteBatcher[T], error) {
 		cfg.ChannelSize = 1024
 	}
 
+	// DQue overflow directory setup (pass by value so cfg is not mutated)
+	dq, err := openDQue(cfg)
+	if err != nil {
+		return nil, err
+	}
+
 	ctx, cancel := context.WithCancel(ctx)
 	wb := &WriteBatcher[T]{
 		cfg:    cfg,
@@ -212,26 +249,120 @@ func New[T any](ctx context.Context, cfg Config[T]) (*WriteBatcher[T], error) {
 		cancel: cancel,
 	}
 
+	// Drain dque items into a local buffer BEFORE starting the worker.
+	// The channel is not available yet (worker consumes from it), so we
+	// drain into memory first to avoid blocking on a full channel.
+	var recovered []T
+	if dq != nil {
+		wb.dq = dq
+		wb.dqNotify = make(chan struct{}, 1)
+		wb.pendingCount.Store(int64(dq.Size()))
+
+		sz := dq.Size()
+		if sz > 0 {
+			slog.Info("writebatcher: recovering items from dque",
+				"count", sz,
+				"channel_capacity", cfg.ChannelSize)
+		}
+
+		for {
+			item, err := dq.Dequeue()
+			if err != nil {
+				if errors.Is(err, dque.ErrEmpty) {
+					break
+				}
+				slog.Error("writebatcher: error draining dque during crash recovery", "err", err)
+				break
+			}
+			recovered = append(recovered, *item)
+		}
+
+		slog.Info("writebatcher: dque recovery complete",
+			"recovered", len(recovered),
+			"pending", wb.pendingCount.Load())
+	}
+
+	// Start worker BEFORE feeding recovered items into the channel,
+	// so the worker can consume them and the channel never fills up.
 	go wb.worker()
+
+	// Feed recovered items into the channel (worker is running and draining)
+	for _, item := range recovered {
+		select {
+		case wb.ch <- item:
+		case <-wb.ctx.Done():
+			return wb, nil
+		}
+	}
 
 	return wb, nil
 }
 
-// appendAndMaybeFlush appends item to batch, updates batchBytes if SizeFunc is set,
-// and flushes when MaxBatchSize or MaxBatchBytes is reached. Returns the updated
-// batch and batchBytes (batch may be reset to empty after a flush).
-func (wb *WriteBatcher[T]) appendAndMaybeFlush(ctx context.Context, batch []T, batchBytes int64, item T) ([]T, int64) {
+// openDQue creates or opens a dque at the configured path for crash recovery.
+// Returns nil when DQueDirPath is empty. It also applies defaults for
+// DQueItemsPerSegment (250 when <= 0) and DQueTurbo (always enabled).
+func openDQue[T any](cfg Config[T]) (*dque.DQue[T], error) {
+	if cfg.DQueDirPath == "" {
+		return nil, nil
+	}
+	if cfg.DQueItemsPerSegment <= 0 {
+		cfg.DQueItemsPerSegment = 250
+	}
+
+	if err := os.MkdirAll(cfg.DQueDirPath, 0755); err != nil {
+		return nil, err
+	}
+
+	dq, err := dque.NewOrOpen[T]("writebatcher", cfg.DQueDirPath, cfg.DQueItemsPerSegment)
+	if err != nil {
+		return nil, err
+	}
+
+	_ = dq.TurboOn() // ignore error if already on
+
+	sz := dq.Size()
+	slog.Info("writebatcher: dque overflow initialized",
+		"dir", cfg.DQueDirPath,
+		"items_per_segment", cfg.DQueItemsPerSegment,
+		"turbo", true,
+		"existing_items", sz)
+
+	return dq, nil
+}
+
+// stopFlushTimer safely stops a timer and drains its channel to prevent
+// the timer from firing after Stop returns false (race condition between
+// Stop and the select receiving from the timer's channel).
+func (wb *WriteBatcher[T]) stopFlushTimer(flushTimer *time.Timer) {
+	if !flushTimer.Stop() {
+		select {
+		case <-flushTimer.C:
+		default:
+		}
+	}
+}
+
+// appendAndManageTimer appends item to batch, flushes if MaxBatchSize or
+// MaxBatchBytes is reached, and manages the flush timer (reset on first
+// item, stop on empty batch after flush).
+func (wb *WriteBatcher[T]) appendAndManageTimer(ctx context.Context, batch []T, batchBytes int64, item T, flushTimer *time.Timer) ([]T, int64) {
 	batch = append(batch, item)
 	if wb.cfg.SizeFunc != nil {
 		batchBytes += wb.cfg.SizeFunc(item)
 	}
 	if len(batch) >= wb.cfg.MaxBatchSize {
 		wb.flush(ctx, batch, batchBytes, "size_limit")
+		wb.stopFlushTimer(flushTimer)
 		return batch[:0], 0
 	}
 	if wb.cfg.MaxBatchBytes > 0 && batchBytes >= wb.cfg.MaxBatchBytes {
 		wb.flush(ctx, batch, batchBytes, "byte_limit")
+		wb.stopFlushTimer(flushTimer)
 		return batch[:0], 0
+	}
+	// First item in batch — start the flush timer
+	if len(batch) == 1 {
+		flushTimer.Reset(wb.cfg.FlushInterval)
 	}
 	return batch, batchBytes
 }
@@ -248,40 +379,35 @@ func (wb *WriteBatcher[T]) worker() {
 	}
 	defer flushTimer.Stop()
 
-	// Maintenance timer for periodic tasks (WAL checkpoint, optimization)
-	// Always create the timer, but only use it if MaintenanceInterval > 0
+	// Maintenance timer for periodic tasks (WAL checkpoint, optimization).
+	// Uses nil channel when disabled so the select case never fires.
+	var maintenanceCh <-chan time.Time
 	var maintenanceTimer *time.Timer
 	if wb.cfg.MaintenanceInterval > 0 {
 		maintenanceTimer = time.NewTimer(wb.cfg.MaintenanceInterval)
-		defer maintenanceTimer.Stop()
-	} else {
-		// Create a timer that never fires if maintenance is disabled
-		maintenanceTimer = time.NewTimer(time.Hour * 24 * 365) // 1 year
-		maintenanceTimer.Stop()
+		maintenanceCh = maintenanceTimer.C
 		defer maintenanceTimer.Stop()
 	}
 
 	for {
+		// Phase 1: Drain dque (non-blocking) before blocking on main select.
+		// This runs after every channel receive or dqNotify wake, interleaving
+		// non-blocking channel receives to prevent channel fill (death spiral prevention).
+		if wb.dq != nil {
+			exit := wb.drainDQueAll(&batch, &batchBytes, flushTimer)
+			if exit {
+				return
+			}
+		}
+
 		select {
 		case item, ok := <-wb.ch:
 			if !ok {
-				if len(batch) > 0 {
-					wb.flush(wb.ctx, batch, batchBytes, "close")
-				}
+				// Channel closed: drain remaining dque items, flush batch, then exit.
+				wb.drainRemaining(&batch, &batchBytes, "close", flushTimer)
 				return
 			}
-
-			batch, batchBytes = wb.appendAndMaybeFlush(wb.ctx, batch, batchBytes, item)
-			if len(batch) == 0 {
-				if !flushTimer.Stop() {
-					select {
-					case <-flushTimer.C:
-					default:
-					}
-				}
-			} else if len(batch) == 1 {
-				flushTimer.Reset(wb.cfg.FlushInterval)
-			}
+			batch, batchBytes = wb.appendAndManageTimer(wb.ctx, batch, batchBytes, item, flushTimer)
 
 		case <-flushTimer.C:
 			if len(batch) > 0 {
@@ -290,7 +416,7 @@ func (wb *WriteBatcher[T]) worker() {
 				batchBytes = 0
 			}
 
-		case <-maintenanceTimer.C:
+		case <-maintenanceCh:
 			// Only run maintenance if enabled (interval > 0)
 			if wb.cfg.MaintenanceInterval > 0 && wb.cfg.OnAfterCommit != nil {
 				lastWalCheckpoint, _ := wb.lastWalCheckpointTime.Load().(time.Time)
@@ -305,25 +431,167 @@ func (wb *WriteBatcher[T]) worker() {
 				maintenanceTimer.Reset(wb.cfg.MaintenanceInterval)
 			}
 
+		case <-wb.dqNotify:
+			// Woken by dqNotify — the drain loop at the top of the for loop
+			// will drain dque items before blocking on select.
+
 		case <-wb.ctx.Done():
-			// Shutdown requested. Drain remaining items from channel.
-			for {
-				select {
-				case item, ok := <-wb.ch:
-					if !ok {
-						if len(batch) > 0 {
-							wb.flush(wb.ctx, batch, batchBytes, "shutdown")
-						}
-						return
-					}
-					batch, batchBytes = wb.appendAndMaybeFlush(wb.ctx, batch, batchBytes, item)
-				default:
-					if len(batch) > 0 {
-						wb.flush(wb.ctx, batch, batchBytes, "shutdown")
-					}
-					return
-				}
+			// Context cancelled: drain remaining items (dque + channel) and exit.
+			wb.drainRemaining(&batch, &batchBytes, "shutdown", flushTimer)
+			return
+		}
+	}
+}
+
+// drainDQueAll non-blocking drains all available dque items, interleaving
+// non-blocking channel receives to prevent channel fill (death spiral prevention).
+// Returns true if the worker should exit (channel closed during drain).
+func (wb *WriteBatcher[T]) drainDQueAll(batch *[]T, batchBytes *int64, flushTimer *time.Timer) bool {
+	drained := 0
+	logInterval := 10000
+	defer func() {
+		if drained > 0 {
+			remaining := 0
+			if wb.dq != nil {
+				remaining = wb.dq.Size()
 			}
+			slog.Info("writebatcher: drained dque items",
+				"count", drained,
+				"remaining", remaining,
+				"overflow_total", wb.overflowCount.Load())
+		}
+	}()
+	for {
+		// Check context cancellation
+		select {
+		case <-wb.ctx.Done():
+			wb.drainRemaining(batch, batchBytes, "shutdown", flushTimer)
+			return true
+		default:
+		}
+
+		// Check flush timer to prevent starvation during long drain
+		select {
+		case <-flushTimer.C:
+			if len(*batch) > 0 {
+				wb.flush(wb.ctx, *batch, *batchBytes, "timeout")
+				*batch = (*batch)[:0]
+				*batchBytes = 0
+			}
+		default:
+		}
+
+		// Non-blocking channel receive (interleaving to prevent channel fill)
+		select {
+		case item, ok := <-wb.ch:
+			if !ok {
+				// Channel closed — drain remaining dque items and exit
+				wb.drainRemaining(batch, batchBytes, "close", flushTimer)
+				return true
+			}
+			*batch, *batchBytes = wb.appendAndManageTimer(wb.ctx, *batch, *batchBytes, item, flushTimer)
+			continue
+		default:
+		}
+
+		// Non-blocking dque dequeue
+		if wb.dq.Size() > 0 {
+			item, err := wb.dq.Dequeue()
+			if err != nil {
+				if errors.Is(err, dque.ErrEmpty) {
+					continue // TOCTOU: item was consumed between Size() and Dequeue()
+				}
+				return false
+			}
+			wb.overflowCount.Add(-1)
+			drained++
+			slog.Debug("writebatcher: dque dequeue",
+				"drained", drained,
+				"remaining", wb.dq.Size(),
+				"overflow_total", wb.overflowCount.Load())
+			if drained%logInterval == 0 {
+				slog.Info("writebatcher: draining dque progress",
+					"drained_so_far", drained,
+					"remaining", wb.dq.Size(),
+					"overflow_total", wb.overflowCount.Load())
+			}
+			*batch, *batchBytes = wb.appendAndManageTimer(wb.ctx, *batch, *batchBytes, *item, flushTimer)
+			continue
+		}
+
+		// Both empty — exit drain phase
+		return false
+	}
+}
+
+// drainRemaining best-effort drains dque + channel on context cancellation or
+// channel close. It first drains all dque items, then any remaining channel items,
+// flushing the final batch before returning. Unlike the normal path, it does not
+// manage the flush timer (timer resets are dead code during a tight drain loop).
+// Uses a 10-second drain-specific timeout to ensure faster shutdown than the
+// default 30-second flush timeout.
+func (wb *WriteBatcher[T]) drainRemaining(batch *[]T, batchBytes *int64, reason string, flushTimer *time.Timer) {
+	flushCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	drained := 0
+
+	// Drain dque items first
+	if wb.dq != nil {
+		for wb.dq.Size() > 0 {
+			item, err := wb.dq.Dequeue()
+			if err != nil {
+				if errors.Is(err, dque.ErrEmpty) {
+					continue
+				}
+				break
+			}
+			wb.overflowCount.Add(-1)
+			drained++
+			slog.Debug("writebatcher: drainRemaining dque dequeue",
+				"drained", drained,
+				"remaining", wb.dq.Size(),
+				"overflow_total", wb.overflowCount.Load())
+			*batch = append(*batch, *item)
+			if wb.cfg.SizeFunc != nil {
+				*batchBytes += wb.cfg.SizeFunc(*item)
+			}
+			if len(*batch) >= wb.cfg.MaxBatchSize || (wb.cfg.MaxBatchBytes > 0 && *batchBytes >= wb.cfg.MaxBatchBytes) {
+				wb.flush(flushCtx, *batch, *batchBytes, reason)
+				*batch = (*batch)[:0]
+				*batchBytes = 0
+			}
+		}
+	}
+
+	// Then drain any remaining items from channel
+	for {
+		select {
+		case item, ok := <-wb.ch:
+			if !ok {
+				if len(*batch) > 0 {
+					wb.flush(flushCtx, *batch, *batchBytes, reason)
+					*batch = (*batch)[:0]
+					*batchBytes = 0
+				}
+				return
+			}
+			*batch = append(*batch, item)
+			if wb.cfg.SizeFunc != nil {
+				*batchBytes += wb.cfg.SizeFunc(item)
+			}
+			if len(*batch) >= wb.cfg.MaxBatchSize || (wb.cfg.MaxBatchBytes > 0 && *batchBytes >= wb.cfg.MaxBatchBytes) {
+				wb.flush(flushCtx, *batch, *batchBytes, reason)
+				*batch = (*batch)[:0]
+				*batchBytes = 0
+			}
+		default:
+			if len(*batch) > 0 {
+				wb.flush(flushCtx, *batch, *batchBytes, reason)
+				*batch = (*batch)[:0]
+				*batchBytes = 0
+			}
+			return
 		}
 	}
 }
@@ -343,6 +611,7 @@ func (wb *WriteBatcher[T]) flush(ctx context.Context, batch []T, batchBytes int6
 	tx, err := wb.cfg.BeginTx(flushCtx)
 	if err != nil {
 		wb.totalErrors.Add(1)
+		wb.reEnqueueBatch(batch)
 		if wb.cfg.OnError != nil {
 			wb.cfg.OnError(err, copyBatch(batch))
 		} else {
@@ -350,20 +619,13 @@ func (wb *WriteBatcher[T]) flush(ctx context.Context, batch []T, batchBytes int6
 		}
 		return
 	}
-	if tx == nil {
-		wb.totalErrors.Add(1)
-		nilTxErr := errors.New("writebatcher: BeginTx returned nil tx without error")
-		if wb.cfg.OnError != nil {
-			wb.cfg.OnError(nilTxErr, copyBatch(batch))
-		} else {
-			slog.Error("writebatcher flush: BeginTx returned nil tx", "batch_size", len(batch))
-		}
-		return
-	}
 
 	if err := wb.cfg.Flush(flushCtx, tx, batch); err != nil {
 		wb.totalErrors.Add(1)
-		_ = tx.Rollback()
+		if tx != nil {
+			_ = tx.Rollback()
+		}
+		wb.reEnqueueBatch(batch)
 		if wb.cfg.OnError != nil {
 			wb.cfg.OnError(err, copyBatch(batch))
 		} else {
@@ -372,19 +634,23 @@ func (wb *WriteBatcher[T]) flush(ctx context.Context, batch []T, batchBytes int6
 		return
 	}
 
-	if err := tx.Commit(); err != nil {
-		wb.totalErrors.Add(1)
-		_ = tx.Rollback()
-		if wb.cfg.OnError != nil {
-			wb.cfg.OnError(err, copyBatch(batch))
-		} else {
-			slog.Error("writebatcher flush: Commit failed", "err", err, "batch_size", len(batch))
+	if tx != nil {
+		if err := tx.Commit(); err != nil {
+			wb.totalErrors.Add(1)
+			_ = tx.Rollback()
+			wb.reEnqueueBatch(batch)
+			if wb.cfg.OnError != nil {
+				wb.cfg.OnError(err, copyBatch(batch))
+			} else {
+				slog.Error("writebatcher flush: Commit failed", "err", err, "batch_size", len(batch))
+			}
+			return
 		}
-		return
 	}
 
 	// Transaction successfully committed - update stats and run maintenance callback
 	now := time.Now()
+	txElapsed := now.Sub(t0)
 	wb.totalFlushed.Add(n)
 	wb.totalCommitted.Add(n)
 	wb.lastCommitTime.Store(now)
@@ -400,7 +666,30 @@ func (wb *WriteBatcher[T]) flush(ctx context.Context, batch []T, batchBytes int6
 		wb.cfg.OnAfterCommit(wb.ctx, time.Time{}, time.Time{}, wb.totalCommitted.Load())
 	}
 
-	slog.Debug("writebatcher flush: completed", "trigger", reason, "batch_size", len(batch), "batch_bytes", humanize.Comma(batchBytes).String(), "elapsed", fmt.Sprintf("%v", time.Since(t0)))
+	totalElapsed := time.Since(t0)
+	postCommitElapsed := totalElapsed - txElapsed
+	slog.Debug("writebatcher flush: completed",
+		"trigger", reason,
+		"batch_size", len(batch),
+		"batch_bytes", humanize.Comma(batchBytes).String(),
+		"tx_elapsed", fmt.Sprintf("%v", txElapsed),
+		"post_commit_elapsed", fmt.Sprintf("%v", postCommitElapsed),
+		"elapsed", fmt.Sprintf("%v", totalElapsed))
+}
+
+// reEnqueueBatch re-submits a failed batch so items are not lost.
+// Called from flush when BeginTx, FlushFunc, or Commit fails.
+// Each item goes through Submit, which handles the channel fast path
+// and dque overflow path. If the batcher is closed during re-enqueue,
+// remaining items are lost.
+func (wb *WriteBatcher[T]) reEnqueueBatch(batch []T) {
+	for _, item := range batch {
+		if err := wb.Submit(item); err != nil {
+			slog.Warn("writebatcher: failed to re-enqueue item after batch error",
+				"err", err)
+			return
+		}
+	}
 }
 
 // copyBatch returns a new slice with the same contents as batch.
@@ -420,26 +709,67 @@ func copyBatch[T any](batch []T) []T {
 // at capacity (caller may retry or drop). It returns ErrClosed if the batcher
 // has been closed or the context passed to New was cancelled.
 //
+// When a dque is configured and the channel is full, Submit overflows the item
+// to the dque instead of returning ErrFull.
+//
 // Submit is safe to call concurrently from multiple goroutines.
 func (wb *WriteBatcher[T]) Submit(item T) error {
 	wb.mu.Lock()
-	if wb.closed {
-		wb.mu.Unlock()
+	defer wb.mu.Unlock()
+	if wb.closed.Load() {
 		return ErrClosed
 	}
 
-	var err error
+	// Fast path: try to send to channel without blocking.
+	// Never acquires overflowMu so TestSubmit_FastPath_NoOverflowMu passes.
 	select {
 	case wb.ch <- item:
 		wb.pendingCount.Add(1)
-		err = nil
+		return nil
 	case <-wb.ctx.Done():
-		err = ErrClosed
+		return ErrClosed
 	default:
-		err = ErrFull
 	}
-	wb.mu.Unlock()
-	return err
+
+	// Overflow path: channel is full. If dque is configured, enqueue there.
+	if wb.dq != nil {
+		pending := wb.pendingCount.Load()
+
+		wb.overflowWG.Add(1)
+		defer wb.overflowWG.Done()
+		wb.overflowMu.Lock()
+		defer wb.overflowMu.Unlock()
+		copied := item // copy for dque enqueue
+		if err := wb.dq.Enqueue(&copied); err != nil {
+			slog.Error("writebatcher: dque enqueue failed",
+				"err", err,
+				"pending", pending)
+			return ErrFull
+		}
+		wb.pendingCount.Add(1)
+		wb.overflowCount.Add(1)
+
+		slog.Debug("writebatcher: dque enqueue",
+			"overflow_count", wb.overflowCount.Load(),
+			"dque_size", wb.dq.Size(),
+			"pending", wb.pendingCount.Load())
+
+		// Periodic summary log every 1000 overflows to provide visibility
+		// without flooding the logs on every single overflow.
+		if cnt := wb.overflowCount.Load(); cnt%1000 == 0 {
+			slog.Info("writebatcher: dque overflow",
+				"overflow_count", cnt,
+				"dque_size", wb.dq.Size(),
+				"pending", wb.pendingCount.Load())
+		}
+		select {
+		case wb.dqNotify <- struct{}{}:
+		default:
+		}
+		return nil
+	}
+
+	return ErrFull
 }
 
 // PendingCount returns the number of items currently enqueued or in the current
@@ -450,22 +780,31 @@ func (wb *WriteBatcher[T]) PendingCount() int64 {
 }
 
 // Close signals shutdown: it closes the input channel, waits for the worker to
-// drain and flush any remaining items, then cancels the context and returns.
+// drain and flush any remaining items, cancels the context, then closes the
+// dque overflow queue (if configured) and returns.
 // After Close returns, all subsequent Submit calls return ErrClosed.
 //
 // Close is safe to call multiple times; after the first call it returns nil
 // immediately without blocking.
 func (wb *WriteBatcher[T]) Close() error {
 	wb.mu.Lock()
-	if wb.closed {
+	if wb.closed.Load() {
 		wb.mu.Unlock()
 		return nil
 	}
-	wb.closed = true
+	wb.closed.Store(true)
 	close(wb.ch)
 	wb.mu.Unlock()
 
+	// Wait for any in-flight overflow Submits to complete before the
+	// worker drains remaining items. After this returns, all overflowed
+	// items are enqueued to the dque and will be drained by the worker.
+	wb.overflowWG.Wait()
+
 	<-wb.done
 	wb.cancel()
+	if wb.dq != nil {
+		_ = wb.dq.Close()
+	}
 	return nil
 }

@@ -24,7 +24,7 @@ import (
 func TestAdminCredentials_E2E_UpdateFlow(t *testing.T) {
 	app := CreateApp(t, false)
 	defer app.Shutdown()
-	app.setDB()
+	t.Parallel()
 	if loadErr := app.loadConfig(); loadErr != nil {
 		t.Fatalf("Failed to load config: %v", loadErr)
 	}
@@ -148,7 +148,7 @@ func TestAdminCredentials_E2E_UpdateFlow(t *testing.T) {
 func TestAdminCredentials_E2E_ValidationErrors(t *testing.T) {
 	app := CreateApp(t, false)
 	defer app.Shutdown()
-	app.setDB()
+	t.Parallel()
 	if loadErr := app.loadConfig(); loadErr != nil {
 		t.Fatalf("Failed to load config: %v", loadErr)
 	}
@@ -219,7 +219,7 @@ func TestAdminCredentials_E2E_ValidationErrors(t *testing.T) {
 func TestAdminCredentials_E2E_WrongCurrentPassword(t *testing.T) {
 	app := CreateApp(t, false)
 	defer app.Shutdown()
-	app.setDB()
+	t.Parallel()
 	if loadErr := app.loadConfig(); loadErr != nil {
 		t.Fatalf("Failed to load config: %v", loadErr)
 	}

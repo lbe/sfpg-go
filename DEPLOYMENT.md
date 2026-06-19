@@ -170,6 +170,7 @@ WantedBy=multi-user.target
   - [ ] Run as a dedicated, least-privileged user
   - [ ] Ensure `DB/` and `Images/` directories exist and are writable by the service user
   - [ ] Back up `DB/sfpg.db` (and WAL files) and `Images/` regularly
+  - [ ] Back up `DB/sfpg.db-dque/` (auto-created persistent write overflow queue) alongside the DB to preserve in-flight pending writes across restarts
 - Operations
   - [ ] Configure systemd (or equivalent) with restart policy
   - [ ] Monitor logs in `logs/` and rotate as needed (log files are timestamped per startup)

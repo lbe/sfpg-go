@@ -170,3 +170,34 @@ func TestBatcherAdapter_PendingCount(t *testing.T) {
 		}
 	})
 }
+
+// TestBatcherAdapter_NilGuard verifies that newBatcherAdapter handles nil input
+// without panicking. A nil *WriteBatcher stored in a batchWriter interface is
+// non-nil at the interface level and will panic on method calls. The adapter
+// must detect this and store a nil interface value instead.
+func TestBatcherAdapter_NilGuard(t *testing.T) {
+	// newBatcherAdapter returns files.UnifiedBatcher, but SubmitCache is not
+	// part of that interface. We type-assert to *batcherAdapter for SubmitCache.
+	ub := newBatcherAdapter(nil)
+	ba, ok := ub.(*batcherAdapter)
+	if !ok {
+		t.Fatal("newBatcherAdapter did not return a *batcherAdapter")
+	}
+
+	// SubmitFile must return ErrClosed, not panic
+	err := ub.SubmitFile(&files.File{Path: "/test/path.jpg"})
+	if !errors.Is(err, writebatcher.ErrClosed) {
+		t.Errorf("SubmitFile with nil batcher: expected ErrClosed, got %v", err)
+	}
+
+	// SubmitCache must return ErrClosed, not panic
+	err = ba.SubmitCache(&cachelite.HTTPCacheEntry{Path: "/test/path"})
+	if !errors.Is(err, writebatcher.ErrClosed) {
+		t.Errorf("SubmitCache with nil batcher: expected ErrClosed, got %v", err)
+	}
+
+	// PendingCount must return 0, not panic
+	if count := ub.PendingCount(); count != 0 {
+		t.Errorf("PendingCount with nil batcher: expected 0, got %d", count)
+	}
+}

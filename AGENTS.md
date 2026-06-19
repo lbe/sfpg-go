@@ -102,7 +102,8 @@ The application follows a structured design with a clear separation of concerns,
   - **`parallelwalkdir`:** High-performance concurrent directory scanner.
   - **`workerpool`:** Dynamic worker pool that scales based on queue depth to process background tasks (importing, thumbnail generation).
   - **`cachelite`:** Database-backed HTTP response cache. Features asynchronous writes via the unified WriteBatcher and post-flush LRU eviction to avoid blocking request processing.
-  - **`writebatcher`:** High-throughput batched database writer for efficiently queuing and executing SQL insert/update operations.
+  - **`writebatcher`:** High-throughput batched database writer for efficiently queuing and executing SQL insert/update operations, with a persistent on-disk overflow queue (`dque`) for burst absorption and crash recovery.
+  - **`dque`/`flock`/`errors`:** Segment-backed persistent FIFO overflow queue, cross-platform file locking, and error sentinels used by `writebatcher`'s overflow path.
   - **`gensyncpool`:** Generic, type-safe wrappers around `sync.Pool` that enforce object resetting to prevent state leakage.
   - **`coords`:** Utility for parsing geographic coordinates (likely for EXIF data).
   - **`gen-test-files`:** Development utility for generating synthetic test files and directory structures.
