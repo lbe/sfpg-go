@@ -175,7 +175,7 @@ WITH cte_cache_map AS (
     UNION ALL
     SELECT 'file'   AS cache_type, '/info/image/'  AS cache_entry, 'true' AS htmx, 'box_info'        AS hx_target, 'gzip' AS encoding
     UNION ALL
-    SELECT 'file'   AS cache_type, '/lightbox/'    AS cache_entry, 'true' AS htmx, 'lightbox_content' AS hx_target, 'gzip' AS encoding
+    SELECT 'file'   AS cache_type, '/lightbox/'    AS cache_entry, 'true' AS htmx, 'lightbox-ui' AS hx_target, 'gzip' AS encoding
 ),
 cte_folders AS (
     SELECT b.cache_entry || f.id AS path, b.htmx, b.hx_target, b.encoding

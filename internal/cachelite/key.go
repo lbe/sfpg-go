@@ -73,13 +73,21 @@ func NewCacheKeyForRequest(r *http.Request, theme string) CacheKeyParams {
 		htmx = "false"
 	}
 
+	target := r.Header.Get("HX-Target")
+	// Normalize lightbox HX-Target values: both lightbox_content (initial open from
+	// gallery thumbnail) and lightbox-ui (navigation prev/next) produce the same
+	// response content, so they should share one cache entry.
+	if strings.HasPrefix(r.URL.Path, "/lightbox/") && (target == "lightbox_content" || target == "lightbox-ui") {
+		target = "lightbox-ui"
+	}
+
 	return CacheKeyParams{
 		Method: r.Method,
 		Path:   r.URL.Path,
 		Query:  r.URL.RawQuery,
 		HTMX: HTMXParams{
 			Request:   htmx,
-			Target:    r.Header.Get("HX-Target"),
+			Target:    target,
 			IsVariant: htmx != "false",
 		},
 		Theme:    theme,
@@ -121,7 +129,7 @@ func VariantForPath(path string) (hxTarget string, defaultEncoding string) {
 	case strings.HasPrefix(path, "/info/image/") || strings.HasPrefix(path, "/info/folder/"):
 		return "box_info", "gzip"
 	case strings.HasPrefix(path, "/lightbox/"):
-		return "lightbox_content", "gzip"
+		return "lightbox-ui", "gzip"
 	case strings.HasPrefix(path, "/gallery/"):
 		return "gallery-content", "gzip"
 	default:

@@ -89,7 +89,7 @@ func NewLoggingMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
 				"Query", r.URL.RawQuery,
 				"Status", rw.status,
 				"Bytes", rw.bytesWritten,
-				"Duration", time.Since(start),
+				"Duration", time.Since(start).String(),
 				"Headers", sanitizeHeaders(rw.Header()))
 		})
 	}

@@ -43,7 +43,7 @@
       {{ if .IsImage }}
         <div
           id="gallery-tile-{{ .ID }}"
-          class="gallery-tile"
+          class="gallery-tile content-visibility-auto contain-intrinsic-[224px_188px]"
           role="listitem"
           hx-get="/info/image/{{ .ID }}?v={{ cacheVersion }}"
           hx-target="#box_info"
@@ -82,6 +82,7 @@
                 src="{{ .ThumbPath }}"
                 alt="{{ .DispName }}"
                 class="max-h-full max-w-full rounded-[3px] object-contain"
+                loading="lazy"
               />
             </figure>
             <div class="truncate px-2 pb-2">
@@ -92,7 +93,7 @@
       {{ else }}
         <div
           id="gallery-tile-{{ .ID }}"
-          class="gallery-tile"
+          class="gallery-tile content-visibility-auto contain-intrinsic-[224px_188px]"
           role="listitem"
           hx-get="/info/folder/{{ .ID }}?v={{ cacheVersion }}"
           hx-target="#box_info"
@@ -122,6 +123,7 @@
                 src="{{ .ThumbPath }}"
                 alt="{{ .DispName }}"
                 class="max-h-full max-w-full rounded-[3px] object-contain"
+                loading="lazy"
               />
             </figure>
             <div class="truncate px-2 pb-2">

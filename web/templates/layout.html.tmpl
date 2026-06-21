@@ -71,7 +71,7 @@
           if #scaled-width is null exit end
 
           -- 1. Find the currently visible slot
-          set slots to <img.lightbox-slot/>
+          set slots to <img.lightbox-slot/> in #lightbox-images
           set img to null
           for s in slots
             if s does not match .hidden set img to s end
@@ -93,7 +93,13 @@
         end
 
         def updateScaled()
-          wait 20ms
+          -- Coalesce multiple calls per frame into a single rAF + one geometry
+          -- read. Replaces the previous fixed `wait 20ms` heuristic: rAF fires
+          -- after layout is flushed and before paint, which is the correct moment
+          -- to read clientWidth/clientHeight for the scaled-size readout.
+          if window.scaledRafPending exit end
+          set window.scaledRafPending to true
+          js return new Promise(function(resolve){ requestAnimationFrame(function(){ window.scaledRafPending = false; resolve() }) }) end
           call updateScaledValues()
         end
 
@@ -149,7 +155,7 @@
           wait 150ms
           call updateScaled()
           -- Recalculate scale for visible lightbox image
-          set slots to <img.lightbox-slot/>
+          set slots to <img.lightbox-slot/> in #lightbox-images
           for s in slots
             if s does not match .hidden
               call updateLightboxScale(s)
@@ -452,8 +458,39 @@
                 remove @disabled from #info-btn
                 remove @disabled from #lightbox-actual-size-btn
                 set window.galleryCountHTML to #image-count-display.innerHTML
+                -- Phase A perf: detach the large gallery DOM from the document
+                -- while the lightbox is open so per-step style recalc is O(1).
+                -- display:none was insufficient: hidden nodes still undergo style recalc.
+                -- Capture the node ref before detaching: getElementById cannot
+                -- find a detached node, so we must re-insert via this reference.
+                if #gallery-content exists
+                  set window.galleryScrollTop to #gallery-content.scrollTop
+                  set window.galleryContentNode to #gallery-content
+                  set window.galleryContentParent to #gallery-content.parentElement
+                  set window.galleryContentNext to #gallery-content.nextElementSibling
+                  remove #gallery-content from window.galleryContentParent
+                end
               on resizeMe call resizeLightbox()
               on closeModal
+                -- Phase A perf: reattach the gallery DOM removed on open.
+                -- Use the saved node ref (#gallery-content is detached, so the
+                -- #id lookup would return null and skip reattach).
+                if window.galleryContentNode is not null
+                  if window.galleryContentParent is not null
+                    if window.galleryContentNext is not null
+                      put window.galleryContentNode before window.galleryContentNext
+                    else
+                      put window.galleryContentNode at end of window.galleryContentParent
+                    end
+                  end
+                  if window.galleryScrollTop is not null
+                    set window.galleryContentNode.scrollTop to window.galleryScrollTop
+                  end
+                  set window.galleryContentNode to null
+                  set window.galleryScrollTop to null
+                  set window.galleryContentParent to null
+                  set window.galleryContentNext to null
+                end
                 set my.style.left to &apos;&apos;
                 remove .lightbox-open from body
                 set my.style.right to &apos;&apos;
@@ -470,7 +507,6 @@
                 add @disabled to #lightbox-next-btn
                 add @disabled to #lightbox-last-btn
                 add @disabled to #slideshow-btn
-                add @disabled to #info-btn
                 add @disabled to #lightbox-actual-size-btn
               '
           >
@@ -773,7 +809,7 @@
               _="on click
                   toggle .actual-size-mode on body
                   if body matches .actual-size-mode
-                    set slots to <img.lightbox-slot/>
+                    set slots to <img.lightbox-slot/> in #lightbox-images
                     set visibleImg to null
                     for s in slots
                       if s does not match .hidden set visibleImg to s end

@@ -152,9 +152,9 @@
             class="block h-full w-full"
             {{ if .HasPrev }}
               hx-get="/lightbox/{{ .PrevIndex }}?v={{ cacheVersion }}"
-              hx-target="#lightbox_content" hx-swap="innerHTML" title="Previous"
-              _="on click call lightboxNav('/raw-image/{{ .PrevIndex }}',
-              '{{ .PrevIndex }}')"
+              hx-target="#lightbox-ui" hx-select="#lightbox-ui"
+              hx-swap="outerHTML" title="Previous" _="on click call
+              lightboxNav('/raw-image/{{ .PrevIndex }}', '{{ .PrevIndex }}')"
             {{ end }}
           ></a>
         </div>
@@ -168,9 +168,9 @@
             class="block h-full w-full"
             {{ if .HasNext }}
               hx-get="/lightbox/{{ .NextIndex }}?v={{ cacheVersion }}"
-              hx-target="#lightbox_content" hx-swap="innerHTML" title="Next"
-              _="on click call lightboxNav('/raw-image/{{ .NextIndex }}',
-              '{{ .NextIndex }}')"
+              hx-target="#lightbox-ui" hx-select="#lightbox-ui"
+              hx-swap="outerHTML" title="Next" _="on click call
+              lightboxNav('/raw-image/{{ .NextIndex }}', '{{ .NextIndex }}')"
             {{ end }}
           ></a>
         </div>
@@ -194,8 +194,9 @@
     class="border-base-content/5 bg-base-300/60 text-base-content/70 hover:bg-base-300 hover:text-primary hover:border-primary/20 relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none"
     title="First"
     hx-get="/lightbox/{{ .FirstIndex }}?v={{ cacheVersion }}"
-    hx-target="#lightbox_content"
-    hx-swap="innerHTML"
+    hx-target="#lightbox-ui"
+    hx-select="#lightbox-ui"
+    hx-swap="outerHTML"
     _="on click call lightboxNav('/raw-image/{{ .FirstIndex }}', '{{ .FirstIndex }}')"
     {{ if not .HasPrev }}disabled{{ end }}
   >
@@ -221,8 +222,9 @@
     class="border-base-content/5 bg-base-300/60 text-base-content/70 hover:bg-base-300 hover:text-primary hover:border-primary/20 relative hidden h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none sm:flex"
     title="Previous"
     hx-get="/lightbox/{{ .PrevIndex }}?v={{ cacheVersion }}"
-    hx-target="#lightbox_content"
-    hx-swap="innerHTML"
+    hx-target="#lightbox-ui"
+    hx-select="#lightbox-ui"
+    hx-swap="outerHTML"
     _="on click call lightboxNav('/raw-image/{{ .PrevIndex }}', '{{ .PrevIndex }}')"
     {{ if not .HasPrev }}disabled{{ end }}
   >
@@ -247,8 +249,9 @@
     class="border-base-content/5 bg-base-300/60 text-base-content/70 hover:bg-base-300 hover:text-primary hover:border-primary/20 relative hidden h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none sm:flex"
     title="Next"
     hx-get="/lightbox/{{ .NextIndex }}?v={{ cacheVersion }}"
-    hx-target="#lightbox_content"
-    hx-swap="innerHTML"
+    hx-target="#lightbox-ui"
+    hx-select="#lightbox-ui"
+    hx-swap="outerHTML"
     _="on click call lightboxNav('/raw-image/{{ .NextIndex }}', '{{ .NextIndex }}')"
     {{ if not .HasNext }}disabled{{ end }}
   >
@@ -273,8 +276,9 @@
     class="border-base-content/5 bg-base-300/60 text-base-content/70 hover:bg-base-300 hover:text-primary hover:border-primary/20 relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none"
     title="Last"
     hx-get="/lightbox/{{ .LastIndex }}?v={{ cacheVersion }}"
-    hx-target="#lightbox_content"
-    hx-swap="innerHTML"
+    hx-target="#lightbox-ui"
+    hx-select="#lightbox-ui"
+    hx-swap="outerHTML"
     _="on click call lightboxNav('/raw-image/{{ .LastIndex }}', '{{ .LastIndex }}')"
     {{ if not .HasNext }}disabled{{ end }}
   >

@@ -664,3 +664,73 @@ func TestSkip404(t *testing.T) {
 		t.Error("expected 404 response not to be cached")
 	}
 }
+
+// TestCacheLightbox_NavigationVariantHit verifies that a lightbox request with
+// HX-Target: lightbox-ui hits the cache when the entry was stored by a request
+// with HX-Target: lightbox_content (and vice versa). Both should normalize to
+// the same cache key.
+func TestCacheLightbox_NavigationVariantHit(t *testing.T) {
+	app := CreateApp(t, false)
+
+	callCount := 0
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.Header().Set("Content-Type", "text/html")
+		w.Header().Set("Cache-Control", "public, max-age=3600")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte("lightbox content"))
+	})
+
+	cfg := cachelite.CacheConfig{
+		Enabled:         true,
+		MaxEntrySize:    10 * 1024 * 1024,
+		MaxTotalSize:    500 * 1024 * 1024,
+		DefaultTTL:      time.Hour,
+		CacheableRoutes: []string{"/lightbox/"},
+	}
+
+	cacheMW := createCacheMWWithSyncSubmit(app, cfg)
+	mw := cacheMW.Middleware(handler)
+
+	// First request: initial lightbox open with HX-Target: lightbox_content
+	req1 := httptest.NewRequest("GET", "/lightbox/1", nil)
+	req1.Header.Set("HX-Request", "true")
+	req1.Header.Set("HX-Target", "lightbox_content")
+	req1.Header.Set("Accept-Encoding", "gzip")
+	w1 := httptest.NewRecorder()
+	mw.ServeHTTP(w1, req1)
+
+	if w1.Code != 200 {
+		t.Fatalf("first request status = %d, want 200", w1.Code)
+	}
+	if w1.Header().Get("X-Cache") != "MISS" {
+		t.Fatalf("first request X-Cache = %q, want MISS", w1.Header().Get("X-Cache"))
+	}
+	if callCount != 1 {
+		t.Fatalf("handler calls after first request = %d, want 1", callCount)
+	}
+
+	// Second request: navigation with HX-Target: lightbox-ui
+	// After normalization, this should produce the same cache key and HIT
+	req2 := httptest.NewRequest("GET", "/lightbox/1", nil)
+	req2.Header.Set("HX-Request", "true")
+	req2.Header.Set("HX-Target", "lightbox-ui")
+	req2.Header.Set("Accept-Encoding", "gzip")
+	w2 := httptest.NewRecorder()
+	mw.ServeHTTP(w2, req2)
+
+	if w2.Code != 200 {
+		t.Fatalf("second request status = %d, want 200", w2.Code)
+	}
+	if w2.Header().Get("X-Cache") != "HIT" {
+		t.Errorf("second request X-Cache = %q, want HIT (lightbox_content and lightbox-ui should share one cache entry)", w2.Header().Get("X-Cache"))
+	}
+	if callCount != 1 {
+		t.Errorf("handler calls after second request = %d, want 1 (cache hit, handler should not be called)", callCount)
+	}
+
+	// Verify the cached body is correct
+	if w2.Body.String() != "lightbox content" {
+		t.Errorf("second request body = %q, want %q", w2.Body.String(), "lightbox content")
+	}
+}

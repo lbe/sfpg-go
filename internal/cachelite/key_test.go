@@ -118,6 +118,40 @@ func TestNewCacheKeyForPreload(t *testing.T) {
 	}
 }
 
+func TestNewCacheKeyForRequest_LightboxTargetNormalization(t *testing.T) {
+	targets := []string{"lightbox_content", "lightbox-ui"}
+	var keys []string
+
+	for _, target := range targets {
+		req, _ := http.NewRequest("GET", "/lightbox/123?v=1", nil)
+		req.Header.Set("HX-Request", "true")
+		req.Header.Set("HX-Target", target)
+		req.Header.Set("Accept-Encoding", "gzip")
+
+		params := NewCacheKeyForRequest(req, "dark")
+		key := NewCacheKey(params)
+		keys = append(keys, key)
+
+		if params.HTMX.Target != "lightbox-ui" {
+			t.Errorf("NewCacheKeyForRequest with target=%q: got HXTarget=%q, want lightbox-ui", target, params.HTMX.Target)
+		}
+	}
+
+	if keys[0] != keys[1] {
+		t.Errorf("lightbox_content and lightbox-ui produced different cache keys:\n  %s\n  %s", keys[0], keys[1])
+	}
+
+	// Verify non-lightbox paths are NOT normalized
+	req, _ := http.NewRequest("GET", "/gallery/123?v=1", nil)
+	req.Header.Set("HX-Request", "true")
+	req.Header.Set("HX-Target", "gallery-content")
+	req.Header.Set("Accept-Encoding", "gzip")
+	params := NewCacheKeyForRequest(req, "dark")
+	if params.HTMX.Target != "gallery-content" {
+		t.Errorf("non-lightbox path: expected HXTarget=gallery-content, got %q", params.HTMX.Target)
+	}
+}
+
 func TestVariantForPath(t *testing.T) {
 	tests := []struct {
 		path         string
@@ -126,7 +160,7 @@ func TestVariantForPath(t *testing.T) {
 	}{
 		{"/info/image/", "box_info", "gzip"},
 		{"/info/folder/", "box_info", "gzip"},
-		{"/lightbox/", "lightbox_content", "gzip"},
+		{"/lightbox/", "lightbox-ui", "gzip"},
 		{"/gallery/", "gallery-content", "gzip"},
 		{"/other/", "", "identity"},
 	}

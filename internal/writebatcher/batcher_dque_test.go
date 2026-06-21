@@ -1713,8 +1713,8 @@ func Test_E2E_CrashRecovery(t *testing.T) {
 
 // Test_E2E_CrashRecovery_OverCapacity verifies that crash recovery handles
 // more items in the dque than the channel buffer, without deadlock.
-// This exercises the fix where dque items are drained to a local buffer
-// before starting the worker, then fed into the channel after.
+// The worker drains dque items incrementally via drainDQueAll on its first
+// iteration, avoiding unbounded memory allocation on startup.
 func Test_E2E_CrashRecovery_OverCapacity(t *testing.T) {
 	dir := t.TempDir()
 
@@ -1760,13 +1760,13 @@ func Test_E2E_CrashRecovery_OverCapacity(t *testing.T) {
 			return nil
 		},
 		MaxBatchSize: 100,
-		ChannelSize:  128, // intentionally small to force buffer-before-worker path
+		ChannelSize:  128, // intentionally small to exercise worker-drain path
 		DQueDirPath:  dir,
 	}
 
 	// This must NOT deadlock: the dque has more items than channel capacity.
-	// The fix drains dque to a local buffer before starting the worker, then
-	// feeds items into the channel after the worker is running.
+	// The worker drains dque items incrementally via drainDQueAll on its first
+	// iteration, avoiding a synchronous memory drain at startup.
 	wb, err := New(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("New: %v", err)

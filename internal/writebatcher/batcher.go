@@ -249,10 +249,6 @@ func New[T any](ctx context.Context, cfg Config[T]) (*WriteBatcher[T], error) {
 		cancel: cancel,
 	}
 
-	// Drain dque items into a local buffer BEFORE starting the worker.
-	// The channel is not available yet (worker consumes from it), so we
-	// drain into memory first to avoid blocking on a full channel.
-	var recovered []T
 	if dq != nil {
 		wb.dq = dq
 		wb.dqNotify = make(chan struct{}, 1)
@@ -261,39 +257,13 @@ func New[T any](ctx context.Context, cfg Config[T]) (*WriteBatcher[T], error) {
 		sz := dq.Size()
 		if sz > 0 {
 			slog.Info("writebatcher: recovering items from dque",
-				"count", sz,
-				"channel_capacity", cfg.ChannelSize)
+				"count", sz)
 		}
-
-		for {
-			item, err := dq.Dequeue()
-			if err != nil {
-				if errors.Is(err, dque.ErrEmpty) {
-					break
-				}
-				slog.Error("writebatcher: error draining dque during crash recovery", "err", err)
-				break
-			}
-			recovered = append(recovered, *item)
-		}
-
-		slog.Info("writebatcher: dque recovery complete",
-			"recovered", len(recovered),
-			"pending", wb.pendingCount.Load())
 	}
 
-	// Start worker BEFORE feeding recovered items into the channel,
-	// so the worker can consume them and the channel never fills up.
+	// Start worker. The worker's drainDQueAll loop handles draining
+	// dque items into batches on its first iteration.
 	go wb.worker()
-
-	// Feed recovered items into the channel (worker is running and draining)
-	for _, item := range recovered {
-		select {
-		case wb.ch <- item:
-		case <-wb.ctx.Done():
-			return wb, nil
-		}
-	}
 
 	return wb, nil
 }

@@ -111,25 +111,27 @@ func TestGenerateCacheKeyWithHX_ForInfoImage_MatchesBrowserRequest(t *testing.T)
 	}
 }
 
-// TestGenerateCacheKeyWithHX_ForLightbox_MatchesBrowserRequest verifies keys for
-// lightbox requests (HX-Target: lightbox_content).
-// match what the middleware builds, so preloaded entries are found by real browser requests.
-func TestGenerateCacheKeyWithHX_ForLightbox_MatchesBrowserRequest(t *testing.T) {
-	// Middleware uses NewCacheKeyForRequest which builds CacheKeyParams
+// TestGenerateCacheKeyWithHX_ForLightbox_CanonicalTarget verifies that a preload key
+// built with the canonical lightbox target (lightbox-ui) matches what the middleware
+// produces after normalizing lightbox HX-Target values.
+func TestGenerateCacheKeyWithHX_ForLightbox_CanonicalTarget(t *testing.T) {
+	// The canonical target for lightbox cache keys is lightbox-ui.
+	// Preload (via VariantForPath) and middleware (via normalization in NewCacheKeyForRequest)
+	// both converge on this value.
 	key := cachelite.NewCacheKey(cachelite.CacheKeyParams{
 		Method: "GET",
 		Path:   "/lightbox/15",
 		Query:  "v=20260202-01",
 		HTMX: cachelite.HTMXParams{
 			Request:   "true",
-			Target:    "lightbox_content",
+			Target:    "lightbox-ui",
 			IsVariant: true,
 		},
 		Encoding: "gzip",
 	})
-	// Expected: GET:/lightbox/15?v=20260202-01|HX=true|HXTarget=lightbox_content|IsVariant=true|Theme=dark|gzip
-	if key != "GET:/lightbox/15?v=20260202-01|HX=true|HXTarget=lightbox_content|IsVariant=true|Theme=dark|gzip" {
-		t.Errorf("GenerateCacheKeyWithHX = %q, want GET:/lightbox/15?v=20260202-01|HX=true|HXTarget=lightbox_content|IsVariant=true|Theme=dark|gzip", key)
+	expected := "GET:/lightbox/15?v=20260202-01|HX=true|HXTarget=lightbox-ui|IsVariant=true|Theme=dark|gzip"
+	if key != expected {
+		t.Errorf("Canonical lightbox cache key = %q, want %q", key, expected)
 	}
 }
 
