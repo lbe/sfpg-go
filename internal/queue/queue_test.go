@@ -86,7 +86,9 @@ func TestQueueDoubleEnded(t *testing.T) {
 func TestQueuePeekAndSlice(t *testing.T) {
 	q := NewQueue[int](16)
 	for i := 1; i <= 5; i++ {
-		_ = q.Enqueue(i)
+		if err := q.Enqueue(i); err != nil {
+			t.Fatalf("Enqueue: %v", err)
+		}
 	}
 	front, err := q.PeekFront()
 	if err != nil || front != 1 {
@@ -141,19 +143,25 @@ func TestQueueErrors(t *testing.T) {
 func TestQueueResizeShrink(t *testing.T) {
 	q := NewQueue[int](16)
 	for i := range 128 {
-		_ = q.Enqueue(i)
+		if err := q.Enqueue(i); err != nil {
+			t.Fatalf("Enqueue: %v", err)
+		}
 	}
 	if q.Cap() < 128 {
 		t.Errorf("Queue should have grown, got cap %d", q.Cap())
 	}
 	for range 120 {
-		_, _ = q.Dequeue()
+		if _, err := q.Dequeue(); err != nil {
+			t.Fatalf("Dequeue: %v", err)
+		}
 	}
 	if q.Cap() > 32 {
 		t.Errorf("Queue should have shrunk, got cap %d", q.Cap())
 	}
 	for range 8 {
-		_, _ = q.Dequeue()
+		if _, err := q.Dequeue(); err != nil {
+			t.Fatalf("Dequeue: %v", err)
+		}
 	}
 	if q.Cap() != 16 {
 		t.Errorf("Queue should not shrink below minCapacity, got cap %d", q.Cap())
@@ -163,7 +171,9 @@ func TestQueueResizeShrink(t *testing.T) {
 func TestQueueClear(t *testing.T) {
 	q := NewQueue[int](16)
 	for i := range 10 {
-		_ = q.Enqueue(i)
+		if err := q.Enqueue(i); err != nil {
+			t.Fatalf("Enqueue: %v", err)
+		}
 	}
 	q.Clear()
 	if !q.IsEmpty() {
@@ -186,7 +196,9 @@ func TestQueueConcurrent(t *testing.T) {
 		wg.Add(2)
 		go func(val int) {
 			defer wg.Done()
-			_ = q.Enqueue(val)
+			if enqErr := q.Enqueue(val); enqErr != nil {
+				t.Errorf("Enqueue: %v", enqErr)
+			}
 		}(i)
 		go func(idx int) {
 			defer wg.Done()

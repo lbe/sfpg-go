@@ -3,6 +3,7 @@ package files
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"image"
 	"image/jpeg"
 	"os"
@@ -91,7 +92,7 @@ func createTestPoolsAndDir(t *testing.T) (roPool *dbconnpool.DbSQLConnPool, rwPo
 		db.Close()
 		t.Fatalf("migrate instance: %v", err)
 	}
-	if upErr := m.Up(); upErr != nil && upErr != migrate.ErrNoChange {
+	if upErr := m.Up(); upErr != nil && !errors.Is(upErr, migrate.ErrNoChange) {
 		db.Close()
 		t.Fatalf("migrate up: %v", upErr)
 	}
@@ -104,7 +105,7 @@ func createTestPoolsAndDir(t *testing.T) (roPool *dbconnpool.DbSQLConnPool, rwPo
 	if err != nil {
 		t.Fatalf("NewThumbsMigrator: %v", err)
 	}
-	if upErr := m2.Up(); upErr != nil && upErr != migrate.ErrNoChange {
+	if upErr := m2.Up(); upErr != nil && !errors.Is(upErr, migrate.ErrNoChange) {
 		m2.Close()
 		t.Fatalf("thumbs migrate up: %v", upErr)
 	}

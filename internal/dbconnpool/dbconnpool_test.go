@@ -46,7 +46,7 @@ func setupTestDB(t testing.TB) (dbPath, thumbsDBPath string, cleanup func()) {
 	if err != nil {
 		t.Fatalf("failed to create migrate instance: %v", err)
 	}
-	if err = m.Up(); err != nil && err != migrate.ErrNoChange {
+	if err = m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		t.Fatalf("failed to apply migrations: %v", err)
 	}
 	m.Close()
@@ -55,7 +55,7 @@ func setupTestDB(t testing.TB) (dbPath, thumbsDBPath string, cleanup func()) {
 	if err != nil {
 		t.Fatalf("failed to create thumbs migrator: %v", err)
 	}
-	if err = m2.Up(); err != nil && err != migrate.ErrNoChange {
+	if err = m2.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		m2.Close()
 		t.Fatalf("failed to apply thumbs migrations: %v", err)
 	}
@@ -997,7 +997,7 @@ func TestThumbsDBAttach(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewMigrator for main DB: %v", err)
 	}
-	if upErr := mainMigrator.Up(); upErr != nil && upErr != migrate.ErrNoChange {
+	if upErr := mainMigrator.Up(); upErr != nil && !errors.Is(upErr, migrate.ErrNoChange) {
 		mainMigrator.Close()
 		t.Fatalf("main migrate up: %v", upErr)
 	}
@@ -1008,7 +1008,7 @@ func TestThumbsDBAttach(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewThumbsMigrator: %v", err)
 	}
-	if upErr := m.Up(); upErr != nil && upErr != migrate.ErrNoChange {
+	if upErr := m.Up(); upErr != nil && !errors.Is(upErr, migrate.ErrNoChange) {
 		m.Close()
 		t.Fatalf("thumbs migrate up: %v", upErr)
 	}
@@ -1056,7 +1056,7 @@ func TestThumbsDBAttachPragmas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewMigrator for main DB: %v", err)
 	}
-	if upErr := mainMigrator.Up(); upErr != nil && upErr != migrate.ErrNoChange {
+	if upErr := mainMigrator.Up(); upErr != nil && !errors.Is(upErr, migrate.ErrNoChange) {
 		mainMigrator.Close()
 		t.Fatalf("main migrate up: %v", upErr)
 	}
@@ -1067,7 +1067,7 @@ func TestThumbsDBAttachPragmas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewThumbsMigrator: %v", err)
 	}
-	if upErr := m.Up(); upErr != nil && upErr != migrate.ErrNoChange {
+	if upErr := m.Up(); upErr != nil && !errors.Is(upErr, migrate.ErrNoChange) {
 		m.Close()
 		t.Fatalf("thumbs migrate up: %v", upErr)
 	}

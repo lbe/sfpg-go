@@ -37,7 +37,11 @@ func TestNewBootstrapLogger_CreatesLoggerWithCorrectDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBootstrapLogger should not fail: %v", err)
 	}
-	defer logger.Shutdown()
+	defer func() {
+		if sErr := logger.Shutdown(); sErr != nil {
+			t.Fatal(sErr)
+		}
+	}()
 
 	if logger == nil {
 		t.Fatal("logger should not be nil")
@@ -69,7 +73,11 @@ func TestNewBootstrapLogger_CreatesLogsDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBootstrapLogger should not fail: %v", err)
 	}
-	defer logger.Shutdown()
+	defer func() {
+		if sErr := logger.Shutdown(); sErr != nil {
+			t.Fatal(sErr)
+		}
+	}()
 
 	// Verify logs directory was created
 	if info, err := os.Stat(logsDir); err != nil || !info.IsDir() {
@@ -87,7 +95,11 @@ func TestNewBootstrapLogger_CreatesLogFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBootstrapLogger should not fail: %v", err)
 	}
-	defer logger.Shutdown()
+	defer func() {
+		if sErr := logger.Shutdown(); sErr != nil {
+			t.Fatal(sErr)
+		}
+	}()
 
 	logger.mu.RLock()
 	logFile := logger.file
@@ -119,7 +131,11 @@ func TestNewBootstrapLogger_DoesNotScheduleRollover(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBootstrapLogger should not fail: %v", err)
 	}
-	defer logger.Shutdown()
+	defer func() {
+		if sErr := logger.Shutdown(); sErr != nil {
+			t.Fatal(sErr)
+		}
+	}()
 
 	logger.mu.RLock()
 	rolloverTaskID := logger.rolloverTaskID
@@ -145,7 +161,11 @@ func TestReloadFromConfig_UpdatesLogLevelWhenDirectoryUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBootstrapLogger should not fail: %v", err)
 	}
-	defer logger.Shutdown()
+	defer func() {
+		if sErr := logger.Shutdown(); sErr != nil {
+			t.Fatal(sErr)
+		}
+	}()
 
 	// Get initial log level
 	logger.mu.RLock()
@@ -193,7 +213,11 @@ func TestReloadFromConfig_SwitchesToNewDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBootstrapLogger should not fail: %v", err)
 	}
-	defer logger.Shutdown()
+	defer func() {
+		if sErr := logger.Shutdown(); sErr != nil {
+			t.Fatal(sErr)
+		}
+	}()
 
 	// Get initial directory
 	logger.mu.RLock()
@@ -243,7 +267,11 @@ func TestReloadFromConfig_SchedulesRolloverAndRetention(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBootstrapLogger should not fail: %v", err)
 	}
-	defer logger.Shutdown()
+	defer func() {
+		if sErr := logger.Shutdown(); sErr != nil {
+			t.Fatal(sErr)
+		}
+	}()
 
 	logDir := filepath.Join(tmpDir, "logs")
 	logLevel := "debug"
@@ -310,7 +338,11 @@ func TestThreadSafety_ConcurrentReloadFromConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBootstrapLogger should not fail: %v", err)
 	}
-	defer logger.Shutdown()
+	defer func() {
+		if sErr := logger.Shutdown(); sErr != nil {
+			t.Fatal(sErr)
+		}
+	}()
 
 	logDir := filepath.Join(tmpDir, "logs")
 	logLevel := "debug"
@@ -349,7 +381,11 @@ func TestMutexProtection_TaskIDs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBootstrapLogger should not fail: %v", err)
 	}
-	defer logger.Shutdown()
+	defer func() {
+		if sErr := logger.Shutdown(); sErr != nil {
+			t.Fatal(sErr)
+		}
+	}()
 
 	logDir := filepath.Join(tmpDir, "logs")
 	logLevel := "debug"
@@ -387,7 +423,11 @@ func TestLoggerGetters_FileReturnsCurrentFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBootstrapLogger should not fail: %v", err)
 	}
-	defer logger.Shutdown()
+	defer func() {
+		if sErr := logger.Shutdown(); sErr != nil {
+			t.Fatal(sErr)
+		}
+	}()
 
 	logDir := filepath.Join(tmpDir, "logs")
 	err = logger.ReloadFromConfig(logDir, "info", "daily", 7, sched)
@@ -420,7 +460,11 @@ func TestLoggerGetters_FilePathReturnsCorrectPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBootstrapLogger should not fail: %v", err)
 	}
-	defer logger.Shutdown()
+	defer func() {
+		if sErr := logger.Shutdown(); sErr != nil {
+			t.Fatal(sErr)
+		}
+	}()
 
 	logDir := filepath.Join(tmpDir, "logs")
 	err = logger.ReloadFromConfig(logDir, "warn", "weekly", 5, sched)
@@ -454,7 +498,11 @@ func TestLoggerGetters_LogsDirReturnsCorrectDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBootstrapLogger should not fail: %v", err)
 	}
-	defer logger.Shutdown()
+	defer func() {
+		if sErr := logger.Shutdown(); sErr != nil {
+			t.Fatal(sErr)
+		}
+	}()
 
 	logDir := filepath.Join(tmpDir, "logs")
 	err = logger.ReloadFromConfig(logDir, "error", "monthly", 3, sched)
@@ -487,7 +535,11 @@ func TestLoggerGetters_LogLevelReturnsCurrentLevel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBootstrapLogger should not fail: %v", err)
 	}
-	defer logger.Shutdown()
+	defer func() {
+		if sErr := logger.Shutdown(); sErr != nil {
+			t.Fatal(sErr)
+		}
+	}()
 
 	// Default level should be debug
 	level := logger.LogLevel()
@@ -517,7 +569,11 @@ func TestLoggerGetters_SlogLoggerReturnsValidLogger(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBootstrapLogger should not fail: %v", err)
 	}
-	defer logger.Shutdown()
+	defer func() {
+		if sErr := logger.Shutdown(); sErr != nil {
+			t.Fatal(sErr)
+		}
+	}()
 
 	// SlogLogger() should return a non-nil logger
 	slogLogger := logger.SlogLogger()

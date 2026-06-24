@@ -28,10 +28,9 @@ func TestStartupLogging_BootstrapThenReload_CapturesEarlyLogs(t *testing.T) {
 	configuredLogDir := filepath.Join(tmpDir, "configured-logs")
 
 	// Create app with temp rootDir
-	app := &App{
-		rootDir:   tmpDir,
-		scheduler: scheduler.NewScheduler(1),
-	}
+	app := &App{}
+	app.rootDir = tmpDir
+	app.scheduler = scheduler.NewScheduler(1)
 
 	// Action: Call setupBootstrapLogging
 	app.setupBootstrapLogging()
@@ -100,10 +99,9 @@ func TestStartupLogging_BootstrapThenReload_SameDirectory(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// Create app with temp rootDir
-	app := &App{
-		rootDir:   tmpDir,
-		scheduler: scheduler.NewScheduler(1),
-	}
+	app := &App{}
+	app.rootDir = tmpDir
+	app.scheduler = scheduler.NewScheduler(1)
 
 	// Action: Call setupBootstrapLogging
 	app.setupBootstrapLogging()
@@ -148,10 +146,9 @@ func TestStartupLogging_BootstrapThenReload_UpdatesLogLevel(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// Create app with temp rootDir
-	app := &App{
-		rootDir:   tmpDir,
-		scheduler: scheduler.NewScheduler(1),
-	}
+	app := &App{}
+	app.rootDir = tmpDir
+	app.scheduler = scheduler.NewScheduler(1)
 
 	// Action: Call setupBootstrapLogging (sets level to debug)
 	app.setupBootstrapLogging()
@@ -193,10 +190,9 @@ func TestStartupLogging_BootstrapWithInvalidConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// Create app with temp rootDir
-	app := &App{
-		rootDir:   tmpDir,
-		scheduler: scheduler.NewScheduler(1),
-	}
+	app := &App{}
+	app.rootDir = tmpDir
+	app.scheduler = scheduler.NewScheduler(1)
 
 	// Action: Call setupBootstrapLogging
 	app.setupBootstrapLogging()
@@ -229,10 +225,9 @@ func TestStartupLogging_BootstrapThenReload_CreatesNewDirectory(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// Create app with temp rootDir
-	app := &App{
-		rootDir:   tmpDir,
-		scheduler: scheduler.NewScheduler(1),
-	}
+	app := &App{}
+	app.rootDir = tmpDir
+	app.scheduler = scheduler.NewScheduler(1)
 
 	// Action: Call setupBootstrapLogging
 	app.setupBootstrapLogging()
@@ -277,10 +272,9 @@ func TestStartupLogging_BootstrapThenReload_AbsoluteConfigPath(t *testing.T) {
 	absoluteLogDir := filepath.Join(tmpDir, "absolute-logs")
 
 	// Create app with temp rootDir
-	app := &App{
-		rootDir:   tmpDir,
-		scheduler: scheduler.NewScheduler(1),
-	}
+	app := &App{}
+	app.rootDir = tmpDir
+	app.scheduler = scheduler.NewScheduler(1)
 
 	// Action: Call setupBootstrapLogging
 	app.setupBootstrapLogging()
@@ -317,10 +311,9 @@ func TestStartupLogging_BootstrapThenReload_InvalidLevel(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// Create app with temp rootDir
-	app := &App{
-		rootDir:   tmpDir,
-		scheduler: scheduler.NewScheduler(1),
-	}
+	app := &App{}
+	app.rootDir = tmpDir
+	app.scheduler = scheduler.NewScheduler(1)
 
 	// Action: Call setupBootstrapLogging
 	app.setupBootstrapLogging()
@@ -375,9 +368,8 @@ func TestStartupLogging_BootstrapThenReload_AllLevelTransitions(t *testing.T) {
 			tmpDir := t.TempDir()
 
 			// Create app with temp rootDir
-			app := &App{
-				rootDir: tmpDir,
-			}
+			app := &App{}
+			app.rootDir = tmpDir
 
 			// Action: Call setupBootstrapLogging
 			app.setupBootstrapLogging()
@@ -421,10 +413,9 @@ func TestConfigAPI_LogDirChangedToSame_NoLoggingReload(t *testing.T) {
 	// Setup: Create temp rootDir
 	tmpDir := t.TempDir()
 
-	app := &App{
-		rootDir:   tmpDir,
-		scheduler: scheduler.NewScheduler(1),
-	}
+	app := &App{}
+	app.rootDir = tmpDir
+	app.scheduler = scheduler.NewScheduler(1)
 
 	// Bootstrap logging setup
 	app.setupBootstrapLogging()
@@ -457,10 +448,9 @@ func TestConfigAPI_LogLevelChangedSameDir_UpdatesLevel(t *testing.T) {
 	// Setup: Create temp rootDir
 	tmpDir := t.TempDir()
 
-	app := &App{
-		rootDir:   tmpDir,
-		scheduler: scheduler.NewScheduler(1),
-	}
+	app := &App{}
+	app.rootDir = tmpDir
+	app.scheduler = scheduler.NewScheduler(1)
 
 	// Bootstrap logging setup
 	app.setupBootstrapLogging()
@@ -500,10 +490,9 @@ func TestConfigAPI_SameDir_NoInterruption(t *testing.T) {
 	// Setup: Create temp rootDir
 	tmpDir := t.TempDir()
 
-	app := &App{
-		rootDir:   tmpDir,
-		scheduler: scheduler.NewScheduler(1),
-	}
+	app := &App{}
+	app.rootDir = tmpDir
+	app.scheduler = scheduler.NewScheduler(1)
 
 	// Bootstrap logging setup
 	app.setupBootstrapLogging()
@@ -539,10 +528,9 @@ func TestConfigAPI_LogDirChangedToDifferent_NewFileCreated(t *testing.T) {
 	// Setup: Create temp rootDir
 	tmpDir := t.TempDir()
 
-	app := &App{
-		rootDir:   tmpDir,
-		scheduler: scheduler.NewScheduler(1),
-	}
+	app := &App{}
+	app.rootDir = tmpDir
+	app.scheduler = scheduler.NewScheduler(1)
 
 	// Bootstrap logging setup
 	app.setupBootstrapLogging()
@@ -592,10 +580,9 @@ func TestConfigAPI_LogDirChangedToDifferent_FilesAligned(t *testing.T) {
 	// Setup: Create temp rootDir
 	tmpDir := t.TempDir()
 
-	app := &App{
-		rootDir:   tmpDir,
-		scheduler: scheduler.NewScheduler(1),
-	}
+	app := &App{}
+	app.rootDir = tmpDir
+	app.scheduler = scheduler.NewScheduler(1)
 
 	// Bootstrap logging setup
 	app.setupBootstrapLogging()
@@ -658,10 +645,9 @@ func TestConfigAPI_LogDirChangedToDifferent_OldFileStillExists(t *testing.T) {
 	// Setup: Create temp rootDir
 	tmpDir := t.TempDir()
 
-	app := &App{
-		rootDir:   tmpDir,
-		scheduler: scheduler.NewScheduler(1),
-	}
+	app := &App{}
+	app.rootDir = tmpDir
+	app.scheduler = scheduler.NewScheduler(1)
 
 	// Bootstrap logging setup
 	app.setupBootstrapLogging()
@@ -713,10 +699,9 @@ func TestConfigAPI_LogDirChangedToDifferent_NewEntriesGoToNew(t *testing.T) {
 	// Setup: Create temp rootDir
 	tmpDir := t.TempDir()
 
-	app := &App{
-		rootDir:   tmpDir,
-		scheduler: scheduler.NewScheduler(1),
-	}
+	app := &App{}
+	app.rootDir = tmpDir
+	app.scheduler = scheduler.NewScheduler(1)
 
 	// Bootstrap logging setup
 	app.setupBootstrapLogging()
@@ -805,10 +790,9 @@ func TestConfigAPI_LogDirChangedToDifferent_TransitionLogged(t *testing.T) {
 	// Setup: Create temp rootDir
 	tmpDir := t.TempDir()
 
-	app := &App{
-		rootDir:   tmpDir,
-		scheduler: scheduler.NewScheduler(1),
-	}
+	app := &App{}
+	app.rootDir = tmpDir
+	app.scheduler = scheduler.NewScheduler(1)
 
 	// Bootstrap logging setup
 	app.setupBootstrapLogging()
@@ -872,10 +856,9 @@ func TestBootstrapConfig_SavedToDatabaseOnInit(t *testing.T) {
 	ctx := context.Background()
 
 	// Create app with temp rootDir
-	app := &App{
-		rootDir: tmpDir,
-		ctx:     ctx,
-	}
+	app := &App{}
+	app.rootDir = tmpDir
+	app.ctx = ctx
 
 	// Initialize database
 	app.setDB()
@@ -927,10 +910,9 @@ func TestBootstrapConfig_NotReinsertedOnSecondInit(t *testing.T) {
 	tmpDir := t.TempDir()
 	ctx := context.Background()
 
-	app := &App{
-		rootDir: tmpDir,
-		ctx:     ctx,
-	}
+	app := &App{}
+	app.rootDir = tmpDir
+	app.ctx = ctx
 
 	// Initialize database
 	app.setDB()
@@ -972,10 +954,9 @@ func TestBootstrapConfig_UsedInLoadConfig(t *testing.T) {
 	ctx := context.Background()
 
 	// Create fresh app to initialize database
-	app1 := &App{
-		rootDir: tmpDir,
-		ctx:     ctx,
-	}
+	app1 := &App{}
+	app1.rootDir = tmpDir
+	app1.ctx = ctx
 
 	app1.setDB()
 	app1.setConfigDefaults()
@@ -996,11 +977,10 @@ func TestBootstrapConfig_UsedInLoadConfig(t *testing.T) {
 
 	// Create new app instance using same database
 	// This simulates application restart
-	app2 := &App{
-		rootDir:  tmpDir,
-		ctx:      ctx,
-		dbRwPool: app1.dbRwPool, // Reuse the database
-	}
+	app2 := &App{}
+	app2.rootDir = tmpDir
+	app2.ctx = ctx
+	app2.dbRwPool = app1.dbRwPool // Reuse the database
 	app2.configService = config.NewService(app1.dbRwPool, app1.dbRoPool)
 
 	// Action: Load config from database
@@ -1060,10 +1040,9 @@ func TestFileAlignment_BootstrapLogsEarlyEvents(t *testing.T) {
 	// Setup: Create temp rootDir
 	tmpDir := t.TempDir()
 
-	app := &App{
-		rootDir:   tmpDir,
-		scheduler: scheduler.NewScheduler(1),
-	}
+	app := &App{}
+	app.rootDir = tmpDir
+	app.scheduler = scheduler.NewScheduler(1)
 
 	// Bootstrap logging setup
 	app.setupBootstrapLogging()
@@ -1105,10 +1084,9 @@ func TestFileAlignment_ConfigLogsContinuation(t *testing.T) {
 	// Setup: Create temp rootDir
 	tmpDir := t.TempDir()
 
-	app := &App{
-		rootDir:   tmpDir,
-		scheduler: scheduler.NewScheduler(1),
-	}
+	app := &App{}
+	app.rootDir = tmpDir
+	app.scheduler = scheduler.NewScheduler(1)
 
 	// Bootstrap logging setup
 	app.setupBootstrapLogging()
@@ -1188,10 +1166,9 @@ func TestFileAlignment_BootstrapFileNotModified(t *testing.T) {
 	// Setup: Create temp rootDir
 	tmpDir := t.TempDir()
 
-	app := &App{
-		rootDir:   tmpDir,
-		scheduler: scheduler.NewScheduler(1),
-	}
+	app := &App{}
+	app.rootDir = tmpDir
+	app.scheduler = scheduler.NewScheduler(1)
 
 	// Bootstrap logging setup
 	app.setupBootstrapLogging()

@@ -98,6 +98,27 @@ func GetTextContent(n *html.Node) string {
 	return sb.String()
 }
 
+// IsDescendant reports whether descendant is a descendant of ancestor
+// by walking ancestor's subtree. It returns false if either node is nil.
+func IsDescendant(ancestor, descendant *html.Node) bool {
+	if ancestor == nil || descendant == nil {
+		return false
+	}
+	var found bool
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		if n == descendant {
+			found = true
+			return
+		}
+		for c := n.FirstChild; c != nil && !found; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(ancestor)
+	return found
+}
+
 // ParseHTML parses an io.Reader into an html.Node.
 func ParseHTML(r io.Reader) (*html.Node, error) {
 	return html.Parse(r)

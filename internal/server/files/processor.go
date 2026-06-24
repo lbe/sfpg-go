@@ -97,17 +97,10 @@ func checkIfFileModifiedCore(ctx context.Context, getFile getFileByPathFunc, get
 	f.File.Mtime = sql.NullInt64{Valid: true, Int64: fileinfo.ModTime().Unix()}
 	f.File.SizeBytes = sql.NullInt64{Valid: true, Int64: fileinfo.Size()}
 
-	// Check invalid_files before files table: skip if known invalid and mtime/size unchanged
+	// Check invalid_files before files table: skip if known invalid and mtime/size unchanged.
 	if getInvalidFile != nil {
 		inv, invErr := getInvalidFile(ctx, f.Path)
 		if invErr == nil {
-			// An invalid_files row exists for this path. Record it so WriteFileInTx
-			// can clear the stale entry after a successful write. This is set for
-			// BOTH the unchanged-skip case (which returns early below and never
-			// reaches WriteFileInTx, so the flag is harmless) and the changed case
-			// (which proceeds to reprocessing and must delete the now-stale row so
-			// the next run does not skip a now-valid file).
-			f.HadInvalidEntry = true
 			if inv.Mtime == f.File.Mtime.Int64 && inv.Size == f.File.SizeBytes.Int64 {
 				f.Ok = true
 				f.Exists = false
@@ -119,7 +112,7 @@ func checkIfFileModifiedCore(ctx context.Context, getFile getFileByPathFunc, get
 	}
 
 	dbFile, err := getFile(ctx, f.Path)
-	if err != nil && err != sql.ErrNoRows {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		slog.Error("checkIfFileModified GetFileByPath", "err", err)
 		return false, err
 	}
@@ -304,11 +297,11 @@ func runPoolWorkerWithProcessor(ctx context.Context,
 
 		fn, err = q.Dequeue()
 		if err != nil {
-			if err == queue.ErrEmptyQueue {
+			if errors.Is(err, queue.ErrEmptyQueue) {
 				time.Sleep(100 * time.Millisecond)
 				continue
 			}
-			if err == queue.ErrClosedQueue {
+			if errors.Is(err, queue.ErrClosedQueue) {
 				return nil
 			}
 			slog.Error("failed to dequeue file", "err", err)

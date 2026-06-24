@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -110,7 +111,7 @@ func migrateDB(dbPath string) error {
 	}
 	defer m.Close()
 
-	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
+	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		return fmt.Errorf("up migration failed: %w", err)
 	}
 	return nil
@@ -129,7 +130,7 @@ func migrateBlobsDB(dbPath string) error {
 	}
 	defer m.Close()
 
-	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
+	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		return fmt.Errorf("thumbs up migration failed: %w", err)
 	}
 	return nil
@@ -203,7 +204,9 @@ func createDatabasePools(ctx context.Context, roDsn, rwDsn, thumbsDBPath string,
 	// Optimize immediately
 	cpcRw, err := dbRwPool.Get()
 	if err == nil {
-		cpcRw.Conn.ExecContext(ctx, `PRAGMA optimize=0x10002`)
+		if _, execErr := cpcRw.Conn.ExecContext(ctx, `PRAGMA optimize=0x10002`); execErr != nil {
+			slog.Warn("PRAGMA optimize call failed", "err", execErr)
+		}
 		dbRwPool.Put(cpcRw)
 	}
 
@@ -256,7 +259,7 @@ func ensureRootFolderExists(ctx context.Context, cpcRw *dbconnpool.CpConn, rootD
 	if err == nil {
 		return nil
 	}
-	if err != sql.ErrNoRows {
+	if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
 

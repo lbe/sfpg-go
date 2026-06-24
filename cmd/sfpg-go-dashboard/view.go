@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -113,7 +114,7 @@ func (m Model) viewLogin() string {
 
 	if m.err != nil {
 		errMsg := "Authentication failed"
-		if m.err == client.ErrNetworkError {
+		if errors.Is(m.err, client.ErrNetworkError) {
 			errMsg = "Network error - cannot connect to server"
 		}
 		b.WriteString(errorBoxStyle.Render(" " + errMsg + " "))

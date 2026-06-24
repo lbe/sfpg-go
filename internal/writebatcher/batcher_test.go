@@ -144,13 +144,22 @@ func TestFlush_OnMaxBatchSize(t *testing.T) {
 		FlushInterval: 10 * time.Second,
 	}
 
-	wb, _ := New(ctx, cfg)
+	wb, err := New(ctx, cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
 	defer wb.Close()
 
 	// Submit 3 items (triggers flush)
-	_ = wb.Submit(1)
-	_ = wb.Submit(2)
-	_ = wb.Submit(3)
+	if err := wb.Submit(1); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if err := wb.Submit(2); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if err := wb.Submit(3); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
 
 	waitForFlushes(t, flushCh, 1, 20*time.Second)
 
@@ -163,9 +172,15 @@ func TestFlush_OnMaxBatchSize(t *testing.T) {
 	mu.Unlock()
 
 	// Submit 3 more
-	_ = wb.Submit(4)
-	_ = wb.Submit(5)
-	_ = wb.Submit(6)
+	if err := wb.Submit(4); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if err := wb.Submit(5); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if err := wb.Submit(6); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
 
 	waitForFlushes(t, flushCh, 1, 20*time.Second)
 
@@ -201,13 +216,22 @@ func TestFlush_OnMaxBatchBytes(t *testing.T) {
 		},
 	}
 
-	wb, _ := New(ctx, cfg)
+	wb, err := New(ctx, cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
 	defer wb.Close()
 
 	// Submit 3 items each with Size=10 (total 30 bytes -> triggers flush)
-	_ = wb.Submit(testItem{Size: 10})
-	_ = wb.Submit(testItem{Size: 10})
-	_ = wb.Submit(testItem{Size: 10})
+	if err := wb.Submit(testItem{Size: 10}); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if err := wb.Submit(testItem{Size: 10}); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if err := wb.Submit(testItem{Size: 10}); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
 
 	// Wait briefly for worker to process
 	time.Sleep(1000 * time.Millisecond)
@@ -221,7 +245,9 @@ func TestFlush_OnMaxBatchBytes(t *testing.T) {
 	mu.Unlock()
 
 	// Submit 1 item with Size=30 (single item >= threshold -> triggers flush)
-	_ = wb.Submit(testItem{Size: 30})
+	if err := wb.Submit(testItem{Size: 30}); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
 
 	time.Sleep(1000 * time.Millisecond)
 
@@ -248,13 +274,24 @@ func TestFlush_BytesBeforeCount(t *testing.T) {
 		MaxBatchBytes: 20,
 		SizeFunc:      func(i testItem) int64 { return int64(i.Size) },
 	}
-	wb, _ := New(context.Background(), cfg)
+	wb, err := New(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
 	defer wb.Close()
 
-	_ = wb.Submit(testItem{Size: 5})
-	_ = wb.Submit(testItem{Size: 5})
-	_ = wb.Submit(testItem{Size: 5})
-	_ = wb.Submit(testItem{Size: 5}) // total 20 bytes -> should flush
+	if err := wb.Submit(testItem{Size: 5}); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if err := wb.Submit(testItem{Size: 5}); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if err := wb.Submit(testItem{Size: 5}); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if err := wb.Submit(testItem{Size: 5}); err != nil { // total 20 bytes -> should flush
+		t.Fatalf("Submit: %v", err)
+	}
 
 	time.Sleep(1000 * time.Millisecond)
 	mu.Lock()
@@ -282,12 +319,21 @@ func TestFlush_CountBeforeBytes(t *testing.T) {
 		MaxBatchBytes: 1000,
 		SizeFunc:      func(i testItem) int64 { return int64(i.Size) },
 	}
-	wb, _ := New(context.Background(), cfg)
+	wb, err := New(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
 	defer wb.Close()
 
-	_ = wb.Submit(testItem{Size: 1})
-	_ = wb.Submit(testItem{Size: 1})
-	_ = wb.Submit(testItem{Size: 1}) // count is 3 -> should flush
+	if err := wb.Submit(testItem{Size: 1}); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if err := wb.Submit(testItem{Size: 1}); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if err := wb.Submit(testItem{Size: 1}); err != nil { // count is 3 -> should flush
+		t.Fatalf("Submit: %v", err)
+	}
 
 	time.Sleep(1000 * time.Millisecond)
 	mu.Lock()
@@ -316,11 +362,18 @@ func TestFlush_TimeoutWithPartialBytes(t *testing.T) {
 		FlushInterval: 50 * time.Millisecond,
 		SizeFunc:      func(i testItem) int64 { return int64(i.Size) },
 	}
-	wb, _ := New(context.Background(), cfg)
+	wb, err := New(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
 	defer wb.Close()
 
-	_ = wb.Submit(testItem{Size: 5})
-	_ = wb.Submit(testItem{Size: 5})
+	if err := wb.Submit(testItem{Size: 5}); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if err := wb.Submit(testItem{Size: 5}); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
 
 	time.Sleep(150 * time.Millisecond)
 	mu.Lock()
@@ -349,10 +402,17 @@ func TestClose_FlushesRemainingWithBytes(t *testing.T) {
 		FlushInterval: 10 * time.Second,
 		SizeFunc:      func(i testItem) int64 { return int64(i.Size) },
 	}
-	wb, _ := New(context.Background(), cfg)
+	wb, err := New(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
 
-	_ = wb.Submit(testItem{Size: 5})
-	_ = wb.Submit(testItem{Size: 5})
+	if err := wb.Submit(testItem{Size: 5}); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if err := wb.Submit(testItem{Size: 5}); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
 
 	_ = wb.Close()
 
@@ -394,9 +454,15 @@ func TestFlush_MaxBatchBytesZero_SizeFuncSet(t *testing.T) {
 
 	// Submit several items; total bytes would exceed any reasonable limit, but
 	// with MaxBatchBytes=0 no size-based flush should occur.
-	_ = wb.Submit(testItem{Size: 100})
-	_ = wb.Submit(testItem{Size: 100})
-	_ = wb.Submit(testItem{Size: 100})
+	if err := wb.Submit(testItem{Size: 100}); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if err := wb.Submit(testItem{Size: 100}); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if err := wb.Submit(testItem{Size: 100}); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
 	time.Sleep(150 * time.Millisecond)
 
 	mu.Lock()
@@ -432,10 +498,15 @@ func TestFlush_OnInterval(t *testing.T) {
 		FlushInterval: 100 * time.Millisecond,
 	}
 
-	wb, _ := New(ctx, cfg)
+	wb, err := New(ctx, cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
 	defer wb.Close()
 
-	_ = wb.Submit(1)
+	if err := wb.Submit(1); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
 
 	// Wait for interval to pass
 	time.Sleep(250 * time.Millisecond)
@@ -468,9 +539,16 @@ func TestClose_DrainsRemaining(t *testing.T) {
 		FlushInterval: 10 * time.Second,
 	}
 
-	wb, _ := New(ctx, cfg)
-	_ = wb.Submit(1)
-	_ = wb.Submit(2)
+	wb, err := New(ctx, cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := wb.Submit(1); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if err := wb.Submit(2); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
 
 	// Close immediately. Should flush the 2 items.
 	if err := wb.Close(); err != nil {
@@ -507,16 +585,21 @@ func TestOnError(t *testing.T) {
 		MaxBatchSize: 1,
 	}
 
-	wb, _ := New(ctx, cfg)
+	wb, err := New(ctx, cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
 	defer wb.Close()
 
-	_ = wb.Submit(123)
+	if err := wb.Submit(123); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
 
 	// Wait for worker
 	time.Sleep(1000 * time.Millisecond)
 
 	mu.Lock()
-	if errReported != expectedErr {
+	if !errors.Is(errReported, expectedErr) {
 		t.Errorf("expected error %v, got %v", expectedErr, errReported)
 	}
 	if len(batchReported) != 1 || batchReported[0] != 123 {
@@ -569,10 +652,13 @@ func TestSubmit(t *testing.T) {
 			MaxBatchSize:  1,
 			FlushInterval: 10 * time.Second,
 		}
-		wb, _ := New(ctx, cfg)
+		wb, err := New(ctx, cfg)
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
 		defer wb.Close()
 
-		err := wb.Submit(42)
+		err = wb.Submit(42)
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}
@@ -604,16 +690,19 @@ func TestSubmit(t *testing.T) {
 			MaxBatchSize: 1,
 			ChannelSize:  1,
 		}
-		wb, _ := New(ctx, cfg)
+		wb, err := New(ctx, cfg)
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
 		defer func() {
 			blockMu.Unlock() // unblock the worker so Close() can complete
 			wb.Close()
 		}()
 
-		_ = wb.Submit(1)    // fills channel OR gets picked up by worker (which blocks in FlushFunc)
-		_ = wb.Submit(2)    // fills channel (worker is blocked, so channel stays full)
-		err := wb.Submit(3) // should return ErrFull
-		if err != ErrFull {
+		_ = wb.Submit(1)   // fills channel OR gets picked up by worker (which blocks in FlushFunc)
+		_ = wb.Submit(2)   // fills channel (worker is blocked, so channel stays full)
+		err = wb.Submit(3) // should return ErrFull
+		if !errors.Is(err, ErrFull) {
 			t.Errorf("expected ErrFull, got %v", err)
 		}
 	})
@@ -626,11 +715,14 @@ func TestSubmit(t *testing.T) {
 				return nil
 			},
 		}
-		wb, _ := New(ctx, cfg)
+		wb, err := New(ctx, cfg)
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
 		_ = wb.Close()
 
-		err := wb.Submit(1)
-		if err != ErrClosed {
+		err = wb.Submit(1)
+		if !errors.Is(err, ErrClosed) {
 			t.Errorf("expected ErrClosed, got %v", err)
 		}
 	})
@@ -657,7 +749,9 @@ func TestOnError_NilCallback_DoesNotPanic(t *testing.T) {
 
 	// Submit an item that will trigger a flush and fail.
 	// Should not panic -- slog fallback handles it.
-	_ = wb.Submit(42)
+	if err := wb.Submit(42); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
 	time.Sleep(1000 * time.Millisecond)
 }
 
@@ -770,9 +864,15 @@ func TestIntegration_RollbackOnError(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	_ = wb.Submit("a")
-	_ = wb.Submit("b")
-	_ = wb.Submit("c")
+	if err := wb.Submit("a"); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if err := wb.Submit("b"); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if err := wb.Submit("c"); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
 
 	// Wait for flush, then close
 	time.Sleep(1000 * time.Millisecond)
@@ -814,11 +914,18 @@ func TestOnSuccess(t *testing.T) {
 		MaxBatchSize: 2,
 	}
 
-	wb, _ := New(ctx, cfg)
+	wb, err := New(ctx, cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
 	defer wb.Close()
 
-	_ = wb.Submit(10)
-	_ = wb.Submit(20)
+	if err := wb.Submit(10); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if err := wb.Submit(20); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
 
 	// Wait for worker
 	time.Sleep(1000 * time.Millisecond)
@@ -862,7 +969,7 @@ func TestConcurrent_SubmitFromMultipleGoroutines(t *testing.T) {
 			for i := range itemsPerGoroutine {
 				for {
 					err := wb.Submit(base*itemsPerGoroutine + i)
-					if err == ErrFull {
+					if errors.Is(err, ErrFull) {
 						time.Sleep(time.Millisecond) // backoff
 						continue
 					}
@@ -920,7 +1027,7 @@ func TestSubmit_DQueDisabled_ReturnsErrFull(t *testing.T) {
 	_ = wb.Submit(1)
 	_ = wb.Submit(2)
 	err = wb.Submit(3)
-	if err != ErrFull {
+	if !errors.Is(err, ErrFull) {
 		t.Errorf("expected ErrFull, got %v", err)
 	}
 }
@@ -947,7 +1054,7 @@ func TestSubmit_AfterClose_ReturnsErrClosed(t *testing.T) {
 		_ = wb.Close()
 
 		err = wb.Submit(1)
-		if err != ErrClosed {
+		if !errors.Is(err, ErrClosed) {
 			t.Errorf("expected ErrClosed, got %v", err)
 		}
 	})
@@ -972,7 +1079,7 @@ func TestSubmit_AfterClose_ReturnsErrClosed(t *testing.T) {
 		_ = wb.Close()
 
 		err = wb.Submit(overflowItem{Val: 1})
-		if err != ErrClosed {
+		if !errors.Is(err, ErrClosed) {
 			t.Errorf("expected ErrClosed for channel path with dque, got %v", err)
 		}
 	})
@@ -1031,13 +1138,17 @@ func TestBatchSliceReuse(t *testing.T) {
 
 	// First flush: 5 items
 	for i := range 5 {
-		_ = wb.Submit(i)
+		if err := wb.Submit(i); err != nil {
+			t.Fatalf("Submit: %v", err)
+		}
 	}
 	time.Sleep(1000 * time.Millisecond)
 
 	// Second flush: 5 more items (batch slice should be reused)
 	for i := 5; i < 10; i++ {
-		_ = wb.Submit(i)
+		if err := wb.Submit(i); err != nil {
+			t.Fatalf("Submit: %v", err)
+		}
 	}
 	time.Sleep(1000 * time.Millisecond)
 

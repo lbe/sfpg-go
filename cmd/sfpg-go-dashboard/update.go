@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -101,7 +102,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		if msg.err != nil {
 			m.err = msg.err
-			if msg.err == client.ErrUnauthorized {
+			if errors.Is(msg.err, client.ErrUnauthorized) {
 				m.authState = authStatePrompting
 				m.usernameInput.Focus()
 				m.passwordInput.Blur()

@@ -34,19 +34,19 @@ func TestCalculateLockout(t *testing.T) {
 			name:           "three failures - threshold reached",
 			failedAttempts: 3,
 			wantValid:      true,
-			wantDuration:   LockoutDuration,
+			wantDuration:   3600,
 		},
 		{
 			name:           "five failures",
 			failedAttempts: 5,
 			wantValid:      true,
-			wantDuration:   LockoutDuration,
+			wantDuration:   3600,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := CalculateLockout(tt.failedAttempts, now)
+			got := CalculateLockout(tt.failedAttempts, now, 3600)
 			if got.Valid != tt.wantValid {
 				t.Errorf("CalculateLockout() Valid = %v, want %v", got.Valid, tt.wantValid)
 			}
@@ -230,11 +230,8 @@ func TestFormatLockoutDuration(t *testing.T) {
 	}
 }
 
-func TestLockoutConstants(t *testing.T) {
+func TestLockoutThreshold(t *testing.T) {
 	if LockoutThreshold != 3 {
 		t.Errorf("LockoutThreshold = %v, want 3", LockoutThreshold)
-	}
-	if LockoutDuration != 3600 {
-		t.Errorf("LockoutDuration = %v, want 3600", LockoutDuration)
 	}
 }

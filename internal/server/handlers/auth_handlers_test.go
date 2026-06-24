@@ -79,7 +79,7 @@ func (m *mockSessionManagerAuth) ValidateCSRFToken(r *http.Request) bool {
 func (m *mockSessionManagerAuth) ClearSession(w http.ResponseWriter, r *http.Request) {
 }
 
-func (m *mockSessionManagerAuth) GetSession(r *http.Request) (*sessions.Session, error) {
+func (m *mockSessionManagerAuth) GetSession(w http.ResponseWriter, r *http.Request) (*sessions.Session, error) {
 	sess := sessions.NewSession(nil, session.SessionName)
 	sess.IsNew = true // New session by default
 	return sess, nil
@@ -117,7 +117,7 @@ func (m *mockSessionManagerWithExistingSession) ValidateCSRFToken(r *http.Reques
 func (m *mockSessionManagerWithExistingSession) ClearSession(w http.ResponseWriter, r *http.Request) {
 }
 
-func (m *mockSessionManagerWithExistingSession) GetSession(r *http.Request) (*sessions.Session, error) {
+func (m *mockSessionManagerWithExistingSession) GetSession(w http.ResponseWriter, r *http.Request) (*sessions.Session, error) {
 	sess := sessions.NewSession(nil, session.SessionName)
 	sess.IsNew = false // This is an existing session
 	sess.Values["csrf_token"] = "existing-csrf-token"
@@ -154,7 +154,7 @@ func (m *mockSessionManagerNewSessionInvalidCSRF) ValidateCSRFToken(r *http.Requ
 func (m *mockSessionManagerNewSessionInvalidCSRF) ClearSession(w http.ResponseWriter, r *http.Request) {
 }
 
-func (m *mockSessionManagerNewSessionInvalidCSRF) GetSession(r *http.Request) (*sessions.Session, error) {
+func (m *mockSessionManagerNewSessionInvalidCSRF) GetSession(w http.ResponseWriter, r *http.Request) (*sessions.Session, error) {
 	sess := sessions.NewSession(nil, session.SessionName)
 	sess.IsNew = true
 	return sess, nil
@@ -190,7 +190,7 @@ func (m *mockSessionManagerExistingSessionNoToken) ValidateCSRFToken(r *http.Req
 func (m *mockSessionManagerExistingSessionNoToken) ClearSession(w http.ResponseWriter, r *http.Request) {
 }
 
-func (m *mockSessionManagerExistingSessionNoToken) GetSession(r *http.Request) (*sessions.Session, error) {
+func (m *mockSessionManagerExistingSessionNoToken) GetSession(w http.ResponseWriter, r *http.Request) (*sessions.Session, error) {
 	sess := sessions.NewSession(nil, session.SessionName)
 	sess.IsNew = false
 	return sess, nil
@@ -249,7 +249,7 @@ func (m *mockSessionManagerWithError) ValidateCSRFToken(r *http.Request) bool {
 func (m *mockSessionManagerWithError) ClearSession(w http.ResponseWriter, r *http.Request) {
 }
 
-func (m *mockSessionManagerWithError) GetSession(r *http.Request) (*sessions.Session, error) {
+func (m *mockSessionManagerWithError) GetSession(w http.ResponseWriter, r *http.Request) (*sessions.Session, error) {
 	return sessions.NewSession(nil, session.SessionName), nil
 }
 

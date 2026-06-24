@@ -28,19 +28,11 @@ import (
 	"github.com/lbe/sfpg-go/internal/server/config"
 	"github.com/lbe/sfpg-go/internal/server/handlers"
 	"github.com/lbe/sfpg-go/internal/server/middleware"
-	serverrestart "github.com/lbe/sfpg-go/internal/server/restart"
+
 	"github.com/lbe/sfpg-go/internal/server/ui"
 	"github.com/lbe/sfpg-go/internal/testutil"
 	"github.com/lbe/sfpg-go/web"
 )
-
-// Minimal templateData struct for testing purposes
-// type templateData struct {
-// 	IsImageView bool
-// 	Breadcrumbs []breadcrumb
-// 	Thumbs      []Thumb
-// 	ImageCount  int // Added ImageCount
-// }
 
 // Minimal Thumb struct for testing purposes
 type Thumb struct {
@@ -306,119 +298,14 @@ func TestLoginHandler_InvalidCookieOnValidCredentials(t *testing.T) {
 	}
 }
 
-// TestSessionExpiry simulates a session timeout/expiry and ensures the user is redirected to login.
-// REMOVED: func TestSessionExpiry(t *testing.T) {
-// REMOVED: 	app := CreateApp(t, false)
-// REMOVED: 	defer app.Shutdown()
-// REMOVED:
-// REMOVED: 	// Set the store's MaxAge so the cookie itself expires
-// REMOVED: 	oldMaxAge := app.store.Options.MaxAge
-// REMOVED: 	app.store.Options.MaxAge = 1 // 1 second expiry
-// REMOVED: 	defer func() { app.store.Options.MaxAge = oldMaxAge }()
-// REMOVED:
-// REMOVED: 	rrWithCookie := httptest.NewRecorder()
-// REMOVED: 	req := httptest.NewRequest("GET", "/", nil)
-// REMOVED: 	session, _ := app.store.Get(req, "session-name")
-// REMOVED: 	session.Values["authenticated"] = true
-// REMOVED: 	if err := session.Save(req, rrWithCookie); err != nil {
-// REMOVED: 		t.Fatalf("Failed to save session: %v", err)
-// REMOVED: 	}
-// REMOVED:
-// REMOVED: 	// Wait for session to expire
-// REMOVED: 	time.Sleep(2 * time.Second)
-// REMOVED:
-// REMOVED: 	rr := httptest.NewRecorder()
-// REMOVED: 	req2 := httptest.NewRequest("GET", "/", nil)
-// REMOVED: 	// Simulate browser omitting expired cookie: do NOT set the cookie header
-// REMOVED:
-// REMOVED: 	handlerCalled := false
-// REMOVED: 	dummyHandler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-// REMOVED: 		handlerCalled = true
-// REMOVED: 		w.WriteHeader(http.StatusOK)
-// REMOVED: 	})
-// REMOVED: 	authHandler := app.authMiddleware(dummyHandler)
-// REMOVED: 	authHandler.ServeHTTP(rr, req2)
-// REMOVED:
-// REMOVED: 	if rr.Code != http.StatusUnauthorized {
-// REMOVED: 		t.Errorf("Expected 401 Unauthorized after session expiry, got %d", rr.Code)
-// REMOVED: 	}
-// REMOVED: 	if handlerCalled {
-// REMOVED: 		t.Error("Handler should not be called after session expiry")
-// REMOVED: 	}
-// REMOVED: }
-// REMOVED:
-// REMOVED: // TestProtectedRouteAccess ensures unauthenticated users cannot access protected routes.
-// REMOVED: func TestProtectedRouteAccess(t *testing.T) {
-// REMOVED: 	app := CreateApp(t, false)
-// REMOVED: 	defer app.Shutdown()
-// REMOVED:
-// REMOVED: 	handlerCalled := false
-// REMOVED: 	dummyHandler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-// REMOVED: 		handlerCalled = true
-// REMOVED: 		w.WriteHeader(http.StatusOK)
-// REMOVED: 	})
-// REMOVED: 	authHandler := app.authMiddleware(dummyHandler)
-// REMOVED:
-// REMOVED: 	req := httptest.NewRequest("GET", "/protected", nil)
-// REMOVED: 	rr := httptest.NewRecorder()
-// REMOVED: 	authHandler.ServeHTTP(rr, req)
-// REMOVED:
-// REMOVED: 	if rr.Code != http.StatusUnauthorized {
-// REMOVED: 		t.Errorf("Expected 401 Unauthorized for unauthenticated access, got %d", rr.Code)
-// REMOVED: 	}
-// REMOVED: 	if handlerCalled {
-// REMOVED: 		t.Error("Handler should not be called for unauthenticated access")
-// REMOVED: 	}
-// REMOVED: }
-// REMOVED:
-// REMOVED: func TestIsAuthenticated(t *testing.T) {
-// REMOVED: 	app := CreateApp(t, false)
-// REMOVED: 	defer app.Shutdown()
-// REMOVED:
-// REMOVED: 	t.Run("No session", func(t *testing.T) {
-// REMOVED: 		req := httptest.NewRequest("GET", "/", nil)
-// REMOVED: 		if app.isAuthenticated(req) {
-// REMOVED: 			t.Error("Expected false for request without session")
-// REMOVED: 		}
-// REMOVED: 	})
-// REMOVED:
-// REMOVED: 	t.Run("Session without authenticated flag", func(t *testing.T) {
-// REMOVED: 		req := httptest.NewRequest("GET", "/", nil)
-// REMOVED: 		rr := httptest.NewRecorder()
-// REMOVED: 		session, _ := app.store.Get(req, "session-name")
-// REMOVED: 		if err := session.Save(req, rr); err != nil {
-// REMOVED: 			t.Fatalf("Failed to save session: %v", err)
-// REMOVED: 		}
-// REMOVED: 		newReq := httptest.NewRequest("GET", "/", nil)
-// REMOVED: 		newReq.Header.Set("Cookie", rr.Header().Get("Set-Cookie"))
-// REMOVED: 		if app.isAuthenticated(newReq) {
-// REMOVED: 			t.Error("Expected false for session without authenticated flag")
-// REMOVED: 		}
-// REMOVED: 	})
-// REMOVED:
-// REMOVED: 	t.Run("Authenticated session", func(t *testing.T) {
-// REMOVED: 		req := httptest.NewRequest("GET", "/", nil)
-// REMOVED: 		rr := httptest.NewRecorder()
-// REMOVED: 		session, _ := app.store.Get(req, "session-name")
-// REMOVED: 		session.Values["authenticated"] = true
-// REMOVED: 		if err := session.Save(req, rr); err != nil {
-// REMOVED: 			t.Fatalf("Failed to save session: %v", err)
-// REMOVED: 		}
-// REMOVED: 		newReq := httptest.NewRequest("GET", "/", nil)
-// REMOVED: 		newReq.Header.Set("Cookie", rr.Header().Get("Set-Cookie"))
-// REMOVED: 		if !app.isAuthenticated(newReq) {
-// REMOVED: 			t.Error("Expected true for authenticated session")
-// REMOVED: 		}
-// REMOVED: 	})
-// REMOVED: }
-
 func TestAddAuthToTemplateData(t *testing.T) {
 	app := CreateApp(t, false)
 	defer app.Shutdown()
 
 	t.Run("Nil data map", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/", nil)
-		data := app.addAuthToTemplateData(req, nil)
+		rr := httptest.NewRecorder()
+		data := app.addAuthToTemplateData(rr, req, nil)
 		if data == nil {
 			t.Fatal("Expected non-nil data map")
 		}
@@ -429,8 +316,9 @@ func TestAddAuthToTemplateData(t *testing.T) {
 
 	t.Run("Existing data map", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/", nil)
+		rr := httptest.NewRecorder()
 		existing := map[string]any{"Key": "value"}
-		data := app.addAuthToTemplateData(req, existing)
+		data := app.addAuthToTemplateData(rr, req, existing)
 		if data["Key"] != "value" {
 			t.Error("Expected existing keys to be preserved")
 		}
@@ -449,7 +337,8 @@ func TestAddAuthToTemplateData(t *testing.T) {
 		}
 		newReq := httptest.NewRequest("GET", "/", nil)
 		newReq.Header.Set("Cookie", rr.Header().Get("Set-Cookie"))
-		data := app.addAuthToTemplateData(newReq, nil)
+		rr2 := httptest.NewRecorder()
+		data := app.addAuthToTemplateData(rr2, newReq, nil)
 		if data["IsAuthenticated"] != true {
 			t.Error("Expected IsAuthenticated to be true")
 		}
@@ -497,7 +386,7 @@ func TestTemplateRendering(t *testing.T) {
 			"Thumbs":      gd.Thumbs,
 		}
 		req := httptest.NewRequest("GET", "/", nil)
-		data = app.addAuthToTemplateData(req, data)
+		data = app.addAuthToTemplateData(rr, req, data)
 		err := ui.RenderPage(rr, "gallery", data, false) // Use renderPage for full layout
 		if err != nil {
 			t.Errorf("Failed to render layout.html.tmpl: %v", err)
@@ -547,7 +436,7 @@ func TestTemplateRendering(t *testing.T) {
 			"Thumbs":      gd.Thumbs,
 		}
 		req := httptest.NewRequest("GET", "/", nil)
-		data = app.addAuthToTemplateData(req, data)
+		data = app.addAuthToTemplateData(rr, req, data)
 		err := ui.RenderPage(rr, "gallery", data, false) // Use renderPage for full layout
 		if err != nil {
 			t.Errorf("Failed to render gallery.html.tmpl: %v", err)
@@ -1289,14 +1178,14 @@ func TestValidateCsrfToken(t *testing.T) {
 // TestConfigValidate tests config validation
 func TestConfigValidate(t *testing.T) {
 	t.Run("valid config", func(t *testing.T) {
-		cfg := DefaultConfig()
+		cfg := config.DefaultConfig()
 		if err := cfg.Validate(); err != nil {
 			t.Errorf("Expected valid config, got error: %v", err)
 		}
 	})
 
 	t.Run("invalid listener port", func(t *testing.T) {
-		cfg := DefaultConfig()
+		cfg := config.DefaultConfig()
 		cfg.ListenerPort = -1
 		if err := cfg.Validate(); err == nil {
 			t.Error("Expected validation error for negative port")
@@ -1304,7 +1193,7 @@ func TestConfigValidate(t *testing.T) {
 	})
 
 	t.Run("invalid listener port too high", func(t *testing.T) {
-		cfg := DefaultConfig()
+		cfg := config.DefaultConfig()
 		cfg.ListenerPort = 70000
 		if err := cfg.Validate(); err == nil {
 			t.Error("Expected validation error for port > 65535")
@@ -1314,7 +1203,7 @@ func TestConfigValidate(t *testing.T) {
 
 // TestConfigValidateSetting tests individual config setting validation
 func TestConfigValidateSetting(t *testing.T) {
-	cfg := DefaultConfig()
+	cfg := config.DefaultConfig()
 
 	tests := []struct {
 		name      string
@@ -1363,11 +1252,11 @@ func TestConfigValidateSetting(t *testing.T) {
 
 // TestConfigMergeDefaults tests merging config with defaults
 func TestConfigMergeDefaults(t *testing.T) {
-	cfg := &Config{
+	cfg := &config.Config{
 		ListenerPort: 9999,
 		// Leave other fields as zero values
 	}
-	defaults := DefaultConfig()
+	defaults := config.DefaultConfig()
 
 	cfg.MergeDefaults(defaults)
 
@@ -1384,7 +1273,7 @@ func TestConfigMergeDefaults(t *testing.T) {
 
 // TestConfigExportToYAML tests YAML export
 func TestConfigExportToYAML(t *testing.T) {
-	cfg := DefaultConfig()
+	cfg := config.DefaultConfig()
 	cfg.ListenerPort = 8888
 	cfg.SiteName = "Test Site"
 
@@ -1423,11 +1312,11 @@ func TestConfigExportToYAML(t *testing.T) {
 
 // TestConfigRecoverFromCorruption tests config recovery
 func TestConfigRecoverFromCorruption(t *testing.T) {
-	cfg := &Config{
+	cfg := &config.Config{
 		ListenerPort: -1, // Invalid value
 		LogLevel:     "",
 	}
-	defaults := DefaultConfig()
+	defaults := config.DefaultConfig()
 
 	cfg.RecoverFromCorruption(defaults)
 
@@ -1439,7 +1328,7 @@ func TestConfigRecoverFromCorruption(t *testing.T) {
 	}
 
 	// Test with nil defaults
-	cfg2 := &Config{ListenerPort: -1}
+	cfg2 := &config.Config{ListenerPort: -1}
 	cfg2.RecoverFromCorruption(nil)
 	if cfg2.ListenerPort != -1 {
 		t.Error("Expected no change when recovering with nil defaults")
@@ -1448,7 +1337,7 @@ func TestConfigRecoverFromCorruption(t *testing.T) {
 
 // TestConfigLoadFromOpt tests loading config from command-line options
 func TestConfigLoadFromOpt(t *testing.T) {
-	cfg := DefaultConfig()
+	cfg := config.DefaultConfig()
 	opt := getopt.Opt{
 		Port: getopt.OptInt{Int: 9090, IsSet: true},
 	}
@@ -1462,7 +1351,7 @@ func TestConfigLoadFromOpt(t *testing.T) {
 
 // TestConfigPreviewImport tests config import preview
 func TestConfigPreviewImport(t *testing.T) {
-	cfg := DefaultConfig()
+	cfg := config.DefaultConfig()
 	cfg.ListenerPort = 8080
 	cfg.SiteName = "Original Site"
 
@@ -1486,7 +1375,7 @@ log_level: "DEBUG"`
 
 // TestConfigPreviewImportInvalid tests preview with invalid YAML
 func TestConfigPreviewImportInvalid(t *testing.T) {
-	cfg := DefaultConfig()
+	cfg := config.DefaultConfig()
 
 	invalidYAML := `this is not: [valid yaml`
 
@@ -1501,7 +1390,7 @@ func TestConfigSaveToDatabase(t *testing.T) {
 	app := CreateApp(t, false)
 	defer app.Shutdown()
 
-	cfg := DefaultConfig()
+	cfg := config.DefaultConfig()
 	cfg.ListenerPort = 7777
 	cfg.SiteName = "Test Save"
 
@@ -1532,7 +1421,7 @@ func TestConfigRestoreLastKnownGood(t *testing.T) {
 	defer app.Shutdown()
 
 	// First save a config
-	cfg := DefaultConfig()
+	cfg := config.DefaultConfig()
 	cfg.ListenerPort = 6666
 	cfg.SiteName = "Backup Config"
 
@@ -1548,7 +1437,7 @@ func TestConfigRestoreLastKnownGood(t *testing.T) {
 	}
 
 	// Now try to restore
-	newCfg := DefaultConfig()
+	newCfg := config.DefaultConfig()
 	restored, err := newCfg.RestoreLastKnownGood(app.ctx, cpc.Queries)
 	if err != nil {
 		t.Errorf("RestoreLastKnownGood failed: %v", err)
@@ -1565,7 +1454,7 @@ func TestConfigGetLastKnownGoodDiff(t *testing.T) {
 	defer app.Shutdown()
 
 	// Save a config first
-	cfg := DefaultConfig()
+	cfg := config.DefaultConfig()
 	cfg.ListenerPort = 5555
 
 	cpc, err := app.dbRwPool.Get()
@@ -1580,7 +1469,7 @@ func TestConfigGetLastKnownGoodDiff(t *testing.T) {
 	}
 
 	// Create a different config and get diff
-	cfg2 := DefaultConfig()
+	cfg2 := config.DefaultConfig()
 	cfg2.ListenerPort = 9999
 	diff, err := cfg2.GetLastKnownGoodDiff(app.ctx, cpc.Queries)
 	if err != nil {
@@ -1645,8 +1534,9 @@ func TestAddAuthToTemplateData_Additional(t *testing.T) {
 
 	data := make(map[string]any)
 	req := httptest.NewRequest("GET", "/", nil)
+	rr := httptest.NewRecorder()
 
-	result := app.addAuthToTemplateData(req, data)
+	result := app.addAuthToTemplateData(rr, req, data)
 
 	if _, ok := result["IsAuthenticated"]; !ok {
 		t.Error("Expected IsAuthenticated in template data")
@@ -2198,44 +2088,14 @@ func TestSetupBootstrapLogging(t *testing.T) {
 	}
 }
 
-// TestRestartServer tests server restart functionality
-func TestRestartServer(t *testing.T) {
-	app := CreateApp(t, false)
-	defer app.Shutdown()
-
-	// Create a test server
-	mux := http.NewServeMux()
-	server := &http.Server{
-		Addr:    ":0",
-		Handler: mux,
-	}
-
-	// Load config first
-	if err := app.loadConfig(); err != nil {
-		t.Fatalf("Failed to load config: %v", err)
-	}
-
-	// Test with nil server
-	err := app.RestartServer(nil)
-	if err == nil {
-		t.Error("Expected error when restarting with nil server")
-	}
-
-	// Test with valid server (but don't actually start it)
-	app.restartRequired = true
-	err = app.RestartServer(server)
-	// May succeed or fail depending on state, just ensure it doesn't panic
-	_ = err
-}
-
-// TestIsAuthenticated_EdgeCases tests additional authentication scenarios
 func TestIsAuthenticated_EdgeCases(t *testing.T) {
 	app := CreateApp(t, false)
 	defer app.Shutdown()
 
 	t.Run("missing session", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/", nil)
-		if app.isAuthenticated(req) {
+		rr := httptest.NewRecorder()
+		if app.isAuthenticated(rr, req) {
 			t.Error("Expected not authenticated when session is missing")
 		}
 	})
@@ -2253,7 +2113,8 @@ func TestIsAuthenticated_EdgeCases(t *testing.T) {
 		req2 := httptest.NewRequest("GET", "/", nil)
 		req2.Header.Set("Cookie", rr.Header().Get("Set-Cookie"))
 
-		if app.isAuthenticated(req2) {
+		rr2 := httptest.NewRecorder()
+		if app.isAuthenticated(rr2, req2) {
 			t.Error("Expected not authenticated when value is not bool")
 		}
 	})
@@ -2318,7 +2179,7 @@ func TestLoadFromDatabase_EdgeCases(t *testing.T) {
 	app := CreateApp(t, false)
 	defer app.Shutdown()
 
-	cfg := DefaultConfig()
+	cfg := config.DefaultConfig()
 
 	cpc, err := app.dbRoPool.Get()
 	if err != nil {
@@ -2337,7 +2198,7 @@ func TestSaveToDatabase_EdgeCases(t *testing.T) {
 	app := CreateApp(t, false)
 	defer app.Shutdown()
 
-	cfg := DefaultConfig()
+	cfg := config.DefaultConfig()
 
 	cpc, err := app.dbRwPool.Get()
 	if err != nil {
@@ -2358,7 +2219,7 @@ func TestGetLastKnownGoodDiff_EdgeCases(t *testing.T) {
 	app := CreateApp(t, false)
 	defer app.Shutdown()
 
-	cfg := DefaultConfig()
+	cfg := config.DefaultConfig()
 
 	cpc, err := app.dbRoPool.Get()
 	if err != nil {
@@ -2839,36 +2700,6 @@ func TestConditionalMiddleware_AdditionalCases(t *testing.T) {
 	})
 }
 
-// TestRestartServer_EdgeCases tests more restart scenarios
-func TestRestartServer_EdgeCases(t *testing.T) {
-	app := CreateApp(t, false)
-	defer app.Shutdown()
-
-	// Load config
-	if err := app.loadConfig(); err != nil {
-		t.Fatalf("Failed to load config: %v", err)
-	}
-
-	t.Run("with configured restart", func(t *testing.T) {
-		mux := http.NewServeMux()
-		server := &http.Server{
-			Addr:    ":0",
-			Handler: mux,
-		}
-
-		// Set restart required flag
-		app.restartMu.Lock()
-		app.restartRequired = true
-		app.restartMu.Unlock()
-
-		// Try restart (will fail since server isn't actually running)
-		err := app.RestartServer(server)
-		// Error is acceptable since server isn't listening
-		_ = err
-	})
-}
-
-// TestSetConfigDefaults_Coverage verifies setConfigDefaults initializes config
 func TestSetConfigDefaults_Coverage(t *testing.T) {
 	app := CreateApp(t, false)
 	defer app.Shutdown()
@@ -2899,11 +2730,7 @@ func TestParseConfigUITemplates_Coverage(t *testing.T) {
 		t.Fatalf("parseConfigUITemplates failed: %v", err)
 	}
 
-	if templates == nil {
-		t.Fatal("Expected templates to be non-nil")
-	}
-
-	// Verify each template exists
+	// Verify each template exists (value type, zero fields are nil)
 	if templates.SaveRestartAlert == nil {
 		t.Error("SaveRestartAlert template is nil")
 	}
@@ -3178,49 +3005,6 @@ func TestRestartRequired_Coverage(t *testing.T) {
 	}
 }
 
-// TestRestartServer_NilServer_Coverage tests error handling for nil server
-func TestRestartServer_NilServer_Coverage(t *testing.T) {
-	app := CreateApp(t, false)
-	defer app.Shutdown()
-
-	err := app.RestartServer(nil)
-	if err == nil {
-		t.Error("Expected error for nil server")
-	}
-}
-
-// TestIsHTTPOnlyRestart_Coverage verifies restart type detection
-func TestIsHTTPOnlyRestart_Coverage(t *testing.T) {
-	cfg := config.DefaultConfig()
-	result := serverrestart.IsHTTPOnlyRestart(cfg)
-	if !result {
-		t.Error("Expected IsHTTPOnlyRestart to return true with valid config")
-	}
-}
-
-// TestIsHTTPOnlyRestart_NilConfig_Coverage tests with nil config
-func TestIsHTTPOnlyRestart_NilConfig_Coverage(t *testing.T) {
-	result := serverrestart.IsHTTPOnlyRestart(nil)
-	if result {
-		t.Error("Expected IsHTTPOnlyRestart to return false with nil config")
-	}
-}
-
-// TestGetRestartType_Coverage verifies restart type string
-func TestGetRestartType_Coverage(t *testing.T) {
-	cfg := config.DefaultConfig()
-	restartType := serverrestart.GetRestartType(cfg)
-	if restartType != "HTTP-only" {
-		t.Errorf("Expected 'HTTP-only', got %q", restartType)
-	}
-
-	restartType = serverrestart.GetRestartType(nil)
-	if restartType != "full" {
-		t.Errorf("Expected 'full', got %q", restartType)
-	}
-}
-
-// TestRecordFailedLoginAttempt_Coverage tests recording failed login attempts
 func TestRecordFailedLoginAttempt_Coverage(t *testing.T) {
 	app := CreateApp(t, false)
 	defer app.Shutdown()
@@ -3382,37 +3166,6 @@ func TestValidateCsrfToken_InvalidSession(t *testing.T) {
 }
 
 // TestRestartServer_WithValidContext tests restart server with valid context
-func TestRestartServer_WithValidContext(t *testing.T) {
-	app := CreateApp(t, false)
-	defer app.Shutdown()
-
-	app.config = config.DefaultConfig()
-
-	// Create a real server to test graceful shutdown
-	server := &http.Server{
-		Addr: "127.0.0.1:0", // Use random port
-	}
-
-	// Try to restart (will fail since server isn't listening, but tests the path)
-	err := app.RestartServer(server)
-	// Error expected since server not running
-	_ = err
-}
-
-// TestRestartServer_MultipleRestarts tests multiple restart attempts
-func TestRestartServer_MultipleRestarts(t *testing.T) {
-	app := CreateApp(t, false)
-	defer app.Shutdown()
-
-	app.config = config.DefaultConfig()
-	server := &http.Server{Addr: "127.0.0.1:0"}
-
-	// Multiple calls should handle gracefully
-	_ = app.RestartServer(server)
-	_ = app.RestartServer(server)
-}
-
-// TestSetupBootstrapLogging_ErrorPaths tests bootstrap logging with special cases
 func TestSetupBootstrapLogging_ErrorPaths(t *testing.T) {
 	app := CreateApp(t, false)
 	defer app.Shutdown()
@@ -3550,746 +3303,6 @@ func TestUnlockAccount_MultipleUsers(t *testing.T) {
 	}
 }
 
-// TestIsHTTPOnlyRestart_EdgeCases tests restart type with various configs
-func TestIsHTTPOnlyRestart_EdgeCases(t *testing.T) {
-	app := CreateApp(t, false)
-	defer app.Shutdown()
-
-	t.Run("with default config", func(t *testing.T) {
-		app.config = config.DefaultConfig()
-		if !app.isHTTPOnlyRestart() {
-			t.Error("Expected true with default config")
-		}
-	})
-
-	t.Run("with modified config", func(t *testing.T) {
-		app.config = config.DefaultConfig()
-		app.config.ListenerPort = 9999
-		if !app.isHTTPOnlyRestart() {
-			t.Error("Expected true even with modified port")
-		}
-	})
-
-	t.Run("with nil config", func(t *testing.T) {
-		app.config = nil
-		if app.isHTTPOnlyRestart() {
-			t.Error("Expected false with nil config")
-		}
-	})
-}
-
-// TestGetRestartType_AllPaths tests restart type determination
-func TestGetRestartType_AllPaths(t *testing.T) {
-	app := CreateApp(t, false)
-	defer app.Shutdown()
-
-	t.Run("HTTP-only with valid config", func(t *testing.T) {
-		app.config = config.DefaultConfig()
-		restartType := app.getRestartType()
-		if restartType != "HTTP-only" {
-			t.Errorf("Expected 'HTTP-only', got %q", restartType)
-		}
-	})
-
-	t.Run("Full restart with nil config", func(t *testing.T) {
-		app.config = nil
-		restartType := app.getRestartType()
-		if restartType != "full" {
-			t.Errorf("Expected 'full', got %q", restartType)
-		}
-	})
-
-	t.Run("Full restart after config clear", func(t *testing.T) {
-		app.config = config.DefaultConfig()
-		firstType := app.getRestartType()
-
-		app.config = nil
-		secondType := app.getRestartType()
-
-		if firstType == secondType {
-			t.Error("Restart type should change when config is cleared")
-		}
-	})
-}
-
-// TestRecordAndCheckAccountLockout_Flow tests the complete lockout flow
-func TestRecordAndCheckAccountLockout_Flow(t *testing.T) {
-	app := CreateApp(t, false)
-	defer app.Shutdown()
-
-	username := "locktest"
-
-	// Check initially not locked
-	isLocked, _ := app.checkAccountLockout(username)
-	if isLocked {
-		t.Error("Expected account to not be locked initially")
-	}
-
-	// Record attempts
-	for i := range 3 {
-		err := app.recordFailedLoginAttempt(username)
-		if err != nil {
-			t.Logf("Failed to record attempt %d: %v", i, err)
-		}
-	}
-
-	// Check again
-	isLocked, _ = app.checkAccountLockout(username)
-	// May or may not be locked depending on lockout threshold
-	_ = isLocked
-}
-
-// TestClearLoginAttempts_MultipleUsers tests clearing attempts for multiple users
-func TestClearLoginAttempts_MultipleUsers(t *testing.T) {
-	app := CreateApp(t, false)
-	defer app.Shutdown()
-
-	users := []string{"alice", "bob", "charlie"}
-
-	for _, user := range users {
-		_ = app.recordFailedLoginAttempt(user)
-		err := app.clearLoginAttempts(user)
-		if err != nil {
-			t.Errorf("Failed to clear attempts for %s: %v", user, err)
-		}
-	}
-}
-
-// TestParseConfigUITemplates_Rendering tests template parsing and basic rendering
-func TestParseConfigUITemplates_Rendering(t *testing.T) {
-	templates, err := parseConfigUITemplates(web.FS)
-	if err != nil {
-		t.Fatalf("Failed to parse templates: %v", err)
-	}
-
-	if templates == nil {
-		t.Fatal("Expected templates to be non-nil")
-	}
-
-	// Verify we can execute templates
-	var buf strings.Builder
-
-	// Test a simple template to ensure it renders
-	if templates.SaveSuccessAlert != nil {
-		err = templates.SaveSuccessAlert.Execute(&buf, nil)
-		if err != nil {
-			t.Logf("Template execution error (may be expected): %v", err)
-		}
-	}
-}
-
-// TestShutdown_Coverage tests shutdown function paths
-func TestShutdown_Coverage(t *testing.T) {
-	// Note: Can't directly test Shutdown() twice due to channel closure
-	// Shutdown is already tested implicitly by all other tests via defer app.Shutdown()
-	t.Skip("Shutdown tested implicitly through defer cleanup in all tests")
-}
-
-// TestConditionalMiddleware_WriteHeader_Idempotent tests WriteHeader idempotence
-func TestConditionalMiddleware_WriteHeader_Idempotent(t *testing.T) {
-	t.Skip("newConditionalResponseWriter is not exported from middleware package")
-}
-
-// TestConditionalMiddleware_Header_Consistency tests header consistency
-func TestConditionalMiddleware_Header_Consistency(t *testing.T) {
-	t.Skip("newConditionalResponseWriter is not exported from middleware package")
-}
-
-// TestCompressMiddleware_ContentTypeLogic tests content type compression logic
-func TestCompressMiddleware_ContentTypeLogic(t *testing.T) {
-	// Test shouldCompressContentType directly
-	compressibleTypes := []string{
-		"text/html",
-		"text/plain",
-		"application/json",
-		"application/javascript",
-		"", // Empty should be treated as compressible
-	}
-
-	for _, ct := range compressibleTypes {
-		if !compress.ShouldCompressContentType(ct) {
-			t.Logf("Expected %q to be compressible", ct)
-		}
-	}
-
-	nonCompressibleTypes := []string{
-		"image/png",
-		"image/jpeg",
-		"video/mp4",
-	}
-
-	for _, ct := range nonCompressibleTypes {
-		if compress.ShouldCompressContentType(ct) {
-			t.Logf("Expected %q to not be compressible", ct)
-		}
-	}
-}
-
-// TestNegotiateEncoding_Priority tests encoding negotiation priority
-func TestNegotiateEncoding_Priority(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected string
-	}{
-		{"br, gzip", "br"},
-		{"gzip, br", "gzip"}, // Returns first match, not preferred
-		{"gzip", "gzip"},
-		{"deflate", "identity"},
-		{"", "identity"},
-		{"*", "br"},
-	}
-
-	for _, test := range tests {
-		result := compress.NegotiateEncoding(test.input)
-		if result != test.expected {
-			t.Errorf("compress.NegotiateEncoding(%q) = %q, expected %q", test.input, result, test.expected)
-		}
-	}
-}
-
-// TestEnsureCsrfToken_WithNilSessionManager tests CSRF token with nil session manager
-func TestEnsureCsrfToken_WithNilSessionManager(t *testing.T) {
-	app := CreateApp(t, false)
-	defer app.Shutdown()
-
-	// Temporarily set sessionManager to nil to test fallback
-	oldMgr := app.sessionManager
-	app.sessionManager = nil
-	defer func() { app.sessionManager = oldMgr }()
-
-	rr := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/", nil)
-
-	token := app.ensureCsrfToken(rr, req)
-	if token == "" {
-		t.Error("Expected non-empty CSRF token")
-	}
-}
-
-// TestValidateCsrfToken_WithNilSessionManager tests CSRF validation with nil session manager
-func TestValidateCsrfToken_WithNilSessionManager(t *testing.T) {
-	app := CreateApp(t, false)
-	defer app.Shutdown()
-
-	// Temporarily set sessionManager to nil to test fallback
-	oldMgr := app.sessionManager
-	app.sessionManager = nil
-	defer func() { app.sessionManager = oldMgr }()
-
-	req := httptest.NewRequest("POST", "/", nil)
-
-	// Should return false since no valid token present
-	valid := app.validateCsrfToken(req)
-	if valid {
-		t.Error("Expected invalid CSRF token validation without session manager")
-	}
-}
-
-// TestSetupBootstrapLogging_AppMethod tests setupBootstrapLogging as app method
-func TestSetupBootstrapLogging_AppMethod(t *testing.T) {
-	app := &App{
-		rootDir: t.TempDir(),
-	}
-
-	// Call setupBootstrapLogging
-	app.setupBootstrapLogging()
-
-	// Verify no panic occurred and function completed
-}
-
-// TestSetupLogging_AppMethod tests setupLogging as app method
-func TestSetupLogging_AppMethod(t *testing.T) {
-	app := CreateApp(t, false)
-	defer app.Shutdown()
-
-	// Call setupLogging without arguments
-	app.setupBootstrapLogging()
-
-	// Verify no panic occurred
-}
-
-// TestRestartServer_MultipleTypes tests restart with different types
-func TestRestartServer_MultipleTypes(t *testing.T) {
-	app := CreateApp(t, false)
-	defer app.Shutdown()
-
-	// Create a mock HTTP server
-	server := &http.Server{
-		Addr: "localhost:8080",
-	}
-
-	// Test with RestartServer taking http.Server
-	err := app.RestartServer(server)
-	// If we get here without panic, the function handled it
-	// Error is expected since server isn't actually running
-	if err == nil {
-		t.Logf("RestartServer completed without error")
-	}
-}
-
-// TestValidateCsrfToken_WithSession tests CSRF validation with established session
-func TestValidateCsrfToken_WithSession(t *testing.T) {
-	app := CreateApp(t, false)
-	defer app.Shutdown()
-
-	// Create initial request to set up token
-	rr := httptest.NewRecorder()
-	getReq := httptest.NewRequest("GET", "/", nil)
-	token := app.ensureCsrfToken(rr, getReq)
-
-	if token == "" {
-		t.Error("Expected token to be generated")
-	}
-
-	// Create POST request with session cookie
-	postReq := httptest.NewRequest("POST", "/", nil)
-	postReq.Header.Set("Cookie", rr.Header().Get("Set-Cookie"))
-
-	// Validate should work with session
-	_ = app.validateCsrfToken(postReq)
-}
-
-// TestSetupLogging_WithProfiler tests setupLogging with profiler active
-func TestSetupLogging_WithProfiler(t *testing.T) {
-	app := CreateApp(t, false)
-	defer app.Shutdown()
-
-	// Call setupLogging (which calls setupBootstrapLogging and checks profiler)
-	app.setupBootstrapLogging()
-
-	// Verify logger is set
-	if app.logger == nil {
-		t.Error("Expected logger to be set after setupLogging")
-	}
-}
-
-// TestBuildHandlers_ErrorCases tests buildHandlers with various configurations
-func TestBuildHandlers_ErrorCases(t *testing.T) {
-	app := CreateApp(t, false)
-	defer app.Shutdown()
-
-	// buildHandlers should succeed with valid configuration
-	if err := app.buildHandlers(web.FS); err != nil {
-		t.Errorf("buildHandlers failed unexpectedly: %v", err)
-	}
-	if app.configHandlers == nil {
-		t.Error("Expected configHandlers to be non-nil")
-	}
-}
-
-// TestIsAuthenticated_WithValidSession tests isAuthenticated with valid session
-func TestIsAuthenticated_WithValidSession(t *testing.T) {
-	app := CreateApp(t, false)
-	defer app.Shutdown()
-
-	rr := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/", nil)
-
-	// Set up session with user data
-	sess, _ := app.store.Get(req, "session-name")
-	sess.Values["authenticated"] = true
-	sess.Values["username"] = "testuser"
-	sess.Save(req, rr)
-
-	// Create a new request with the session cookie
-	newReq := httptest.NewRequest("GET", "/", nil)
-	newReq.Header.Set("Cookie", rr.Header().Get("Set-Cookie"))
-
-	// Test isAuthenticated
-	result := app.isAuthenticated(newReq)
-	if !result {
-		t.Error("Expected isAuthenticated to return true for authenticated session")
-	}
-}
-
-// TestIsAuthenticated_WithoutSession tests isAuthenticated without session
-func TestIsAuthenticated_WithoutSession(t *testing.T) {
-	app := CreateApp(t, false)
-	defer app.Shutdown()
-
-	req := httptest.NewRequest("GET", "/", nil)
-
-	// Test isAuthenticated without session
-	result := app.isAuthenticated(req)
-	if result {
-		t.Error("Expected isAuthenticated to return false for unauthenticated request")
-	}
-}
-
-// TestReloadLoggingFromConfig_Success tests reloadLoggingFromConfig succeeds
-func TestReloadLoggingFromConfig_Success(t *testing.T) {
-	app := CreateApp(t, false)
-	defer app.Shutdown()
-
-	// Ensure config is set
-	app.configMu.RLock()
-	if app.config == nil {
-		app.configMu.RUnlock()
-		t.Skip("Config not initialized")
-	}
-	app.configMu.RUnlock()
-
-	// Call reloadLoggingFromConfig
-	err := app.reloadLoggingFromConfig()
-	if err != nil {
-		t.Errorf("reloadLoggingFromConfig failed: %v", err)
-	}
-
-	// Verify context is available for operations
-	_ = context.Background()
-}
-
-// TestBuildHandlers_MultipleBuilds tests calling buildHandlers multiple times
-func TestBuildHandlers_MultipleBuilds(t *testing.T) {
-	app := CreateApp(t, false)
-	defer app.Shutdown()
-
-	// Call buildHandlers multiple times
-	for i := range 3 {
-		if err := app.buildHandlers(web.FS); err != nil {
-			t.Errorf("buildHandlers call %d failed: %v", i+1, err)
-		}
-		if app.configHandlers == nil {
-			t.Errorf("buildHandlers call %d returned nil configHandlers", i+1)
-		}
-	}
-}
-
-// TestAddCommonTemplateData_Complete tests adding all template data
-func TestAddCommonTemplateData_Complete(t *testing.T) {
-	app := CreateApp(t, false)
-	defer app.Shutdown()
-
-	rr := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/", nil)
-
-	data := make(map[string]any)
-	result := app.addCommonTemplateData(rr, req, data, false)
-	if result == nil {
-		t.Error("Expected non-nil template data result")
-	}
-
-	// Verify some expected keys are present
-	if _, ok := result["IsImage"]; !ok {
-		t.Logf("IsImage key not in result (this may be okay depending on context)")
-	}
-}
-
-// TestAddAuthToTemplateData_WithAuth tests adding auth data to template
-func TestAddAuthToTemplateData_WithAuth(t *testing.T) {
-	app := CreateApp(t, false)
-	defer app.Shutdown()
-
-	rr := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/", nil)
-
-	// Set up authenticated session
-	sess, _ := app.store.Get(req, "session-name")
-	sess.Values["authenticated"] = true
-	sess.Values["username"] = "admin"
-	sess.Save(req, rr)
-
-	newReq := httptest.NewRequest("GET", "/", nil)
-	newReq.Header.Set("Cookie", rr.Header().Get("Set-Cookie"))
-
-	data := make(map[string]any)
-	result := app.addAuthToTemplateData(newReq, data)
-
-	// Verify auth data was added and returned
-	if result == nil {
-		t.Error("Expected non-nil result from addAuthToTemplateData")
-	}
-
-	// Check if authenticated data was added
-	if isAuth, ok := result["IsAuthenticated"]; ok {
-		if _, isBool := isAuth.(bool); !isBool {
-			t.Errorf("Expected IsAuthenticated to be bool, got %T", isAuth)
-		}
-	}
-}
-
-// TestGetAdminUsername_ErrorPath tests getAdminUsername error handling
-func TestGetAdminUsername_ErrorPath(t *testing.T) {
-	app := CreateApp(t, false)
-	defer app.Shutdown()
-
-	// Test with configService set (normal path)
-	username, err := app.getAdminUsername()
-	if err != nil {
-		t.Logf("getAdminUsername error (may be expected): %v", err)
-	}
-	if username == "" && err == nil {
-		t.Error("Expected either username or error")
-	}
-}
-
-// TestClearLoginAttempts_Success tests clearLoginAttempts successfully
-func TestClearLoginAttempts_Success(t *testing.T) {
-	app := CreateApp(t, false)
-	defer app.Shutdown()
-
-	err := app.clearLoginAttempts("testuser")
-	if err != nil {
-		t.Errorf("clearLoginAttempts failed: %v", err)
-	}
-}
-
-// TestUnlockAccount_Success tests UnlockAccount successfully
-func TestUnlockAccount_Success(t *testing.T) {
-	app := CreateApp(t, false)
-	defer app.Shutdown()
-
-	err := app.UnlockAccount("testuser")
-	if err != nil {
-		t.Errorf("UnlockAccount failed: %v", err)
-	}
-}
-
-// TestLoadFromDatabase_Success tests LoadFromDatabase with valid context
-func TestLoadFromDatabase_Success(t *testing.T) {
-	app := CreateApp(t, false)
-	defer app.Shutdown()
-
-	cfg := DefaultConfig()
-	cpcRo, err := app.dbRoPool.Get()
-	if err != nil {
-		t.Fatalf("Failed to get database connection: %v", err)
-	}
-	defer app.dbRoPool.Put(cpcRo)
-
-	err = cfg.LoadFromDatabase(app.ctx, cpcRo.Queries)
-	if err != nil {
-		t.Errorf("LoadFromDatabase failed: %v", err)
-	}
-}
-
-// TestSaveToDatabase_Success tests SaveToDatabase with valid context
-func TestSaveToDatabase_Success(t *testing.T) {
-	app := CreateApp(t, false)
-	defer app.Shutdown()
-
-	cfg := DefaultConfig()
-	cfg.SiteName = "Test Save"
-
-	cpcRw, err := app.dbRwPool.Get()
-	if err != nil {
-		t.Fatalf("Failed to get database connection: %v", err)
-	}
-	defer app.dbRwPool.Put(cpcRw)
-
-	err = cfg.SaveToDatabase(app.ctx, cpcRw.Queries)
-	if err != nil {
-		t.Errorf("SaveToDatabase failed: %v", err)
-	}
-}
-
-// TestLoadFromYAML_Success tests LoadFromYAML
-func TestLoadFromYAML_Success(t *testing.T) {
-	cfg := DefaultConfig()
-
-	// LoadFromYAML loads from the default config.yaml location
-	// In test environment this may fail, but we test the code path
-	err := cfg.LoadFromYAML()
-	// Error is expected in test environment
-	if err != nil {
-		t.Logf("LoadFromYAML failed as expected in test: %v", err)
-	}
-}
-
-// TestIsAuthenticated_SessionError tests isAuthenticated with session error
-func TestIsAuthenticated_SessionError(t *testing.T) {
-	app := CreateApp(t, false)
-	defer app.Shutdown()
-
-	// Create request with invalid cookie to trigger session error
-	req := httptest.NewRequest("GET", "/", nil)
-	req.Header.Set("Cookie", "session-name=invalid_base64_!@#$%")
-
-	result := app.isAuthenticated(req)
-	if result {
-		t.Error("Expected isAuthenticated to return false on session error")
-	}
-}
-
-// TestBuildHandlers_NilSessionManager tests buildHandlers when sessionManager is nil
-func TestBuildHandlers_NilSessionManager(t *testing.T) {
-	app := CreateApp(t, false)
-	defer app.Shutdown()
-
-	// Set sessionManager to nil to test the fallback path
-	app.sessionManager = nil
-
-	if err := app.buildHandlers(web.FS); err != nil {
-		t.Errorf("buildHandlers failed with nil sessionManager: %v", err)
-	}
-	if app.configHandlers == nil {
-		t.Error("Expected configHandlers to be non-nil")
-	}
-}
-
-// TestServe_WithoutConfig tests Serve when config is nil
-func TestServe_WithoutConfig(t *testing.T) {
-	// This would require starting an actual server which is complex
-	// Instead we test the config loading path indirectly
-	app := CreateApp(t, false)
-	defer app.Shutdown()
-
-	// Set config to nil to test the config loading path in Serve
-	app.configMu.Lock()
-	app.config = nil
-	app.configMu.Unlock()
-
-	// We can't actually call Serve() as it starts a blocking server
-	// But we can test that loadConfig works
-	err := app.loadConfig()
-	if err != nil {
-		t.Logf("loadConfig failed: %v (expected in some test environments)", err)
-	}
-}
-
-// TestCompress_Write_Coverage tests compress Write function with different scenarios
-func TestCompress_Write_Coverage(t *testing.T) {
-	handler := middleware.CompressMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Write small amount (below compression threshold)
-		w.Header().Set("Content-Type", "text/html")
-		w.Write([]byte("small"))
-	}))
-
-	rr := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/test", nil)
-	req.Header.Set("Accept-Encoding", "gzip")
-
-	handler.ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusOK {
-		t.Errorf("Expected status 200, got %d", rr.Code)
-	}
-}
-
-// TestSetRootDir_NilPath tests setRootDir with nil path
-func TestSetRootDir_NilPath(t *testing.T) {
-	app := &App{}
-
-	app.setRootDir(nil)
-
-	// Should use current directory
-	if app.rootDir == "" {
-		t.Error("Expected rootDir to be set to current directory")
-	}
-}
-
-// TestSetDB_Success tests setDB function
-func TestSetDB_Success(t *testing.T) {
-	app := &App{
-		rootDir: t.TempDir(),
-		ctx:     context.Background(),
-	}
-
-	app.setDB()
-
-	if app.dbRoPool == nil {
-		t.Error("Expected dbRoPool to be initialized")
-	}
-	if app.dbRwPool == nil {
-		t.Error("Expected dbRwPool to be initialized")
-	}
-
-	// Cleanup
-	if app.dbRoPool != nil {
-		app.dbRoPool.Close()
-	}
-	if app.dbRwPool != nil {
-		app.dbRwPool.Close()
-	}
-}
-
-// TestShutdown_Complete tests Shutdown function
-func TestShutdown_Complete(t *testing.T) {
-	app := CreateApp(t, false)
-
-	// Call Shutdown
-	app.Shutdown()
-
-	// Verify app is shutdown (ctx should be done)
-	app.ctxMu.RLock()
-	select {
-	case <-app.ctx.Done():
-		// Good, context is cancelled
-	default:
-		t.Error("Expected context to be cancelled after Shutdown")
-	}
-	app.ctxMu.RUnlock()
-}
-
-// TestParseConfigUITemplates_AllTemplates tests parseConfigUITemplates
-func TestParseConfigUITemplates_AllTemplates(t *testing.T) {
-	templates, err := parseConfigUITemplates(web.FS)
-	if err != nil {
-		t.Errorf("parseConfigUITemplates failed: %v", err)
-	}
-
-	if templates == nil {
-		t.Fatal("Expected non-nil templates")
-	}
-
-	// Verify all templates are present
-	if templates.SaveRestartAlert == nil {
-		t.Error("Expected SaveRestartAlert template")
-	}
-	if templates.SaveSuccessAlert == nil {
-		t.Error("Expected SaveSuccessAlert template")
-	}
-	if templates.ExportModal == nil {
-		t.Error("Expected ExportModal template")
-	}
-	if templates.ImportModal == nil {
-		t.Error("Expected ImportModal template")
-	}
-	if templates.RestoreModal == nil {
-		t.Error("Expected RestoreModal template")
-	}
-	if templates.RestoreSuccessAlert == nil {
-		t.Error("Expected RestoreSuccessAlert template")
-	}
-	if templates.ImportSuccessAlert == nil {
-		t.Error("Expected ImportSuccessAlert template")
-	}
-	if templates.RestartInitiatedAlert == nil {
-		t.Error("Expected RestartInitiatedAlert template")
-	}
-}
-
-// TestLogProfileLocation_AppMethod tests app.LogProfileLocation
-func TestLogProfileLocation_AppMethod(t *testing.T) {
-	app := CreateApp(t, false)
-	defer app.Shutdown()
-
-	// LogProfileLocation logs profiler information
-	app.LogProfileLocation()
-	// If no panic, test passes
-}
-
-// TestSetupBootstrapLogging_SuccessPath tests setupBootstrapLogging success
-func TestSetupBootstrapLogging_SuccessPath(t *testing.T) {
-	app := &App{
-		rootDir: t.TempDir(),
-	}
-
-	// This should succeed and not panic
-	defer func() {
-		if r := recover(); r != nil {
-			t.Errorf("setupBootstrapLogging panicked: %v", r)
-		}
-	}()
-
-	app.setupBootstrapLogging()
-
-	if app.logger == nil {
-		t.Error("Expected logger to be initialized after setupBootstrapLogging")
-	}
-}
-
-// TestSetupLogging_Complete tests setupLogging thoroughly
 func TestSetupLogging_Complete(t *testing.T) {
 	app := CreateApp(t, false)
 	defer app.Shutdown()

@@ -49,13 +49,13 @@ func (f *fundamental) Format(s fmt.State, verb rune) {
 	switch verb {
 	case 'v':
 		if s.Flag('+') {
-			io.WriteString(s, f.msg)
+			fmt.Fprint(s, f.msg)
 			renderStack(s, f.stack)
 			return
 		}
 		fallthrough
 	case 's':
-		io.WriteString(s, f.msg)
+		fmt.Fprint(s, f.msg)
 	case 'q':
 		fmt.Fprintf(s, "%q", f.msg)
 	}
@@ -109,13 +109,13 @@ func (e *wrappedError) Format(s fmt.State, verb rune) {
 		if s.Flag('+') {
 			// %+v: render the cause chain with stack traces
 			fmt.Fprintf(s, "%+v\n", e.cause)
-			io.WriteString(s, e.msg)
+			fmt.Fprint(s, e.msg)
 			renderStack(s, e.stack)
 			return
 		}
 		fallthrough
 	case 's':
-		io.WriteString(s, e.Error())
+		fmt.Fprint(s, e.Error())
 	case 'q':
 		fmt.Fprintf(s, "%q", e.Error())
 	}
@@ -142,11 +142,11 @@ func renderStack(w io.Writer, pcs []uintptr) {
 	frames := runtime.CallersFrames(pcs)
 	for {
 		frame, more := frames.Next()
-		io.WriteString(w, "\n")
-		io.WriteString(w, frame.Function)
-		io.WriteString(w, "\n\t")
-		io.WriteString(w, frame.File)
-		io.WriteString(w, ":")
+		fmt.Fprint(w, "\n")
+		fmt.Fprint(w, frame.Function)
+		fmt.Fprint(w, "\n\t")
+		fmt.Fprint(w, frame.File)
+		fmt.Fprint(w, ":")
 		fmt.Fprint(w, frame.Line)
 		if !more {
 			break

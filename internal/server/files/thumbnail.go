@@ -3,6 +3,7 @@ package files
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path"
@@ -15,6 +16,23 @@ import (
 	"github.com/lbe/sfpg-go/internal/thumbnail"
 )
 
+// invalidFileDeleter is the minimal interface needed to clear a stale
+// invalid_files row. Both *gallerydb.CustomQueries and the query object
+// embedded in gallerylib.Importer satisfy it.
+type invalidFileDeleter interface {
+	DeleteInvalidFileByPath(ctx context.Context, path string) error
+}
+
+// clearStaleInvalidFile removes any invalid_files row for the given path.
+// A previously-invalid file that has since become valid must be importable on
+// subsequent runs, so WriteFileInTx always deletes the stale entry after a
+// successful import.
+func clearStaleInvalidFile(ctx context.Context, q invalidFileDeleter, path string) {
+	if err := q.DeleteInvalidFileByPath(ctx, path); err != nil {
+		slog.Warn("delete invalid file on success", "path", path, "err", err)
+	}
+}
+
 // UpsertThumbnail inserts or updates a thumbnail record and its blob data in a single transaction.
 func UpsertThumbnail(ctx context.Context, cpcRw *dbconnpool.CpConn, fileID int64, thumb []byte) (int64, error) {
 	var thumbnailID int64
@@ -24,7 +42,7 @@ func UpsertThumbnail(ctx context.Context, cpcRw *dbconnpool.CpConn, fileID int64
 	}
 	defer func() {
 		err = tx.Rollback()
-		if err != nil && err != sql.ErrTxDone {
+		if err != nil && !errors.Is(err, sql.ErrTxDone) {
 			slog.Error("upsertThumbnail: transaction rollback failed", "err", err)
 		}
 	}()
@@ -76,7 +94,7 @@ var UpsertThumbnailTxOnly = func(qtx ThumbnailTx, ctx context.Context, fileID in
 func NeedsThumbnail(ctx context.Context, cpcRo *dbconnpool.CpConn, fileID int64) (bool, error) {
 	exists, err := cpcRo.Queries.GetThumbnailExistsViewByID(ctx, fileID)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return true, nil // Needs thumbnail
 		}
 		slog.Error("thumbnailExists check failed", "fileID", fileID, "err", err)
@@ -89,7 +107,7 @@ func NeedsThumbnail(ctx context.Context, cpcRo *dbconnpool.CpConn, fileID int64)
 func NeedsFolderTileUpdate(ctx context.Context, cpcRo *dbconnpool.CpConn, folderPath string) (bool, error) {
 	exists, err := cpcRo.Queries.GetFolderTileExistsViewByPath(ctx, folderPath)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return true, nil // Needs folder tile update
 		}
 		slog.Error("directoryTileExists check failed", "dir", folderPath, "err", err)
@@ -132,16 +150,9 @@ func WriteFileInTx(ctx context.Context, imp *gallerylib.Importer, f *File) error
 	f.File = dbFile
 
 	// 2. Clear stale invalid_files entry.
-	// Only the file that was previously recorded invalid needs its row cleared;
-	// for never-invalid files (the common case in a fresh preload) this DELETE
-	// would be a guaranteed no-op, so skip the round-trip entirely. Preserving
-	// the delete here is correctness-critical: without it, a now-valid file
-	// would still be skipped on the next run.
-	if f.HadInvalidEntry {
-		if delErr := q.DeleteInvalidFileByPath(ctx, f.Path); delErr != nil {
-			slog.Warn("delete invalid file on success", "path", f.Path, "err", delErr)
-		}
-	}
+	// Always delete any invalid_files row for this path: a previously-invalid
+	// file that has since become valid must be importable on subsequent runs.
+	clearStaleInvalidFile(ctx, q, f.Path)
 
 	// 3. UpsertExif if available (non-fatal)
 	if f.Exif.CameraMake.Valid {
@@ -160,7 +171,7 @@ func WriteFileInTx(ctx context.Context, imp *gallerylib.Importer, f *File) error
 	needsThumb := true
 	if f.Exists {
 		exists, err := q.GetThumbnailExistsViewByID(ctx, dbFile.ID)
-		if err != nil && err != sql.ErrNoRows {
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			slog.Warn("check thumbnail exists, assuming needed", "path", f.Path, "file_id", dbFile.ID, "err", err)
 		} else if err == nil {
 			needsThumb = !exists
@@ -190,7 +201,7 @@ func WriteFileInTx(ctx context.Context, imp *gallerylib.Importer, f *File) error
 	if !imp.IsDirTiled(dir) {
 		needsTile := true
 		tileExists, err := q.GetFolderTileExistsViewByPath(ctx, dir)
-		if err != nil && err != sql.ErrNoRows {
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			slog.Error("check folder tile", "path", dir, "err", err)
 		} else if err == nil {
 			needsTile = !tileExists
@@ -242,10 +253,8 @@ func GenerateThumbnailAndUpdateDbIfNeeded(
 	f.File.ID = dbFile.ID
 	f.File = dbFile
 
-	// Clear any stale invalid_files entry now that this path succeeded
-	if delErr := cpcRw.Queries.DeleteInvalidFileByPath(ctx, f.Path); delErr != nil {
-		slog.Warn("delete invalid file on success", "path", f.Path, "err", delErr)
-	}
+	// Clear any stale invalid_files entry now that this path succeeded.
+	clearStaleInvalidFile(ctx, cpcRw.Queries, f.Path)
 
 	doGen, err := NeedsThumbnail(ctx, cpcRo, f.File.ID)
 	if err != nil {

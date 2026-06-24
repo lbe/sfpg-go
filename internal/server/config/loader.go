@@ -8,7 +8,6 @@ import (
 	"os"
 	"slices"
 	"strconv"
-	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -24,16 +23,29 @@ type ConfigQueries interface {
 
 // LoadFromDatabase loads configuration values from the database.
 // Only loads values that exist in the database; missing keys keep their current values.
-// Ignores metadata columns for now (they'll be used for UI help text later).
+// Also populates HelpText and ExampleValues maps from each row's metadata columns.
 func (c *Config) LoadFromDatabase(ctx context.Context, q ConfigQueries) error {
 	configs, err := q.GetConfigs(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get configs from database: %w", err)
 	}
 
+	if len(configs) > 0 {
+		c.HelpText = make(map[string]string, len(configs))
+		c.ExampleValues = make(map[string]string, len(configs))
+	}
+
 	for _, dbConfig := range configs {
 		key := dbConfig.Key
 		value := dbConfig.Value
+
+		// Populate metadata maps from each row's help_text / example_value columns.
+		if dbConfig.HelpText.Valid {
+			c.HelpText[key] = dbConfig.HelpText.String
+		}
+		if dbConfig.ExampleValue.Valid {
+			c.ExampleValues[key] = dbConfig.ExampleValue.String
+		}
 
 		// Skip special keys like user/password and LastKnownGoodConfig
 		if key == "user" || key == "password" || key == "LastKnownGoodConfig" {
@@ -71,168 +83,12 @@ func FromMap(m map[string]string) (*Config, error) {
 // SetValueFromString sets a config field value from a string representation.
 // This is used when loading from database or parsing from YAML.
 func (c *Config) SetValueFromString(key, value string) error {
-	switch key {
-	case "listener_address":
-		c.ListenerAddress = value
-	case "listener_port":
-		port, err := strconv.Atoi(value)
-		if err != nil {
-			return fmt.Errorf("invalid port value %q: %w", value, err)
+	for _, f := range fields() {
+		if f.dbKey == key {
+			return f.set(c, value)
 		}
-		c.ListenerPort = port
-	case "log_directory":
-		c.LogDirectory = value
-	case "log_level":
-		c.LogLevel = value
-	case "log_rollover":
-		c.LogRollover = value
-	case "log_retention_count":
-		count, err := strconv.Atoi(value)
-		if err != nil {
-			return fmt.Errorf("invalid log retention count %q: %w", value, err)
-		}
-		c.LogRetentionCount = count
-	case "site_name":
-		c.SiteName = value
-	case "themes":
-		var themes []string
-		if err := json.Unmarshal([]byte(value), &themes); err != nil {
-			return fmt.Errorf("invalid themes JSON %q: %w", value, err)
-		}
-		c.Themes = themes
-	case "current_theme":
-		c.CurrentTheme = value
-	case "image_directory":
-		c.ImageDirectory = value
-	case "etag_version":
-		c.ETagVersion = value
-	case "session_max_age":
-		age, err := strconv.Atoi(value)
-		if err != nil {
-			return fmt.Errorf("invalid session max age %q: %w", value, err)
-		}
-		c.SessionMaxAge = age
-	case "session_http_only":
-		httpOnly, err := strconv.ParseBool(value)
-		if err != nil {
-			return fmt.Errorf("invalid session http only %q: %w", value, err)
-		}
-		c.SessionHttpOnly = httpOnly
-	case "session_secure":
-		secure, err := strconv.ParseBool(value)
-		if err != nil {
-			return fmt.Errorf("invalid session secure %q: %w", value, err)
-		}
-		c.SessionSecure = secure
-	case "session_same_site":
-		c.SessionSameSite = value
-	case "server_compression_enable":
-		enable, err := strconv.ParseBool(value)
-		if err != nil {
-			return fmt.Errorf("invalid compression enable %q: %w", value, err)
-		}
-		c.ServerCompressionEnable = enable
-	case "enable_http_cache":
-		enable, err := strconv.ParseBool(value)
-		if err != nil {
-			return fmt.Errorf("invalid http cache enable %q: %w", value, err)
-		}
-		c.EnableHTTPCache = enable
-	case "cache_max_size":
-		size, err := strconv.ParseInt(value, 10, 64)
-		if err != nil {
-			return fmt.Errorf("invalid cache max size %q: %w", value, err)
-		}
-		c.CacheMaxSize = size
-	case "cache_max_time":
-		duration, err := time.ParseDuration(value)
-		if err != nil {
-			return fmt.Errorf("invalid cache max time %q: %w", value, err)
-		}
-		c.CacheMaxTime = duration
-	case "cache_max_entry_size":
-		size, err := strconv.ParseInt(value, 10, 64)
-		if err != nil {
-			return fmt.Errorf("invalid cache max entry size %q: %w", value, err)
-		}
-		c.CacheMaxEntrySize = size
-	case "cache_cleanup_interval":
-		duration, err := time.ParseDuration(value)
-		if err != nil {
-			return fmt.Errorf("invalid cache cleanup interval %q: %w", value, err)
-		}
-		c.CacheCleanupInterval = duration
-	case "db_max_pool_size":
-		size, err := strconv.Atoi(value)
-		if err != nil {
-			return fmt.Errorf("invalid db max pool size %q: %w", value, err)
-		}
-		c.DBMaxPoolSize = size
-	case "db_min_idle_connections":
-		count, err := strconv.Atoi(value)
-		if err != nil {
-			return fmt.Errorf("invalid db min idle connections %q: %w", value, err)
-		}
-		c.DBMinIdleConnections = count
-	case "db_optimize_interval":
-		duration, err := time.ParseDuration(value)
-		if err != nil {
-			return fmt.Errorf("invalid db optimize interval %q: %w", value, err)
-		}
-		c.DBOptimizeInterval = duration
-	case "worker_pool_max":
-		max, err := strconv.Atoi(value)
-		if err != nil {
-			return fmt.Errorf("invalid worker pool max %q: %w", value, err)
-		}
-		c.WorkerPoolMax = max
-	case "worker_pool_min_idle":
-		min, err := strconv.Atoi(value)
-		if err != nil {
-			return fmt.Errorf("invalid worker pool min idle %q: %w", value, err)
-		}
-		c.WorkerPoolMinIdle = min
-	case "worker_pool_max_idle_time":
-		duration, err := time.ParseDuration(value)
-		if err != nil {
-			return fmt.Errorf("invalid worker pool max idle time %q: %w", value, err)
-		}
-		c.WorkerPoolMaxIdleTime = duration
-	case "db_pool_monitor_interval":
-		duration, err := time.ParseDuration(value)
-		if err != nil {
-			return fmt.Errorf("invalid db pool monitor interval %q: %w", value, err)
-		}
-		c.DBPoolMonitorInterval = duration
-	case "queue_size":
-		size, err := strconv.Atoi(value)
-		if err != nil {
-			return fmt.Errorf("invalid queue size %q: %w", value, err)
-		}
-		c.QueueSize = size
-	case "enable_cache_preload":
-		enable, err := strconv.ParseBool(value)
-		if err != nil {
-			return fmt.Errorf("invalid enable cache preload %q: %w", value, err)
-		}
-		c.EnableCachePreload = enable
-	case "max_http_cache_entry_insert_per_transaction":
-		n, err := strconv.Atoi(value)
-		if err != nil {
-			return fmt.Errorf("invalid max http cache entry insert per transaction %q: %w", value, err)
-		}
-		c.MaxHTTPCacheEntryInsertPerTransaction = n
-	case "run_file_discovery":
-		enable, err := strconv.ParseBool(value)
-		if err != nil {
-			return fmt.Errorf("invalid run file discovery %q: %w", value, err)
-		}
-		c.RunFileDiscovery = enable
-	default:
-		// Unknown key - silently ignore (might be user/password or other legacy keys)
-		return nil
 	}
-
+	// Unknown key - silently ignore (might be user/password or other legacy keys)
 	return nil
 }
 
@@ -241,277 +97,168 @@ func (c *Config) SetValueFromString(key, value string) error {
 // Only values that were explicitly set (IsSet=true) override the current config.
 // This ensures that default/zero values from getopt.Opt do not override database values.
 func (c *Config) LoadFromOpt(opt getopt.Opt) {
-	if opt.Port.IsSet {
-		c.ListenerPort = opt.Port.Int
-	}
-	if opt.EnableCompression.IsSet {
-		c.ServerCompressionEnable = opt.EnableCompression.Bool
-	}
-	if opt.EnableHTTPCache.IsSet {
-		c.EnableHTTPCache = opt.EnableHTTPCache.Bool
-	}
-	if opt.EnableCachePreload.IsSet {
-		c.EnableCachePreload = opt.EnableCachePreload.Bool
-	}
-	if opt.RunFileDiscovery.IsSet {
-		c.RunFileDiscovery = opt.RunFileDiscovery.Bool
-	}
-	if opt.SessionSecure.IsSet {
-		c.SessionSecure = opt.SessionSecure.Bool
-	}
-	if opt.SessionHttpOnly.IsSet {
-		c.SessionHttpOnly = opt.SessionHttpOnly.Bool
-	}
-	if opt.SessionMaxAge.IsSet {
-		c.SessionMaxAge = opt.SessionMaxAge.Int
-	}
-	if opt.SessionSameSite.IsSet {
-		c.SessionSameSite = opt.SessionSameSite.String
-	}
-	// SessionSecret is not stored in Config (memory only)
+	c.loadFromOpt(opt, nil)
 }
 
 // LoadFromOptExcluding applies CLI/env values except for fields in the exclude list.
 // The exclude list contains config field names that should NOT be overridden (e.g., user-changed fields).
 // This supports the use case where CLI values should override unchanged fields, but user changes persist.
 func (c *Config) LoadFromOptExcluding(opt getopt.Opt, exclude []string) {
-	// Helper to check if a field is in the exclude list
-	isExcluded := func(field string) bool {
-		return slices.Contains(exclude, field)
+	c.loadFromOpt(opt, exclude)
+}
+
+// cliRoute maps a getopt.Opt field to a config dbKey and extracts a string
+// value when the CLI flag is set. The dbKey must exist in the fields()
+// registry — this is enforced by TestLoadFromOptDBKeysExistInFields.
+type cliRoute struct {
+	dbKey string
+	val   func(getopt.Opt) (string, bool)
+}
+
+// cliRoutes defines which CLI/env flags map to config fields. Adding a new
+// CLI-settable field requires an entry here AND a matching entry in fields().
+var cliRoutes = []cliRoute{
+	{"listener_port", func(o getopt.Opt) (string, bool) { return strconv.Itoa(o.Port.Int), o.Port.IsSet }},
+	{"server_compression_enable", func(o getopt.Opt) (string, bool) {
+		return strconv.FormatBool(o.EnableCompression.Bool), o.EnableCompression.IsSet
+	}},
+	{"enable_http_cache", func(o getopt.Opt) (string, bool) {
+		return strconv.FormatBool(o.EnableHTTPCache.Bool), o.EnableHTTPCache.IsSet
+	}},
+	{"enable_cache_preload", func(o getopt.Opt) (string, bool) {
+		return strconv.FormatBool(o.EnableCachePreload.Bool), o.EnableCachePreload.IsSet
+	}},
+	{"run_file_discovery", func(o getopt.Opt) (string, bool) {
+		return strconv.FormatBool(o.RunFileDiscovery.Bool), o.RunFileDiscovery.IsSet
+	}},
+	{"session_secure", func(o getopt.Opt) (string, bool) {
+		return strconv.FormatBool(o.SessionSecure.Bool), o.SessionSecure.IsSet
+	}},
+	{"session_http_only", func(o getopt.Opt) (string, bool) {
+		return strconv.FormatBool(o.SessionHttpOnly.Bool), o.SessionHttpOnly.IsSet
+	}},
+	{"session_max_age", func(o getopt.Opt) (string, bool) { return strconv.Itoa(o.SessionMaxAge.Int), o.SessionMaxAge.IsSet }},
+	{"session_same_site", func(o getopt.Opt) (string, bool) { return o.SessionSameSite.String, o.SessionSameSite.IsSet }},
+}
+
+// loadFromOpt applies explicitly set CLI/environment values to c. Fields whose
+// database key appears in exclude are skipped. A nil exclude slice skips nothing.
+// Values are applied through the fields() registry so that dbKey strings are
+// validated against the single source of truth.
+func (c *Config) loadFromOpt(opt getopt.Opt, exclude []string) {
+	// Build a lookup from the fields registry to validate all dbKeys.
+	fieldsByKey := make(map[string]configField, len(fields()))
+	for _, f := range fields() {
+		fieldsByKey[f.dbKey] = f
 	}
 
-	if opt.Port.IsSet && !isExcluded("listener_port") {
-		c.ListenerPort = opt.Port.Int
-	}
-	if opt.EnableCompression.IsSet && !isExcluded("server_compression_enable") {
-		c.ServerCompressionEnable = opt.EnableCompression.Bool
-	}
-	if opt.EnableHTTPCache.IsSet && !isExcluded("enable_http_cache") {
-		c.EnableHTTPCache = opt.EnableHTTPCache.Bool
-	}
-	if opt.EnableCachePreload.IsSet && !isExcluded("enable_cache_preload") {
-		c.EnableCachePreload = opt.EnableCachePreload.Bool
-	}
-	if opt.RunFileDiscovery.IsSet && !isExcluded("run_file_discovery") {
-		c.RunFileDiscovery = opt.RunFileDiscovery.Bool
-	}
-	if opt.SessionSecure.IsSet && !isExcluded("session_secure") {
-		c.SessionSecure = opt.SessionSecure.Bool
-	}
-	if opt.SessionHttpOnly.IsSet && !isExcluded("session_http_only") {
-		c.SessionHttpOnly = opt.SessionHttpOnly.Bool
-	}
-	if opt.SessionMaxAge.IsSet && !isExcluded("session_max_age") {
-		c.SessionMaxAge = opt.SessionMaxAge.Int
-	}
-	if opt.SessionSameSite.IsSet && !isExcluded("session_same_site") {
-		c.SessionSameSite = opt.SessionSameSite.String
+	for _, r := range cliRoutes {
+		if slices.Contains(exclude, r.dbKey) {
+			continue
+		}
+		v, ok := r.val(opt)
+		if !ok {
+			continue
+		}
+		if f, ok := fieldsByKey[r.dbKey]; ok {
+			if err := f.set(c, v); err != nil {
+				slog.Warn("failed to set config value from CLI", "key", r.dbKey, "err", err)
+			}
+		}
 	}
 	// SessionSecret is not stored in Config (memory only)
 }
 
-// yamlConfigForConfig holds YAML values for Config struct.
-type yamlConfigForConfig struct {
-	ListenerAddress                       *string   `yaml:"listener-address"`
-	ListenerPort                          *int      `yaml:"listener-port"`
-	LogDirectory                          *string   `yaml:"log-directory"`
-	LogLevel                              *string   `yaml:"log-level"`
-	LogRollover                           *string   `yaml:"log-rollover"`
-	LogRetentionCount                     *int      `yaml:"log-retention-count"`
-	SiteName                              *string   `yaml:"site-name"`
-	Themes                                *[]string `yaml:"themes"`
-	CurrentTheme                          *string   `yaml:"current-theme"`
-	ImageDirectory                        *string   `yaml:"image-directory"`
-	ETagVersion                           *string   `yaml:"etag-version"`
-	SessionMaxAge                         *int      `yaml:"session-max-age"`
-	SessionHttpOnly                       *bool     `yaml:"session-http-only"`
-	SessionSecure                         *bool     `yaml:"session-secure"`
-	SessionSameSite                       *string   `yaml:"session-same-site"`
-	Compression                           *bool     `yaml:"compression"`
-	HTTPCache                             *bool     `yaml:"http-cache"`
-	CacheMaxSize                          *int64    `yaml:"cache-max-size"`
-	CacheMaxTime                          *string   `yaml:"cache-max-time"`
-	CacheMaxEntrySize                     *int64    `yaml:"cache-max-entry-size"`
-	CacheCleanupInterval                  *string   `yaml:"cache-cleanup-interval"`
-	DBMaxPoolSize                         *int      `yaml:"db-max-pool-size"`
-	DBMinIdleConnections                  *int      `yaml:"db-min-idle-connections"`
-	DBOptimizeInterval                    *string   `yaml:"db-optimize-interval"`
-	WorkerPoolMax                         *int      `yaml:"worker-pool-max"`
-	WorkerPoolMinIdle                     *int      `yaml:"worker-pool-min-idle"`
-	WorkerPoolMaxIdleTime                 *string   `yaml:"worker-pool-max-idle-time"`
-	DBPoolMonitorInterval                 *string   `yaml:"db-pool-monitor-interval"`
-	QueueSize                             *int      `yaml:"queue-size"`
-	EnableCachePreload                    *bool     `yaml:"enable-cache-preload"`
-	MaxHTTPCacheEntryInsertPerTransaction *int      `yaml:"max-http-cache-entry-insert-per-transaction"`
-	Discover                              *bool     `yaml:"discover"`
+// yamlFieldsMap builds a yamlKey → *configField lookup from fields().
+func yamlFieldsMap() map[string]*configField {
+	fieldsList := fields()
+	m := make(map[string]*configField, len(fieldsList))
+	for i := range fieldsList {
+		if fieldsList[i].yamlKey != "" {
+			m[fieldsList[i].yamlKey] = &fieldsList[i]
+		}
+	}
+	return m
 }
 
-func loadYAMLConfigForConfig(path string) (*yamlConfigForConfig, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read config file %s: %w", path, err)
+// yamlValueToSetString converts a yaml.v3-decoded interface{} value to a
+// string suitable for configField.set(). Returns an empty string for nil.
+func yamlValueToSetString(v interface{}) (string, error) {
+	switch val := v.(type) {
+	case nil:
+		return "", nil
+	case string:
+		return val, nil
+	case int:
+		return strconv.Itoa(val), nil
+	case bool:
+		return strconv.FormatBool(val), nil
+	case []interface{}:
+		b, err := json.Marshal(val)
+		if err != nil {
+			return "", fmt.Errorf("failed to marshal YAML sequence: %w", err)
+		}
+		return string(b), nil
+	default:
+		return "", fmt.Errorf("unsupported YAML value type %T", v)
 	}
-
-	var cfg yamlConfigForConfig
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("invalid YAML syntax in %s: %w", path, err)
-	}
-
-	return &cfg, nil
 }
 
-func applyYAMLConfigToConfig(c *Config, cfg *yamlConfigForConfig) {
-	if cfg == nil {
-		return
-	}
-
-	if cfg.ListenerAddress != nil {
-		c.ListenerAddress = *cfg.ListenerAddress
-	}
-	if cfg.ListenerPort != nil {
-		c.ListenerPort = *cfg.ListenerPort
-	}
-	if cfg.LogDirectory != nil {
-		c.LogDirectory = *cfg.LogDirectory
-	}
-	if cfg.LogLevel != nil {
-		c.LogLevel = *cfg.LogLevel
-	}
-	if cfg.LogRollover != nil {
-		c.LogRollover = *cfg.LogRollover
-	}
-	if cfg.LogRetentionCount != nil {
-		c.LogRetentionCount = *cfg.LogRetentionCount
-	}
-	if cfg.SiteName != nil {
-		c.SiteName = *cfg.SiteName
-	}
-	if cfg.Themes != nil {
-		c.Themes = *cfg.Themes
-	}
-	if cfg.CurrentTheme != nil {
-		c.CurrentTheme = *cfg.CurrentTheme
-	}
-	if cfg.ImageDirectory != nil {
-		c.ImageDirectory = *cfg.ImageDirectory
-	}
-	if cfg.ETagVersion != nil {
-		c.ETagVersion = *cfg.ETagVersion
-	}
-	if cfg.SessionMaxAge != nil {
-		c.SessionMaxAge = *cfg.SessionMaxAge
-	}
-	if cfg.SessionHttpOnly != nil {
-		c.SessionHttpOnly = *cfg.SessionHttpOnly
-	}
-	if cfg.SessionSecure != nil {
-		c.SessionSecure = *cfg.SessionSecure
-	}
-	if cfg.SessionSameSite != nil {
-		c.SessionSameSite = *cfg.SessionSameSite
-	}
-	if cfg.Compression != nil {
-		c.ServerCompressionEnable = *cfg.Compression
-	}
-	if cfg.HTTPCache != nil {
-		c.EnableHTTPCache = *cfg.HTTPCache
-	}
-	if cfg.CacheMaxSize != nil {
-		c.CacheMaxSize = *cfg.CacheMaxSize
-	}
-	if cfg.CacheMaxTime != nil {
-		duration, err := time.ParseDuration(*cfg.CacheMaxTime)
-		if err == nil {
-			c.CacheMaxTime = duration
-		} else {
-			slog.Warn("invalid cache-max-time duration", "value", *cfg.CacheMaxTime, "err", err)
+// applyYAMLValues applies values from a generic YAML map to c, using
+// fields() by yamlKey. Fields absent from fields() are silently skipped.
+// Invalid values for known fields return an error.
+func applyYAMLValues(c *Config, raw map[string]interface{}) error {
+	fieldByYAML := yamlFieldsMap()
+	for yamlKey, rawVal := range raw {
+		f, ok := fieldByYAML[yamlKey]
+		if !ok {
+			continue
+		}
+		strVal, err := yamlValueToSetString(rawVal)
+		if err != nil {
+			return fmt.Errorf("yaml key %q: %w", yamlKey, err)
+		}
+		if strVal == "" {
+			continue
+		}
+		if err := f.set(c, strVal); err != nil {
+			return fmt.Errorf("yaml key %q: %w", yamlKey, err)
 		}
 	}
-	if cfg.CacheMaxEntrySize != nil {
-		c.CacheMaxEntrySize = *cfg.CacheMaxEntrySize
-	}
-	if cfg.CacheCleanupInterval != nil {
-		duration, err := time.ParseDuration(*cfg.CacheCleanupInterval)
-		if err == nil {
-			c.CacheCleanupInterval = duration
-		} else {
-			slog.Warn("invalid cache-cleanup-interval duration", "value", *cfg.CacheCleanupInterval, "err", err)
-		}
-	}
-	if cfg.DBMaxPoolSize != nil {
-		c.DBMaxPoolSize = *cfg.DBMaxPoolSize
-	}
-	if cfg.DBMinIdleConnections != nil {
-		c.DBMinIdleConnections = *cfg.DBMinIdleConnections
-	}
-	if cfg.DBOptimizeInterval != nil {
-		duration, err := time.ParseDuration(*cfg.DBOptimizeInterval)
-		if err == nil {
-			c.DBOptimizeInterval = duration
-		} else {
-			slog.Warn("invalid db-optimize-interval duration", "value", *cfg.DBOptimizeInterval, "err", err)
-		}
-	}
-	if cfg.WorkerPoolMax != nil {
-		c.WorkerPoolMax = *cfg.WorkerPoolMax
-	}
-	if cfg.WorkerPoolMinIdle != nil {
-		c.WorkerPoolMinIdle = *cfg.WorkerPoolMinIdle
-	}
-	if cfg.WorkerPoolMaxIdleTime != nil {
-		duration, err := time.ParseDuration(*cfg.WorkerPoolMaxIdleTime)
-		if err == nil {
-			c.WorkerPoolMaxIdleTime = duration
-		} else {
-			slog.Warn("invalid worker-pool-max-idle-time duration", "value", *cfg.WorkerPoolMaxIdleTime, "err", err)
-		}
-	}
-	if cfg.DBPoolMonitorInterval != nil {
-		duration, err := time.ParseDuration(*cfg.DBPoolMonitorInterval)
-		if err == nil {
-			c.DBPoolMonitorInterval = duration
-		} else {
-			slog.Warn("invalid db-pool-monitor-interval duration", "value", *cfg.DBPoolMonitorInterval, "err", err)
-		}
-	}
-	if cfg.QueueSize != nil {
-		c.QueueSize = *cfg.QueueSize
-	}
-	if cfg.EnableCachePreload != nil {
-		c.EnableCachePreload = *cfg.EnableCachePreload
-	}
-	if cfg.MaxHTTPCacheEntryInsertPerTransaction != nil {
-		c.MaxHTTPCacheEntryInsertPerTransaction = *cfg.MaxHTTPCacheEntryInsertPerTransaction
-	}
-	if cfg.Discover != nil {
-		c.RunFileDiscovery = *cfg.Discover
-	}
+	return nil
 }
 
 // LoadFromYAML loads configuration values from YAML files.
 // It loads from platform config dir first (lower precedence), then exe dir (higher precedence).
 // Only values present in YAML files are applied; missing keys keep their current values.
 func (c *Config) LoadFromYAML() error {
-	// Get config file paths (platform first, then exe dir)
 	configPaths, err := getopt.FindConfigFiles()
 	if err != nil {
 		return fmt.Errorf("failed to find config files: %w", err)
 	}
 
-	// Load from lowest to highest precedence (platform first, then exe dir)
 	for i := len(configPaths) - 1; i >= 0; i-- {
 		path := configPaths[i]
 		if !FileExists(path) {
 			continue
 		}
 
-		cfg, err := loadYAMLConfigForConfig(path)
+		data, err := os.ReadFile(path)
 		if err != nil {
-			slog.Warn("failed to load YAML config", "path", path, "err", err)
+			slog.Warn("failed to read YAML config", "path", path, "err", err)
 			continue
 		}
 
-		applyYAMLConfigToConfig(c, cfg)
+		var raw map[string]interface{}
+		if err := yaml.Unmarshal(data, &raw); err != nil {
+			slog.Warn("invalid YAML syntax in config", "path", path, "err", err)
+			continue
+		}
+
+		if err := applyYAMLValues(c, raw); err != nil {
+			slog.Warn("failed to apply YAML config", "path", path, "err", err)
+			continue
+		}
 	}
 
 	return nil

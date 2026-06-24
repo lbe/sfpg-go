@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -55,59 +54,33 @@ func (e *ApplyPersistenceError) Unwrap() error {
 	return e.err
 }
 
-// BuildImportedConfig parses and applies YAML content onto a cloned base config.
-// It enforces strict type checks for duration settings used by modal submission.
+// BuildImportedConfig parses and applies YAML content on top of the current
+// base config. Fields absent from the imported YAML retain their current
+// (live) value. It rejects session-secret because it is memory-only.
 func BuildImportedConfig(base *Config, yamlContent string) (*Config, error) {
 	if base == nil {
 		return nil, fmt.Errorf("base config cannot be nil")
 	}
 
-	var yamlCfg yamlConfigForConfig
-	if err := yaml.Unmarshal([]byte(yamlContent), &yamlCfg); err != nil {
+	var raw map[string]interface{}
+	if err := yaml.Unmarshal([]byte(yamlContent), &raw); err != nil {
 		return nil, fmt.Errorf("invalid YAML syntax: %w", err)
 	}
 
-	var configMap map[string]any
-	if err := yaml.Unmarshal([]byte(yamlContent), &configMap); err == nil {
-		if _, hasSecret := configMap["session-secret"]; hasSecret {
-			return nil, fmt.Errorf("session-secret cannot be imported (memory only)")
-		}
-	}
-
-	if yamlCfg.CacheMaxTime != nil {
-		if _, err := time.ParseDuration(*yamlCfg.CacheMaxTime); err != nil {
-			return nil, fmt.Errorf("invalid cache max time: %w", err)
-		}
-	}
-	if yamlCfg.CacheCleanupInterval != nil {
-		if _, err := time.ParseDuration(*yamlCfg.CacheCleanupInterval); err != nil {
-			return nil, fmt.Errorf("invalid cache cleanup interval: %w", err)
-		}
-	}
-	if yamlCfg.DBOptimizeInterval != nil {
-		if _, err := time.ParseDuration(*yamlCfg.DBOptimizeInterval); err != nil {
-			return nil, fmt.Errorf("invalid db optimize interval: %w", err)
-		}
-	}
-	if yamlCfg.WorkerPoolMaxIdleTime != nil {
-		if _, err := time.ParseDuration(*yamlCfg.WorkerPoolMaxIdleTime); err != nil {
-			return nil, fmt.Errorf("invalid worker pool max idle time: %w", err)
-		}
-	}
-	if yamlCfg.DBPoolMonitorInterval != nil {
-		if _, err := time.ParseDuration(*yamlCfg.DBPoolMonitorInterval); err != nil {
-			return nil, fmt.Errorf("invalid db pool monitor interval: %w", err)
-		}
+	if _, ok := raw["session-secret"]; ok {
+		return nil, fmt.Errorf("session-secret cannot be imported (memory only)")
 	}
 
 	candidate := *base
-	applyYAMLConfigToConfig(&candidate, &yamlCfg)
+	if err := applyYAMLValues(&candidate, raw); err != nil {
+		return nil, err
+	}
 
 	return normalizeConfigCandidate(&candidate), nil
 }
 
 // ApplyConfig validates, persists, and computes restart requirements for a new configuration.
-func ApplyConfig(ctx context.Context, svc ConfigService, current, candidate *Config) (*ApplyResult, error) {
+func ApplyConfig(ctx context.Context, svc ConfigStore, current, candidate *Config) (*ApplyResult, error) {
 	if svc == nil {
 		return nil, fmt.Errorf("config service cannot be nil")
 	}
@@ -135,6 +108,8 @@ func ApplyConfig(ctx context.Context, svc ConfigService, current, candidate *Con
 	}, nil
 }
 
+// normalizeConfigCandidate returns a cleaned copy of cfg with trimmed strings
+// and normalized file paths. A nil config returns nil.
 func normalizeConfigCandidate(cfg *Config) *Config {
 	if cfg == nil {
 		return nil
@@ -165,84 +140,17 @@ func normalizePath(path string) string {
 	return filepath.Clean(trimmed)
 }
 
+// restartRequiredKeys returns the database key names for settings that differ
+// between current and candidate and require a server restart to take effect.
 func restartRequiredKeys(current, candidate *Config) []string {
-	keys := make([]string, 0, 24)
-
-	if current.ListenerAddress != candidate.ListenerAddress {
-		keys = append(keys, "listener_address")
+	var keys []string
+	for _, f := range fields() {
+		if !f.restart {
+			continue
+		}
+		if f.getDB(current) != f.getDB(candidate) {
+			keys = append(keys, f.dbKey)
+		}
 	}
-	if current.ListenerPort != candidate.ListenerPort {
-		keys = append(keys, "listener_port")
-	}
-	if current.LogDirectory != candidate.LogDirectory {
-		keys = append(keys, "log_directory")
-	}
-	if current.LogLevel != candidate.LogLevel {
-		keys = append(keys, "log_level")
-	}
-	if current.LogRollover != candidate.LogRollover {
-		keys = append(keys, "log_rollover")
-	}
-	if current.LogRetentionCount != candidate.LogRetentionCount {
-		keys = append(keys, "log_retention_count")
-	}
-	if current.ImageDirectory != candidate.ImageDirectory {
-		keys = append(keys, "image_directory")
-	}
-	if current.ServerCompressionEnable != candidate.ServerCompressionEnable {
-		keys = append(keys, "server_compression_enable")
-	}
-	if current.EnableHTTPCache != candidate.EnableHTTPCache {
-		keys = append(keys, "enable_http_cache")
-	}
-	if current.CacheMaxSize != candidate.CacheMaxSize {
-		keys = append(keys, "cache_max_size")
-	}
-	if current.CacheMaxEntrySize != candidate.CacheMaxEntrySize {
-		keys = append(keys, "cache_max_entry_size")
-	}
-	if current.CacheMaxTime != candidate.CacheMaxTime {
-		keys = append(keys, "cache_max_time")
-	}
-	if current.CacheCleanupInterval != candidate.CacheCleanupInterval {
-		keys = append(keys, "cache_cleanup_interval")
-	}
-	if current.DBMaxPoolSize != candidate.DBMaxPoolSize {
-		keys = append(keys, "db_max_pool_size")
-	}
-	if current.DBMinIdleConnections != candidate.DBMinIdleConnections {
-		keys = append(keys, "db_min_idle_connections")
-	}
-	if current.DBOptimizeInterval != candidate.DBOptimizeInterval {
-		keys = append(keys, "db_optimize_interval")
-	}
-	if current.WorkerPoolMax != candidate.WorkerPoolMax {
-		keys = append(keys, "worker_pool_max")
-	}
-	if current.WorkerPoolMinIdle != candidate.WorkerPoolMinIdle {
-		keys = append(keys, "worker_pool_min_idle")
-	}
-	if current.WorkerPoolMaxIdleTime != candidate.WorkerPoolMaxIdleTime {
-		keys = append(keys, "worker_pool_max_idle_time")
-	}
-	if current.DBPoolMonitorInterval != candidate.DBPoolMonitorInterval {
-		keys = append(keys, "db_pool_monitor_interval")
-	}
-	if current.QueueSize != candidate.QueueSize {
-		keys = append(keys, "queue_size")
-	}
-	if current.SessionMaxAge != candidate.SessionMaxAge {
-		keys = append(keys, "session_max_age")
-	}
-	if current.SessionHttpOnly != candidate.SessionHttpOnly {
-		keys = append(keys, "session_http_only")
-	}
-	if current.SessionSecure != candidate.SessionSecure {
-		keys = append(keys, "session_secure")
-	}
-	if current.SessionSameSite != candidate.SessionSameSite {
-		keys = append(keys, "session_same_site")
-	}
-
 	return keys
 }

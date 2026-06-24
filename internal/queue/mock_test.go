@@ -56,7 +56,7 @@ func TestMockDequeuer_Error(t *testing.T) {
 	}
 
 	_, err := mock.Dequeue()
-	if err != mockErr {
+	if !errors.Is(err, mockErr) {
 		t.Errorf("expected %v, got %v", mockErr, err)
 	}
 }
@@ -134,7 +134,9 @@ func BenchmarkMockDequeuer(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		mock := &MockDequeuer[string]{Items: items}
 		for !mock.IsEmpty() {
-			mock.Dequeue()
+			if _, deqErr := mock.Dequeue(); deqErr != nil {
+				b.Fatalf("Dequeue: %v", deqErr)
+			}
 		}
 	}
 }
@@ -145,10 +147,14 @@ func BenchmarkQueue_Real(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		q := NewQueue[string](1000)
 		for j := range 1000 {
-			q.Enqueue(string(rune(j)))
+			if enqErr := q.Enqueue(string(rune(j))); enqErr != nil {
+				b.Fatalf("Enqueue: %v", enqErr)
+			}
 		}
 		for !q.IsEmpty() {
-			q.Dequeue()
+			if _, deqErr := q.Dequeue(); deqErr != nil {
+				b.Fatalf("Dequeue: %v", deqErr)
+			}
 		}
 	}
 }

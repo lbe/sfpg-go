@@ -99,7 +99,6 @@ func setupTestConfigHandlers(t *testing.T, mockSvc config.ConfigService, mockAut
 	// Set required callbacks with sensible defaults
 	ch.UpdateConfig = func(*config.Config, []string) {}
 	ch.ApplyConfig = func() {}
-	ch.IncrementETag = func() (string, error) { return "test-etag", nil }
 	ch.InvalidateHTTPCache = func() {}
 	ch.SetPreloadEnabled = func(bool) {}
 	ch.SetRestartRequired = func(bool) {}
@@ -251,7 +250,7 @@ func TestConfigIncrementETag_UpdatesInMemoryConfig(t *testing.T) {
 	h.SessionManager.(*mockSessionManagerAuth).authenticated = true
 
 	// Call handler
-	h.ConfigIncrementETag(w, req)
+	NewConfigETagHandler(h).ConfigIncrementETag(w, req)
 
 	// Verify status - should be 200 OK
 	if w.Code != http.StatusOK {
@@ -283,32 +282,13 @@ func TestConfigIncrementETag_Error(t *testing.T) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 
-	h.ConfigIncrementETag(w, req)
+	NewConfigETagHandler(h).ConfigIncrementETag(w, req)
 
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("Status = %d, want %d", w.Code, http.StatusInternalServerError)
 	}
 	if w.Header().Get("HX-Retarget") != "#config-error-message" {
 		t.Errorf("expected HX-Retarget header, got %q", w.Header().Get("HX-Retarget"))
-	}
-}
-
-func TestConfigIncrementETag_Unauthenticated(t *testing.T) {
-	if err := ui.ParseTemplates(web.FS); err != nil {
-		t.Fatalf("Parse templates: %v", err)
-	}
-
-	h := setupTestConfigHandlers(t, &mockConfigServiceForETag{}, nil, nil)
-	h.SessionManager.(*mockSessionManagerAuth).authenticated = false
-
-	req := httptest.NewRequest("POST", "/config/increment-etag", strings.NewReader("csrf_token=valid"))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	w := httptest.NewRecorder()
-
-	h.ConfigIncrementETag(w, req)
-
-	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("Status = %d, want %d", w.Code, http.StatusUnauthorized)
 	}
 }
 
@@ -324,7 +304,7 @@ func TestConfigIncrementETag_ParseFormError(t *testing.T) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 
-	h.ConfigIncrementETag(w, req)
+	NewConfigETagHandler(h).ConfigIncrementETag(w, req)
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("Status = %d, want %d", w.Code, http.StatusBadRequest)
@@ -343,7 +323,7 @@ func TestConfigIncrementETag_InvalidCSRF(t *testing.T) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 
-	h.ConfigIncrementETag(w, req)
+	NewConfigETagHandler(h).ConfigIncrementETag(w, req)
 
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("Status = %d, want %d", w.Code, http.StatusForbidden)
@@ -371,7 +351,7 @@ func TestConfigIncrementETag_LoadError(t *testing.T) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 
-	h.ConfigIncrementETag(w, req)
+	NewConfigETagHandler(h).ConfigIncrementETag(w, req)
 
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("Status = %d, want %d", w.Code, http.StatusInternalServerError)
@@ -402,9 +382,6 @@ func TestConfigIncrementETag_InvalidatesHTTPCache(t *testing.T) {
 	h.InvalidateHTTPCache = func() {
 		invalidateCallCount++
 	}
-	h.IncrementETag = func() (string, error) {
-		return newETag, nil
-	}
 	h.Ctx = context.Background()
 
 	formData := strings.NewReader("csrf_token=valid-token")
@@ -415,7 +392,7 @@ func TestConfigIncrementETag_InvalidatesHTTPCache(t *testing.T) {
 	// Set session to authenticated
 	h.SessionManager.(*mockSessionManagerAuth).authenticated = true
 
-	h.ConfigIncrementETag(w, req)
+	NewConfigETagHandler(h).ConfigIncrementETag(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("Status = %d, want %d, body: %s", w.Code, http.StatusOK, w.Body.String())

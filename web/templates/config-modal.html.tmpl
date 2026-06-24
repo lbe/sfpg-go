@@ -306,6 +306,392 @@
         </div>
       </form>
 
+      <!-- Themes form (separate form for submitting themes independently) -->
+      <form
+        hx-post="/config/themes"
+        hx-target="#config-success-message"
+        hx-swap="outerHTML"
+        hx-indicator="#config-loading"
+        class="flex min-h-0 flex-1 flex-col overflow-hidden"
+      >
+        <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}" />
+        <div class="form-control mb-4">
+          <label class="label">
+            <span class="label-text font-semibold">Available Themes</span>
+          </label>
+          <select
+            name="themes"
+            multiple
+            class="select select-bordered w-64"
+            size="10"
+          >
+            {{ $themes := .Config.Themes }}
+            <option
+              value="light"
+              {{- if not $themes }}
+                selected
+              {{ else }}
+                {{ range $themes }}
+                  {{ if eq . "light" }}selected{{ end }}
+                {{ end }}
+              {{ end -}}
+            >
+              Light
+            </option>
+            <option
+              value="dark"
+              {{- if not $themes }}
+                selected
+              {{ else }}
+                {{ range $themes }}
+                  {{ if eq . "dark" }}selected{{ end }}
+                {{ end }}
+              {{ end -}}
+            >
+              Dark
+            </option>
+            <option
+              value="acid"
+              {{- if $themes }}
+                {{ range $themes }}
+                  {{ if eq . "acid" }}selected{{ end }}
+                {{ end }}
+              {{ end -}}
+            >
+              Acid
+            </option>
+            <option
+              value="aqua"
+              {{- if $themes }}
+                {{ range $themes }}
+                  {{ if eq . "aqua" }}selected{{ end }}
+                {{ end }}
+              {{ end -}}
+            >
+              Aqua
+            </option>
+            <option
+              value="autumn"
+              {{- if $themes }}
+                {{ range $themes }}
+                  {{ if eq . "autumn" }}selected{{ end }}
+                {{ end }}
+              {{ end -}}
+            >
+              Autumn
+            </option>
+            <option
+              value="black"
+              {{- if $themes }}
+                {{ range $themes }}
+                  {{ if eq . "black" }}selected{{ end }}
+                {{ end }}
+              {{ end -}}
+            >
+              Black
+            </option>
+            <option
+              value="bumblebee"
+              {{- if $themes }}
+                {{ range $themes }}
+                  {{ if eq . "bumblebee" }}selected{{ end }}
+                {{ end }}
+              {{ end -}}
+            >
+              Bumblebee
+            </option>
+            <option
+              value="business"
+              {{- if $themes }}
+                {{ range $themes }}
+                  {{ if eq . "business" }}selected{{ end }}
+                {{ end }}
+              {{ end -}}
+            >
+              Business
+            </option>
+            <option
+              value="caramellatte"
+              {{- if $themes }}
+                {{ range $themes }}
+                  {{ if eq . "caramellatte" }}selected{{ end }}
+                {{ end }}
+              {{ end -}}
+            >
+              Caramellatte
+            </option>
+            <option
+              value="coffee"
+              {{- if $themes }}
+                {{ range $themes }}
+                  {{ if eq . "coffee" }}selected{{ end }}
+                {{ end }}
+              {{ end -}}
+            >
+              Coffee
+            </option>
+            <option
+              value="corporate"
+              {{- if $themes }}
+                {{ range $themes }}
+                  {{ if eq . "corporate" }}selected{{ end }}
+                {{ end }}
+              {{ end -}}
+            >
+              Corporate
+            </option>
+            <option
+              value="cupcake"
+              {{- if $themes }}
+                {{ range $themes }}
+                  {{ if eq . "cupcake" }}selected{{ end }}
+                {{ end }}
+              {{ end -}}
+            >
+              Cupcake
+            </option>
+            <option
+              value="cmyk"
+              {{- if $themes }}
+                {{ range $themes }}
+                  {{ if eq . "cmyk" }}selected{{ end }}
+                {{ end }}
+              {{ end -}}
+            >
+              Cmyk
+            </option>
+            <option
+              value="cyberpunk"
+              {{- if $themes }}
+                {{ range $themes }}
+                  {{ if eq . "cyberpunk" }}selected{{ end }}
+                {{ end }}
+              {{ end -}}
+            >
+              Cyberpunk
+            </option>
+            <option
+              value="dim"
+              {{- if $themes }}
+                {{ range $themes }}{{ if eq . "dim" }}selected{{ end }}{{ end }}
+              {{ end -}}
+            >
+              Dim
+            </option>
+            <option
+              value="dracula"
+              {{- if $themes }}
+                {{ range $themes }}
+                  {{ if eq . "dracula" }}selected{{ end }}
+                {{ end }}
+              {{ end -}}
+            >
+              Dracula
+            </option>
+            <option
+              value="emerald"
+              {{- if $themes }}
+                {{ range $themes }}
+                  {{ if eq . "emerald" }}selected{{ end }}
+                {{ end }}
+              {{ end -}}
+            >
+              Emerald
+            </option>
+            <option
+              value="fantasy"
+              {{- if $themes }}
+                {{ range $themes }}
+                  {{ if eq . "fantasy" }}selected{{ end }}
+                {{ end }}
+              {{ end -}}
+            >
+              Fantasy
+            </option>
+            <option
+              value="forest"
+              {{- if $themes }}
+                {{ range $themes }}
+                  {{ if eq . "forest" }}selected{{ end }}
+                {{ end }}
+              {{ end -}}
+            >
+              Forest
+            </option>
+            <option
+              value="garden"
+              {{- if $themes }}
+                {{ range $themes }}
+                  {{ if eq . "garden" }}selected{{ end }}
+                {{ end }}
+              {{ end -}}
+            >
+              Garden
+            </option>
+            <option
+              value="halloween"
+              {{- if $themes }}
+                {{ range $themes }}
+                  {{ if eq . "halloween" }}selected{{ end }}
+                {{ end }}
+              {{ end -}}
+            >
+              Halloween
+            </option>
+            <option
+              value="lemonade"
+              {{- if $themes }}
+                {{ range $themes }}
+                  {{ if eq . "lemonade" }}selected{{ end }}
+                {{ end }}
+              {{ end -}}
+            >
+              Lemonade
+            </option>
+            <option
+              value="lofi"
+              {{- if $themes }}
+                {{ range $themes }}
+                  {{ if eq . "lofi" }}selected{{ end }}
+                {{ end }}
+              {{ end -}}
+            >
+              Lofi
+            </option>
+            <option
+              value="luxury"
+              {{- if $themes }}
+                {{ range $themes }}
+                  {{ if eq . "luxury" }}selected{{ end }}
+                {{ end }}
+              {{ end -}}
+            >
+              Luxury
+            </option>
+            <option
+              value="nord"
+              {{- if $themes }}
+                {{ range $themes }}
+                  {{ if eq . "nord" }}selected{{ end }}
+                {{ end }}
+              {{ end -}}
+            >
+              Nord
+            </option>
+            <option
+              value="night"
+              {{- if $themes }}
+                {{ range $themes }}
+                  {{ if eq . "night" }}selected{{ end }}
+                {{ end }}
+              {{ end -}}
+            >
+              Night
+            </option>
+            <option
+              value="pastel"
+              {{- if $themes }}
+                {{ range $themes }}
+                  {{ if eq . "pastel" }}selected{{ end }}
+                {{ end }}
+              {{ end -}}
+            >
+              Pastel
+            </option>
+            <option
+              value="retro"
+              {{- if $themes }}
+                {{ range $themes }}
+                  {{ if eq . "retro" }}selected{{ end }}
+                {{ end }}
+              {{ end -}}
+            >
+              Retro
+            </option>
+            <option
+              value="silk"
+              {{- if $themes }}
+                {{ range $themes }}
+                  {{ if eq . "silk" }}selected{{ end }}
+                {{ end }}
+              {{ end -}}
+            >
+              Silk
+            </option>
+            <option
+              value="sunset"
+              {{- if $themes }}
+                {{ range $themes }}
+                  {{ if eq . "sunset" }}selected{{ end }}
+                {{ end }}
+              {{ end -}}
+            >
+              Sunset
+            </option>
+            <option
+              value="synthwave"
+              {{- if $themes }}
+                {{ range $themes }}
+                  {{ if eq . "synthwave" }}selected{{ end }}
+                {{ end }}
+              {{ end -}}
+            >
+              Synthwave
+            </option>
+            <option
+              value="valentine"
+              {{- if $themes }}
+                {{ range $themes }}
+                  {{ if eq . "valentine" }}selected{{ end }}
+                {{ end }}
+              {{ end -}}
+            >
+              Valentine
+            </option>
+            <option
+              value="wireframe"
+              {{- if $themes }}
+                {{ range $themes }}
+                  {{ if eq . "wireframe" }}selected{{ end }}
+                {{ end }}
+              {{ end -}}
+            >
+              Wireframe
+            </option>
+            <option
+              value="winter"
+              {{- if $themes }}
+                {{ range $themes }}
+                  {{ if eq . "winter" }}selected{{ end }}
+                {{ end }}
+              {{ end -}}
+            >
+              Winter
+            </option>
+            <option
+              value="abyss"
+              {{- if $themes }}
+                {{ range $themes }}
+                  {{ if eq . "abyss" }}selected{{ end }}
+                {{ end }}
+              {{ end -}}
+            >
+              Abyss
+            </option>
+          </select>
+          <label class="label">
+            <span class="label-text-alt"
+              >Select which DaisyUI themes are available to users</span
+            >
+          </label>
+        </div>
+        <div class="flex justify-end">
+          <button type="submit" class="btn btn-primary btn-sm">
+            Save Themes
+          </button>
+        </div>
+      </form>
+
       <!-- Fixed Footer with buttons and info area -->
       <div class="border-base-300 flex-shrink-0 border-t p-6 pt-4">
         <!-- Button explanation and badge area (fixed height) -->
@@ -1022,311 +1408,6 @@
 
   <div class="form-control mb-4">
     <label class="label">
-      <span class="label-text font-semibold">Available Themes</span>
-    </label>
-    <select
-      name="themes"
-      multiple
-      class="select select-bordered w-64"
-      size="10"
-    >
-      {{ $themes := .Config.Themes }}
-      <option
-        value="light"
-        {{- if not $themes }}
-          selected
-        {{ else }}
-          {{ range $themes }}{{ if eq . "light" }}selected{{ end }}{{ end }}
-        {{ end -}}
-      >
-        Light
-      </option>
-      <option
-        value="dark"
-        {{- if not $themes }}
-          selected
-        {{ else }}
-          {{ range $themes }}{{ if eq . "dark" }}selected{{ end }}{{ end }}
-        {{ end -}}
-      >
-        Dark
-      </option>
-      <option
-        value="acid"
-        {{- if $themes }}
-          {{ range $themes }}{{ if eq . "acid" }}selected{{ end }}{{ end }}
-        {{ end -}}
-      >
-        Acid
-      </option>
-      <option
-        value="aqua"
-        {{- if $themes }}
-          {{ range $themes }}{{ if eq . "aqua" }}selected{{ end }}{{ end }}
-        {{ end -}}
-      >
-        Aqua
-      </option>
-      <option
-        value="autumn"
-        {{- if $themes }}
-          {{ range $themes }}{{ if eq . "autumn" }}selected{{ end }}{{ end }}
-        {{ end -}}
-      >
-        Autumn
-      </option>
-      <option
-        value="black"
-        {{- if $themes }}
-          {{ range $themes }}{{ if eq . "black" }}selected{{ end }}{{ end }}
-        {{ end -}}
-      >
-        Black
-      </option>
-      <option
-        value="bumblebee"
-        {{- if $themes }}
-          {{ range $themes }}{{ if eq . "bumblebee" }}selected{{ end }}{{ end }}
-        {{ end -}}
-      >
-        Bumblebee
-      </option>
-      <option
-        value="business"
-        {{- if $themes }}
-          {{ range $themes }}{{ if eq . "business" }}selected{{ end }}{{ end }}
-        {{ end -}}
-      >
-        Business
-      </option>
-      <option
-        value="caramellatte"
-        {{- if $themes }}
-          {{ range $themes }}
-            {{ if eq . "caramellatte" }}selected{{ end }}
-          {{ end }}
-        {{ end -}}
-      >
-        Caramellatte
-      </option>
-      <option
-        value="coffee"
-        {{- if $themes }}
-          {{ range $themes }}{{ if eq . "coffee" }}selected{{ end }}{{ end }}
-        {{ end -}}
-      >
-        Coffee
-      </option>
-      <option
-        value="corporate"
-        {{- if $themes }}
-          {{ range $themes }}{{ if eq . "corporate" }}selected{{ end }}{{ end }}
-        {{ end -}}
-      >
-        Corporate
-      </option>
-      <option
-        value="cupcake"
-        {{- if $themes }}
-          {{ range $themes }}{{ if eq . "cupcake" }}selected{{ end }}{{ end }}
-        {{ end -}}
-      >
-        Cupcake
-      </option>
-      <option
-        value="cmyk"
-        {{- if $themes }}
-          {{ range $themes }}{{ if eq . "cmyk" }}selected{{ end }}{{ end }}
-        {{ end -}}
-      >
-        Cmyk
-      </option>
-      <option
-        value="cyberpunk"
-        {{- if $themes }}
-          {{ range $themes }}{{ if eq . "cyberpunk" }}selected{{ end }}{{ end }}
-        {{ end -}}
-      >
-        Cyberpunk
-      </option>
-      <option
-        value="dim"
-        {{- if $themes }}
-          {{ range $themes }}{{ if eq . "dim" }}selected{{ end }}{{ end }}
-        {{ end -}}
-      >
-        Dim
-      </option>
-      <option
-        value="dracula"
-        {{- if $themes }}
-          {{ range $themes }}{{ if eq . "dracula" }}selected{{ end }}{{ end }}
-        {{ end -}}
-      >
-        Dracula
-      </option>
-      <option
-        value="emerald"
-        {{- if $themes }}
-          {{ range $themes }}{{ if eq . "emerald" }}selected{{ end }}{{ end }}
-        {{ end -}}
-      >
-        Emerald
-      </option>
-      <option
-        value="fantasy"
-        {{- if $themes }}
-          {{ range $themes }}{{ if eq . "fantasy" }}selected{{ end }}{{ end }}
-        {{ end -}}
-      >
-        Fantasy
-      </option>
-      <option
-        value="forest"
-        {{- if $themes }}
-          {{ range $themes }}{{ if eq . "forest" }}selected{{ end }}{{ end }}
-        {{ end -}}
-      >
-        Forest
-      </option>
-      <option
-        value="garden"
-        {{- if $themes }}
-          {{ range $themes }}{{ if eq . "garden" }}selected{{ end }}{{ end }}
-        {{ end -}}
-      >
-        Garden
-      </option>
-      <option
-        value="halloween"
-        {{- if $themes }}
-          {{ range $themes }}{{ if eq . "halloween" }}selected{{ end }}{{ end }}
-        {{ end -}}
-      >
-        Halloween
-      </option>
-      <option
-        value="lemonade"
-        {{- if $themes }}
-          {{ range $themes }}{{ if eq . "lemonade" }}selected{{ end }}{{ end }}
-        {{ end -}}
-      >
-        Lemonade
-      </option>
-      <option
-        value="lofi"
-        {{- if $themes }}
-          {{ range $themes }}{{ if eq . "lofi" }}selected{{ end }}{{ end }}
-        {{ end -}}
-      >
-        Lofi
-      </option>
-      <option
-        value="luxury"
-        {{- if $themes }}
-          {{ range $themes }}{{ if eq . "luxury" }}selected{{ end }}{{ end }}
-        {{ end -}}
-      >
-        Luxury
-      </option>
-      <option
-        value="nord"
-        {{- if $themes }}
-          {{ range $themes }}{{ if eq . "nord" }}selected{{ end }}{{ end }}
-        {{ end -}}
-      >
-        Nord
-      </option>
-      <option
-        value="night"
-        {{- if $themes }}
-          {{ range $themes }}{{ if eq . "night" }}selected{{ end }}{{ end }}
-        {{ end -}}
-      >
-        Night
-      </option>
-      <option
-        value="pastel"
-        {{- if $themes }}
-          {{ range $themes }}{{ if eq . "pastel" }}selected{{ end }}{{ end }}
-        {{ end -}}
-      >
-        Pastel
-      </option>
-      <option
-        value="retro"
-        {{- if $themes }}
-          {{ range $themes }}{{ if eq . "retro" }}selected{{ end }}{{ end }}
-        {{ end -}}
-      >
-        Retro
-      </option>
-      <option
-        value="silk"
-        {{- if $themes }}
-          {{ range $themes }}{{ if eq . "silk" }}selected{{ end }}{{ end }}
-        {{ end -}}
-      >
-        Silk
-      </option>
-      <option
-        value="sunset"
-        {{- if $themes }}
-          {{ range $themes }}{{ if eq . "sunset" }}selected{{ end }}{{ end }}
-        {{ end -}}
-      >
-        Sunset
-      </option>
-      <option
-        value="synthwave"
-        {{- if $themes }}
-          {{ range $themes }}{{ if eq . "synthwave" }}selected{{ end }}{{ end }}
-        {{ end -}}
-      >
-        Synthwave
-      </option>
-      <option
-        value="valentine"
-        {{- if $themes }}
-          {{ range $themes }}{{ if eq . "valentine" }}selected{{ end }}{{ end }}
-        {{ end -}}
-      >
-        Valentine
-      </option>
-      <option
-        value="wireframe"
-        {{- if $themes }}
-          {{ range $themes }}{{ if eq . "wireframe" }}selected{{ end }}{{ end }}
-        {{ end -}}
-      >
-        Wireframe
-      </option>
-      <option
-        value="winter"
-        {{- if $themes }}
-          {{ range $themes }}{{ if eq . "winter" }}selected{{ end }}{{ end }}
-        {{ end -}}
-      >
-        Winter
-      </option>
-      <option
-        value="abyss"
-        {{- if $themes }}
-          {{ range $themes }}{{ if eq . "abyss" }}selected{{ end }}{{ end }}
-        {{ end -}}
-      >
-        Abyss
-      </option>
-    </select>
-    <label class="label">
-      <span class="label-text-alt"
-        >Select which DaisyUI themes are available to users</span
-      >
-    </label>
-  </div>
-
-  <div class="form-control mb-4">
-    <label class="label">
       <span class="label-text font-semibold">Default Theme</span>
     </label>
     <select
@@ -1370,43 +1451,6 @@
       Default theme must be one of the selected themes
     </div>
   </div>
-
-  <script type="text/hyperscript">
-    /* Update default theme dropdown when themes checkboxes change */
-    on change from .theme-checkbox
-      set selectEl to #default-theme-select
-      set currentValue to selectEl.value
-      set selectEl.innerHTML to ''
-      set checkboxes to document.querySelectorAll('input[name="themes"]:checked')
-      set isValid to false
-      set firstTheme to null
-
-      /* Build dropdown options and check validation */
-      for checkbox in checkboxes
-        set theme to checkbox.value
-        if firstTheme is null set firstTheme to theme end
-        if theme == currentValue set isValid to true end
-
-        set option to document.createElement('option')
-        set option.value to theme
-        set option.textContent to theme.charAt(0).toUpperCase() + theme.slice(1)
-        if theme == currentValue set option.selected to true end
-        call selectEl.appendChild(option)
-      end
-
-      /* Validate and update selection */
-      if checkboxes.length == 0
-        remove .hidden from #theme-validation-error
-      else if not isValid
-        if firstTheme is not null
-          set selectEl.value to firstTheme
-        end
-        add .hidden to #theme-validation-error
-      else
-        add .hidden to #theme-validation-error
-      end
-    end
-  </script>
 {{ end }}
 
 {{ define "config-session-tab" }}

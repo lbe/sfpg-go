@@ -13,23 +13,12 @@ import (
 	"github.com/lbe/sfpg-go/internal/testutil"
 )
 
-func TestConfigIncrementETag_Unauthenticated(t *testing.T) {
-	app := CreateApp(t, false)
-	h := app.configHandlers
-
-	req := httptest.NewRequest("POST", "/config/increment-etag", nil)
-	w := httptest.NewRecorder()
-
-	h.ConfigIncrementETag(w, req)
-
-	if w.Code != http.StatusUnauthorized {
-		t.Errorf("Status = %d, want %d", w.Code, http.StatusUnauthorized)
-	}
-}
+// Auth enforcement is handled by authMiddleware at the router level.
+// See TestAuthMiddleware_* in server_test.go.
 
 func TestConfigIncrementETag_MissingCSRF(t *testing.T) {
 	app := CreateApp(t, false)
-	h := app.configHandlers
+	h := app.configETagHandler
 
 	req := httptest.NewRequest("POST", "/config/increment-etag", nil)
 	w := httptest.NewRecorder()
@@ -46,7 +35,7 @@ func TestConfigIncrementETag_MissingCSRF(t *testing.T) {
 
 func TestConfigIncrementETag_Success(t *testing.T) {
 	app := CreateApp(t, false)
-	h := app.configHandlers
+	h := app.configETagHandler
 	ctx := context.Background()
 
 	// Get current ETag

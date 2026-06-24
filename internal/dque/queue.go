@@ -271,7 +271,7 @@ func (q *DQue[T]) dequeueLocked() (*T, error) {
 
 	// Remove the first object from the first segment
 	obj, err := q.firstSegment.remove()
-	if err == errEmptySegment {
+	if errors.Is(err, errEmptySegment) {
 		return nil, ErrEmpty
 	}
 	if err != nil {
@@ -339,7 +339,7 @@ func (q *DQue[T]) peekLocked() (*T, error) {
 
 	// Return the first object from the first segment
 	obj, err := q.firstSegment.peek()
-	if err == errEmptySegment {
+	if errors.Is(err, errEmptySegment) {
 		return nil, ErrEmpty
 	}
 	if err != nil {
@@ -355,7 +355,7 @@ func (q *DQue[T]) DequeueBlock() (*T, error) {
 	q.mutex.Lock()
 	for {
 		obj, err := q.dequeueLocked()
-		if err == ErrEmpty {
+		if errors.Is(err, ErrEmpty) {
 			q.emptyCond.Wait()
 			continue
 		} else if err != nil {
@@ -372,7 +372,7 @@ func (q *DQue[T]) PeekBlock() (*T, error) {
 	q.mutex.Lock()
 	for {
 		obj, err := q.peekLocked()
-		if err == ErrEmpty {
+		if errors.Is(err, ErrEmpty) {
 			q.emptyCond.Wait()
 			continue
 		} else if err != nil {
@@ -533,7 +533,10 @@ func (q *DQue[T]) load() error {
 		if !f.IsDir() && filePattern.MatchString(f.Name()) {
 			// Extract number out of the filename
 			fileNumStr := filePattern.FindStringSubmatch(f.Name())[1]
-			fileNum, _ := strconv.Atoi(fileNumStr)
+			fileNum, err := strconv.Atoi(fileNumStr)
+			if err != nil {
+				continue
+			}
 			if fileNum > maxNum {
 				maxNum = fileNum
 			}

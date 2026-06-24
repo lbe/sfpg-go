@@ -22,7 +22,7 @@ func addAuthToRequest(t *testing.T, sm session.SessionManager, req *http.Request
 
 	// Set a CSRF token in the session for form validation
 	// Tests should use "csrf_token=valid-token" in their form data
-	session, _ := sm.GetSession(req)
+	session, _ := sm.GetSession(w, req)
 	session.Values["csrf_token"] = "valid-token"
 	if err := session.Save(req, w); err != nil {
 		t.Fatalf("failed to save session with CSRF token: %v", err)

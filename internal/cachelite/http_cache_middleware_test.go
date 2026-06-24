@@ -3,6 +3,7 @@ package cachelite_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -48,7 +49,7 @@ func createTestDBPool(t *testing.T) *dbconnpool.DbSQLConnPool {
 		t.Fatalf("failed to create migrator: %v", err)
 	}
 	defer func() { _, _ = m.Close() }()
-	if migErr := m.Up(); migErr != nil && migErr != migrate.ErrNoChange {
+	if migErr := m.Up(); migErr != nil && !errors.Is(migErr, migrate.ErrNoChange) {
 		t.Fatalf("failed to run migrations: %v", err)
 	}
 
@@ -56,7 +57,7 @@ func createTestDBPool(t *testing.T) *dbconnpool.DbSQLConnPool {
 	if err != nil {
 		t.Fatalf("failed to create thumbs migrator: %v", err)
 	}
-	if thumbsErr := m2.Up(); thumbsErr != nil && thumbsErr != migrate.ErrNoChange {
+	if thumbsErr := m2.Up(); thumbsErr != nil && !errors.Is(thumbsErr, migrate.ErrNoChange) {
 		m2.Close()
 		t.Fatalf("failed to run thumbs migrations: %v", thumbsErr)
 	}

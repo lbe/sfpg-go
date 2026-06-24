@@ -182,7 +182,9 @@ func TestStartWorkerPool_BasicProcessing(t *testing.T) {
 
 	numTasks := 50
 	for range numTasks {
-		q.Enqueue("task")
+		if enqErr := q.Enqueue("task"); enqErr != nil {
+			t.Fatalf("Enqueue: %v", enqErr)
+		}
 	}
 
 	// Wait for tasks to be processed
@@ -232,7 +234,9 @@ func TestStartWorkerPool_Scaling(t *testing.T) {
 	// Add tasks to trigger scale-up
 	wg.Add(4) // Expect 4 more workers to start
 	for range 20 {
-		q.Enqueue("task")
+		if enqErr := q.Enqueue("task"); enqErr != nil {
+			t.Fatalf("Enqueue: %v", enqErr)
+		}
 	}
 
 	// Wait for scale-up, with a timeout

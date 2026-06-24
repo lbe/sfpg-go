@@ -6,10 +6,10 @@ import (
 )
 
 // getHandlerQueries returns either the override (for tests) or the pool's prepared queries.
-// hqOverride allows tests to inject erroring queries.
+// testHookHandlerQueries allows tests to inject erroring queries.
 func (app *App) getHandlerQueries(cpc *dbconnpool.CpConn) interfaces.HandlerQueries {
-	if app.hqOverride != nil {
-		return app.hqOverride
+	if app.testHookHandlerQueries != nil {
+		return app.testHookHandlerQueries
 	}
 	return cpc.Queries
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/gob"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -696,7 +697,7 @@ func TestBatchedWrite_DqueRoundTrip(t *testing.T) {
 
 	// Queue should now be empty
 	_, err = q.Dequeue()
-	if err != dque.ErrEmpty {
+	if !errors.Is(err, dque.ErrEmpty) {
 		t.Errorf("expected ErrEmpty after draining, got: %v", err)
 	}
 }
@@ -765,7 +766,7 @@ func TestBatchedWrite_DqueRoundTrip_CrashRecovery(t *testing.T) {
 
 	// Queue should now be empty
 	_, err = q2.Dequeue()
-	if err != dque.ErrEmpty {
+	if !errors.Is(err, dque.ErrEmpty) {
 		t.Errorf("expected ErrEmpty after draining, got: %v", err)
 	}
 }
@@ -1143,7 +1144,10 @@ func main() {
 
 	// Run the subprocess via 'go run'
 	runCmd := exec.Command("go", "run", srcFile)
-	runOutput, _ := runCmd.CombinedOutput()
+	runOutput, runErr := runCmd.CombinedOutput()
+	if runErr != nil {
+		t.Logf("subprocess exit: %v", runErr)
+	}
 	t.Logf("subprocess output: %q", string(runOutput))
 
 	// The subprocess prints ENCODE_ERROR (and exits 0) if encoding failed without registration,

@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -389,7 +390,7 @@ func TestParseDashboardNotFound(t *testing.T) {
 	html := `<!DOCTYPE html><html><body><div id="other">content</div></body></html>`
 
 	_, err := ParseDashboard(strings.NewReader(html))
-	if err != ErrDashboardNotFound {
+	if !errors.Is(err, ErrDashboardNotFound) {
 		t.Errorf("ParseDashboard error = %v, want %v", err, ErrDashboardNotFound)
 	}
 }

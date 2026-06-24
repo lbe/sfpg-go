@@ -233,7 +233,10 @@ func MakeAuthCookie(t *testing.T, app *App) *http.Cookie {
 	t.Helper()
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/", nil)
-	session, _ := app.store.Get(req, "session-name")
+	session, err := app.store.Get(req, "session-name")
+	if err != nil {
+		t.Fatalf("failed to get session: %v", err)
+	}
 	session.Values["authenticated"] = true
 	// Include a stable CSRF token to ensure consistent HTML output for cache tests
 	session.Values["csrf_token"] = "test-csrf-token-for-consistent-caching"

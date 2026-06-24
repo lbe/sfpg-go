@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -35,9 +36,9 @@ func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request, etagVersion
 	// Validate CSRF token
 	if !h.SessionManager.ValidateCSRFToken(r) {
 		// Check if this is a new session without CSRF token (allowed)
-		sess, _ := h.SessionManager.GetSession(r)
+		sess, gsErr := h.SessionManager.GetSession(w, r)
 		hasCsrfToken := false
-		if sess != nil {
+		if gsErr == nil && sess != nil {
 			if token, ok := sess.Values["csrf_token"].(string); ok && token != "" {
 				hasCsrfToken = true
 			}
@@ -66,23 +67,27 @@ func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request, etagVersion
 		return
 	}
 	if locked {
-		_ = ui.RenderTemplate(w, "login-form.html.tmpl", map[string]any{
+		if rtErr := ui.RenderTemplate(w, "login-form.html.tmpl", map[string]any{
 			"ErrorMessage": "Account locked. Please try again later.",
 			"Username":     username,
 			"CSRFToken":    h.SessionManager.EnsureCSRFToken(w, r),
-		})
+		}); rtErr != nil {
+			slog.Error("failed to render login form", "err", rtErr)
+		}
 		return
 	}
 
 	// Authenticate via AuthService
 	_, err = h.AuthService.Authenticate(ctx, username, password)
 	if err != nil {
-		if err == auth.ErrInvalidCredentials {
-			_ = ui.RenderTemplate(w, "login-form.html.tmpl", map[string]any{
+		if errors.Is(err, auth.ErrInvalidCredentials) {
+			if rtErr := ui.RenderTemplate(w, "login-form.html.tmpl", map[string]any{
 				"ErrorMessage": "Invalid credentials",
 				"Username":     username,
 				"CSRFToken":    h.SessionManager.EnsureCSRFToken(w, r),
-			})
+			}); rtErr != nil {
+				slog.Error("failed to render login form", "err", rtErr)
+			}
 		} else {
 			slog.Error("authentication error", "err", err)
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)

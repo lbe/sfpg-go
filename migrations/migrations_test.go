@@ -3,6 +3,7 @@ package migrations
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"regexp"
 	"testing"
@@ -50,7 +51,7 @@ func TestMigration_AddETagConfig(t *testing.T) {
          FROM config WHERE key = 'etag_version'`,
 	).Scan(&key, &value, &valueType, &category, &requiresRestart, &description)
 
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		t.Fatal("etag_version config entry not found after migration")
 	}
 	if err != nil {

@@ -139,7 +139,11 @@ func TestRolloverTask_Run_ExecutesRollover(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBootstrapLogger should not fail: %v", err)
 	}
-	defer logger.Shutdown()
+	defer func() {
+		if sErr := logger.Shutdown(); sErr != nil {
+			t.Fatal(sErr)
+		}
+	}()
 
 	// Get initial file path
 	logger.mu.RLock()
@@ -197,7 +201,11 @@ func TestRolloverTask_Run_TriggersRetentionCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBootstrapLogger should not fail: %v", err)
 	}
-	defer logger.Shutdown()
+	defer func() {
+		if sErr := logger.Shutdown(); sErr != nil {
+			t.Fatal(sErr)
+		}
+	}()
 
 	// Create multiple old log files to test retention
 	logsDir := filepath.Join(tmpDir, "logs")
@@ -253,7 +261,11 @@ func TestScheduleRollover_RemovesOldTask(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBootstrapLogger should not fail: %v", err)
 	}
-	defer logger.Shutdown()
+	defer func() {
+		if sErr := logger.Shutdown(); sErr != nil {
+			t.Fatal(sErr)
+		}
+	}()
 
 	logRollover := "daily"
 	logRetentionCount := 7
@@ -301,7 +313,11 @@ func TestScheduleRollover_ErrorHandling(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBootstrapLogger should not fail: %v", err)
 	}
-	defer logger.Shutdown()
+	defer func() {
+		if sErr := logger.Shutdown(); sErr != nil {
+			t.Fatal(sErr)
+		}
+	}()
 
 	logRollover := "daily"
 	logRetentionCount := 7

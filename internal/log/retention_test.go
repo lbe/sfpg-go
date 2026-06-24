@@ -290,7 +290,11 @@ func TestRetentionTask_Run_ExecutesRetentionCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBootstrapLogger should not fail: %v", err)
 	}
-	defer logger.Shutdown()
+	defer func() {
+		if sErr := logger.Shutdown(); sErr != nil {
+			t.Fatal(sErr)
+		}
+	}()
 
 	// Create multiple old log files
 	logsDir := filepath.Join(tmpDir, "logs")

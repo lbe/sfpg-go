@@ -64,7 +64,7 @@ func TestIntegration_ETagIncrementWorkflow(t *testing.T) {
 
 	addAuthToRequest(t, app.sessionManager, req)
 
-	app.configHandlers.ConfigIncrementETag(w, req)
+	app.configETagHandler.ConfigIncrementETag(w, req)
 
 	if w.Code != 200 {
 		t.Fatalf("API increment status = %d, want 200, body: %s", w.Code, w.Body.String())
@@ -211,7 +211,7 @@ func TestIntegration_ConfigModal_FullWorkflow(t *testing.T) {
 
 	addAuthToRequest(t, app.sessionManager, req2)
 
-	app.configHandlers.ConfigIncrementETag(w2, req2)
+	app.configETagHandler.ConfigIncrementETag(w2, req2)
 
 	// Step 4: Verify response has incremented value
 	doc2, err := testutil.ParseHTML(strings.NewReader(w2.Body.String()))
@@ -296,7 +296,7 @@ func TestConfigIncrementETag_RuntimePropagation(t *testing.T) {
 	// Set up authentication and CSRF token in the session
 	addAuthToRequest(t, app.sessionManager, req)
 
-	app.configHandlers.ConfigIncrementETag(w, req)
+	app.configETagHandler.ConfigIncrementETag(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("ConfigIncrementETag failed: expected status 200, got %d, body: %s", w.Code, w.Body.String())

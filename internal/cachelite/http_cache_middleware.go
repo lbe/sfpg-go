@@ -3,6 +3,7 @@ package cachelite
 import (
 	"context"
 	"database/sql"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -262,7 +263,9 @@ func (hcm *HTTPCacheMiddleware) Middleware(next http.Handler) http.Handler {
 			}
 			w.Header().Set("X-Cache", "HIT")
 			w.WriteHeader(int(entry.Status))
-			_, _ = w.Write(entry.Body)
+			if _, err := w.Write(entry.Body); err != nil {
+				slog.Error("failed to write cached response body", "err", err)
+			}
 			hcm.maybeTriggerGalleryPreload(r.Context(), r)
 			return
 		}

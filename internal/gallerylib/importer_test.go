@@ -16,6 +16,8 @@ import (
 	"github.com/lbe/sfpg-go/internal/gallerydb"
 	"github.com/lbe/sfpg-go/internal/gallerylib"
 
+	"errors"
+
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/sqlite"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
@@ -50,7 +52,10 @@ func setupTestDB(t *testing.T) (*sql.DB, *gallerydb.CustomQueries, context.Conte
 		t.Fatal(err)
 	}
 
-	driver, _ := sqlite.WithInstance(db, &sqlite.Config{})
+	driver, err := sqlite.WithInstance(db, &sqlite.Config{})
+	if err != nil {
+		t.Fatalf("sqlite.WithInstance: %v", err)
+	}
 	d, err := iofs.New(migrations.FS, "migrations")
 	if err != nil {
 		t.Fatalf("failed to create iofs source driver: %v", err)
@@ -60,14 +65,14 @@ func setupTestDB(t *testing.T) (*sql.DB, *gallerydb.CustomQueries, context.Conte
 	if err != nil {
 		t.Fatal(err)
 	}
-	if migErr := m.Up(); migErr != nil && migErr != migrate.ErrNoChange {
+	if migErr := m.Up(); migErr != nil && !errors.Is(migErr, migrate.ErrNoChange) {
 		t.Fatal(err)
 	}
 	m2, err := migrations.NewThumbsMigrator(thumbsDBPath)
 	if err != nil {
 		t.Fatalf("NewThumbsMigrator: %v", err)
 	}
-	if thumbsErr := m2.Up(); thumbsErr != nil && thumbsErr != migrate.ErrNoChange {
+	if thumbsErr := m2.Up(); thumbsErr != nil && !errors.Is(thumbsErr, migrate.ErrNoChange) {
 		m2.Close()
 		t.Fatalf("thumbs migrate: %v", thumbsErr)
 	}
@@ -150,7 +155,11 @@ func TestUpsertPathChain(t *testing.T) {
 		t.Fatal(err)
 	}
 	func() {
-		defer tx.Rollback()
+		defer func() {
+			if rbErr := tx.Rollback(); rbErr != nil {
+				t.Logf("tx.Rollback: %v", rbErr)
+			}
+		}()
 		imp.Q = q.WithTx(tx)
 
 		// first call should insert
@@ -186,7 +195,9 @@ func TestUpsertPathChain(t *testing.T) {
 		if f.MimeType.String != mime {
 			t.Fatalf("expected mime %s, got %s", mime, f.MimeType.String)
 		}
-		tx.Commit()
+		if cmtErr := tx.Commit(); cmtErr != nil {
+			t.Fatalf("tx.Commit: %v", cmtErr)
+		}
 	}()
 
 	tx, err = db.BeginTx(ctx, nil)
@@ -194,7 +205,11 @@ func TestUpsertPathChain(t *testing.T) {
 		t.Fatal(err)
 	}
 	func() {
-		defer tx.Rollback()
+		defer func() {
+			if rbErr := tx.Rollback(); rbErr != nil {
+				t.Logf("tx.Rollback: %v", rbErr)
+			}
+		}()
 		imp.Q = q.WithTx(tx)
 
 		// call again should not duplicate
@@ -212,7 +227,9 @@ func TestUpsertPathChain(t *testing.T) {
 		if f2.ID != f.ID {
 			t.Fatalf("expected same file id %d, got %d", f.ID, f2.ID)
 		}
-		tx.Commit()
+		if cmtErr := tx.Commit(); cmtErr != nil {
+			t.Fatalf("tx.Commit: %v", cmtErr)
+		}
 	}()
 }
 
@@ -300,7 +317,10 @@ func TestCreateRootFolderEntry_ReadOnlyDB(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	driver, _ := sqlite.WithInstance(baseDB, &sqlite.Config{})
+	driver, err := sqlite.WithInstance(baseDB, &sqlite.Config{})
+	if err != nil {
+		t.Fatalf("sqlite.WithInstance: %v", err)
+	}
 	d, err := iofs.New(migrations.FS, "migrations")
 	if err != nil {
 		baseDB.Close()
@@ -311,7 +331,7 @@ func TestCreateRootFolderEntry_ReadOnlyDB(t *testing.T) {
 		baseDB.Close()
 		t.Fatal(err)
 	}
-	if migErr := m.Up(); migErr != nil && migErr != migrate.ErrNoChange {
+	if migErr := m.Up(); migErr != nil && !errors.Is(migErr, migrate.ErrNoChange) {
 		baseDB.Close()
 		t.Fatal(migErr)
 	}
@@ -322,7 +342,7 @@ func TestCreateRootFolderEntry_ReadOnlyDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewThumbsMigrator: %v", err)
 	}
-	if thumbsErr := m2.Up(); thumbsErr != nil && thumbsErr != migrate.ErrNoChange {
+	if thumbsErr := m2.Up(); thumbsErr != nil && !errors.Is(thumbsErr, migrate.ErrNoChange) {
 		m2.Close()
 		t.Fatalf("thumbs migrate: %v", thumbsErr)
 	}

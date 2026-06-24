@@ -12,13 +12,13 @@ import (
 
 // Load handles the full configuration loading precedence:
 // Defaults -> Database -> YAML -> CLI/Env
-func Load(ctx context.Context, rootDir string, service ConfigService, opt getopt.Opt) (*Config, error) {
+func Load(ctx context.Context, rootDir string, store ConfigStore, opt getopt.Opt) (*Config, error) {
 	// 1. Start with defaults
 	cfg := DefaultConfig()
 
-	// 2. Load from database (if ConfigService is available)
-	if service != nil {
-		dbConfig, err := service.Load(ctx)
+	// 2. Load from database (if ConfigStore is available)
+	if store != nil {
+		dbConfig, err := store.Load(ctx)
 		if err != nil {
 			slog.Warn("failed to load config from database via ConfigService", "err", err)
 		} else {
@@ -49,9 +49,9 @@ func Load(ctx context.Context, rootDir string, service ConfigService, opt getopt
 }
 
 // EnsureDefaults makes sure the database has at least the default config and admin user.
-func EnsureDefaults(ctx context.Context, rootDir string, service ConfigService, pool any) {
-	if service != nil {
-		if err := service.EnsureDefaults(ctx, rootDir); err != nil {
+func EnsureDefaults(ctx context.Context, rootDir string, admin ConfigAdmin, pool any) {
+	if admin != nil {
+		if err := admin.EnsureDefaults(ctx, rootDir); err != nil {
 			slog.Error("failed to ensure config defaults", "err", err)
 			panic("main - setConfigDefaults")
 		}

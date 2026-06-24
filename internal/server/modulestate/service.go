@@ -3,6 +3,7 @@ package modulestate
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"time"
 
 	"github.com/lbe/sfpg-go/internal/dbconnpool"
@@ -63,7 +64,7 @@ func (s *Service) IsActive(ctx context.Context, name string) (bool, error) {
 
 	row, err := cpc.Queries.GetModuleState(ctx, name)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return false, nil
 		}
 		return false, err
@@ -86,7 +87,7 @@ func (s *Service) GetLastStartedAt(ctx context.Context, name string) (int64, boo
 
 	row, err := cpc.Queries.GetModuleState(ctx, name)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return 0, false, nil
 		}
 		return 0, false, err

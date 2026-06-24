@@ -1,8 +1,9 @@
 // Package handlers defines HTTP handlers and their test interfaces.
 //
-// This file defines interfaces used by handler unit tests (see HANDLER_DEPENDENCIES.md).
-// Existing interfaces (ConfigService, SessionManager, HandlerQueries, AuthService)
-// live in config, session, server/interfaces, and auth packages respectively.
+// This file defines the MetadataQueries interface for reading EXIF and IPTC metadata.
+// It lives in the handlers package to avoid circular dependencies between server and
+// the metadata packages. HandlerQueries (server/interfaces package) does not include
+// these; handlers depend on MetadataQueries via the GetMetadataQueries callback.
 package handlers
 
 import (

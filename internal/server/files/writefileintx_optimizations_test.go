@@ -65,17 +65,16 @@ func newSpyImporter(t *testing.T, ctx context.Context, rwPool *dbconnpool.DbSQLC
 
 // thumbFile builds a File with a small in-memory thumbnail buffer drawn from the
 // shared pool, so WriteFileInTx can return it to the pool correctly.
-func thumbFile(t *testing.T, p string, exists bool, hadInvalid bool) *File {
+func thumbFile(t *testing.T, p string, exists bool) *File {
 	t.Helper()
 	buf := thumbnail.GetBytesBuffer()
 	if _, err := buf.WriteString("thumbnail-bytes"); err != nil {
 		t.Fatalf("write thumb buffer: %v", err)
 	}
 	return &File{
-		Path:            p,
-		Exists:          exists,
-		HadInvalidEntry: hadInvalid,
-		Thumbnail:       buf,
+		Path:      p,
+		Exists:    exists,
+		Thumbnail: buf,
 		File: gallerydb.File{
 			Mtime:     sql.NullInt64{Int64: 1700000000, Valid: true},
 			SizeBytes: sql.NullInt64{Int64: 1024, Valid: true},
@@ -94,7 +93,7 @@ func TestWriteFileInTx_B1_SkipsThumbnailViewForNewFile(t *testing.T) {
 	imp, spy, tx := newSpyImporter(t, ctx, rwPool)
 	defer tx.Rollback()
 
-	f := thumbFile(t, path.Join("d1", "new.jpg"), false /*exists*/, false)
+	f := thumbFile(t, path.Join("d1", "new.jpg"), false /*exists*/)
 	if err := WriteFileInTx(ctx, imp, f); err != nil {
 		t.Fatalf("WriteFileInTx: %v", err)
 	}
@@ -113,7 +112,7 @@ func TestWriteFileInTx_B1_QueriesThumbnailViewForExistingFile(t *testing.T) {
 	imp, spy, tx := newSpyImporter(t, ctx, rwPool)
 	defer tx.Rollback()
 
-	f := thumbFile(t, path.Join("d1", "existing.jpg"), true /*exists*/, false)
+	f := thumbFile(t, path.Join("d1", "existing.jpg"), true /*exists*/)
 	if err := WriteFileInTx(ctx, imp, f); err != nil {
 		t.Fatalf("WriteFileInTx: %v", err)
 	}
@@ -135,7 +134,7 @@ func TestWriteFileInTx_B2_SkipsTileForAlreadyTiledDir(t *testing.T) {
 	defer tx.Rollback()
 
 	dir := "album"
-	f1 := thumbFile(t, path.Join(dir, "a.jpg"), false, false)
+	f1 := thumbFile(t, path.Join(dir, "a.jpg"), false)
 	if err := WriteFileInTx(ctx, imp, f1); err != nil {
 		t.Fatalf("WriteFileInTx f1: %v", err)
 	}
@@ -145,7 +144,7 @@ func TestWriteFileInTx_B2_SkipsTileForAlreadyTiledDir(t *testing.T) {
 	}
 
 	// Second file in the SAME dir, same Importer → dir is already tiled this batch.
-	f2 := thumbFile(t, path.Join(dir, "b.jpg"), false, false)
+	f2 := thumbFile(t, path.Join(dir, "b.jpg"), false)
 	if err := WriteFileInTx(ctx, imp, f2); err != nil {
 		t.Fatalf("WriteFileInTx f2: %v", err)
 	}
@@ -157,37 +156,38 @@ func TestWriteFileInTx_B2_SkipsTileForAlreadyTiledDir(t *testing.T) {
 
 // --- E: skip DeleteInvalidFileByPath when the file was never invalid ---
 
-// TestWriteFileInTx_E_SkipsDeleteWhenNeverInvalid proves E: when
-// f.HadInvalidEntry is false (the common preload case) the
-// DeleteInvalidFileByPath round-trip is skipped entirely.
-func TestWriteFileInTx_E_SkipsDeleteWhenNeverInvalid(t *testing.T) {
+// TestWriteFileInTx_AlwaysDeletesInvalidFileRow proves that WriteFileInTx
+// unconditionally removes any stale invalid_files row for a processed file,
+// even when the file was not previously recorded as invalid. This ensures a
+// once-invalid file that has since become valid is importable again.
+func TestWriteFileInTx_AlwaysDeletesInvalidFileRow(t *testing.T) {
 	_, rwPool, _, ctx := createTestPoolsAndDir(t)
 	imp, spy, tx := newSpyImporter(t, ctx, rwPool)
 	defer tx.Rollback()
 
-	f := thumbFile(t, path.Join("d2", "clean.jpg"), false, false /*hadInvalid*/)
+	f := thumbFile(t, path.Join("d2", "clean.jpg"), false)
 	if err := WriteFileInTx(ctx, imp, f); err != nil {
 		t.Fatalf("WriteFileInTx: %v", err)
 	}
-	if spy.deleteInvalidFileByPathCalls != 0 {
-		t.Errorf("never-invalid file (HadInvalidEntry=false) must not issue DeleteInvalidFileByPath; got %d calls",
+	if spy.deleteInvalidFileByPathCalls != 1 {
+		t.Errorf("WriteFileInTx must always issue DeleteInvalidFileByPath for a processed file; got %d calls (want 1)",
 			spy.deleteInvalidFileByPathCalls)
 	}
 }
 
-// TestWriteFileInTx_E_DeletesWhenPreviouslyInvalid proves E: when
-// f.HadInvalidEntry is true the stale invalid_files row IS cleared.
+// TestWriteFileInTx_E_DeletesWhenPreviouslyInvalid proves E: when an
+// invalid_files row already exists for the path, WriteFileInTx clears it.
 func TestWriteFileInTx_E_DeletesWhenPreviouslyInvalid(t *testing.T) {
 	_, rwPool, _, ctx := createTestPoolsAndDir(t)
 	imp, spy, tx := newSpyImporter(t, ctx, rwPool)
 	defer tx.Rollback()
 
-	f := thumbFile(t, path.Join("d3", "wasinvalid.jpg"), false, true /*hadInvalid*/)
+	f := thumbFile(t, path.Join("d3", "wasinvalid.jpg"), false)
 	if err := WriteFileInTx(ctx, imp, f); err != nil {
 		t.Fatalf("WriteFileInTx: %v", err)
 	}
 	if spy.deleteInvalidFileByPathCalls != 1 {
-		t.Errorf("previously-invalid file (HadInvalidEntry=true) must issue DeleteInvalidFileByPath exactly once; got %d calls",
+		t.Errorf("previously-invalid file must issue DeleteInvalidFileByPath exactly once; got %d calls",
 			spy.deleteInvalidFileByPathCalls)
 	}
 }
@@ -195,9 +195,7 @@ func TestWriteFileInTx_E_DeletesWhenPreviouslyInvalid(t *testing.T) {
 // TestWriteFileInTx_E_ClearsStaleInvalidRow is the correctness-critical
 // integration assertion for E: a previously-invalid file, after a successful
 // WriteFileInTx + commit, must have its invalid_files row removed — otherwise
-// the next run would skip a now-valid file. This guards the silent-correctness
-// trap where the flag is set only in the wrong branch (the unchanged-skip
-// branch that never reaches WriteFileInTx).
+// the next run would skip a now-valid file.
 func TestWriteFileInTx_E_ClearsStaleInvalidRow(t *testing.T) {
 	roPool, rwPool, _, ctx := createTestPoolsAndDir(t)
 	const p = "d4/recover.jpg"
@@ -231,10 +229,9 @@ func TestWriteFileInTx_E_ClearsStaleInvalidRow(t *testing.T) {
 	}
 	roPool.Put(cpcRo)
 
-	// Write the file with HadInvalidEntry=true (as checkIfFileModifiedCore would
-	// set it after detecting the row with a changed mtime), then commit.
+	// Write the file after seeding a stale invalid_files row, then commit.
 	imp, _, tx := newSpyImporter(t, ctx, rwPool)
-	f := thumbFile(t, p, false, true /*hadInvalid*/)
+	f := thumbFile(t, p, false)
 	if err := WriteFileInTx(ctx, imp, f); err != nil {
 		tx.Rollback()
 		t.Fatalf("WriteFileInTx: %v", err)
@@ -255,16 +252,13 @@ func TestWriteFileInTx_E_ClearsStaleInvalidRow(t *testing.T) {
 	}
 }
 
-// TestCheckIfFileModified_SetsHadInvalidEntryForChangedInvalidFile is the guard
-// for the E correctness trap: checkIfFileModifiedCore must set f.HadInvalidEntry
-// = true whenever an invalid_files row exists for the path, INCLUDING the case
-// where the file has since changed (mtime differs) and therefore proceeds to
-// reprocessing. The silent bug would set the flag only in the unchanged-skip
-// branch (which returns early and never reaches WriteFileInTx), leaving a
-// previously-invalid-now-changed file with HadInvalidEntry=false → WriteFileInTx
-// skips the DELETE → the stale invalid_files row persists → the next run skips
-// a now-valid file. This test fails if the flag is set in the wrong branch.
-func TestCheckIfFileModified_SetsHadInvalidEntryForChangedInvalidFile(t *testing.T) {
+// TestCheckIfFileModified_ChangedInvalidFileProceedsToReprocessing guards the
+// E correctness trap: when an invalid_files row exists for a path but the file
+// has since changed (mtime differs), checkIfFileModifiedCore must return
+// unchanged == false so the file is reprocessed and WriteFileInTx clears the
+// stale invalid_files row. If this instead returned unchanged == true, the
+// stale row would persist and the next run would skip the now-valid file.
+func TestCheckIfFileModified_ChangedInvalidFileProceedsToReprocessing(t *testing.T) {
 	roPool, rwPool, imagesDir, ctx := createTestPoolsAndDir(t)
 	name := createTestImage(t, imagesDir, "recov.jpg")
 
@@ -310,13 +304,9 @@ func TestCheckIfFileModified_SetsHadInvalidEntryForChangedInvalidFile(t *testing
 	}
 
 	// The file changed (seeded mtime != real mtime), so it must proceed to
-	// reprocessing (unchanged == false), AND the flag must be set so WriteFileInTx
-	// clears the stale row.
+	// reprocessing (unchanged == false), allowing WriteFileInTx to clear the
+	// stale invalid_files row.
 	if unchanged {
 		t.Error("file with a stale invalid_files row (changed mtime) should proceed to reprocessing, not be skipped")
-	}
-	if !f.HadInvalidEntry {
-		t.Error("HadInvalidEntry must be true when an invalid_files row exists for the path " +
-			"(regardless of mtime match); otherwise WriteFileInTx skips the DELETE and the stale row persists")
 	}
 }

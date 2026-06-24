@@ -12,6 +12,7 @@ import (
 	"golang.org/x/net/html"
 	"gopkg.in/yaml.v3"
 
+	"github.com/lbe/sfpg-go/internal/server/config"
 	"github.com/lbe/sfpg-go/internal/testutil"
 )
 
@@ -237,7 +238,7 @@ func TestConfigUI_FormSubmission_UpdatesDatabase(t *testing.T) {
 	}
 	defer app.dbRwPool.Put(cpcRw)
 
-	newConfig := DefaultConfig()
+	newConfig := config.DefaultConfig()
 	err = newConfig.LoadFromDatabase(app.ctx, cpcRw.Queries)
 	if err != nil {
 		t.Fatalf("Failed to load config: %v", err)

@@ -6,6 +6,7 @@ package server
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -134,16 +135,7 @@ func (app *App) buildHandlers(templateFS fs.FS) error {
 		sm,
 		app.dbRoPool,
 		app.dbRwPool,
-		handlers.ConfigTemplates{
-			SaveRestartAlert:      tmpl.SaveRestartAlert,
-			SaveSuccessAlert:      tmpl.SaveSuccessAlert,
-			ExportModal:           tmpl.ExportModal,
-			ImportModal:           tmpl.ImportModal,
-			ImportSuccessAlert:    tmpl.ImportSuccessAlert,
-			RestoreModal:          tmpl.RestoreModal,
-			RestoreSuccessAlert:   tmpl.RestoreSuccessAlert,
-			RestartInitiatedAlert: tmpl.RestartInitiatedAlert,
-		},
+		tmpl,
 		app.ctx,
 	)
 	// Set callback fields on ConfigHandlers
@@ -158,7 +150,6 @@ func (app *App) buildHandlers(templateFS fs.FS) error {
 		app.configMu.Unlock()
 	}
 	app.configHandlers.ApplyConfig = app.applyConfig
-	app.configHandlers.IncrementETag = app.IncrementETag
 	app.configHandlers.InvalidateHTTPCache = app.invalidateHTTPCache
 	app.configHandlers.SetPreloadEnabled = func(enabled bool) {
 		if app.preloadManager != nil {
@@ -174,6 +165,10 @@ func (app *App) buildHandlers(templateFS fs.FS) error {
 	}
 	app.configHandlers.AddCommonTemplateData = app.addCommonTemplateData
 	app.configHandlers.ServerError = app.serverError
+
+	app.configThemesHandler = handlers.NewConfigThemesHandler(app.configHandlers)
+	app.configRestartHandler = handlers.NewConfigRestartHandler(app.configHandlers)
+	app.configETagHandler = handlers.NewConfigETagHandler(app.configHandlers)
 
 	if err := app.configHandlers.Validate(); err != nil {
 		return err
@@ -547,26 +542,22 @@ func (app *App) authMiddleware(next http.Handler) http.Handler {
 }
 
 // isAuthenticated checks if the current request has a valid authenticated session.
-func (app *App) isAuthenticated(r *http.Request) bool {
-	session, err := app.store.Get(r, "session-name")
-	if err != nil {
-		return false
-	}
-	auth, ok := session.Values["authenticated"].(bool)
-	return ok && auth
+// If the session cookie is invalid or malformed, it clears the cookie and returns false.
+func (app *App) isAuthenticated(w http.ResponseWriter, r *http.Request) bool {
+	return session.IsAuthenticated(app.store, w, r)
 }
 
 // addAuthToTemplateData adds authentication state to template data map
 // Delegates to template.AddAuthToData
-func (app *App) addAuthToTemplateData(r *http.Request, data map[string]any) map[string]any {
-	return template.AddAuthToData(data, app.isAuthenticated(r))
+func (app *App) addAuthToTemplateData(w http.ResponseWriter, r *http.Request, data map[string]any) map[string]any {
+	return template.AddAuthToData(data, app.isAuthenticated(w, r))
 }
 
 // addCommonTemplateData adds common template data (auth state, CSRF token, theme, and gallery statistics) to template data map.
 // When partial is true, skips GalleryStats (expensive getGalleryStatistics) since partials (HTMX swaps, modals, toasts)
 // don't include the about modal. Full pages need GalleryStats for the about modal in the layout.
 func (app *App) addCommonTemplateData(w http.ResponseWriter, r *http.Request, data map[string]any, partial bool) map[string]any {
-	data = template.AddCommonData(data, app.isAuthenticated(r), app.ensureCsrfToken(w, r))
+	data = template.AddCommonData(data, app.isAuthenticated(w, r), app.ensureCsrfToken(w, r))
 	data["Theme"] = app.getEffectiveTheme(r)
 	data["Version"] = app.version
 
@@ -582,8 +573,14 @@ func (app *App) addCommonTemplateData(w http.ResponseWriter, r *http.Request, da
 			}
 		} else {
 			ctx := r.Context()
-			isActive, _ := app.moduleStateService.IsActive(ctx, "discovery")
-			lastStarted, _, _ := app.moduleStateService.GetLastStartedAt(ctx, "discovery")
+			isActive, aErr := app.moduleStateService.IsActive(ctx, "discovery")
+			if aErr != nil {
+				slog.Error("failed to check discovery active state", "err", aErr)
+			}
+			lastStarted, _, lsErr := app.moduleStateService.GetLastStartedAt(ctx, "discovery")
+			if lsErr != nil {
+				slog.Error("failed to get discovery last started at", "err", lsErr)
+			}
 			if isActive {
 				if cached := app.getGalleryStatsCached(lastStarted); cached != nil {
 					data["GalleryStats"] = *cached
@@ -718,7 +715,7 @@ func (app *App) checkAccountLockout(username string) (bool, error) {
 
 	attempt, err := cpcRw.Queries.GetLoginAttempt(app.ctx, username)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			// No login attempts recorded, account is not locked
 			return false, nil
 		}
@@ -758,7 +755,7 @@ func (app *App) recordFailedLoginAttempt(username string) error {
 
 	// Check if there's an existing record
 	attempt, err := cpcRw.Queries.GetLoginAttempt(app.ctx, username)
-	if err != nil && err != sql.ErrNoRows {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("failed to get login attempt for username %q: %w", username, err)
 	}
 
@@ -768,7 +765,13 @@ func (app *App) recordFailedLoginAttempt(username string) error {
 	}
 
 	// Calculate lockout using pure function
-	lockedUntil := security.CalculateLockout(failedAttempts, now)
+	lockoutDuration := int64(3600) // default 1 hour
+	app.configMu.RLock()
+	if app.config != nil && app.config.LockoutDuration > 0 {
+		lockoutDuration = int64(app.config.LockoutDuration)
+	}
+	app.configMu.RUnlock()
+	lockedUntil := security.CalculateLockout(failedAttempts, now, lockoutDuration)
 
 	// Upsert the login attempt record
 	err = cpcRw.Queries.UpsertLoginAttempt(app.ctx, gallerydb.UpsertLoginAttemptParams{
@@ -865,8 +868,12 @@ func (app *App) walkImageDir() {
 
 	// Refresh gallery stats cache after discovery completes (covers both startup and server menu)
 	if app.moduleStateService != nil {
-		if lastStarted, ok, _ := app.moduleStateService.GetLastStartedAt(ctx, "discovery"); ok {
-			app.refreshGalleryStatsCache(ctx, lastStarted)
+		if lastStarted, ok, gsErr := app.moduleStateService.GetLastStartedAt(ctx, "discovery"); ok && gsErr == nil {
+			if _, refreshErr := app.refreshGalleryStatsCache(ctx, lastStarted); refreshErr != nil {
+				slog.Error("failed to refresh gallery stats cache", "err", refreshErr)
+			}
+		} else if gsErr != nil {
+			slog.Error("failed to get discovery last started at", "err", gsErr)
 		}
 	}
 	app.scheduleStaleCacheDrop("discovery-complete")

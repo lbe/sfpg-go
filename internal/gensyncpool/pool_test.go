@@ -240,7 +240,9 @@ type hashIface = interface {
 }
 
 func touchMD5(h hashIface) {
-	_, _ = h.Write([]byte("abcdefg"))
+	if _, err := h.Write([]byte("abcdefg")); err != nil {
+		panic(err)
+	}
 	_ = h.Sum(nil)
 }
 

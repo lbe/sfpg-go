@@ -5,6 +5,7 @@ package cachelite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -255,7 +256,11 @@ func StoreCacheEntryBatch(ctx context.Context, db *dbconnpool.DbSQLConnPool, ent
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() {
+		if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+			slog.Warn("cache tx rollback failed", "err", err)
+		}
+	}()
 
 	queries := gallerydb.New(tx)
 	for _, entry := range entries {
@@ -320,7 +325,11 @@ func RotateCacheTable(ctx context.Context, db *dbconnpool.DbSQLConnPool) error {
 	if err != nil {
 		return fmt.Errorf("failed to begin rotation transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() {
+		if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+			slog.Warn("cache rotation tx rollback failed", "err", err)
+		}
+	}()
 
 	if _, err := tx.ExecContext(ctx, rotateDropStaleTableSQL); err != nil {
 		return fmt.Errorf("drop previous stale cache table: %w", err)

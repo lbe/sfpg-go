@@ -3,6 +3,7 @@ package thumbnail
 import (
 	"bytes"
 	"database/sql"
+	"errors"
 	"testing"
 )
 
@@ -43,7 +44,7 @@ func TestMockGenerator_Error(t *testing.T) {
 	}
 
 	_, _, _, err := mock.GenerateThumbnailAndHashes(nil)
-	if err != sql.ErrConnDone {
+	if !errors.Is(err, sql.ErrConnDone) {
 		t.Errorf("expected sql.ErrConnDone, got %v", err)
 	}
 }

@@ -3,6 +3,7 @@ package files
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"testing"
 
 	_ "github.com/ncruces/go-sqlite3/driver"
@@ -254,7 +255,7 @@ func TestFileProcessor_SubmitFileForWrite(t *testing.T) {
 		}
 
 		err := processor.SubmitFileForWrite(file)
-		if err != expectedErr {
+		if !errors.Is(err, expectedErr) {
 			t.Errorf("expected error %v, got %v", expectedErr, err)
 		}
 	})

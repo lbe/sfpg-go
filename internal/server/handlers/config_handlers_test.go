@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -66,7 +67,7 @@ func (m *mockSessionManagerAuthenticatedInvalidCSRF) ValidateCSRFToken(r *http.R
 func (m *mockSessionManagerAuthenticatedInvalidCSRF) ClearSession(w http.ResponseWriter, r *http.Request) {
 }
 
-func (m *mockSessionManagerAuthenticatedInvalidCSRF) GetSession(r *http.Request) (*sessions.Session, error) {
+func (m *mockSessionManagerAuthenticatedInvalidCSRF) GetSession(w http.ResponseWriter, r *http.Request) (*sessions.Session, error) {
 	sess := sessions.NewSession(nil, session.SessionName)
 	sess.IsNew = false
 	sess.Values["csrf_token"] = "existing-csrf-token"
@@ -160,24 +161,8 @@ func (m *mockConfigServiceForConfig) IncrementETag(ctx context.Context) (string,
 	return "20260130-01", nil
 }
 
-func TestConfigHandlers_ConfigGet_Unauthenticated(t *testing.T) {
-	if err := ui.ParseTemplates(web.FS); err != nil {
-		t.Fatalf("ParseTemplates failed: %v", err)
-	}
-
-	ch := setupTestConfigHandlers(t, &mockConfigServiceForConfig{}, &mockAuthServiceForConfig{}, &mockCredentialStore{})
-	ch.DBRoPool = errConnPool{getErr: errors.New("no db")}
-	ch.SessionManager.(*mockSessionManagerAuth).authenticated = false
-
-	req := httptest.NewRequest(http.MethodGet, "/config", nil)
-	w := httptest.NewRecorder()
-
-	ch.ConfigGet(w, req)
-
-	if w.Code != http.StatusUnauthorized {
-		t.Errorf("expected status 401, got %d", w.Code)
-	}
-}
+// Auth enforcement is handled by authMiddleware at the router level,
+// not by individual handlers. See TestAuthMiddleware_* in server_test.go.
 
 func TestConfigHandlers_ConfigGet_Authenticated(t *testing.T) {
 	if err := ui.ParseTemplates(web.FS); err != nil {
@@ -185,7 +170,6 @@ func TestConfigHandlers_ConfigGet_Authenticated(t *testing.T) {
 	}
 
 	ch := setupTestConfigHandlers(t, &mockConfigServiceForConfig{}, &mockAuthServiceForConfig{}, &mockCredentialStore{})
-	ch.DBRoPool = errConnPool{getErr: errors.New("no db")}
 	ch.SessionManager.(*mockSessionManagerAuth).authenticated = true
 
 	req := httptest.NewRequest(http.MethodGet, "/config", nil)
@@ -209,7 +193,6 @@ func TestConfigHandlers_ConfigGet_LoadError(t *testing.T) {
 		},
 	}
 	ch := setupTestConfigHandlers(t, mockSvc, &mockAuthServiceForConfig{}, &mockCredentialStore{})
-	ch.DBRoPool = errConnPool{getErr: errors.New("no db")}
 	ch.SessionManager.(*mockSessionManagerAuth).authenticated = true
 
 	req := httptest.NewRequest(http.MethodGet, "/config", nil)
@@ -219,25 +202,6 @@ func TestConfigHandlers_ConfigGet_LoadError(t *testing.T) {
 
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("expected status 500, got %d", w.Code)
-	}
-}
-
-func TestConfigHandlers_ConfigPost_Unauthenticated(t *testing.T) {
-	if err := ui.ParseTemplates(web.FS); err != nil {
-		t.Fatalf("ParseTemplates failed: %v", err)
-	}
-
-	ch := setupTestConfigHandlers(t, &mockConfigServiceForConfig{}, &mockAuthServiceForConfig{}, &mockCredentialStore{})
-	ch.SessionManager.(*mockSessionManagerAuth).authenticated = false
-
-	req := httptest.NewRequest(http.MethodPost, "/config", strings.NewReader("site_name=Test"))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	w := httptest.NewRecorder()
-
-	ch.ConfigPost(w, req)
-
-	if w.Code != http.StatusUnauthorized {
-		t.Errorf("expected status 401, got %d", w.Code)
 	}
 }
 
@@ -257,6 +221,60 @@ func TestConfigHandlers_ConfigPost_InvalidCSRF(t *testing.T) {
 
 	if w.Code != http.StatusForbidden {
 		t.Errorf("expected status 403, got %d", w.Code)
+	}
+}
+
+func TestConfigHandlers_ConfigPost_WithThemesInPayload(t *testing.T) {
+	if err := ui.ParseTemplates(web.FS); err != nil {
+		t.Fatalf("ParseTemplates failed: %v", err)
+	}
+
+	oldCfg := config.DefaultConfig()
+	oldCfg.Themes = []string{"dark", "light"}
+	oldCfg.CurrentTheme = "dark"
+	oldCfg.SiteName = "OldName"
+
+	var savedCfg *config.Config
+	mockSvc := &mockConfigServiceForConfig{
+		loadFunc: func(ctx context.Context) (*config.Config, error) {
+			return oldCfg, nil
+		},
+		saveFunc: func(ctx context.Context, cfg *config.Config) error {
+			savedCfg = cfg
+			return nil
+		},
+	}
+	ch := setupTestConfigHandlers(t, mockSvc, &mockAuthServiceForConfig{}, &mockCredentialStore{})
+	ch.SessionManager.(*mockSessionManagerAuth).authenticated = true
+
+	body := "site_name=Test&themes=light&themes=dark&csrf_token=valid"
+	req := httptest.NewRequest(http.MethodPost, "/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+
+	ch.ConfigPost(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	doc, err := testutil.ParseHTML(w.Body)
+	if err != nil {
+		t.Fatalf("parse HTML: %v", err)
+	}
+	errorMsg := testutil.FindElementByID(doc, "config-error-message")
+	if errorMsg != nil {
+		text := testutil.GetTextContent(errorMsg)
+		if strings.Contains(text, "themes") {
+			t.Errorf("validation error should not mention themes, got: %q", text)
+		}
+	}
+
+	if savedCfg == nil {
+		t.Fatal("expected config to be saved")
+	}
+	if len(savedCfg.Themes) != 2 || savedCfg.Themes[0] != "dark" || savedCfg.Themes[1] != "light" {
+		t.Errorf("Themes should be unchanged [dark light], got %v", savedCfg.Themes)
 	}
 }
 
@@ -365,24 +383,6 @@ func TestConfigHandlers_ConfigPost_ValidationErrors(t *testing.T) {
 	}
 }
 
-func TestConfigHandlers_ExportConfigDownload_Unauthenticated(t *testing.T) {
-	if err := ui.ParseTemplates(web.FS); err != nil {
-		t.Fatalf("ParseTemplates failed: %v", err)
-	}
-
-	ch := setupTestConfigHandlers(t, &mockConfigServiceForConfig{}, &mockAuthServiceForConfig{}, &mockCredentialStore{})
-	ch.SessionManager.(*mockSessionManagerAuth).authenticated = false
-
-	req := httptest.NewRequest(http.MethodGet, "/config/export/download", nil)
-	w := httptest.NewRecorder()
-
-	ch.ExportConfigDownloadHandler(w, req)
-
-	if w.Code != http.StatusUnauthorized {
-		t.Errorf("expected status 401, got %d", w.Code)
-	}
-}
-
 func TestConfigHandlers_ExportConfigDownload_Success(t *testing.T) {
 	if err := ui.ParseTemplates(web.FS); err != nil {
 		t.Fatalf("ParseTemplates failed: %v", err)
@@ -406,24 +406,6 @@ func TestConfigHandlers_ExportConfigDownload_Success(t *testing.T) {
 	}
 	if !strings.Contains(w.Header().Get("Content-Disposition"), "attachment") {
 		t.Error("expected Content-Disposition header with attachment")
-	}
-}
-
-func TestConfigHandlers_ImportPreview_Unauthenticated(t *testing.T) {
-	if err := ui.ParseTemplates(web.FS); err != nil {
-		t.Fatalf("ParseTemplates failed: %v", err)
-	}
-
-	ch := setupTestConfigHandlers(t, &mockConfigServiceForConfig{}, &mockAuthServiceForConfig{}, &mockCredentialStore{})
-	ch.SessionManager.(*mockSessionManagerAuth).authenticated = false
-
-	req := httptest.NewRequest(http.MethodPost, "/config/import/preview", nil)
-	w := httptest.NewRecorder()
-
-	ch.ImportConfigPreviewHandler(w, req)
-
-	if w.Code != http.StatusUnauthorized {
-		t.Errorf("expected status 401, got %d", w.Code)
 	}
 }
 
@@ -495,24 +477,6 @@ func TestConfigHandlers_ImportCommit_Success(t *testing.T) {
 	}
 }
 
-func TestConfigHandlers_RestoreLastKnownGood_Unauthenticated(t *testing.T) {
-	if err := ui.ParseTemplates(web.FS); err != nil {
-		t.Fatalf("ParseTemplates failed: %v", err)
-	}
-
-	ch := setupTestConfigHandlers(t, &mockConfigServiceForConfig{}, &mockAuthServiceForConfig{}, &mockCredentialStore{})
-	ch.SessionManager.(*mockSessionManagerAuth).authenticated = false
-
-	req := httptest.NewRequest(http.MethodPost, "/config/restore-last-known-good", nil)
-	w := httptest.NewRecorder()
-
-	ch.RestoreLastKnownGoodHandler(w, req)
-
-	if w.Code != http.StatusUnauthorized {
-		t.Errorf("expected status 401, got %d", w.Code)
-	}
-}
-
 func TestConfigHandlers_RestoreLastKnownGood_PreviewDBError(t *testing.T) {
 	if err := ui.ParseTemplates(web.FS); err != nil {
 		t.Fatalf("ParseTemplates failed: %v", err)
@@ -551,24 +515,6 @@ func TestConfigHandlers_RestoreLastKnownGood_CommitInvalidCSRF(t *testing.T) {
 	}
 }
 
-func TestConfigHandlers_Restart_Unauthenticated(t *testing.T) {
-	if err := ui.ParseTemplates(web.FS); err != nil {
-		t.Fatalf("ParseTemplates failed: %v", err)
-	}
-
-	ch := setupTestConfigHandlers(t, &mockConfigServiceForConfig{}, &mockAuthServiceForConfig{}, &mockCredentialStore{})
-	ch.SessionManager.(*mockSessionManagerAuth).authenticated = false
-
-	req := httptest.NewRequest(http.MethodPost, "/config/restart", nil)
-	w := httptest.NewRecorder()
-
-	ch.RestartHandler(w, req)
-
-	if w.Code != http.StatusUnauthorized {
-		t.Errorf("expected status 401, got %d", w.Code)
-	}
-}
-
 func TestConfigHandlers_Restart_InvalidCSRF(t *testing.T) {
 	if err := ui.ParseTemplates(web.FS); err != nil {
 		t.Fatalf("ParseTemplates failed: %v", err)
@@ -580,7 +526,7 @@ func TestConfigHandlers_Restart_InvalidCSRF(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/config/restart", nil)
 	w := httptest.NewRecorder()
 
-	ch.RestartHandler(w, req)
+	NewConfigRestartHandler(ch).RestartHandler(w, req)
 
 	if w.Code != http.StatusForbidden {
 		t.Errorf("expected status 403, got %d", w.Code)
@@ -601,7 +547,7 @@ func TestConfigHandlers_Restart_Authenticated(t *testing.T) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 
-	ch.RestartHandler(w, req)
+	NewConfigRestartHandler(ch).RestartHandler(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", w.Code)
@@ -918,10 +864,75 @@ func TestConfigHandlers_Restart_NilRestartChannel(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/config/restart", nil)
 	w := httptest.NewRecorder()
 
-	ch.RestartHandler(w, req)
+	NewConfigRestartHandler(ch).RestartHandler(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", w.Code)
+	}
+}
+
+// flushTrackingResponseWriter wraps httptest.ResponseRecorder to track Flush calls.
+type flushTrackingResponseWriter struct {
+	*httptest.ResponseRecorder
+	flushed bool
+}
+
+func (w *flushTrackingResponseWriter) Flush() {
+	w.flushed = true
+}
+
+func TestConfigHandlers_RestartHandler_FlushesResponseAndWarnsOnFullChannel(t *testing.T) {
+	if err := ui.ParseTemplates(web.FS); err != nil {
+		t.Fatalf("ParseTemplates failed: %v", err)
+	}
+
+	// Capture log output to verify warning for full channel.
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	prevLogger := slog.Default()
+	slog.SetDefault(logger)
+	defer slog.SetDefault(prevLogger)
+
+	// Pre-fill the buffered channel so it is full.
+	restartCh := make(chan struct{}, 1)
+	restartCh <- struct{}{}
+
+	ch := setupTestConfigHandlers(t, &mockConfigServiceForConfig{}, &mockAuthServiceForConfig{}, &mockCredentialStore{})
+	ch.GetRestartCh = func() chan struct{} { return restartCh }
+	ch.SessionManager.(*mockSessionManagerAuth).authenticated = true
+
+	req := httptest.NewRequest(http.MethodPost, "/config/restart", strings.NewReader("csrf_token=valid"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	// Wrap ResponseRecorder to detect Flush calls.
+	w := &flushTrackingResponseWriter{ResponseRecorder: httptest.NewRecorder()}
+
+	NewConfigRestartHandler(ch).RestartHandler(w, req)
+
+	// Assertion 1: HTTP 200 is written.
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d", w.Code)
+	}
+
+	// Assertion 2: the restart-initiated template is rendered.
+	if w.Body.Len() == 0 {
+		t.Error("expected restart-initiated template in response body")
+	}
+
+	// Assertion 3: response writer is flushed before the goroutine runs.
+	if !w.flushed {
+		t.Error("expected response writer to be flushed before returning")
+	}
+
+	// Assertion 4: handler returns without blocking (non-blocking behavior).
+
+	// Wait for the goroutine to execute (500ms sleep + margin).
+	time.Sleep(800 * time.Millisecond)
+
+	// Assertion 5: warning is logged instead of blocking when channel is full.
+	logOutput := logBuf.String()
+	if !strings.Contains(logOutput, "Restart channel full") {
+		t.Errorf("expected log to contain 'Restart channel full' warning, got: %s", logOutput)
 	}
 }
 
@@ -1319,25 +1330,6 @@ func TestConfigHandlers_ConfigPost_InvalidRetentionCount(t *testing.T) {
 	}
 }
 
-func TestConfigHandlers_ImportCommit_Unauthenticated(t *testing.T) {
-	if err := ui.ParseTemplates(web.FS); err != nil {
-		t.Fatalf("ParseTemplates failed: %v", err)
-	}
-
-	ch := setupTestConfigHandlers(t, &mockConfigServiceForConfig{}, &mockAuthServiceForConfig{}, &mockCredentialStore{})
-	ch.SessionManager.(*mockSessionManagerAuth).authenticated = false
-
-	req := httptest.NewRequest(http.MethodPost, "/config/import/commit", strings.NewReader("yaml=site_name: Test"))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	w := httptest.NewRecorder()
-
-	ch.ImportConfigCommitHandler(w, req)
-
-	if w.Code != http.StatusUnauthorized {
-		t.Errorf("expected status 401, got %d", w.Code)
-	}
-}
-
 func TestConfigHandlers_ImportCommit_ParseFormError(t *testing.T) {
 	if err := ui.ParseTemplates(web.FS); err != nil {
 		t.Fatalf("ParseTemplates failed: %v", err)
@@ -1354,24 +1346,6 @@ func TestConfigHandlers_ImportCommit_ParseFormError(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("expected status 400, got %d", w.Code)
-	}
-}
-
-func TestConfigHandlers_ExportConfigToFileHandler_Unauthenticated(t *testing.T) {
-	if err := ui.ParseTemplates(web.FS); err != nil {
-		t.Fatalf("ParseTemplates failed: %v", err)
-	}
-
-	ch := setupTestConfigHandlers(t, &mockConfigServiceForConfig{}, &mockAuthServiceForConfig{}, &mockCredentialStore{})
-	ch.SessionManager.(*mockSessionManagerAuth).authenticated = false
-
-	req := httptest.NewRequest(http.MethodPost, "/config/export/to-file", nil)
-	w := httptest.NewRecorder()
-
-	ch.ExportConfigToFileHandler(w, req)
-
-	if w.Code != http.StatusUnauthorized {
-		t.Errorf("expected status 401, got %d", w.Code)
 	}
 }
 
@@ -1435,11 +1409,12 @@ func TestConfigHandlers_ConfigPost_ThemesFallback(t *testing.T) {
 	ch := setupTestConfigHandlers(t, mockSvc, &mockAuthServiceForConfig{}, &mockCredentialStore{})
 	ch.SessionManager.(*mockSessionManagerAuth).authenticated = true
 
-	req := httptest.NewRequest(http.MethodPost, "/config", strings.NewReader("themes=light"))
+	req := httptest.NewRequest(http.MethodPost, "/config/themes", strings.NewReader("themes=light"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 
-	ch.ConfigPost(w, req)
+	themesHandler := NewConfigThemesHandler(ch)
+	themesHandler.UpdateThemesHandler(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", w.Code)
@@ -1481,7 +1456,6 @@ func TestConfigHandlers_ConfigGet_ThemesSorted(t *testing.T) {
 		},
 	}
 	ch := setupTestConfigHandlers(t, mockSvc, &mockAuthServiceForConfig{}, &mockCredentialStore{})
-	ch.DBRoPool = errConnPool{getErr: errors.New("no db")}
 	ch.SessionManager.(*mockSessionManagerAuth).authenticated = true
 
 	req := httptest.NewRequest(http.MethodGet, "/config", nil)
@@ -1647,6 +1621,89 @@ func TestConfigHandlers_ImportCommit_LoadError(t *testing.T) {
 	}
 }
 
+func TestConfigPostRejectsInvalidImageDirectory(t *testing.T) {
+	if err := ui.ParseTemplates(web.FS); err != nil {
+		t.Fatalf("ParseTemplates failed: %v", err)
+	}
+
+	tests := []struct {
+		name      string
+		imageDir  string
+		wantError bool
+	}{
+		{
+			name:      "nonexistent path is rejected",
+			imageDir:  "/nonexistent/path",
+			wantError: true,
+		},
+		{
+			name:      "directory traversal is rejected",
+			imageDir:  "../../../etc",
+			wantError: true,
+		},
+		{
+			name:      "valid path is accepted",
+			imageDir:  t.TempDir(),
+			wantError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var saveCalled bool
+			mockSvc := &mockConfigServiceForConfig{
+				saveFunc: func(ctx context.Context, cfg *config.Config) error {
+					saveCalled = true
+					return nil
+				},
+			}
+			ch := setupTestConfigHandlers(t, mockSvc, &mockAuthServiceForConfig{}, &mockCredentialStore{})
+			ch.SessionManager.(*mockSessionManagerAuth).authenticated = true
+
+			body := "image_directory=" + tt.imageDir + "&csrf_token=valid"
+			req := httptest.NewRequest(http.MethodPost, "/config", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			w := httptest.NewRecorder()
+
+			ch.ConfigPost(w, req)
+
+			if tt.wantError {
+				if saveCalled {
+					t.Error("ConfigService.Save was called but should not have been for invalid image_directory")
+				}
+				if w.Code != http.StatusOK {
+					t.Errorf("expected status 200 for validation error, got %d", w.Code)
+				}
+				doc, err := testutil.ParseHTML(w.Body)
+				if err != nil {
+					t.Fatalf("parse HTML: %v", err)
+				}
+				errorMsg := testutil.FindElementByID(doc, "config-error-message")
+				if errorMsg == nil {
+					t.Fatal("missing #config-error-message for invalid image_directory")
+				}
+				if got := testutil.GetTextContent(errorMsg); !strings.Contains(got, "image_directory") {
+					t.Errorf("expected error mentioning image_directory, got %q", got)
+				}
+			} else {
+				if !saveCalled {
+					t.Error("ConfigService.Save was not called for valid image_directory")
+				}
+				if w.Code != http.StatusOK {
+					t.Errorf("expected status 200, got %d", w.Code)
+				}
+				doc, err := testutil.ParseHTML(w.Body)
+				if err != nil {
+					t.Fatalf("parse HTML: %v", err)
+				}
+				if testutil.FindElementByID(doc, "config-success-message") == nil {
+					t.Error("expected success message for valid image_directory")
+				}
+			}
+		})
+	}
+}
+
 func TestConfigHandlers_ConfigPost_ThemesDoNotRequireRestart(t *testing.T) {
 	if err := ui.ParseTemplates(web.FS); err != nil {
 		t.Fatalf("ParseTemplates failed: %v", err)
@@ -1667,11 +1724,12 @@ func TestConfigHandlers_ConfigPost_ThemesDoNotRequireRestart(t *testing.T) {
 	ch.SessionManager.(*mockSessionManagerAuth).authenticated = true
 
 	// Change themes - should NOT trigger restart
-	req := httptest.NewRequest(http.MethodPost, "/config", strings.NewReader("themes=dark&themes=light&themes=cupcake"))
+	req := httptest.NewRequest(http.MethodPost, "/config/themes", strings.NewReader("themes=dark&themes=light&themes=cupcake"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 
-	ch.ConfigPost(w, req)
+	themesHandler := NewConfigThemesHandler(ch)
+	themesHandler.UpdateThemesHandler(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", w.Code)

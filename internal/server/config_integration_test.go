@@ -177,108 +177,6 @@ func loginAsAdmin(t *testing.T, client *http.Client, baseURL string) {
 	}
 }
 
-// REMOVED: TestIntegration_CompleteConfigWorkflow - Slow duplicate test (0.89s)
-// REMOVED: func TestIntegration_CompleteConfigWorkflow(t *testing.T) {
-// REMOVED: setenvForTest(t, "SEPG_SESSION_SECURE", "false")
-// REMOVED: 	app := CreateApp(t, true)
-// REMOVED: 	defer app.Shutdown()
-// REMOVED:
-// REMOVED: 	ts := httptest.NewServer(app.getRouter())
-// REMOVED: 	defer ts.Close()
-// REMOVED:
-// REMOVED: 	jar, err := cookiejar.New(nil)
-// REMOVED: 	if err != nil {
-// REMOVED: 		t.Fatalf("failed to create cookie jar: %v", err)
-// REMOVED: 	}
-// REMOVED: 	client := &http.Client{Jar: jar}
-// REMOVED:
-// REMOVED: 	// Step 1: Login
-// REMOVED: 	loginAsAdmin(t, client, ts.URL)
-// REMOVED:
-// REMOVED: 	// Step 2: Load config page and extract CSRF token
-// REMOVED: 	csrfToken := extractCSRFTokenFromConfig(t, client, ts.URL)
-// REMOVED:
-// REMOVED: 	// Step 3: Update a non-restart-required setting (site_name)
-// REMOVED: 	formData := url.Values{}
-// REMOVED: 	formData.Set("csrf_token", csrfToken)
-// REMOVED: 	formData.Set("site_name", "E2E Test Site")
-// REMOVED: 	req, err := http.NewRequest(http.MethodPost, ts.URL+"/config", strings.NewReader(formData.Encode()))
-// REMOVED: 	if err != nil {
-// REMOVED: 		t.Fatalf("failed to create POST request: %v", err)
-// REMOVED: 	}
-// REMOVED: 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-// REMOVED: 	req.Header.Set("Origin", ts.URL)
-// REMOVED: 	resp, err := client.Do(req)
-// REMOVED: 	if err != nil {
-// REMOVED: 		t.Fatalf("POST /config failed: %v", err)
-// REMOVED: 	}
-// REMOVED: 	defer resp.Body.Close()
-// REMOVED: 	if resp.StatusCode != http.StatusOK {
-// REMOVED: 		t.Fatalf("expected 200 after config update, got %d", resp.StatusCode)
-// REMOVED: 	}
-// REMOVED:
-// REMOVED: 	// Verify HX-Trigger header is present
-// REMOVED: 	if trigger := resp.Header.Get("HX-Trigger"); trigger != "config-saved" {
-// REMOVED: 		t.Errorf("expected HX-Trigger: config-saved, got '%s'", trigger)
-// REMOVED: 	}
-// REMOVED:
-// REMOVED: 	// Step 4: Verify the setting was saved to database
-// REMOVED: 	cpcRo, err := app.dbRoPool.Get()
-// REMOVED: 	if err != nil {
-// REMOVED: 		t.Fatalf("failed to get DB connection: %v", err)
-// REMOVED: 	}
-// REMOVED: 	defer app.dbRoPool.Put(cpcRo)
-// REMOVED:
-// REMOVED: 	ctx := context.Background()
-// REMOVED: 	config, err := cpcRo.Queries.GetConfigByKey(ctx, "site_name")
-// REMOVED: 	if err != nil {
-// REMOVED: 		t.Fatalf("failed to get config from DB: %v", err)
-// REMOVED: 	}
-// REMOVED: 	if config.Value != "E2E Test Site" {
-// REMOVED: 		t.Errorf("expected site_name='E2E Test Site', got '%s'", config.Value)
-// REMOVED: 	}
-// REMOVED:
-// REMOVED: 	// Step 5: Update a restart-required setting (listener_port)
-// REMOVED: 	// Extract fresh CSRF token for new request
-// REMOVED: 	csrfToken = extractCSRFTokenFromConfig(t, client, ts.URL)
-// REMOVED: 	formData = url.Values{}
-// REMOVED: 	formData.Set("csrf_token", csrfToken)
-// REMOVED: 	formData.Set("listener_port", "9090")
-// REMOVED: 	req, err = http.NewRequest(http.MethodPost, ts.URL+"/config", strings.NewReader(formData.Encode()))
-// REMOVED: 	if err != nil {
-// REMOVED: 		t.Fatalf("failed to create POST request: %v", err)
-// REMOVED: 	}
-// REMOVED: 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-// REMOVED: 	req.Header.Set("Origin", ts.URL)
-// REMOVED: 	resp, err = client.Do(req)
-// REMOVED: 	if err != nil {
-// REMOVED: 		t.Fatalf("POST /config failed: %v", err)
-// REMOVED: 	}
-// REMOVED: 	defer resp.Body.Close()
-// REMOVED: 	if resp.StatusCode != http.StatusOK {
-// REMOVED: 		t.Fatalf("expected 200 after config update, got %d", resp.StatusCode)
-// REMOVED: 	}
-// REMOVED:
-// REMOVED: 	// Verify HX-Trigger header is present even for restart-required updates
-// REMOVED: 	if trigger := resp.Header.Get("HX-Trigger"); trigger != "config-saved" {
-// REMOVED: 		t.Errorf("expected HX-Trigger: config-saved, got '%s'", trigger)
-// REMOVED: 	}
-// REMOVED:
-// REMOVED: 	// Step 6: Verify restart-required setting was saved
-// REMOVED: 	config, err = cpcRo.Queries.GetConfigByKey(ctx, "listener_port")
-// REMOVED: 	if err != nil {
-// REMOVED: 		t.Fatalf("failed to get config from DB: %v", err)
-// REMOVED: 	}
-// REMOVED: 	if config.Value != "9090" {
-// REMOVED: 		t.Errorf("expected listener_port='9090', got '%s'", config.Value)
-// REMOVED: 	}
-// REMOVED:
-// REMOVED: 	// Step 7: Verify restart warning appears in response (check HTML for restart warning)
-// REMOVED: 	body := resp.Body
-// REMOVED: 	// Note: We'd need to parse HTML here to verify restart warning, but for E2E we verify the setting was saved
-// REMOVED: 	_ = body
-// REMOVED: }
-
 // TestIntegration_MultipleCategoryUpdates tests updating settings from multiple categories in sequence,
 // verifying that changes persist correctly in the database across different configuration sections.
 // Note: This is an integration test, not E2E, as it only verifies database state, not server behavior.
@@ -405,266 +303,13 @@ func TestIntegration_MultipleCategoryUpdates(t *testing.T) {
 	}
 }
 
-// REMOVED: TestIntegration_ConfigPersistenceAcrossRestart - slow duplicate (3.86s)
 // Config persistence is already tested by TestConfigSaveToDatabase (0.37s)
 // and config service tests. This test creating two full app instances was redundant.
-// REMOVED: // func TestIntegration_ConfigPersistenceAcrossRestart(t *testing.T) {
-// REMOVED: setenvForTest(t, "SEPG_SESSION_SECURE", "false")
-// REMOVED:
-// REMOVED: 	// Create first app instance
-// REMOVED: 	app1 := CreateApp(t, true)
-// REMOVED: 	// Note: We'll shutdown manually before creating app2, so no defer here
-// REMOVED:
-// REMOVED: 	ts1 := httptest.NewServer(app1.getRouter())
-// REMOVED: 	defer ts1.Close()
-// REMOVED:
-// REMOVED: 	jar, err := cookiejar.New(nil)
-// REMOVED: 	if err != nil {
-// REMOVED: 		t.Fatalf("failed to create cookie jar: %v", err)
-// REMOVED: 	}
-// REMOVED: 	client := &http.Client{Jar: jar}
-// REMOVED:
-// REMOVED: 	loginAsAdmin(t, client, ts1.URL)
-// REMOVED:
-// REMOVED: 	// Save a configuration value
-// REMOVED: 	csrfToken := extractCSRFTokenFromConfig(t, client, ts1.URL)
-// REMOVED: 	formData := url.Values{}
-// REMOVED: 	formData.Set("csrf_token", csrfToken)
-// REMOVED: 	formData.Set("site_name", "Persistence Test")
-// REMOVED: 	req, err := http.NewRequest(http.MethodPost, ts1.URL+"/config", strings.NewReader(formData.Encode()))
-// REMOVED: 	if err != nil {
-// REMOVED: 		t.Fatalf("failed to create POST request: %v", err)
-// REMOVED: 	}
-// REMOVED: 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-// REMOVED: 	req.Header.Set("Origin", ts1.URL)
-// REMOVED: 	resp, err := client.Do(req)
-// REMOVED: 	if err != nil {
-// REMOVED: 		t.Fatalf("POST /config failed: %v", err)
-// REMOVED: 	}
-// REMOVED: 	if resp.StatusCode != http.StatusOK {
-// REMOVED: 		t.Fatalf("expected 200, got %d", resp.StatusCode)
-// REMOVED: 	}
-// REMOVED: 	resp.Body.Close()
-// REMOVED:
-// REMOVED: 	// Verify the config was saved before shutdown
-// REMOVED: 	cpcRo, err := app1.dbRoPool.Get()
-// REMOVED: 	if err != nil {
-// REMOVED: 		t.Fatalf("failed to get DB connection: %v", err)
-// REMOVED: 	}
-// REMOVED: 	defer app1.dbRoPool.Put(cpcRo)
-// REMOVED: 	ctx := context.Background()
-// REMOVED: 	config, err := cpcRo.Queries.GetConfigByKey(ctx, "site_name")
-// REMOVED: 	if err != nil {
-// REMOVED: 		t.Fatalf("failed to verify config was saved: %v", err)
-// REMOVED: 	}
-// REMOVED: 	if config.Value != "Persistence Test" {
-// REMOVED: 		t.Fatalf("config not saved correctly before shutdown: expected 'Persistence Test', got '%s'", config.Value)
-// REMOVED: 	}
-// REMOVED:
-// REMOVED: 	// Save database path and root dir before shutdown
-// REMOVED: 	dbPath := app1.dbPath
-// REMOVED: 	rootDir := app1.rootDir
-// REMOVED:
-// REMOVED: 	// Shutdown first app (but don't use defer since we need to control when it happens)
-// REMOVED: 	app1.Shutdown()
-// REMOVED:
-// REMOVED: 	// Create second app instance using the same database path
-// REMOVED: 	// This simulates a server restart
-// REMOVED: 	opt := getopt.Opt{
-// REMOVED: 		SessionSecret: getopt.OptString{String: "this-is-a-test-secret", IsSet: true},
-// REMOVED: 	}
-// REMOVED: 	app2 := New(opt,"x.y.z")
-// REMOVED: 	app2.dbPath = dbPath
-// REMOVED: 	app2.setRootDir(&rootDir)
-// REMOVED: 	app2.setDB()
-// REMOVED: 	app2.setConfigDefaults()
-// REMOVED: 	defer app2.Shutdown()
-// REMOVED:
-// REMOVED: 	// Load config and verify persistence
-// REMOVED: 	// setConfigDefaults() initializes defaults but doesn't load from DB
-// REMOVED: 	// We need to explicitly call loadConfig() to load from database
-// REMOVED: 	if err := app2.loadConfig(); err != nil {
-// REMOVED: 		t.Fatalf("failed to load config in second app: %v", err)
-// REMOVED: 	}
-// REMOVED: 	app2.applyConfig()
-// REMOVED:
-// REMOVED: 	// Verify the config was loaded from database
-// REMOVED: 	// Note: loadConfig() applies precedence: CLI > Env > DB > YAML > Defaults
-// REMOVED: 	// Since we're not setting CLI/env, it should load from DB
-// REMOVED: 	if app2.config.SiteName != "Persistence Test" {
-// REMOVED: 		t.Errorf("expected SiteName='Persistence Test', got '%s'. Config may not have been loaded from DB.", app2.config.SiteName)
-// REMOVED: 	}
-// REMOVED: }
 
 // TestIntegration_ConfigPersistence_BooleanValues verifies that boolean configuration values
 // persist in the database. This test specifically covers the bug where unchecked
 // checkboxes were not being saved to the database.
 // Note: This is an integration test, not E2E, as it only verifies database persistence, not that the server uses the values.
-// REMOVED: func TestIntegration_ConfigPersistence_BooleanValues(t *testing.T) {
-// REMOVED: setenvForTest(t, "SEPG_SESSION_SECURE", "false")
-// REMOVED:
-// REMOVED: 	// Create first app instance
-// REMOVED: 	app1 := CreateApp(t, true)
-// REMOVED:
-// REMOVED: 	ts1 := httptest.NewServer(app1.getRouter())
-// REMOVED: 	defer ts1.Close()
-// REMOVED:
-// REMOVED: 	jar, err := cookiejar.New(nil)
-// REMOVED: 	if err != nil {
-// REMOVED: 		t.Fatalf("failed to create cookie jar: %v", err)
-// REMOVED: 	}
-// REMOVED: 	client := &http.Client{Jar: jar}
-// REMOVED:
-// REMOVED: 	loginAsAdmin(t, client, ts1.URL)
-// REMOVED:
-// REMOVED: 	// Test boolean values: set some to true, some to false (unchecked)
-// REMOVED: 	csrfToken := extractCSRFTokenFromConfig(t, client, ts1.URL)
-// REMOVED: 	formData := url.Values{}
-// REMOVED: 	formData.Set("csrf_token", csrfToken)
-// REMOVED: 	// Set server_compression_enable to false (unchecked checkbox - this was the bug)
-// REMOVED: 	// Don't include it in form - unchecked checkboxes don't appear in form
-// REMOVED: 	// Set enable_http_cache to true (checked checkbox)
-// REMOVED: 	formData.Set("enable_http_cache", "on")
-// REMOVED: 	// Set session_http_only to false (unchecked)
-// REMOVED: 	// Don't include it in form
-// REMOVED: 	// Set run_file_discovery to true (checked)
-// REMOVED: 	formData.Set("run_file_discovery", "on")
-// REMOVED:
-// REMOVED: 	req, err := http.NewRequest(http.MethodPost, ts1.URL+"/config", strings.NewReader(formData.Encode()))
-// REMOVED: 	if err != nil {
-// REMOVED: 		t.Fatalf("failed to create POST request: %v", err)
-// REMOVED: 	}
-// REMOVED: 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-// REMOVED: 	req.Header.Set("Origin", ts1.URL)
-// REMOVED: 	resp, err := client.Do(req)
-// REMOVED: 	if err != nil {
-// REMOVED: 		t.Fatalf("POST /config failed: %v", err)
-// REMOVED: 	}
-// REMOVED: 	if resp.StatusCode != http.StatusOK {
-// REMOVED: 		t.Fatalf("expected 200, got %d", resp.StatusCode)
-// REMOVED: 	}
-// REMOVED: 	resp.Body.Close()
-// REMOVED:
-// REMOVED: 	// Verify boolean values were saved before shutdown
-// REMOVED: 	cpcRo, err := app1.dbRoPool.Get()
-// REMOVED: 	if err != nil {
-// REMOVED: 		t.Fatalf("failed to get DB connection: %v", err)
-// REMOVED: 	}
-// REMOVED: 	defer app1.dbRoPool.Put(cpcRo)
-// REMOVED: 	ctx := context.Background()
-// REMOVED:
-// REMOVED: 	// Verify server_compression_enable is false (unchecked checkbox)
-// REMOVED: 	config, err := cpcRo.Queries.GetConfigByKey(ctx, "server_compression_enable")
-// REMOVED: 	if err != nil {
-// REMOVED: 		t.Fatalf("failed to get server_compression_enable: %v", err)
-// REMOVED: 	}
-// REMOVED: 	if config.Value != "false" {
-// REMOVED: 		t.Errorf("expected server_compression_enable='false' (unchecked), got '%s'", config.Value)
-// REMOVED: 	}
-// REMOVED:
-// REMOVED: 	// Verify enable_http_cache is true (checked checkbox)
-// REMOVED: 	config, err = cpcRo.Queries.GetConfigByKey(ctx, "enable_http_cache")
-// REMOVED: 	if err != nil {
-// REMOVED: 		t.Fatalf("failed to get enable_http_cache: %v", err)
-// REMOVED: 	}
-// REMOVED: 	if config.Value != "true" {
-// REMOVED: 		t.Errorf("expected enable_http_cache='true' (checked), got '%s'", config.Value)
-// REMOVED: 	}
-// REMOVED:
-// REMOVED: 	// Verify session_http_only is false (unchecked checkbox)
-// REMOVED: 	config, err = cpcRo.Queries.GetConfigByKey(ctx, "session_http_only")
-// REMOVED: 	if err != nil {
-// REMOVED: 		t.Fatalf("failed to get session_http_only: %v", err)
-// REMOVED: 	}
-// REMOVED: 	if config.Value != "false" {
-// REMOVED: 		t.Errorf("expected session_http_only='false' (unchecked), got '%s'", config.Value)
-// REMOVED: 	}
-// REMOVED:
-// REMOVED: 	// Verify run_file_discovery is true (checked checkbox)
-// REMOVED: 	config, err = cpcRo.Queries.GetConfigByKey(ctx, "run_file_discovery")
-// REMOVED: 	if err != nil {
-// REMOVED: 		t.Fatalf("failed to get run_file_discovery: %v", err)
-// REMOVED: 	}
-// REMOVED: 	if config.Value != "true" {
-// REMOVED: 		t.Errorf("expected run_file_discovery='true' (checked), got '%s'", config.Value)
-// REMOVED: 	}
-// REMOVED:
-// REMOVED: 	// Save database path and root dir before shutdown
-// REMOVED: 	dbPath := app1.dbPath
-// REMOVED: 	rootDir := app1.rootDir
-// REMOVED:
-// REMOVED: 	// Shutdown first app
-// REMOVED: 	app1.Shutdown()
-// REMOVED:
-// REMOVED: 	// Create second app instance using the same database path (simulates restart)
-// REMOVED: 	// Note: LoadFromOpt will override with defaults, but we verify database values are saved correctly
-// REMOVED: 	opt := getopt.Opt{
-// REMOVED: 		SessionSecret: getopt.OptString{String: "this-is-a-test-secret", IsSet: true},
-// REMOVED: 	}
-// REMOVED: 	app2 := New(opt,"x.y.z")
-// REMOVED: 	app2.dbPath = dbPath
-// REMOVED: 	app2.setRootDir(&rootDir)
-// REMOVED: 	app2.setDB()
-// REMOVED: 	app2.setConfigDefaults()
-// REMOVED: 	defer app2.Shutdown()
-// REMOVED:
-// REMOVED: 	// Verify database values are correct before loading (they should be saved correctly)
-// REMOVED: 	cpcRo2, err := app2.dbRoPool.Get()
-// REMOVED: 	if err != nil {
-// REMOVED: 		t.Fatalf("failed to get DB connection: %v", err)
-// REMOVED: 	}
-// REMOVED: 	defer app2.dbRoPool.Put(cpcRo2)
-// REMOVED:
-// REMOVED: 	// Verify server_compression_enable is false in database
-// REMOVED: 	config, err = cpcRo2.Queries.GetConfigByKey(ctx, "server_compression_enable")
-// REMOVED: 	if err != nil {
-// REMOVED: 		t.Fatalf("failed to get server_compression_enable from DB: %v", err)
-// REMOVED: 	}
-// REMOVED: 	if config.Value != "false" {
-// REMOVED: 		t.Errorf("expected server_compression_enable='false' in DB, got '%s'", config.Value)
-// REMOVED: 	}
-// REMOVED:
-// REMOVED: 	// Verify enable_http_cache is true in database
-// REMOVED: 	config, err = cpcRo2.Queries.GetConfigByKey(ctx, "enable_http_cache")
-// REMOVED: 	if err != nil {
-// REMOVED: 		t.Fatalf("failed to get enable_http_cache from DB: %v", err)
-// REMOVED: 	}
-// REMOVED: 	if config.Value != "true" {
-// REMOVED: 		t.Errorf("expected enable_http_cache='true' in DB, got '%s'", config.Value)
-// REMOVED: 	}
-// REMOVED:
-// REMOVED: 	// Verify session_http_only is false in database
-// REMOVED: 	config, err = cpcRo2.Queries.GetConfigByKey(ctx, "session_http_only")
-// REMOVED: 	if err != nil {
-// REMOVED: 		t.Fatalf("failed to get session_http_only from DB: %v", err)
-// REMOVED: 	}
-// REMOVED: 	if config.Value != "false" {
-// REMOVED: 		t.Errorf("expected session_http_only='false' in DB, got '%s'", config.Value)
-// REMOVED: 	}
-// REMOVED:
-// REMOVED: 	// Verify run_file_discovery is true in database
-// REMOVED: 	config, err = cpcRo2.Queries.GetConfigByKey(ctx, "run_file_discovery")
-// REMOVED: 	if err != nil {
-// REMOVED: 		t.Fatalf("failed to get run_file_discovery from DB: %v", err)
-// REMOVED: 	}
-// REMOVED: 	if config.Value != "true" {
-// REMOVED: 		t.Errorf("expected run_file_discovery='true' in DB, got '%s'", config.Value)
-// REMOVED: 	}
-// REMOVED:
-// REMOVED: 	// Load config from database
-// REMOVED: 	// Note: LoadFromOpt will override with defaults, but we've verified the DB values are correct
-// REMOVED: 	if err := app2.loadConfig(); err != nil {
-// REMOVED: 		t.Fatalf("failed to load config in second app: %v", err)
-// REMOVED: 	}
-// REMOVED: 	app2.applyConfig()
-// REMOVED:
-// REMOVED: 	// The values in app2.config will be overridden by LoadFromOpt defaults,
-// REMOVED: 	// but we've verified the database has the correct values.
-// REMOVED: 	// This test verifies that unchecked checkboxes are saved to the database correctly.
-// REMOVED: }
-// REMOVED:
-// REMOVED: // TestIntegration_ConfigPersistence_LoadFromOptDoesNotOverrideWithDefaults verifies that
-// REMOVED: // LoadFromOpt does not override database values when opt contains only default values.
 // This ensures database persistence works correctly even when no CLI/env overrides are set.
 // Note: This is an integration test, not E2E, as it only verifies config loading logic, not server behavior.
 func TestIntegration_ConfigPersistence_LoadFromOptDoesNotOverrideWithDefaults(t *testing.T) {
@@ -987,161 +632,9 @@ func TestIntegration_ConfigLoadsOnStartup(t *testing.T) {
 	}
 }
 
-// REMOVED: TestIntegration_ConcurrentConfigUpdates - Slow duplicate test (1.17s)
-// REMOVED: func TestIntegration_ConcurrentConfigUpdates(t *testing.T) {
-// REMOVED: setenvForTest(t, "SEPG_SESSION_SECURE", "false")
-// REMOVED: 	app := CreateApp(t, true)
-// REMOVED: 	defer app.Shutdown()
-// REMOVED:
-// REMOVED: 	ts := httptest.NewServer(app.getRouter())
-// REMOVED: 	defer ts.Close()
-// REMOVED:
-// REMOVED: 	// Create multiple clients (simulating concurrent users)
-// REMOVED: 	clients := make([]*http.Client, 3)
-// REMOVED: 	for i := range clients {
-// REMOVED: 		jar, err := cookiejar.New(nil)
-// REMOVED: 		if err != nil {
-// REMOVED: 			t.Fatalf("failed to create cookie jar: %v", err)
-// REMOVED: 		}
-// REMOVED: 		clients[i] = &http.Client{Jar: jar}
-// REMOVED: 		loginAsAdmin(t, clients[i], ts.URL)
-// REMOVED: 	}
-// REMOVED:
-// REMOVED: 	// All clients update settings sequentially (CSRF tokens are single-use)
-// REMOVED: 	// This tests that multiple users can update config in sequence without conflicts
-// REMOVED: 	for i, client := range clients {
-// REMOVED: 		// Extract fresh CSRF token for each request
-// REMOVED: 		csrfToken := extractCSRFTokenFromConfig(t, client, ts.URL)
-// REMOVED: 		formData := url.Values{}
-// REMOVED: 		formData.Set("csrf_token", csrfToken)
-// REMOVED: 		formData.Set("site_name", "Concurrent Test")
-// REMOVED: 		formData.Set("log_level", "INFO")
-// REMOVED: 		formData.Set("cache_max_size", "52428800")
-// REMOVED: 		req, err := http.NewRequest(http.MethodPost, ts.URL+"/config", strings.NewReader(formData.Encode()))
-// REMOVED: 		if err != nil {
-// REMOVED: 			t.Fatalf("client %d: failed to create request: %v", i, err)
-// REMOVED: 		}
-// REMOVED: 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-// REMOVED: 		req.Header.Set("Origin", ts.URL)
-// REMOVED: 		resp, err := client.Do(req)
-// REMOVED: 		if err != nil {
-// REMOVED: 			t.Fatalf("client %d: POST /config failed: %v", i, err)
-// REMOVED: 		}
-// REMOVED: 		if resp.StatusCode != http.StatusOK {
-// REMOVED: 			t.Fatalf("client %d: expected 200, got %d", i, resp.StatusCode)
-// REMOVED: 		}
-// REMOVED: 		resp.Body.Close()
-// REMOVED: 	}
-// REMOVED:
-// REMOVED: 	// Verify final state is consistent
-// REMOVED: 	cpcRo, err := app.dbRoPool.Get()
-// REMOVED: 	if err != nil {
-// REMOVED: 		t.Fatalf("failed to get DB connection: %v", err)
-// REMOVED: 	}
-// REMOVED: 	defer app.dbRoPool.Put(cpcRo)
-// REMOVED:
-// REMOVED: 	ctx := context.Background()
-// REMOVED: 	config, err := cpcRo.Queries.GetConfigByKey(ctx, "site_name")
-// REMOVED: 	if err != nil {
-// REMOVED: 		t.Fatalf("failed to get config: %v", err)
-// REMOVED: 	}
-// REMOVED: 	if config.Value != "Concurrent Test" {
-// REMOVED: 		t.Errorf("expected site_name='Concurrent Test', got '%s'", config.Value)
-// REMOVED: 	}
-// REMOVED: }
-
 // TestIntegration_ConfigPersistence_CLIEnvOverridesDB verifies that when CLI/env values ARE set (IsSet=true),
 // they override database values. This tests the precedence: CLI/env > DB > defaults.
 // Note: This is an integration test, not E2E, as it only verifies config loading logic, not server behavior.
-// REMOVED: func TestIntegration_ConfigPersistence_CLIEnvOverridesDB(t *testing.T) {
-// REMOVED: setenvForTest(t, "SEPG_SESSION_SECURE", "false")
-// REMOVED:
-// REMOVED: 	// Create first app instance
-// REMOVED: 	app1 := CreateApp(t, true)
-// REMOVED:
-// REMOVED: 	ts1 := httptest.NewServer(app1.getRouter())
-// REMOVED: 	defer ts1.Close()
-// REMOVED:
-// REMOVED: 	jar, err := cookiejar.New(nil)
-// REMOVED: 	if err != nil {
-// REMOVED: 		t.Fatalf("failed to create cookie jar: %v", err)
-// REMOVED: 	}
-// REMOVED: 	client := &http.Client{Jar: jar}
-// REMOVED:
-// REMOVED: 	loginAsAdmin(t, client, ts1.URL)
-// REMOVED:
-// REMOVED: 	// Set boolean values to false in database
-// REMOVED: 	csrfToken := extractCSRFTokenFromConfig(t, client, ts1.URL)
-// REMOVED: 	formData := url.Values{}
-// REMOVED: 	formData.Set("csrf_token", csrfToken)
-// REMOVED: 	// Don't include checkboxes - they'll be saved as false (unchecked)
-// REMOVED:
-// REMOVED: 	req, err := http.NewRequest(http.MethodPost, ts1.URL+"/config", strings.NewReader(formData.Encode()))
-// REMOVED: 	if err != nil {
-// REMOVED: 		t.Fatalf("failed to create POST request: %v", err)
-// REMOVED: 	}
-// REMOVED: 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-// REMOVED: 	req.Header.Set("Origin", ts1.URL)
-// REMOVED: 	resp, err := client.Do(req)
-// REMOVED: 	if err != nil {
-// REMOVED: 		t.Fatalf("POST /config failed: %v", err)
-// REMOVED: 	}
-// REMOVED: 	if resp.StatusCode != http.StatusOK {
-// REMOVED: 		t.Fatalf("expected 200, got %d", resp.StatusCode)
-// REMOVED: 	}
-// REMOVED: 	resp.Body.Close()
-// REMOVED:
-// REMOVED: 	// Verify values were saved to database as false
-// REMOVED: 	cpcRo, err := app1.dbRoPool.Get()
-// REMOVED: 	if err != nil {
-// REMOVED: 		t.Fatalf("failed to get DB connection: %v", err)
-// REMOVED: 	}
-// REMOVED: 	defer app1.dbRoPool.Put(cpcRo)
-// REMOVED: 	ctx := context.Background()
-// REMOVED:
-// REMOVED: 	config, err := cpcRo.Queries.GetConfigByKey(ctx, "enable_http_cache")
-// REMOVED: 	if err != nil {
-// REMOVED: 		t.Fatalf("failed to get enable_http_cache: %v", err)
-// REMOVED: 	}
-// REMOVED: 	if config.Value != "false" {
-// REMOVED: 		t.Errorf("expected enable_http_cache='false' in DB, got '%s'", config.Value)
-// REMOVED: 	}
-// REMOVED:
-// REMOVED: 	// Save database path and root dir before shutdown
-// REMOVED: 	dbPath := app1.dbPath
-// REMOVED: 	rootDir := app1.rootDir
-// REMOVED:
-// REMOVED: 	// Shutdown first app
-// REMOVED: 	app1.Shutdown()
-// REMOVED:
-// REMOVED: 	// Create second app instance with CLI/env values set (IsSet=true)
-// REMOVED: 	// These should override the DB values
-// REMOVED: 	opt := getopt.Opt{
-// REMOVED: 		SessionSecret:   getopt.OptString{String: "this-is-a-test-secret", IsSet: true},
-// REMOVED: 		EnableHTTPCache: getopt.OptBool{Bool: true, IsSet: true}, // Set - should override DB
-// REMOVED: 	}
-// REMOVED: 	app2 := New(opt,"x.y.z")
-// REMOVED: 	app2.dbPath = dbPath
-// REMOVED: 	app2.setRootDir(&rootDir)
-// REMOVED: 	app2.setDB()
-// REMOVED: 	app2.setConfigDefaults()
-// REMOVED: 	defer app2.Shutdown()
-// REMOVED:
-// REMOVED: 	// Load config from database
-// REMOVED: 	if err := app2.loadConfig(); err != nil {
-// REMOVED: 		t.Fatalf("failed to load config in second app: %v", err)
-// REMOVED: 	}
-// REMOVED: 	app2.applyConfig()
-// REMOVED:
-// REMOVED: 	// Verify CLI/env value overrides DB value
-// REMOVED: 	// DB has false, but CLI/env has true (IsSet=true), so should be true
-// REMOVED: 	if app2.config.EnableHTTPCache != true {
-// REMOVED: 		t.Errorf("expected EnableHTTPCache=true from CLI/env override, got %v", app2.config.EnableHTTPCache)
-// REMOVED: 	}
-// REMOVED: }
-// REMOVED:
-// REMOVED: // TestSessionConfigIntegration_MaxAge verifies that SessionMaxAge from config
-// REMOVED: // is correctly applied to the session cookie MaxAge option.
 func TestSessionConfigIntegration_MaxAge(t *testing.T) {
 	app := CreateApp(t, false)
 	defer app.Shutdown()
@@ -1214,137 +707,6 @@ func TestSessionConfigIntegration_Secure(t *testing.T) {
 // TestSessionConfigIntegration_SameSite verifies that SessionSameSite from config
 // is correctly converted and applied to the session cookie SameSite option.
 // Tests all three valid values: "Lax", "Strict", and "None".
-// REMOVED: func TestSessionConfigIntegration_SameSite(t *testing.T) {
-// REMOVED: 	tests := []struct {
-// REMOVED: 		name        string
-// REMOVED: 		configValue string
-// REMOVED: 		expected    http.SameSite // http.SameSite value
-// REMOVED: 	}{
-// REMOVED: 		{"Lax", "Lax", http.SameSiteLaxMode},
-// REMOVED: 		{"Strict", "Strict", http.SameSiteStrictMode},
-// REMOVED: 		{"None", "None", http.SameSiteNoneMode},
-// REMOVED: 	}
-// REMOVED:
-// REMOVED: 	for _, tt := range tests {
-// REMOVED: 		t.Run(tt.name, func(t *testing.T) {
-// REMOVED: 			app := CreateApp(t, false)
-// REMOVED: 			defer app.Shutdown()
-// REMOVED:
-// REMOVED: 			// Initialize config if not already loaded
-// REMOVED: 			app.configMu.Lock()
-// REMOVED: 			if app.config == nil {
-// REMOVED: 				app.config = config.DefaultConfig()
-// REMOVED: 			}
-// REMOVED: 			app.config.SessionSameSite = tt.configValue
-// REMOVED: 			app.configMu.Unlock()
-// REMOVED:
-// REMOVED: 			app.store = sessions.NewCookieStore([]byte(app.sessionSecret))
-// REMOVED: 			app.store.Options = app.getSessionOptions()
-// REMOVED:
-// REMOVED: 			if app.store.Options.SameSite != tt.expected {
-// REMOVED: 				t.Errorf("Expected SameSite to be %d (%s), got %d", tt.expected, tt.name, app.store.Options.SameSite)
-// REMOVED: 			}
-// REMOVED: 		})
-// REMOVED: 	}
-// REMOVED: }
-// REMOVED:
-// REMOVED: // TestSessionConfigIntegration_Defaults verifies that default config values
-// REMOVED: // are correctly used when session configuration is not customized.
-// REMOVED: func TestSessionConfigIntegration_Defaults(t *testing.T) {
-// REMOVED: 	app := CreateApp(t, false)
-// REMOVED: 	defer app.Shutdown()
-// REMOVED:
-// REMOVED: 	// Initialize config if not already loaded
-// REMOVED: 	app.configMu.Lock()
-// REMOVED: 	if app.config == nil {
-// REMOVED: 		app.config = config.DefaultConfig()
-// REMOVED: 	}
-// REMOVED: 	app.configMu.Unlock()
-// REMOVED:
-// REMOVED: 	app.store = sessions.NewCookieStore([]byte(app.sessionSecret))
-// REMOVED: 	app.store.Options = app.getSessionOptions()
-// REMOVED:
-// REMOVED: 	app.configMu.RLock()
-// REMOVED: 	cfg := app.config
-// REMOVED: 	app.configMu.RUnlock()
-// REMOVED:
-// REMOVED: 	// Verify defaults match config defaults
-// REMOVED: 	if app.store.Options.MaxAge != cfg.SessionMaxAge {
-// REMOVED: 		t.Errorf("Expected MaxAge to match config default (%d), got %d", cfg.SessionMaxAge, app.store.Options.MaxAge)
-// REMOVED: 	}
-// REMOVED: 	if app.store.Options.HttpOnly != cfg.SessionHttpOnly {
-// REMOVED: 		t.Errorf("Expected HttpOnly to match config default (%v), got %v", cfg.SessionHttpOnly, app.store.Options.HttpOnly)
-// REMOVED: 	}
-// REMOVED: 	if app.store.Options.Secure != cfg.SessionSecure {
-// REMOVED: 		t.Errorf("Expected Secure to match config default (%v), got %v", cfg.SessionSecure, app.store.Options.Secure)
-// REMOVED: 	}
-// REMOVED: }
-// REMOVED:
-// REMOVED: // TestSetConfigDefaults_AllDefaultsPresent verifies that after setConfigDefaults(),
-// REMOVED: // ALL default configuration values are present in the database with correct values.
-// REMOVED: func TestSetConfigDefaults_AllDefaultsPresent(t *testing.T) {
-// REMOVED: 	tmpDir := t.TempDir()
-// REMOVED: 	ctx := context.Background()
-// REMOVED:
-// REMOVED: 	app := &App{
-// REMOVED: 		rootDir: tmpDir,
-// REMOVED: 		ctx:     ctx,
-// REMOVED: 	}
-// REMOVED:
-// REMOVED: 	app.setDB()
-// REMOVED: 	app.setConfigDefaults()
-// REMOVED:
-// REMOVED: 	// Get database connection
-// REMOVED: 	cpcRw, err := app.dbRwPool.Get()
-// REMOVED: 	if err != nil {
-// REMOVED: 		t.Fatalf("failed to get DB connection: %v", err)
-// REMOVED: 	}
-// REMOVED: 	defer app.dbRwPool.Put(cpcRw)
-// REMOVED:
-// REMOVED: 	// Get default config to compare
-// REMOVED: 	defaults := config.DefaultConfig()
-// REMOVED: 	configMap := defaults.ToMap()
-// REMOVED:
-// REMOVED: 	// Verify each default key exists in database with correct value
-// REMOVED: 	for key, expectedValue := range configMap {
-// REMOVED: 		// Skip special keys and keys that may vary by date/time
-// REMOVED: 		// Also skip image_directory since EnsureDefaults now sets it from rootDir
-// REMOVED: 		if key == "user" || key == "password" || key == "LastKnownGoodConfig" || key == "log_directory" || key == "etag_version" || key == "image_directory" {
-// REMOVED: 			continue
-// REMOVED: 		}
-// REMOVED:
-// REMOVED: 		var dbValue string
-// REMOVED: 		scanErr := cpcRw.Conn.QueryRowContext(ctx, "SELECT value FROM config WHERE key = ?", key).Scan(&dbValue)
-// REMOVED: 		if scanErr != nil {
-// REMOVED: 			t.Errorf("Key %q should exist in database but was not found", key)
-// REMOVED: 			continue
-// REMOVED: 		}
-// REMOVED:
-// REMOVED: 		if dbValue != expectedValue {
-// REMOVED: 			t.Errorf("Key %q: expected %q, got %q", key, expectedValue, dbValue)
-// REMOVED: 		}
-// REMOVED: 	}
-// REMOVED:
-// REMOVED: 	// Specifically verify etag_version exists and has correct format
-// REMOVED: 	var etagValue string
-// REMOVED: 	err = cpcRw.Conn.QueryRowContext(ctx, "SELECT value FROM config WHERE key = ?", "etag_version").Scan(&etagValue)
-// REMOVED: 	if err != nil {
-// REMOVED: 		t.Errorf("etag_version should exist in database: %v", err)
-// REMOVED: 	} else if !regexp.MustCompile(`^[vV]?\d{8}-\d{2}$`).MatchString(etagValue) {
-// REMOVED: 		// Just verify it's a valid format, don't strictly match today if migration seeded it
-// REMOVED: 		t.Errorf("etag_version %q has invalid format", etagValue)
-// REMOVED: 	}
-// REMOVED:
-// REMOVED: 	// Specifically verify run_file_discovery is true (the bug case)
-// REMOVED: 	var runDiscoveryValue string
-// REMOVED: 	err = cpcRw.Conn.QueryRowContext(ctx, "SELECT value FROM config WHERE key = ?", "run_file_discovery").Scan(&runDiscoveryValue)
-// REMOVED: 	if err != nil {
-// REMOVED: 		t.Fatal("run_file_discovery should exist in database")
-// REMOVED: 	}
-// REMOVED: 	if runDiscoveryValue != "true" {
-// REMOVED: 		t.Fatalf("run_file_discovery should be 'true', got %q", runDiscoveryValue)
-// REMOVED: 	}
-// REMOVED: }
 
 // TestLoadConfig_CompleteStateAfterFreshDatabase verifies that after fresh database
 // initialization and loadConfig(), the complete app.config matches config.DefaultConfig().
@@ -1353,10 +715,9 @@ func TestLoadConfig_CompleteStateAfterFreshDatabase(t *testing.T) {
 	ctx := context.Background()
 
 	// Setup: Initialize database with defaults
-	app := &App{
-		rootDir: tmpDir,
-		ctx:     ctx,
-	}
+	app := &App{}
+	app.rootDir = tmpDir
+	app.ctx = ctx
 
 	app.setDB()
 	app.setConfigDefaults()
@@ -1398,10 +759,9 @@ func TestBootstrapConfig_DoesNotOverrideDefaults(t *testing.T) {
 	tmpDir := t.TempDir()
 	ctx := context.Background()
 
-	app := &App{
-		rootDir: tmpDir,
-		ctx:     ctx,
-	}
+	app := &App{}
+	app.rootDir = tmpDir
+	app.ctx = ctx
 
 	app.setDB()
 	app.setConfigDefaults()
@@ -1458,10 +818,9 @@ func TestRun_StartsDiscoveryWhenEnabled(t *testing.T) {
 		t.Fatalf("failed to create test image: %v", err)
 	}
 
-	app := &App{
-		rootDir: tmpDir,
-		ctx:     ctx,
-	}
+	app := &App{}
+	app.rootDir = tmpDir
+	app.ctx = ctx
 
 	app.setRootDir(nil)
 	app.setupBootstrapLogging()
@@ -1520,10 +879,9 @@ func TestPartialConfigStruct_SaveToDatabase_Prevention(t *testing.T) {
 	tmpDir := t.TempDir()
 	ctx := context.Background()
 
-	app := &App{
-		rootDir: tmpDir,
-		ctx:     ctx,
-	}
+	app := &App{}
+	app.rootDir = tmpDir
+	app.ctx = ctx
 
 	app.setDB()
 

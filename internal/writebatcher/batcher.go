@@ -288,7 +288,9 @@ func openDQue[T any](cfg Config[T]) (*dque.DQue[T], error) {
 		return nil, err
 	}
 
-	_ = dq.TurboOn() // ignore error if already on
+	if err := dq.TurboOn(); err != nil {
+		slog.Debug("writebatcher: dque turbo already on")
+	}
 
 	sz := dq.Size()
 	slog.Info("writebatcher: dque overflow initialized",
@@ -593,7 +595,9 @@ func (wb *WriteBatcher[T]) flush(ctx context.Context, batch []T, batchBytes int6
 	if err := wb.cfg.Flush(flushCtx, tx, batch); err != nil {
 		wb.totalErrors.Add(1)
 		if tx != nil {
-			_ = tx.Rollback()
+			if rbErr := tx.Rollback(); rbErr != nil {
+				slog.Warn("writebatcher flush: rollback after FlushFunc error", "err", rbErr)
+			}
 		}
 		wb.reEnqueueBatch(batch)
 		if wb.cfg.OnError != nil {
@@ -607,7 +611,9 @@ func (wb *WriteBatcher[T]) flush(ctx context.Context, batch []T, batchBytes int6
 	if tx != nil {
 		if err := tx.Commit(); err != nil {
 			wb.totalErrors.Add(1)
-			_ = tx.Rollback()
+			if rbErr := tx.Rollback(); rbErr != nil {
+				slog.Warn("writebatcher flush: rollback after Commit error", "err", rbErr)
+			}
 			wb.reEnqueueBatch(batch)
 			if wb.cfg.OnError != nil {
 				wb.cfg.OnError(err, copyBatch(batch))

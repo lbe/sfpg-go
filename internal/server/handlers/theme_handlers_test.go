@@ -389,7 +389,7 @@ func TestThemeHandlers_ThemeModalHandler_RendererError(t *testing.T) {
 	serverErrorCalled := false
 	serverError := func(w http.ResponseWriter, r *http.Request, err error) {
 		serverErrorCalled = true
-		if err != renderError {
+		if !errors.Is(err, renderError) {
 			t.Errorf("ServerError called with wrong error: %v", err)
 		}
 		http.Error(w, "Server Error", http.StatusInternalServerError)

@@ -4,16 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"html"
 	"html/template"
-	"io"
 	"log/slog"
 	"maps"
 	"net/http"
-	"slices"
-	"strconv"
+	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/lbe/sfpg-go/internal/dbconnpool"
 	"github.com/lbe/sfpg-go/internal/server/auth"
@@ -51,7 +47,6 @@ type ConfigHandlers struct {
 	// The callback should apply CLI/env overrides only to fields NOT in the changed list.
 	UpdateConfig        func(cfg *config.Config, changedFields []string)
 	ApplyConfig         func()
-	IncrementETag       func() (string, error)
 	InvalidateHTTPCache func()
 	SetPreloadEnabled   func(bool)
 	SetRestartRequired  func(bool)
@@ -119,9 +114,6 @@ func (h *ConfigHandlers) Validate() error {
 	if h.ApplyConfig == nil {
 		missing = append(missing, "ApplyConfig")
 	}
-	if h.IncrementETag == nil {
-		missing = append(missing, "IncrementETag")
-	}
 	if h.InvalidateHTTPCache == nil {
 		missing = append(missing, "InvalidateHTTPCache")
 	}
@@ -156,6 +148,17 @@ func (h *ConfigHandlers) disableConfigCaching(w http.ResponseWriter) {
 	w.Header().Set("Expires", "0")
 }
 
+// ConfigAuthMiddleware wraps config handlers with cache-disabling headers.
+// Authentication is enforced by the router-level authMiddleware, so per-handler
+// IsAuthenticated checks are not needed. CSRF validation remains handler-specific
+// because the restore-preview action is a POST that does not require CSRF.
+func (h *ConfigHandlers) ConfigAuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		h.disableConfigCaching(w)
+		next(w, r)
+	}
+}
+
 func (h *ConfigHandlers) ensureCsrf(w http.ResponseWriter, r *http.Request) string {
 	return h.SessionManager.EnsureCSRFToken(w, r)
 }
@@ -179,14 +182,6 @@ func (h *ConfigHandlers) executeConfigTemplate(w http.ResponseWriter, tmpl *temp
 // and renders the config-modal.html.tmpl template with the collected data.
 // Authentication is required via the authMiddleware.
 func (h *ConfigHandlers) ConfigGet(w http.ResponseWriter, r *http.Request) {
-	h.disableConfigCaching(w)
-
-	// Check authentication via SessionManager
-	if !h.SessionManager.IsAuthenticated(r) {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
 	// Load current config via ConfigService
 	cfg, err := h.ConfigService.Load(h.Ctx)
 	if err != nil {
@@ -208,33 +203,10 @@ func (h *ConfigHandlers) ConfigGet(w http.ResponseWriter, r *http.Request) {
 		"ETagVersion": cfg.ETagVersion,
 	}
 
-	// Load help text and example values from database
-	cpcRo, err := h.DBRoPool.Get()
-	if err != nil {
-		slog.Warn("failed to get DB connection for help text", "err", err)
-	} else {
-		defer h.DBRoPool.Put(cpcRo)
-
-		configRows, cfgErr := cpcRo.Queries.GetConfigs(h.Ctx)
-		if cfgErr != nil {
-			slog.Warn("failed to load config metadata", "err", cfgErr)
-		} else {
-			helpTextMap := make(map[string]string)
-			exampleValueMap := make(map[string]string)
-
-			for _, cfgRow := range configRows {
-				if cfgRow.HelpText.Valid {
-					helpTextMap[cfgRow.Key] = cfgRow.HelpText.String
-				}
-				if cfgRow.ExampleValue.Valid {
-					exampleValueMap[cfgRow.Key] = cfgRow.ExampleValue.String
-				}
-			}
-
-			data["HelpText"] = helpTextMap
-			data["ExampleValue"] = exampleValueMap
-		}
-	}
+	// Help text and example values are already populated by LoadFromDatabase
+	// during ConfigService.Load(). Read them from the loaded config.
+	data["HelpText"] = cfg.HelpText
+	data["ExampleValue"] = cfg.ExampleValues
 
 	// Check for category query parameter
 	category := r.URL.Query().Get("category")
@@ -256,13 +228,6 @@ func (h *ConfigHandlers) ConfigGet(w http.ResponseWriter, r *http.Request) {
 // If changes affect runtime properties (listener address, port, log settings), it marks
 // the restart as required. Authentication is required via the authMiddleware.
 func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
-	h.disableConfigCaching(w)
-
-	if !h.SessionManager.IsAuthenticated(r) {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
 	if err := r.ParseForm(); err != nil {
 		slog.Warn("failed to parse form in configPost", "err", err)
 		w.Header().Set("HX-Retarget", "#config-error-message")
@@ -319,318 +284,56 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 	// Create a copy to modify
 	newConfig := *oldConfig
 
-	// Config key setters
-	configKeys := map[string]func(string) error{
-		"listener_address": func(v string) error {
-			if oldConfig.ListenerAddress != v {
-				newConfig.ListenerAddress = v
-			}
-			return nil
-		},
-		"listener_port": func(v string) error {
-			port, portErr := strconv.Atoi(v)
-			if portErr != nil {
-				return fmt.Errorf("invalid port: %w", portErr)
-			}
-			if oldConfig.ListenerPort != port {
-				newConfig.ListenerPort = port
-			}
-			return nil
-		},
-		"log_directory": func(v string) error {
-			if oldConfig.LogDirectory != v {
-				newConfig.LogDirectory = v
-			}
-			return nil
-		},
-		"log_level": func(v string) error {
-			if oldConfig.LogLevel != v {
-				newConfig.LogLevel = v
-			}
-			return nil
-		},
-		"log_rollover": func(v string) error {
-			if oldConfig.LogRollover != v {
-				newConfig.LogRollover = v
-			}
-			return nil
-		},
-		"log_retention_count": func(v string) error {
-			count, countErr := strconv.Atoi(v)
-			if countErr != nil {
-				return fmt.Errorf("invalid retention count: %w", countErr)
-			}
-			if oldConfig.LogRetentionCount != count {
-				newConfig.LogRetentionCount = count
-			}
-			return nil
-		},
-		"site_name": func(v string) error {
-			newConfig.SiteName = v
-			return nil
-		},
-		"current_theme": func(v string) error {
-			newConfig.CurrentTheme = v
-			return nil
-		},
-		"image_directory": func(v string) error {
-			if oldConfig.ImageDirectory != v {
-				newConfig.ImageDirectory = v
-			}
-			return nil
-		},
-		"server_compression_enable": func(v string) error {
-			enable, enableErr := strconv.ParseBool(v)
-			if enableErr != nil {
-				return fmt.Errorf("invalid boolean: %w", enableErr)
-			}
-			if oldConfig.ServerCompressionEnable != enable {
-				newConfig.ServerCompressionEnable = enable
-			}
-			return nil
-		},
-		"enable_http_cache": func(v string) error {
-			enable, enableErr := strconv.ParseBool(v)
-			if enableErr != nil {
-				return fmt.Errorf("invalid boolean: %w", enableErr)
-			}
-			if oldConfig.EnableHTTPCache != enable {
-				newConfig.EnableHTTPCache = enable
-			}
-			return nil
-		},
-		"cache_max_size": func(v string) error {
-			size, sizeErr := strconv.ParseInt(v, 10, 64)
-			if sizeErr != nil {
-				return fmt.Errorf("invalid cache max size: %w", sizeErr)
-			}
-			if oldConfig.CacheMaxSize != size {
-				newConfig.CacheMaxSize = size
-			}
-			return nil
-		},
-		"cache_max_entry_size": func(v string) error {
-			size, sizeErr := strconv.ParseInt(v, 10, 64)
-			if sizeErr != nil {
-				return fmt.Errorf("invalid cache max entry size: %w", sizeErr)
-			}
-			if oldConfig.CacheMaxEntrySize != size {
-				newConfig.CacheMaxEntrySize = size
-			}
-			return nil
-		},
-		"cache_max_time": func(v string) error {
-			duration, durationErr := time.ParseDuration(v)
-			if durationErr != nil {
-				return fmt.Errorf("invalid cache max time: %w", durationErr)
-			}
-			if oldConfig.CacheMaxTime != duration {
-				newConfig.CacheMaxTime = duration
-			}
-			return nil
-		},
-		"cache_cleanup_interval": func(v string) error {
-			duration, durationErr := time.ParseDuration(v)
-			if durationErr != nil {
-				return fmt.Errorf("invalid cache cleanup interval: %w", durationErr)
-			}
-			if oldConfig.CacheCleanupInterval != duration {
-				newConfig.CacheCleanupInterval = duration
-			}
-			return nil
-		},
-		"db_max_pool_size": func(v string) error {
-			size, sizeErr := strconv.Atoi(v)
-			if sizeErr != nil {
-				return fmt.Errorf("invalid db max pool size: %w", sizeErr)
-			}
-			if oldConfig.DBMaxPoolSize != size {
-				newConfig.DBMaxPoolSize = size
-			}
-			return nil
-		},
-		"db_min_idle_connections": func(v string) error {
-			count, countErr := strconv.Atoi(v)
-			if countErr != nil {
-				return fmt.Errorf("invalid db min idle connections: %w", countErr)
-			}
-			if oldConfig.DBMinIdleConnections != count {
-				newConfig.DBMinIdleConnections = count
-			}
-			return nil
-		},
-		"db_optimize_interval": func(v string) error {
-			duration, durationErr := time.ParseDuration(v)
-			if durationErr != nil {
-				return fmt.Errorf("invalid db optimize interval: %w", durationErr)
-			}
-			if oldConfig.DBOptimizeInterval != duration {
-				newConfig.DBOptimizeInterval = duration
-			}
-			return nil
-		},
-		"worker_pool_max": func(v string) error {
-			max, maxErr := strconv.Atoi(v)
-			if maxErr != nil {
-				return fmt.Errorf("invalid worker pool max: %w", maxErr)
-			}
-			if oldConfig.WorkerPoolMax != max {
-				newConfig.WorkerPoolMax = max
-			}
-			return nil
-		},
-		"worker_pool_min_idle": func(v string) error {
-			min, minErr := strconv.Atoi(v)
-			if minErr != nil {
-				return fmt.Errorf("invalid worker pool min idle: %w", minErr)
-			}
-			if oldConfig.WorkerPoolMinIdle != min {
-				newConfig.WorkerPoolMinIdle = min
-			}
-			return nil
-		},
-		"worker_pool_max_idle_time": func(v string) error {
-			duration, durationErr := time.ParseDuration(v)
-			if durationErr != nil {
-				return fmt.Errorf("invalid worker pool max idle time: %w", durationErr)
-			}
-			if oldConfig.WorkerPoolMaxIdleTime != duration {
-				newConfig.WorkerPoolMaxIdleTime = duration
-			}
-			return nil
-		},
-		"db_pool_monitor_interval": func(v string) error {
-			duration, durationErr := time.ParseDuration(v)
-			if durationErr != nil {
-				return fmt.Errorf("invalid db pool monitor interval: %w", durationErr)
-			}
-			if oldConfig.DBPoolMonitorInterval != duration {
-				newConfig.DBPoolMonitorInterval = duration
-			}
-			return nil
-		},
-		"queue_size": func(v string) error {
-			size, sizeErr := strconv.Atoi(v)
-			if sizeErr != nil {
-				return fmt.Errorf("invalid queue size: %w", sizeErr)
-			}
-			if oldConfig.QueueSize != size {
-				newConfig.QueueSize = size
-			}
-			return nil
-		},
-		"session_max_age": func(v string) error {
-			age, ageErr := strconv.Atoi(v)
-			if ageErr != nil {
-				return fmt.Errorf("invalid session max age: %w", ageErr)
-			}
-			if oldConfig.SessionMaxAge != age {
-				newConfig.SessionMaxAge = age
-			}
-			return nil
-		},
-		"session_http_only": func(v string) error {
-			httpOnly, httpOnlyErr := strconv.ParseBool(v)
-			if httpOnlyErr != nil {
-				return fmt.Errorf("invalid session http only: %w", httpOnlyErr)
-			}
-			if oldConfig.SessionHttpOnly != httpOnly {
-				newConfig.SessionHttpOnly = httpOnly
-			}
-			return nil
-		},
-		"session_secure": func(v string) error {
-			secure, secureErr := strconv.ParseBool(v)
-			if secureErr != nil {
-				return fmt.Errorf("invalid session secure: %w", secureErr)
-			}
-			if oldConfig.SessionSecure != secure {
-				newConfig.SessionSecure = secure
-			}
-			return nil
-		},
-		"session_same_site": func(v string) error {
-			if oldConfig.SessionSameSite != v {
-				newConfig.SessionSameSite = v
-			}
-			return nil
-		},
-		"enable_cache_preload": func(v string) error {
-			enable, enableErr := strconv.ParseBool(v)
-			if enableErr != nil {
-				return fmt.Errorf("invalid boolean: %w", enableErr)
-			}
-			newConfig.EnableCachePreload = enable
-			if h.SetPreloadEnabled != nil {
-				h.SetPreloadEnabled(enable)
-			}
-			return nil
-		},
-		"run_file_discovery": func(v string) error {
-			enable, enableErr := strconv.ParseBool(v)
-			if enableErr != nil {
-				return fmt.Errorf("invalid boolean: %w", enableErr)
-			}
-			newConfig.RunFileDiscovery = enable
-			return nil
-		},
-	}
-
-	// Process config fields
-	isCheckboxField := func(k string) bool {
-		return k == "server_compression_enable" || k == "enable_http_cache" ||
-			k == "enable_cache_preload" ||
-			k == "session_http_only" || k == "session_secure" || k == "run_file_discovery"
-	}
-
-	// Check what type of form submission this is
-	hasThemes := false
-	hasOtherConfigFields := false
-	for key := range r.Form {
-		if key == "themes" {
-			hasThemes = true
-		} else if key != "csrf_token" {
-			hasOtherConfigFields = true
-		}
-	}
-	// Process unchecked checkboxes unless this is a themes-only update
-	// (themes-only means has themes and no other config fields)
-	isThemesOnlyUpdate := hasThemes && !hasOtherConfigFields
-	shouldProcessUncheckedCheckboxes := !isThemesOnlyUpdate
-
-	for key, setter := range configKeys {
-		_, inForm := r.Form[key]
-
-		if !inForm {
-			if isCheckboxField(key) && shouldProcessUncheckedCheckboxes {
-				if setErr := setter("false"); setErr != nil {
-					validationErrors[key] = setErr.Error()
-				}
-			}
+	// Process config fields by iterating the single source of truth.
+	// Fields marked SkipInForm are excluded; side effects (e.g. cache preload)
+	// are handled inline.
+	for _, f := range config.Fields() {
+		if f.SkipInForm {
 			continue
 		}
+		_, inForm := r.Form[f.DBKey]
 
-		value := r.FormValue(key)
-		if isCheckboxField(key) {
-			if value == "on" {
-				value = "true"
-			} else {
+		var value string
+		if !inForm {
+			if f.IsCheckbox {
 				value = "false"
+			} else {
+				continue
+			}
+		} else {
+			value = r.FormValue(f.DBKey)
+			if f.IsCheckbox {
+				if value == "on" {
+					value = "true"
+				} else {
+					value = "false"
+				}
 			}
 		}
-		if setErr := setter(value); setErr != nil {
-			validationErrors[key] = setErr.Error()
+
+		if setErr := f.Set(&newConfig, value); setErr != nil {
+			validationErrors[f.DBKey] = setErr.Error()
+		}
+
+		// Inline the former configFieldSetter sideEffect for cache preload.
+		if f.DBKey == "enable_cache_preload" {
+			if h.SetPreloadEnabled != nil {
+				h.SetPreloadEnabled(value == "true")
+			}
 		}
 	}
 
-	// Handle themes - themes can be changed without restart
-	if themes, ok := r.Form["themes"]; ok && len(themes) > 0 {
-		newConfig.Themes = themes
-		if newConfig.CurrentTheme != "" {
-			found := slices.Contains(themes, newConfig.CurrentTheme)
-			if !found && len(themes) > 0 {
-				newConfig.CurrentTheme = themes[0]
-			}
+	// Reject directory-traversal paths; validate path existence and readability
+	// for changed image directories before persisting any config changes.
+	// Note: the directory must already exist on disk; previously a missing
+	// directory would be created lazily by ApplyImageDirectory, but now an
+	// invalid or missing path is rejected at save time.
+	if newConfig.ImageDirectory != oldConfig.ImageDirectory && newConfig.ImageDirectory != "" {
+		cleanDir := filepath.Clean(newConfig.ImageDirectory)
+		if strings.HasPrefix(cleanDir, "..") {
+			validationErrors["image_directory"] = fmt.Sprintf("image directory %q is outside the application root", newConfig.ImageDirectory)
+		} else if validateDirErr := config.ValidateImageDirectory(newConfig.ImageDirectory); validateDirErr != nil {
+			validationErrors["image_directory"] = validateDirErr.Error()
 		}
 	}
 
@@ -690,448 +393,4 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 	h.executeConfigTemplate(w, h.Templates.SaveSuccessAlert, "config-save-success-alert.html.tmpl", nil)
-}
-
-// ExportConfigToFileHandler handles POST /config/export/to-file and returns the
-// current configuration in YAML format wrapped in an HTML modal for display.
-// This is typically called via HTMX when the user clicks 'Export to Screen'.
-// Authentication is required.
-func (h *ConfigHandlers) ExportConfigToFileHandler(w http.ResponseWriter, r *http.Request) {
-	h.disableConfigCaching(w)
-	if !h.SessionManager.IsAuthenticated(r) {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	currentYAML, err := h.ConfigService.Export()
-	if err != nil {
-		slog.Error("failed to export current config", "err", err)
-		http.Error(w, "Failed to export configuration", http.StatusInternalServerError)
-		return
-	}
-
-	data := struct {
-		CurrentYAML string
-	}{
-		CurrentYAML: html.EscapeString(currentYAML),
-	}
-	w.WriteHeader(http.StatusOK)
-	h.executeConfigTemplate(w, h.Templates.ExportModal, "config-export-modal.html.tmpl", data)
-}
-
-// ExportConfigDownloadHandler handles GET /config/export/download and triggers
-// a file download of the current configuration in YAML format.
-// It sets the Content-Disposition header to 'attachment; filename=config.yaml'.
-// Authentication is required.
-func (h *ConfigHandlers) ExportConfigDownloadHandler(w http.ResponseWriter, r *http.Request) {
-	h.disableConfigCaching(w)
-	if !h.SessionManager.IsAuthenticated(r) {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	yamlContent, err := h.ConfigService.Export()
-	if err != nil {
-		slog.Error("failed to export config", "err", err)
-		http.Error(w, "Failed to export configuration", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/x-yaml")
-	w.Header().Set("Content-Disposition", "attachment; filename=config.yaml")
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(yamlContent))
-}
-
-// ImportConfigPreviewHandler handles POST /config/import/preview requests.
-// It parses the uploaded YAML config (either via file upload or text area),
-// calculates the diff against current config, and returns a preview modal.
-// Response: HTML modal (bufferable, caching disabled).
-// Authentication and CSRF protection are required.
-func (h *ConfigHandlers) ImportConfigPreviewHandler(w http.ResponseWriter, r *http.Request) {
-	h.disableConfigCaching(w)
-	if !h.SessionManager.IsAuthenticated(r) {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	var yamlContent string
-	var err error
-
-	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
-		if parseErr := r.ParseMultipartForm(10 << 20); parseErr != nil {
-			slog.Warn("failed to parse multipart form", "err", parseErr)
-			http.Error(w, "Invalid form data", http.StatusBadRequest)
-			return
-		}
-
-		file, header, formErr := r.FormFile("yaml")
-		if formErr != nil {
-			slog.Warn("failed to get file from form", "err", formErr)
-			http.Error(w, "YAML file is required", http.StatusBadRequest)
-			return
-		}
-		defer file.Close()
-
-		filename := header.Filename
-		if !strings.HasSuffix(strings.ToLower(filename), ".yaml") && !strings.HasSuffix(strings.ToLower(filename), ".yml") {
-			http.Error(w, "File must have .yaml or .yml extension", http.StatusBadRequest)
-			return
-		}
-
-		contentBytes, readErr := io.ReadAll(file)
-		if readErr != nil {
-			slog.Warn("failed to read file content", "err", readErr)
-			http.Error(w, "Failed to read file", http.StatusBadRequest)
-			return
-		}
-		yamlContent = string(contentBytes)
-	} else {
-		if parseFormErr := r.ParseForm(); parseFormErr != nil {
-			http.Error(w, "Invalid form data", http.StatusBadRequest)
-			return
-		}
-
-		yamlContent = r.FormValue("yaml")
-		if yamlContent == "" {
-			http.Error(w, "YAML content is required", http.StatusBadRequest)
-			return
-		}
-	}
-
-	if yamlContent == "" {
-		http.Error(w, "YAML content is required", http.StatusBadRequest)
-		return
-	}
-
-	// Load current config to call PreviewImport
-	cfg, err := h.ConfigService.Load(h.Ctx)
-	if err != nil {
-		slog.Error("failed to load current config for preview", "err", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-
-	diff, err := cfg.PreviewImport(yamlContent)
-	if err != nil {
-		slog.Warn("failed to preview import", "err", err)
-		http.Error(w, fmt.Sprintf("Invalid YAML: %v", err), http.StatusBadRequest)
-		return
-	}
-
-	escapedYaml := html.EscapeString(yamlContent)
-	csrfToken := h.ensureCsrf(w, r)
-
-	data := struct {
-		ImportedYAML string
-		CSRFToken    string
-		CurrentYAML  string
-		NewYAML      string
-	}{
-		ImportedYAML: escapedYaml,
-		CSRFToken:    html.EscapeString(csrfToken),
-		CurrentYAML:  html.EscapeString(diff.CurrentYAML),
-		NewYAML:      html.EscapeString(diff.NewYAML),
-	}
-	w.WriteHeader(http.StatusOK)
-	h.executeConfigTemplate(w, h.Templates.ImportModal, "config-import-modal.html.tmpl", data)
-}
-
-// ImportConfigCommitHandler handles POST /config/import/commit requests.
-// It applies the imported YAML configuration to the system.
-// Response: HTML success alert (bufferable, caching disabled).
-// Authentication and CSRF protection are required.
-func (h *ConfigHandlers) ImportConfigCommitHandler(w http.ResponseWriter, r *http.Request) {
-	h.disableConfigCaching(w)
-	if !h.SessionManager.IsAuthenticated(r) {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	if !h.validateCsrf(r) {
-		http.Error(w, "Forbidden - CSRF token invalid", http.StatusForbidden)
-		return
-	}
-
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "Invalid form data", http.StatusBadRequest)
-		return
-	}
-
-	yamlContent := r.FormValue("yaml")
-	if yamlContent == "" {
-		http.Error(w, "YAML content is required", http.StatusBadRequest)
-		return
-	}
-
-	oldConfig, err := h.ConfigService.Load(h.Ctx)
-	if err != nil {
-		slog.Warn("failed to load current config for import", "err", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-
-	importedConfig, err := config.BuildImportedConfig(oldConfig, yamlContent)
-	if err != nil {
-		slog.Warn("failed to import config", "err", err)
-		http.Error(w, fmt.Sprintf("Import failed: %v", err), http.StatusBadRequest)
-		return
-	}
-
-	applyResult, err := config.ApplyConfig(h.Ctx, h.ConfigService, oldConfig, importedConfig)
-	if err != nil {
-		var validationErr *config.ApplyValidationError
-		if errors.As(err, &validationErr) {
-			http.Error(w, fmt.Sprintf("Import failed: %v", validationErr.Error()), http.StatusBadRequest)
-			return
-		}
-
-		slog.Warn("failed to apply imported config", "err", err)
-		http.Error(w, "Import failed: unable to persist config", http.StatusInternalServerError)
-		return
-	}
-
-	if h.UpdateConfig != nil {
-		h.UpdateConfig(applyResult.Config, applyResult.RestartRequiredKeys)
-	}
-	if h.ApplyConfig != nil {
-		h.ApplyConfig()
-	}
-	if applyResult.RestartRequired && h.SetRestartRequired != nil {
-		h.SetRestartRequired(true)
-	}
-
-	w.WriteHeader(http.StatusOK)
-	if applyResult.RestartRequired {
-		h.executeConfigTemplate(w, h.Templates.SaveRestartAlert, "config-save-restart-alert.html.tmpl", nil)
-		return
-	}
-	h.executeConfigTemplate(w, h.Templates.ImportSuccessAlert, "config-import-success-alert.html.tmpl", nil)
-}
-
-// RestoreLastKnownGoodHandler handles POST /config/restore-last-known-good requests.
-// Supports 'preview' (returns diff modal) and 'commit' (restores previous config)
-// actions via query parameter.
-// Response: HTML modal or success alert (bufferable, caching disabled).
-// Authentication and CSRF protection are required.
-func (h *ConfigHandlers) RestoreLastKnownGoodHandler(w http.ResponseWriter, r *http.Request) {
-	h.disableConfigCaching(w)
-	if !h.SessionManager.IsAuthenticated(r) {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	action := r.URL.Query().Get("action")
-	if action == "preview" || action == "" {
-		// Preview: return diff
-		cpcRw, err := h.DBRwPool.Get()
-		if err != nil {
-			slog.Error("failed to get db connection", "err", err)
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-			return
-		}
-		defer h.DBRwPool.Put(cpcRw)
-
-		// Load current config to call GetLastKnownGoodDiff
-		cfg, err := h.ConfigService.Load(h.Ctx)
-		if err != nil {
-			slog.Error("failed to load current config", "err", err)
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-			return
-		}
-
-		// GetLastKnownGoodDiff needs queries - cpcRw.Queries implements ConfigQueries interface
-		diff, err := cfg.GetLastKnownGoodDiff(h.Ctx, cpcRw.Queries)
-		if err != nil {
-			slog.Warn("failed to get last known good diff", "err", err)
-			http.Error(w, fmt.Sprintf("Failed to get last known good config: %v", err), http.StatusBadRequest)
-			return
-		}
-
-		data := struct {
-			BackupYAML  string
-			CSRFToken   string
-			CurrentYAML string
-		}{
-			BackupYAML:  html.EscapeString(diff.NewYAML),
-			CSRFToken:   html.EscapeString(h.ensureCsrf(w, r)),
-			CurrentYAML: html.EscapeString(diff.CurrentYAML),
-		}
-		w.WriteHeader(http.StatusOK)
-		h.executeConfigTemplate(w, h.Templates.RestoreModal, "config-restore-modal.html.tmpl", data)
-		return
-	}
-
-	if action != "commit" {
-		http.Error(w, "Invalid action", http.StatusBadRequest)
-		return
-	}
-
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "Bad Request", http.StatusBadRequest)
-		return
-	}
-
-	if !h.validateCsrf(r) {
-		slog.Warn("CSRF validation failed for restore last known good", "remote_addr", r.RemoteAddr)
-		http.Error(w, "Forbidden - CSRF token invalid", http.StatusForbidden)
-		return
-	}
-
-	currentConfig, err := h.ConfigService.Load(h.Ctx)
-	if err != nil {
-		slog.Warn("failed to load current config before restore", "err", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-
-	// Restore via ConfigService
-	restoredConfig, err := h.ConfigService.RestoreLastKnownGood(h.Ctx)
-	if err != nil {
-		slog.Warn("failed to restore last known good", "err", err)
-		http.Error(w, fmt.Sprintf("Failed to restore last known good config: %v", err), http.StatusBadRequest)
-		return
-	}
-
-	applyResult, err := config.ApplyConfig(h.Ctx, h.ConfigService, currentConfig, restoredConfig)
-	if err != nil {
-		var validationErr *config.ApplyValidationError
-		if errors.As(err, &validationErr) {
-			http.Error(w, fmt.Sprintf("Restored config is invalid: %v", validationErr.Error()), http.StatusBadRequest)
-			return
-		}
-
-		slog.Error("failed to save restored config", "err", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-
-	if h.UpdateConfig != nil {
-		h.UpdateConfig(applyResult.Config, applyResult.RestartRequiredKeys)
-	}
-	if h.ApplyConfig != nil {
-		h.ApplyConfig()
-	}
-	restartRequired := applyResult.RestartRequired
-
-	if restartRequired && h.SetRestartRequired != nil {
-		h.SetRestartRequired(true)
-	}
-
-	data := struct {
-		RestartRequired bool
-	}{
-		RestartRequired: restartRequired,
-	}
-	w.WriteHeader(http.StatusOK)
-	h.executeConfigTemplate(w, h.Templates.RestoreSuccessAlert, "config-restore-success-alert.html.tmpl", data)
-}
-
-// RestartHandler handles POST /config/restart requests.
-// It initiates an asynchronous application restart.
-// Response: HTML alert (bufferable, caching disabled).
-// Authentication and CSRF protection are required.
-func (h *ConfigHandlers) RestartHandler(w http.ResponseWriter, r *http.Request) {
-	h.disableConfigCaching(w)
-
-	if !h.SessionManager.IsAuthenticated(r) {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	if !h.validateCsrf(r) {
-		slog.Warn("CSRF validation failed for restart", "remote_addr", r.RemoteAddr)
-		http.Error(w, "Forbidden - CSRF token invalid", http.StatusForbidden)
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
-	h.executeConfigTemplate(w, h.Templates.RestartInitiatedAlert, "config-restart-initiated-alert.html.tmpl", nil)
-
-	// Trigger restart
-	go func() {
-		time.Sleep(500 * time.Millisecond)
-		slog.Info("Restart requested via web interface, sending restart signal")
-
-		restartCh := h.GetRestartCh()
-		if restartCh != nil {
-			select {
-			case restartCh <- struct{}{}:
-				slog.Info("Restart signal sent successfully")
-			default:
-				slog.Warn("Restart channel full, restart already pending")
-			}
-		} else {
-			slog.Error("Restart channel not initialized")
-		}
-	}()
-}
-
-// ConfigIncrementETag increments the application ETag version.
-// POST /config/increment-etag
-func (h *ConfigHandlers) ConfigIncrementETag(w http.ResponseWriter, r *http.Request) {
-	h.disableConfigCaching(w)
-
-	// Check authentication
-	if !h.SessionManager.IsAuthenticated(r) {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	// Parse form to get CSRF token
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "Bad Request", http.StatusBadRequest)
-		return
-	}
-
-	// Validate CSRF token
-	if !h.validateCsrf(r) {
-		http.Error(w, "Forbidden - CSRF token invalid", http.StatusForbidden)
-		return
-	}
-
-	// Increment ETag version using wired service/logic
-	_, err := h.ConfigService.IncrementETag(h.Ctx)
-	if err != nil {
-		slog.Error("failed to increment etag version", "err", err)
-		w.Header().Set("HX-Retarget", "#config-error-message")
-		w.Header().Set("HX-Swap", "outerHTML")
-		w.WriteHeader(http.StatusInternalServerError)
-		ui.RenderTemplate(w, "config-generic-error.html.tmpl", map[string]any{
-			"Error": "Failed to increment ETag version",
-		})
-		return
-	}
-
-	// Reload config to get the updated ETag and update in-memory state
-	cfg, err := h.ConfigService.Load(h.Ctx)
-	if err != nil {
-		slog.Error("failed to reload config after etag increment", "err", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-
-	// Update in-memory app state
-	if h.UpdateConfig != nil {
-		h.UpdateConfig(cfg, nil)
-	}
-
-	// Update UI-wide cache version
-	ui.SetCacheVersion(cfg.ETagVersion)
-
-	// Invalidate HTTP cache so stale responses with old cache-busting URLs are not served.
-	if h.InvalidateHTTPCache != nil {
-		h.InvalidateHTTPCache()
-	}
-
-	slog.Info("etag version incremented and app config updated",
-		"new", cfg.ETagVersion)
-
-	// Return updated field (HTMX will swap this into the page)
-	data := map[string]any{
-		"ETagVersion": cfg.ETagVersion,
-	}
-
-	w.WriteHeader(http.StatusOK)
-	ui.RenderTemplate(w, "config-etag-field.html.tmpl", data)
 }

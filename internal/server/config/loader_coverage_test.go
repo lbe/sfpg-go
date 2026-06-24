@@ -181,6 +181,23 @@ func TestConfig_LoadFromOptExcluding(t *testing.T) {
 	}
 }
 
+// TestLoadFromOptDBKeysExistInFields verifies every cliRoutes dbKey exists in the
+// fields() registry. This prevents the maintenance hazard where a field is added
+// to fields() or cliRoutes but not the other.
+func TestLoadFromOptDBKeysExistInFields(t *testing.T) {
+	fieldMap := make(map[string]bool, len(fields()))
+	for _, f := range fields() {
+		fieldMap[f.dbKey] = true
+	}
+	for _, r := range cliRoutes {
+		if !fieldMap[r.dbKey] {
+			t.Errorf("cliRoutes dbKey %q not found in fields() — add it to fields() or fix the dbKey", r.dbKey)
+		}
+	}
+	// Also check for unused dbKeys in fields() — fields with a CLI counterpart.
+	// This is informational only; many fields intentionally have no CLI flag.
+}
+
 // TestConfig_LoadFromOptExcluding_EmptyExcludeList verifies behavior with nil/empty exclude.
 func TestConfig_LoadFromOptExcluding_EmptyExcludeList(t *testing.T) {
 	cfg := Config{

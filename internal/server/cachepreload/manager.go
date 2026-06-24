@@ -2,6 +2,7 @@ package cachepreload
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"runtime"
@@ -108,7 +109,7 @@ func (pm *PreloadManager) startScheduler() {
 	sched := scheduler.NewScheduler(4 * runtime.NumCPU())
 	pm.scheduler = sched
 	go func() {
-		if err := sched.Start(ctx); err != nil && err != context.Canceled {
+		if err := sched.Start(ctx); err != nil && !errors.Is(err, context.Canceled) {
 			slog.Debug("cache preload scheduler stopped", "error", err)
 		}
 	}()
@@ -120,7 +121,9 @@ func (pm *PreloadManager) stopScheduler() {
 		pm.schedulerCancel = nil
 	}
 	if pm.scheduler != nil {
-		_ = pm.scheduler.Shutdown()
+		if err := pm.scheduler.Shutdown(); err != nil {
+			slog.Warn("cache preload scheduler shutdown error", "err", err)
+		}
 		pm.scheduler = nil
 	}
 	pm.schedulerCtx = nil
@@ -166,7 +169,9 @@ func (pm *PreloadManager) ScheduleFolderPreload(ctx context.Context, folderID in
 		if prevFolderID != 0 && taskTracker != nil {
 			taskIDs := taskTracker.CancelSessionTasks(sessionID)
 			for _, id := range taskIDs {
-				_ = sched.RemoveTask(id)
+				if err := sched.RemoveTask(id); err != nil {
+					slog.Debug("cache preload remove task error", "id", id, "err", err)
+				}
 			}
 		}
 	}

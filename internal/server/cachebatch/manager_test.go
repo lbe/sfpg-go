@@ -2,6 +2,7 @@ package cachebatch
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"sync/atomic"
 	"testing"
@@ -71,7 +72,7 @@ func TestManager_Run_BlocksWhenAlreadyRunning(t *testing.T) {
 
 	// Second run should fail immediately
 	err := mgr.Run(ctx)
-	if err != ErrAlreadyRunning {
+	if !errors.Is(err, ErrAlreadyRunning) {
 		t.Errorf("Run() = %v, want ErrAlreadyRunning", err)
 	}
 }

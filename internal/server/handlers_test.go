@@ -2,6 +2,7 @@ package server
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -41,7 +42,10 @@ func TestRootRedirectLeadsToGallery(t *testing.T) {
 	client := &http.Client{}
 
 	// Test without authentication (gallery is now public)
-	req, _ := http.NewRequest("GET", server.URL+"/", nil)
+	req, err := http.NewRequest("GET", server.URL+"/", nil)
+	if err != nil {
+		t.Fatalf("http.NewRequest: %v", err)
+	}
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -90,7 +94,10 @@ func TestRootHandler(t *testing.T) {
 	})
 
 	t.Run("Authenticated access to root", func(t *testing.T) {
-		req, _ := http.NewRequest("GET", server.URL+"/", nil)
+		req, err := http.NewRequest("GET", server.URL+"/", nil)
+		if err != nil {
+			t.Fatalf("http.NewRequest: %v", err)
+		}
 		req.AddCookie(MakeAuthCookie(t, app))
 
 		resp, err := client.Do(req)
@@ -114,7 +121,10 @@ func TestRootHandler(t *testing.T) {
 	})
 
 	t.Run("Unrecognized path", func(t *testing.T) {
-		req, _ := http.NewRequest("GET", server.URL+"/unrecognized/path", nil)
+		req, err := http.NewRequest("GET", server.URL+"/unrecognized/path", nil)
+		if err != nil {
+			t.Fatalf("http.NewRequest: %v", err)
+		}
 		req.AddCookie(MakeAuthCookie(t, app))
 
 		resp, err := client.Do(req)
@@ -221,7 +231,10 @@ func TestLoginHandler(t *testing.T) {
 		form.Add("password", "admin")
 		form.Add("csrf_token", csrfToken)
 
-		req, _ := http.NewRequest("POST", server.URL+"/login", strings.NewReader(form.Encode()))
+		req, err := http.NewRequest("POST", server.URL+"/login", strings.NewReader(form.Encode()))
+		if err != nil {
+			t.Fatalf("http.NewRequest: %v", err)
+		}
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.Header.Set("Origin", server.URL)
 		req.Header.Set("HX-Request", "true") // Simulate HTMX request
@@ -298,7 +311,10 @@ func TestLoginHandler(t *testing.T) {
 		form.Add("password", "wrongpassword")
 		form.Add("csrf_token", csrfToken)
 
-		req, _ := http.NewRequest("POST", server.URL+"/login", strings.NewReader(form.Encode()))
+		req, err := http.NewRequest("POST", server.URL+"/login", strings.NewReader(form.Encode()))
+		if err != nil {
+			t.Fatalf("http.NewRequest: %v", err)
+		}
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.Header.Set("Origin", server.URL)
 
@@ -402,6 +418,7 @@ func TestLoginHandler_LockoutAfterThreeFailures(t *testing.T) {
 	wrongPassword := "wrongpassword"
 
 	// Make 3 failed login attempts
+	var req *http.Request
 	for i := range 3 {
 		csrfToken := getCSRFToken()
 		form := url.Values{}
@@ -409,7 +426,10 @@ func TestLoginHandler_LockoutAfterThreeFailures(t *testing.T) {
 		form.Add("password", wrongPassword)
 		form.Add("csrf_token", csrfToken)
 
-		req, _ := http.NewRequest("POST", server.URL+"/login", strings.NewReader(form.Encode()))
+		req, err = http.NewRequest("POST", server.URL+"/login", strings.NewReader(form.Encode()))
+		if err != nil {
+			t.Fatalf("http.NewRequest: %v", err)
+		}
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.Header.Set("Origin", server.URL)
 
@@ -456,7 +476,10 @@ func TestLoginHandler_LockoutAfterThreeFailures(t *testing.T) {
 	form.Add("password", "admin") // Correct password
 	form.Add("csrf_token", csrfToken)
 
-	req, _ := http.NewRequest("POST", server.URL+"/login", strings.NewReader(form.Encode()))
+	req, err = http.NewRequest("POST", server.URL+"/login", strings.NewReader(form.Encode()))
+	if err != nil {
+		t.Fatalf("http.NewRequest: %v", err)
+	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Origin", server.URL)
 
@@ -556,6 +579,7 @@ func TestLoginHandler_ClearAttemptsOnSuccess(t *testing.T) {
 	username := "admin"
 
 	// Make 2 failed login attempts
+	var req *http.Request
 	for i := range 2 {
 		csrfToken := getCSRFToken()
 		form := url.Values{}
@@ -563,7 +587,10 @@ func TestLoginHandler_ClearAttemptsOnSuccess(t *testing.T) {
 		form.Add("password", "wrongpassword")
 		form.Add("csrf_token", csrfToken)
 
-		req, _ := http.NewRequest("POST", server.URL+"/login", strings.NewReader(form.Encode()))
+		req, err = http.NewRequest("POST", server.URL+"/login", strings.NewReader(form.Encode()))
+		if err != nil {
+			t.Fatalf("http.NewRequest: %v", err)
+		}
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.Header.Set("Origin", server.URL)
 
@@ -596,7 +623,10 @@ func TestLoginHandler_ClearAttemptsOnSuccess(t *testing.T) {
 	form.Add("password", "admin")
 	form.Add("csrf_token", csrfToken)
 
-	req, _ := http.NewRequest("POST", server.URL+"/login", strings.NewReader(form.Encode()))
+	req, err = http.NewRequest("POST", server.URL+"/login", strings.NewReader(form.Encode()))
+	if err != nil {
+		t.Fatalf("http.NewRequest: %v", err)
+	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Origin", server.URL)
 
@@ -614,7 +644,7 @@ func TestLoginHandler_ClearAttemptsOnSuccess(t *testing.T) {
 	_, err = cpcRo.Queries.GetLoginAttempt(app.ctx, username)
 	if err == nil {
 		t.Error("expected login_attempts record to be deleted after successful login, but it still exists")
-	} else if err != sql.ErrNoRows {
+	} else if !errors.Is(err, sql.ErrNoRows) {
 		t.Errorf("expected sql.ErrNoRows after successful login, got %v", err)
 	}
 }
@@ -705,7 +735,10 @@ func TestLoginHandler_LockoutExpiration(t *testing.T) {
 	form.Add("password", "admin")
 	form.Add("csrf_token", csrfToken)
 
-	req, _ := http.NewRequest("POST", server.URL+"/login", strings.NewReader(form.Encode()))
+	req, err := http.NewRequest("POST", server.URL+"/login", strings.NewReader(form.Encode()))
+	if err != nil {
+		t.Fatalf("http.NewRequest: %v", err)
+	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Origin", server.URL)
 
@@ -839,7 +872,10 @@ func TestLoginHandler_LockoutBlocksLogin(t *testing.T) {
 	form.Add("password", "admin") // Correct password
 	form.Add("csrf_token", csrfToken)
 
-	req, _ := http.NewRequest("POST", server.URL+"/login", strings.NewReader(form.Encode()))
+	req, err := http.NewRequest("POST", server.URL+"/login", strings.NewReader(form.Encode()))
+	if err != nil {
+		t.Fatalf("http.NewRequest: %v", err)
+	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Origin", server.URL)
 
@@ -897,7 +933,10 @@ func TestLogoutHandler(t *testing.T) {
 				return http.ErrUseLastResponse
 			},
 		}
-		req, _ := http.NewRequest("POST", server.URL+"/logout", nil)
+		req, err := http.NewRequest("POST", server.URL+"/logout", nil)
+		if err != nil {
+			t.Fatalf("http.NewRequest: %v", err)
+		}
 		req.AddCookie(MakeAuthCookie(t, app)) // Authenticate the request
 		req.Header.Set("Origin", server.URL)
 		req.Header.Set("HX-Request", "true") // Simulate HTMX request (logout form uses HTMX)
@@ -1121,7 +1160,10 @@ func TestRefactoredGalleryHandlerByID(t *testing.T) {
 
 	t.Run("authenticated", func(t *testing.T) {
 		client := &http.Client{}
-		req, _ := http.NewRequest("GET", server.URL+fmt.Sprintf("/gallery/%d", folder.ID), nil)
+		req, err := http.NewRequest("GET", server.URL+fmt.Sprintf("/gallery/%d", folder.ID), nil)
+		if err != nil {
+			t.Fatalf("http.NewRequest: %v", err)
+		}
 		req.AddCookie(MakeAuthCookie(t, app))
 
 		resp, err := client.Do(req)
@@ -1152,7 +1194,10 @@ func TestRefactoredGalleryHandlerByID(t *testing.T) {
 
 	t.Run("authenticated htmx partial", func(t *testing.T) {
 		client := &http.Client{}
-		req, _ := http.NewRequest("GET", server.URL+fmt.Sprintf("/gallery/%d", folder.ID), nil)
+		req, err := http.NewRequest("GET", server.URL+fmt.Sprintf("/gallery/%d", folder.ID), nil)
+		if err != nil {
+			t.Fatalf("http.NewRequest: %v", err)
+		}
 		req.AddCookie(MakeAuthCookie(t, app))
 		req.Header.Set("HX-Request", "true")
 		req.Header.Set("HX-Target", "gallery-content")
@@ -1210,7 +1255,10 @@ func TestRefactoredGalleryHandlerByID(t *testing.T) {
 
 	t.Run("authenticated htmx partial with oob breadcrumbs", func(t *testing.T) {
 		client := &http.Client{}
-		req, _ := http.NewRequest("GET", server.URL+fmt.Sprintf("/gallery/%d", folder.ID), nil)
+		req, err := http.NewRequest("GET", server.URL+fmt.Sprintf("/gallery/%d", folder.ID), nil)
+		if err != nil {
+			t.Fatalf("http.NewRequest: %v", err)
+		}
 		req.AddCookie(MakeAuthCookie(t, app))
 		req.Header.Set("HX-Request", "true")
 		req.Header.Set("HX-Target", "gallery-content")
@@ -1268,7 +1316,10 @@ func TestRefactoredGalleryHandlerByID(t *testing.T) {
 
 	t.Run("invalid id", func(t *testing.T) {
 		client := &http.Client{}
-		req, _ := http.NewRequest("GET", server.URL+"/gallery/99999", nil)
+		req, err := http.NewRequest("GET", server.URL+"/gallery/99999", nil)
+		if err != nil {
+			t.Fatalf("http.NewRequest: %v", err)
+		}
 		req.AddCookie(MakeAuthCookie(t, app))
 
 		resp, err := client.Do(req)
@@ -1311,7 +1362,10 @@ func TestRefactoredImageHandlerByID(t *testing.T) {
 
 	t.Run("authenticated cache-busting", func(t *testing.T) {
 		client := &http.Client{}
-		req, _ := http.NewRequest("GET", server.URL+fmt.Sprintf("/image/%d", file.ID), nil)
+		req, err := http.NewRequest("GET", server.URL+fmt.Sprintf("/image/%d", file.ID), nil)
+		if err != nil {
+			t.Fatalf("http.NewRequest: %v", err)
+		}
 		req.AddCookie(MakeAuthCookie(t, app))
 
 		resp, err := client.Do(req)
@@ -1380,7 +1434,10 @@ func TestRefactoredImageHandlerByID(t *testing.T) {
 
 	t.Run("authenticated", func(t *testing.T) {
 		client := &http.Client{}
-		req, _ := http.NewRequest("GET", server.URL+fmt.Sprintf("/image/%d", file.ID), nil)
+		req, err := http.NewRequest("GET", server.URL+fmt.Sprintf("/image/%d", file.ID), nil)
+		if err != nil {
+			t.Fatalf("http.NewRequest: %v", err)
+		}
 		req.AddCookie(MakeAuthCookie(t, app))
 
 		resp, err := client.Do(req)
@@ -1440,7 +1497,10 @@ func TestRefactoredRawImageByIDHandler(t *testing.T) {
 		// No cache-buster
 		u, _ := url.Parse(server.URL)
 		u.Path = fmt.Sprintf("/raw-image/%d", file.ID)
-		req, _ := http.NewRequest("GET", u.String(), nil)
+		req, err := http.NewRequest("GET", u.String(), nil)
+		if err != nil {
+			t.Fatalf("http.NewRequest: %v", err)
+		}
 		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatalf("Failed to make request to test server: %v", err)
@@ -1470,7 +1530,10 @@ func TestRefactoredRawImageByIDHandler(t *testing.T) {
 		// No cache-buster
 		u, _ := url.Parse(server.URL)
 		u.Path = fmt.Sprintf("/raw-image/%d", file.ID)
-		req, _ := http.NewRequest("GET", u.String(), nil)
+		req, err := http.NewRequest("GET", u.String(), nil)
+		if err != nil {
+			t.Fatalf("http.NewRequest: %v", err)
+		}
 		req.AddCookie(MakeAuthCookie(t, app))
 		resp, err := client.Do(req)
 		if err != nil {
@@ -1546,7 +1609,10 @@ func TestRefactoredThumbnailByIDHandler(t *testing.T) {
 
 	t.Run("authenticated", func(t *testing.T) {
 		client := &http.Client{}
-		req, _ := http.NewRequest("GET", server.URL+fmt.Sprintf("/thumbnail/file/%d", file.ID), nil)
+		req, err := http.NewRequest("GET", server.URL+fmt.Sprintf("/thumbnail/file/%d", file.ID), nil)
+		if err != nil {
+			t.Fatalf("http.NewRequest: %v", err)
+		}
 		req.AddCookie(MakeAuthCookie(t, app))
 
 		resp, err := client.Do(req)
@@ -1571,7 +1637,10 @@ func TestRefactoredThumbnailByIDHandler(t *testing.T) {
 
 	t.Run("authenticated cache-busting", func(t *testing.T) {
 		client := &http.Client{}
-		req, _ := http.NewRequest("GET", server.URL+fmt.Sprintf("/gallery/%d", file.FolderID.Int64), nil)
+		req, err := http.NewRequest("GET", server.URL+fmt.Sprintf("/gallery/%d", file.FolderID.Int64), nil)
+		if err != nil {
+			t.Fatalf("http.NewRequest: %v", err)
+		}
 		req.AddCookie(MakeAuthCookie(t, app))
 
 		resp, err := client.Do(req)
@@ -1662,7 +1731,10 @@ func TestRefactoredFolderThumbnailByIDHandler(t *testing.T) {
 
 	t.Run("authenticated", func(t *testing.T) {
 		client := &http.Client{}
-		req, _ := http.NewRequest("GET", server.URL+fmt.Sprintf("/thumbnail/folder/%d", file.FolderID.Int64), nil)
+		req, err := http.NewRequest("GET", server.URL+fmt.Sprintf("/thumbnail/folder/%d", file.FolderID.Int64), nil)
+		if err != nil {
+			t.Fatalf("http.NewRequest: %v", err)
+		}
 		req.AddCookie(MakeAuthCookie(t, app))
 
 		resp, err := client.Do(req)
@@ -1689,7 +1761,10 @@ func TestRefactoredFolderThumbnailByIDHandler(t *testing.T) {
 		client := &http.Client{}
 		cacheBuster := time.Now().Unix()
 		url := server.URL + fmt.Sprintf("/thumbnail/folder/%d?v=%d", file.FolderID.Int64, cacheBuster)
-		req, _ := http.NewRequest("GET", url, nil)
+		req, err := http.NewRequest("GET", url, nil)
+		if err != nil {
+			t.Fatalf("http.NewRequest: %v", err)
+		}
 		req.AddCookie(MakeAuthCookie(t, app))
 
 		resp, err := client.Do(req)
@@ -1713,130 +1788,6 @@ func TestRefactoredFolderThumbnailByIDHandler(t *testing.T) {
 	})
 }
 
-// REMOVED: func TestGalleryByIDHandler_SortOrder(t *testing.T) {
-// REMOVED: 	app := CreateApp(t, false)
-// REMOVED: 	defer app.Shutdown()
-// REMOVED:
-// REMOVED: 	// Generate test files in app.imagesDir
-// REMOVED: 	filePaths := []string{
-// REMOVED: 		"FileA.gif",
-// REMOVED: 		"FileB.png",
-// REMOVED: 		"FileC.jpg",
-// REMOVED: 		"FolderB/FileB.jpg",
-// REMOVED: 		"FolderA/FileA.jpg",
-// REMOVED: 	}
-// REMOVED:
-// REMOVED: 	err := gentestfiles.CreateTestFiles(app.imagesDir, filePaths)
-// REMOVED: 	if err != nil {
-// REMOVED: 		t.Fatalf("file to create test files: %v", err)
-// REMOVED: 	}
-// REMOVED:
-// REMOVED: 	router := app.getRouter()
-// REMOVED: 	server := httptest.NewServer(router)
-// REMOVED: 	defer server.Close()
-// REMOVED:
-// REMOVED: 	cpc, err := app.dbRwPool.Get()
-// REMOVED: 	if err != nil {
-// REMOVED: 		t.Fatalf("failed to get db connection: %v", err)
-// REMOVED: 	}
-// REMOVED: 	defer app.dbRwPool.Put(cpc)
-// REMOVED:
-// REMOVED: 	importer := gallerylib.Importer{Q: cpc.Queries}
-// REMOVED:
-// REMOVED: 	for _, fp := range filePaths {
-// REMOVED: 		_, err2 := importer.UpsertPathChain(app.ctx, fp, 0, 0, "", 0, 0, 0, "image/jpeg")
-// REMOVED: 		if err2 != nil {
-// REMOVED: 			t.Fatalf("failed to upsert path chain: %v", err2)
-// REMOVED: 		}
-// REMOVED: 	}
-// REMOVED:
-// REMOVED: 	waitForWorkersToBeIdle(app, t)
-// REMOVED:
-// REMOVED: 	// Get the ID of the parent folder
-// REMOVED: 	sortTestFolder, err := cpc.Queries.GetFolderByPath(app.ctx, "")
-// REMOVED: 	if err != nil {
-// REMOVED: 		folderPaths, _ := cpc.Queries.GetFolderPaths(app.ctx)
-// REMOVED: 		t.Logf("Folder paths in DB: %v", folderPaths)
-// REMOVED: 		t.Fatalf("Failed to get folder by path '%s': %v", app.imagesDir, err)
-// REMOVED: 	}
-// REMOVED:
-// REMOVED: 	// t.Run("tempTest", func(t *testing.T) {
-// REMOVED: 	// 	req := httptest.NewRequest("GET", "/gallery/1", nil)
-// REMOVED: 	// 	req.SetPathValue("id", "1")
-// REMOVED: 	// 	w := httptest.NewRecorder()
-// REMOVED: 	//
-// REMOVED: 	// 	// Call YOUR handler function directly (not a live endpoint)
-// REMOVED: 	// 	app.galleryByIDHandler(w, req)
-// REMOVED: 	//
-// REMOVED: 	// 	body := w.Body.String()
-// REMOVED: 	// 	fmt.Println(body) // For debugging
-// REMOVED: 	//
-// REMOVED: 	// 	_ = body // Use body for debugging if needed
-// REMOVED: 	// })
-// REMOVED:
-// REMOVED: 	t.Run("authenticated - correct sort order", func(t *testing.T) {
-// REMOVED: 		client := &http.Client{}
-// REMOVED: 		req, _ := http.NewRequest("GET", server.URL+fmt.Sprintf("/gallery/%d", sortTestFolder.ID), nil)
-// REMOVED: 		req.AddCookie(MakeAuthCookie(t, app))
-// REMOVED:
-// REMOVED: 		resp, err := client.Do(req)
-// REMOVED: 		if err != nil {
-// REMOVED: 			t.Fatalf("Failed to make request to test server: %v", err)
-// REMOVED: 		}
-// REMOVED: 		defer func() { _ = resp.Body.Close() }()
-// REMOVED:
-// REMOVED: 		if resp.StatusCode != http.StatusOK {
-// REMOVED: 			t.Errorf("handler returned wrong status code: got %v want %v", resp.StatusCode, http.StatusOK)
-// REMOVED: 		}
-// REMOVED:
-// REMOVED: 		// Verify Content-Type header is set correctly
-// REMOVED: 		contentType := resp.Header.Get("Content-Type")
-// REMOVED: 		if contentType != "text/html; charset=utf-8" {
-// REMOVED: 			t.Errorf("Expected Content-Type 'text/html; charset=utf-8', got %q", contentType)
-// REMOVED: 		}
-// REMOVED:
-// REMOVED: 		doc, err := html.Parse(resp.Body)
-// REMOVED: 		if err != nil {
-// REMOVED: 			t.Fatalf("Failed to parse response body: %v", err)
-// REMOVED: 		}
-// REMOVED:
-// REMOVED: 		boxGallery := findElementByID(doc, "boxgallery")
-// REMOVED: 		if boxGallery == nil {
-// REMOVED: 			t.Fatal("could not find boxgallery element")
-// REMOVED: 		}
-// REMOVED:
-// REMOVED: 		var actualDispNames []string
-// REMOVED: 		// Each tile is a div with role="listitem"
-// REMOVED: 		for c := boxGallery.FirstChild; c != nil; c = c.NextSibling {
-// REMOVED: 			if c.Type == html.ElementNode && c.Data == "div" {
-// REMOVED: 				role, ok := getAttribute(c, "role")
-// REMOVED: 				if ok && role == "listitem" {
-// REMOVED: 					// Find the <a> element inside the listitem div
-// REMOVED: 					aNode := findElementByTag(c, "a")
-// REMOVED: 					if aNode != nil {
-// REMOVED: 						ariaLabel, ariaOk := getAttribute(aNode, "aria-label")
-// REMOVED: 						if ariaOk && strings.HasPrefix(ariaLabel, "View ") {
-// REMOVED: 							actualDispNames = append(actualDispNames, strings.TrimPrefix(ariaLabel, "View "))
-// REMOVED: 						}
-// REMOVED: 					}
-// REMOVED: 				}
-// REMOVED: 			}
-// REMOVED: 		}
-// REMOVED:
-// REMOVED: 		expectedDispNames := []string{
-// REMOVED: 			"📁︎ FolderA",
-// REMOVED: 			"📁︎ FolderB",
-// REMOVED: 			"FileA.gif",
-// REMOVED: 			"FileB.png",
-// REMOVED: 			"FileC.jpg",
-// REMOVED: 		}
-// REMOVED:
-// REMOVED: 		if !reflect.DeepEqual(actualDispNames, expectedDispNames) {
-// REMOVED: 			t.Errorf("sort order mismatch:\nGot:  %v\nWant: %v", actualDispNames, expectedDispNames)
-// REMOVED: 		}
-// REMOVED: 	})
-// REMOVED: }
-
 // TestGalleryByIDHandler_SetsAllRequiredHeaders verifies that galleryByIDHandler
 // sets all required response headers correctly when compression is enabled.
 // It validates Content-Type, ETag, Cache-Control, Last-Modified,
@@ -1853,7 +1804,10 @@ func TestGalleryByIDHandler_SetsAllRequiredHeaders(t *testing.T) {
 
 	// Ensure there is at least one gallery (root folder exists by default from migrations)
 	client := &http.Client{}
-	req, _ := http.NewRequest("GET", server.URL+"/gallery/1", nil)
+	req, err := http.NewRequest("GET", server.URL+"/gallery/1", nil)
+	if err != nil {
+		t.Fatalf("http.NewRequest: %v", err)
+	}
 	req.AddCookie(MakeAuthCookie(t, app))
 	req.Header.Set("Accept-Encoding", "gzip")
 
@@ -1939,7 +1893,10 @@ func TestLightboxLooping(t *testing.T) {
 			{"first", file1.ID, file2.ID, file2.ID, file1.ID, file2.ID},
 			{"last", file2.ID, file1.ID, file1.ID, file1.ID, file2.ID},
 		} {
-			req, _ := http.NewRequest("GET", server.URL+fmt.Sprintf("/lightbox/%d", tc.id), nil)
+			req, err := http.NewRequest("GET", server.URL+fmt.Sprintf("/lightbox/%d", tc.id), nil)
+			if err != nil {
+				t.Fatalf("http.NewRequest: %v", err)
+			}
 			req.AddCookie(MakeAuthCookie(t, app))
 			resp, err := (&http.Client{}).Do(req)
 			if err != nil {
@@ -2062,7 +2019,10 @@ func TestInfoBoxFolderHandler(t *testing.T) {
 	server := httptest.NewServer(router)
 	defer server.Close()
 
-	req, _ := http.NewRequest("GET", server.URL+fmt.Sprintf("/info/folder/%d", testFolder.ID), nil)
+	req, err := http.NewRequest("GET", server.URL+fmt.Sprintf("/info/folder/%d", testFolder.ID), nil)
+	if err != nil {
+		t.Fatalf("http.NewRequest: %v", err)
+	}
 	req.AddCookie(MakeAuthCookie(t, app))
 
 	resp, err := (&http.Client{}).Do(req)
@@ -2161,7 +2121,10 @@ func TestInfoBoxImageHandler(t *testing.T) {
 	server := httptest.NewServer(router)
 	defer server.Close()
 
-	req, _ := http.NewRequest("GET", server.URL+fmt.Sprintf("/info/image/%d", file.ID), nil)
+	req, err := http.NewRequest("GET", server.URL+fmt.Sprintf("/info/image/%d", file.ID), nil)
+	if err != nil {
+		t.Fatalf("http.NewRequest: %v", err)
+	}
 	req.AddCookie(MakeAuthCookie(t, app))
 
 	resp, err := (&http.Client{}).Do(req)
@@ -2234,7 +2197,10 @@ func TestInfoFolderCacheBusting(t *testing.T) {
 	}
 
 	url := server.URL + "/info/folder/" + fmt.Sprint(folder.FolderID.Int64) + "?v=" + ui.GetCacheVersion()
-	req, _ := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		t.Fatalf("http.NewRequest: %v", err)
+	}
 	req.AddCookie(MakeAuthCookie(t, app))
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -2314,7 +2280,10 @@ func TestHXPushURLRegression(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req, _ := http.NewRequest("GET", server.URL+tt.path, nil)
+			req, err := http.NewRequest("GET", server.URL+tt.path, nil)
+			if err != nil {
+				t.Fatalf("http.NewRequest: %v", err)
+			}
 			req.AddCookie(authCookie)
 			// Header should be present even for non-HTMX requests (safe)
 			resp, err := http.DefaultClient.Do(req)

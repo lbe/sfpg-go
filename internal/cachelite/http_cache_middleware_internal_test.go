@@ -3,6 +3,7 @@ package cachelite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -35,14 +36,14 @@ func createTestDBPoolTB(tb testing.TB) *dbconnpool.DbSQLConnPool {
 		tb.Fatalf("failed to initialize migrate: %v", err)
 	}
 	tb.Cleanup(func() { _, _ = m.Close() })
-	if migErr := m.Up(); migErr != nil && migErr != migrate.ErrNoChange {
+	if migErr := m.Up(); migErr != nil && !errors.Is(migErr, migrate.ErrNoChange) {
 		tb.Fatalf("failed to apply migrations: %v", err)
 	}
 	m2, err := migrations.NewThumbsMigrator(thumbsDBPath)
 	if err != nil {
 		tb.Fatalf("failed to create thumbs migrator: %v", err)
 	}
-	if thumbsErr := m2.Up(); thumbsErr != nil && thumbsErr != migrate.ErrNoChange {
+	if thumbsErr := m2.Up(); thumbsErr != nil && !errors.Is(thumbsErr, migrate.ErrNoChange) {
 		m2.Close()
 		tb.Fatalf("failed to run thumbs migrations: %v", thumbsErr)
 	}

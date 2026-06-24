@@ -4,20 +4,24 @@ import (
 	"github.com/lbe/sfpg-go/internal/server/config"
 )
 
-// Config is the main application configuration type.
-// It is defined in the config package and re-exported here for backward compatibility.
+// Deprecated: Config is a type alias for config.Config.
+// Use config.Config directly in new code.
 type Config = config.Config
 
-// DefaultConfig returns a Config with all default values.
+// Deprecated: DefaultConfig returns a Config with all default values.
+// Use config.DefaultConfig directly in new code.
 func DefaultConfig() *Config {
 	return config.DefaultConfig()
 }
 
-// ConfigQueries is an alias for config.ConfigQueries to maintain backward compatibility.
+// Deprecated: ConfigQueries is a type alias for config.ConfigQueries.
+// Use config.ConfigQueries directly in new code.
 type ConfigQueries = config.ConfigQueries
 
-// ConfigSaver is an alias for config.ConfigSaver to maintain backward compatibility.
+// Deprecated: ConfigSaver is a type alias for config.ConfigSaver.
+// Use config.ConfigSaver directly in new code.
 type ConfigSaver = config.ConfigSaver
 
-// ConfigDiff is an alias for config.ConfigDiff to maintain backward compatibility.
+// Deprecated: ConfigDiff is a type alias for config.ConfigDiff.
+// Use config.ConfigDiff directly in new code.
 type ConfigDiff = config.ConfigDiff

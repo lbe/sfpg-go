@@ -23,9 +23,8 @@ func TestApp_SubmitCacheWrite(t *testing.T) {
 		}
 		defer wb.Close()
 
-		app := &App{
-			writeBatcher: wb,
-		}
+		app := &App{}
+		app.writeBatcher = wb
 
 		entry := cachelite.GetHTTPCacheEntry()
 		entry.Path = "/test/path"
@@ -42,9 +41,8 @@ func TestApp_SubmitCacheWrite(t *testing.T) {
 	})
 
 	t.Run("handles nil batcher gracefully", func(t *testing.T) {
-		app := &App{
-			writeBatcher: nil,
-		}
+		app := &App{}
+		app.writeBatcher = nil
 
 		entry := cachelite.GetHTTPCacheEntry()
 		entry.Path = "/test/path"
@@ -70,9 +68,8 @@ func TestApp_SubmitCacheWrite(t *testing.T) {
 		}
 		defer wb.Close()
 
-		app := &App{
-			writeBatcher: wb,
-		}
+		app := &App{}
+		app.writeBatcher = wb
 
 		// We test the submitCacheWrite behavior statically:
 		// When adapter.SubmitCache fails, the entry should be returned to pool

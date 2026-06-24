@@ -68,7 +68,10 @@ func TestCacheKey_HTMXVariants(t *testing.T) {
 }
 
 func TestNewCacheKeyForRequest(t *testing.T) {
-	req, _ := http.NewRequest("GET", "/gallery/123?v=1", nil)
+	req, err := http.NewRequest("GET", "/gallery/123?v=1", nil)
+	if err != nil {
+		t.Fatalf("http.NewRequest: %v", err)
+	}
 	req.Header.Set("HX-Request", "true")
 	req.Header.Set("HX-Target", "gallery-content")
 	req.Header.Set("Accept-Encoding", "gzip")
@@ -123,7 +126,10 @@ func TestNewCacheKeyForRequest_LightboxTargetNormalization(t *testing.T) {
 	var keys []string
 
 	for _, target := range targets {
-		req, _ := http.NewRequest("GET", "/lightbox/123?v=1", nil)
+		req, err := http.NewRequest("GET", "/lightbox/123?v=1", nil)
+		if err != nil {
+			t.Fatalf("http.NewRequest: %v", err)
+		}
 		req.Header.Set("HX-Request", "true")
 		req.Header.Set("HX-Target", target)
 		req.Header.Set("Accept-Encoding", "gzip")
@@ -142,7 +148,10 @@ func TestNewCacheKeyForRequest_LightboxTargetNormalization(t *testing.T) {
 	}
 
 	// Verify non-lightbox paths are NOT normalized
-	req, _ := http.NewRequest("GET", "/gallery/123?v=1", nil)
+	req, err := http.NewRequest("GET", "/gallery/123?v=1", nil)
+	if err != nil {
+		t.Fatalf("http.NewRequest: %v", err)
+	}
 	req.Header.Set("HX-Request", "true")
 	req.Header.Set("HX-Target", "gallery-content")
 	req.Header.Set("Accept-Encoding", "gzip")

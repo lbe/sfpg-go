@@ -2,9 +2,8 @@ package config
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"strconv"
+	"log/slog"
 	"time"
 
 	"github.com/lbe/sfpg-go/internal/gallerydb"
@@ -42,7 +41,7 @@ func (c *Config) SaveToDatabase(ctx context.Context, q ConfigSaver) error {
 	// Save last known good config as YAML string
 	yamlContent, err := c.ExportToYAML()
 	if err != nil {
-		// Log warning but don't fail the save if YAML export fails
+		slog.Warn("failed to export YAML for last known good config", "err", err)
 		return nil
 	}
 
@@ -53,7 +52,7 @@ func (c *Config) SaveToDatabase(ctx context.Context, q ConfigSaver) error {
 		UpdatedAt: now,
 	})
 	if err != nil {
-		// Log warning but don't fail the save if last known good save fails
+		slog.Warn("failed to save last known good config", "err", err)
 		return nil
 	}
 
@@ -62,41 +61,9 @@ func (c *Config) SaveToDatabase(ctx context.Context, q ConfigSaver) error {
 
 // ToMap converts the Config to a map of key-value pairs for database storage.
 func (c *Config) ToMap() map[string]string {
-	m := make(map[string]string)
-
-	m["listener_address"] = c.ListenerAddress
-	m["listener_port"] = strconv.Itoa(c.ListenerPort)
-	m["log_directory"] = c.LogDirectory
-	m["log_level"] = c.LogLevel
-	m["log_rollover"] = c.LogRollover
-	m["log_retention_count"] = strconv.Itoa(c.LogRetentionCount)
-	m["site_name"] = c.SiteName
-	themesJSON, _ := json.Marshal(c.Themes)
-	m["themes"] = string(themesJSON)
-	m["current_theme"] = c.CurrentTheme
-	m["image_directory"] = c.ImageDirectory
-	m["etag_version"] = c.ETagVersion
-	m["session_max_age"] = strconv.Itoa(c.SessionMaxAge)
-	m["session_http_only"] = strconv.FormatBool(c.SessionHttpOnly)
-	m["session_secure"] = strconv.FormatBool(c.SessionSecure)
-	m["session_same_site"] = c.SessionSameSite
-	m["server_compression_enable"] = strconv.FormatBool(c.ServerCompressionEnable)
-	m["enable_http_cache"] = strconv.FormatBool(c.EnableHTTPCache)
-	m["cache_max_size"] = strconv.FormatInt(c.CacheMaxSize, 10)
-	m["cache_max_time"] = c.CacheMaxTime.String()
-	m["cache_max_entry_size"] = strconv.FormatInt(c.CacheMaxEntrySize, 10)
-	m["cache_cleanup_interval"] = c.CacheCleanupInterval.String()
-	m["db_max_pool_size"] = strconv.Itoa(c.DBMaxPoolSize)
-	m["db_min_idle_connections"] = strconv.Itoa(c.DBMinIdleConnections)
-	m["db_optimize_interval"] = c.DBOptimizeInterval.String()
-	m["worker_pool_max"] = strconv.Itoa(c.WorkerPoolMax)
-	m["worker_pool_min_idle"] = strconv.Itoa(c.WorkerPoolMinIdle)
-	m["worker_pool_max_idle_time"] = c.WorkerPoolMaxIdleTime.String()
-	m["db_pool_monitor_interval"] = c.DBPoolMonitorInterval.String()
-	m["queue_size"] = strconv.Itoa(c.QueueSize)
-	m["enable_cache_preload"] = strconv.FormatBool(c.EnableCachePreload)
-	m["max_http_cache_entry_insert_per_transaction"] = strconv.Itoa(c.MaxHTTPCacheEntryInsertPerTransaction)
-	m["run_file_discovery"] = strconv.FormatBool(c.RunFileDiscovery)
-
+	m := make(map[string]string, len(fields()))
+	for _, f := range fields() {
+		m[f.dbKey] = f.getDB(c)
+	}
 	return m
 }

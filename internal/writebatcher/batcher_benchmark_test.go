@@ -3,6 +3,7 @@ package writebatcher
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"testing"
 
 	_ "github.com/ncruces/go-sqlite3/driver"
@@ -18,13 +19,18 @@ func BenchmarkWriteBatcher_Submit(b *testing.B) {
 		Flush:   func(ctx context.Context, tx *sql.Tx, batch []int) error { return nil },
 		OnError: func(err error, batch []int) {},
 	}
-	wb, _ := New(ctx, cfg)
+	wb, err := New(ctx, cfg)
+	if err != nil {
+		b.Fatalf("New: %v", err)
+	}
 	defer wb.Close()
 
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_ = wb.Submit(i)
+		if submitErr := wb.Submit(i); submitErr != nil {
+			b.Fatalf("Submit: %v", submitErr)
+		}
 	}
 }
 
@@ -37,13 +43,18 @@ func BenchmarkSubmitWithSizeFunc(b *testing.B) {
 		MaxBatchBytes: 1000,
 		SizeFunc:      func(i int) int64 { return 10 },
 	}
-	wb, _ := New(ctx, cfg)
+	wb, err := New(ctx, cfg)
+	if err != nil {
+		b.Fatalf("New: %v", err)
+	}
 	defer wb.Close()
 
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_ = wb.Submit(i)
+		if submitErr := wb.Submit(i); submitErr != nil {
+			b.Fatalf("Submit: %v", submitErr)
+		}
 	}
 }
 
@@ -54,7 +65,9 @@ func BenchmarkWriteBatcher_Integration(b *testing.B) {
 	}
 	defer db.Close()
 
-	_, _ = db.Exec("CREATE TABLE bench (id INTEGER)")
+	if _, execErr := db.Exec("CREATE TABLE bench (id INTEGER)"); execErr != nil {
+		b.Fatalf("db.Exec: %v", execErr)
+	}
 
 	ctx := context.Background()
 	cfg := Config[int]{
@@ -75,13 +88,16 @@ func BenchmarkWriteBatcher_Integration(b *testing.B) {
 		MaxBatchSize: 100,
 	}
 
-	wb, _ := New(ctx, cfg)
+	wb, newErr := New(ctx, cfg)
+	if newErr != nil {
+		b.Fatalf("New: %v", newErr)
+	}
 	defer wb.Close()
 
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		for wb.Submit(i) == ErrFull {
+		for errors.Is(wb.Submit(i), ErrFull) {
 			// Busy-wait backoff for benchmark throughput measurement.
 		}
 	}

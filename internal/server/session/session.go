@@ -120,7 +120,8 @@ func EnsureCsrfToken(store *sessions.CookieStore, w http.ResponseWriter, r *http
 	sess, err := store.Get(r, SessionName)
 	if err != nil {
 		ClearSessionCookie(store, w, r)
-		sess, _ = store.Get(r, SessionName)
+		// gorilla/sessions returns a usable session even on cookie decode error.
+		sess, _ = store.Get(r, SessionName) //nolint:errcheck
 	}
 	if token, ok := sess.Values["csrf_token"].(string); ok && token != "" {
 		return token
@@ -141,7 +142,8 @@ func EnsureCsrfToken(store *sessions.CookieStore, w http.ResponseWriter, r *http
 // ValidateCsrfToken checks the CSRF token in the request form against the session.
 // Returns false if the session has no token or the form token is missing or doesn't match.
 func ValidateCsrfToken(store *sessions.CookieStore, r *http.Request) bool {
-	sess, _ := store.Get(r, SessionName)
+	// gorilla/sessions returns a usable session even on cookie decode error.
+	sess, _ := store.Get(r, SessionName) //nolint:errcheck
 	sessionToken, ok := sess.Values["csrf_token"].(string)
 	if !ok || sessionToken == "" {
 		slog.Warn("validateCsrfToken: no token in session")
@@ -155,6 +157,19 @@ func ValidateCsrfToken(store *sessions.CookieStore, r *http.Request) bool {
 	return subtle.ConstantTimeCompare([]byte(sessionToken), []byte(formToken)) == 1
 }
 
+// IsAuthenticated reports whether the request has a valid authenticated session.
+// If the session cookie is invalid or malformed, it clears the cookie and
+// returns false.
+func IsAuthenticated(store *sessions.CookieStore, w http.ResponseWriter, r *http.Request) bool {
+	sess, err := store.Get(r, SessionName)
+	if err != nil {
+		ClearSessionCookie(store, w, r)
+		return false
+	}
+	authenticated, _ := sess.Values["authenticated"].(bool)
+	return authenticated
+}
+
 // SessionManager provides an interface for session management operations.
 // It encapsulates session store access, CSRF token handling, and session options.
 type SessionManager interface {
@@ -164,8 +179,8 @@ type SessionManager interface {
 	ClearSession(w http.ResponseWriter, r *http.Request)
 
 	// GetSession retrieves the session from the request.
-	// Returns a new session if one doesn't exist.
-	GetSession(r *http.Request) (*sessions.Session, error)
+	// If the session cookie is invalid, it clears the cookie and returns a new session.
+	GetSession(w http.ResponseWriter, r *http.Request) (*sessions.Session, error)
 
 	// SaveSession saves the session to the response.
 	SaveSession(w http.ResponseWriter, r *http.Request, sess *sessions.Session) error
@@ -204,29 +219,84 @@ func (m *Manager) GetOptions() *sessions.Options {
 }
 
 // EnsureCSRFToken ensures a CSRF token exists in the session and returns it.
-// Delegates to the package-level EnsureCsrfToken function.
+// If none is present, it generates a new one. If the session cookie is invalid
+// (e.g., after secret rotation), the cookie is cleared and a new session is used.
 func (m *Manager) EnsureCSRFToken(w http.ResponseWriter, r *http.Request) string {
-	return EnsureCsrfToken(m.store, w, r)
+	sess, err := m.store.Get(r, SessionName)
+	if err != nil {
+		ClearSessionCookie(m.store, w, r)
+		// gorilla/sessions returns a usable session even on cookie decode error.
+		sess, _ = m.store.Get(r, SessionName) //nolint:errcheck
+	}
+	if token, ok := sess.Values["csrf_token"].(string); ok && token != "" {
+		return token
+	}
+	bytes := make([]byte, 32)
+	if _, err := rand.Read(bytes); err != nil {
+		slog.Error("failed to generate random bytes for CSRF token", "err", err)
+		return ""
+	}
+	token := hex.EncodeToString(bytes)
+	sess.Values["csrf_token"] = token
+	if err := sess.Save(r, w); err != nil {
+		slog.Error("failed to save session with new CSRF token", "err", err)
+	}
+	return token
 }
 
 // ValidateCSRFToken validates the CSRF token in the request form against the session.
-// Delegates to the package-level ValidateCsrfToken function.
+// Returns false if the session has no token or the form token is missing or doesn't match.
 func (m *Manager) ValidateCSRFToken(r *http.Request) bool {
-	return ValidateCsrfToken(m.store, r)
+	// gorilla/sessions returns a usable session even on cookie decode error.
+	sess, _ := m.store.Get(r, SessionName) //nolint:errcheck
+	sessionToken, ok := sess.Values["csrf_token"].(string)
+	if !ok || sessionToken == "" {
+		slog.Warn("validateCsrfToken: no token in session")
+		return false
+	}
+	formToken := r.FormValue("csrf_token")
+	if formToken == "" {
+		slog.Warn("validateCsrfToken: no token in form")
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(sessionToken), []byte(formToken)) == 1
 }
 
-// ClearSession removes the session cookie. Delegates to the package-level ClearSessionCookie function.
+// ClearSession removes the session cookie by setting a max-age=-1 cookie
+// with matching name, path, secure, and http-only flags.
 func (m *Manager) ClearSession(w http.ResponseWriter, r *http.Request) {
-	ClearSessionCookie(m.store, w, r)
+	opts := m.store.Options
+	c := &http.Cookie{
+		Name:     SessionName,
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		Expires:  time.Unix(0, 0),
+		Secure:   opts != nil && opts.Secure,
+		HttpOnly: opts != nil && opts.HttpOnly,
+	}
+	host := r.Host
+	if host != "" {
+		if i := strings.IndexByte(host, ':'); i != -1 {
+			host = host[:i]
+		}
+		if !isIPAddress(host) {
+			c.Domain = host
+		}
+	}
+	http.SetCookie(w, c)
 }
 
 // GetSession retrieves the session from the request.
-// If the session cookie is invalid, it clears the cookie and returns a new session.
-func (m *Manager) GetSession(r *http.Request) (*sessions.Session, error) {
+// If the session cookie is invalid, it clears the cookie from the browser
+// and returns a fresh session.
+func (m *Manager) GetSession(w http.ResponseWriter, r *http.Request) (*sessions.Session, error) {
 	sess, err := m.store.Get(r, SessionName)
 	if err != nil {
-		// Invalid cookie - clear it and get a fresh session
-		sess, _ = m.store.New(r, SessionName)
+		// Invalid cookie - clear it from the browser and create a fresh session
+		ClearSessionCookie(m.store, w, r)
+		// gorilla/sessions returns a usable session even on cookie decode error.
+		sess, _ = m.store.New(r, SessionName) //nolint:errcheck
 	}
 	return sess, nil
 }
@@ -251,7 +321,8 @@ func (m *Manager) SetAuthenticated(w http.ResponseWriter, r *http.Request, authe
 	sess, err := m.store.Get(r, SessionName)
 	if err != nil {
 		// Invalid cookie - create a new session
-		sess, _ = m.store.New(r, SessionName)
+		// gorilla/sessions returns a usable session even on cookie decode error.
+		sess, _ = m.store.New(r, SessionName) //nolint:errcheck
 	}
 	sess.Values["authenticated"] = authenticated
 	// When logging out, clear the session cookie by setting MaxAge to -1

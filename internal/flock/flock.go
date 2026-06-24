@@ -9,6 +9,7 @@ package flock
 import (
 	"errors"
 	"os"
+	"time"
 )
 
 // Flock is a file-backed advisory lock.
@@ -32,6 +33,10 @@ func New(path string) *Flock {
 // (true, nil). If the lock cannot be acquired, the underlying file handle is
 // left open so subsequent calls can retry efficiently. Callers must use
 // Unlock or Close to release the lock and close the file descriptor.
+//
+// On contention, TryLock retries a few times with short delays to tolerate
+// filesystem-level lag (e.g., ZFS) where the kernel may not immediately
+// release a flock after the owning process dies.
 func (f *Flock) TryLock() (bool, error) {
 	if f.locked {
 		return true, nil
@@ -45,14 +50,23 @@ func (f *Flock) TryLock() (bool, error) {
 		f.file = file
 	}
 
-	locked, err := f.tryLock()
-	if err != nil {
-		return false, err
+	// Retry with backoff to handle transient lock contention
+	// (e.g., ZFS releasing flock after process termination).
+	const retries = 3
+	for i := range retries {
+		locked, err := f.tryLock()
+		if err != nil {
+			return false, err
+		}
+		if locked {
+			f.locked = true
+			return true, nil
+		}
+		if i < retries-1 {
+			time.Sleep(100 * time.Millisecond)
+		}
 	}
-	if locked {
-		f.locked = true
-	}
-	return locked, nil
+	return false, nil
 }
 
 // Unlock releases the lock. It is safe to call when the lock is not held.

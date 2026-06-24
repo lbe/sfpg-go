@@ -6,6 +6,7 @@ package dque_test
 //
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -52,7 +53,7 @@ func ExampleDQue() {
 	// Peek at the next item in the queue
 	item, err := q.Peek()
 	if err != nil {
-		if err != dque.ErrEmpty {
+		if !errors.Is(err, dque.ErrEmpty) {
 			log.Fatal("Error peeking at item", err)
 		}
 	}
@@ -60,14 +61,16 @@ func ExampleDQue() {
 
 	// Dequeue the next item in the queue
 	item, err = q.Dequeue()
-	if err != nil && err != dque.ErrEmpty {
+	if err != nil && !errors.Is(err, dque.ErrEmpty) {
 		log.Fatal("Error dequeuing item:", err)
 	}
 	log.Println("Dequeued an item:", item)
 	log.Println("Size should be zero:", q.Size())
 
 	go func() {
-		_ = q.Enqueue(&Item{"Joe", 1})
+		if enqErr := q.Enqueue(&Item{"Joe", 1}); enqErr != nil {
+			log.Fatal("Error enqueueing item", enqErr)
+		}
 	}()
 
 	// Dequeue the next item in the queue and block until one is available

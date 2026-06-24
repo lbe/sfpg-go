@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -46,7 +47,10 @@ func TestLogin(t *testing.T) {
 	}
 
 	// Verify cookie was stored by making a follow-up request
-	serverURL, _ := url.Parse(server.URL)
+	serverURL, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("url.Parse: %v", err)
+	}
 	cookies := c.client.Jar.Cookies(serverURL)
 	if len(cookies) == 0 {
 		t.Error("No cookies stored after login")
@@ -69,7 +73,7 @@ func TestLoginInvalidCredentials(t *testing.T) {
 	if err == nil {
 		t.Fatal("Login should fail with invalid credentials")
 	}
-	if err != ErrUnauthorized {
+	if !errors.Is(err, ErrUnauthorized) {
 		t.Errorf("Login error = %v, want %v", err, ErrUnauthorized)
 	}
 }
@@ -97,7 +101,9 @@ func TestFetchDashboard(t *testing.T) {
 			}
 			w.Header().Set("Content-Type", "text/html")
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(dashboardHTML))
+			if _, err := w.Write([]byte(dashboardHTML)); err != nil {
+				t.Fatalf("w.Write: %v", err)
+			}
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
@@ -106,7 +112,10 @@ func TestFetchDashboard(t *testing.T) {
 
 	c := New(server.URL)
 	// Set session cookie manually for test
-	serverURL, _ := url.Parse(server.URL)
+	serverURL, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("url.Parse: %v", err)
+	}
 	c.client.Jar.SetCookies(serverURL, []*http.Cookie{
 		{Name: "session", Value: "test-session-token"},
 	})
@@ -138,7 +147,7 @@ func TestFetchDashboardUnauthorized(t *testing.T) {
 	if err == nil {
 		t.Fatal("FetchDashboard should fail without auth")
 	}
-	if err != ErrUnauthorized {
+	if !errors.Is(err, ErrUnauthorized) {
 		t.Errorf("FetchDashboard error = %v, want %v", err, ErrUnauthorized)
 	}
 }
@@ -150,7 +159,7 @@ func TestNetworkError(t *testing.T) {
 	if err == nil {
 		t.Fatal("FetchDashboard should fail with network error")
 	}
-	if err != ErrNetworkError {
+	if !errors.Is(err, ErrNetworkError) {
 		t.Errorf("FetchDashboard error = %v, want %v", err, ErrNetworkError)
 	}
 }

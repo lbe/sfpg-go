@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -82,7 +83,7 @@ func TestConcurrencyLimits(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		if err := scheduler.Start(ctx); err != nil && err != context.Canceled {
+		if err := scheduler.Start(ctx); err != nil && !errors.Is(err, context.Canceled) {
 			t.Errorf("Scheduler Start returned error: %v", err)
 		}
 	}()
@@ -155,7 +156,9 @@ func TestOneTimeTaskRunsExactlyOnce(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_ = scheduler.Start(ctx)
+		if startErr := scheduler.Start(ctx); startErr != nil && !errors.Is(startErr, context.Canceled) {
+			t.Errorf("scheduler.Start: %v", startErr)
+		}
 	}()
 
 	// Wait for task to complete (50ms sleep + margin) and at least a few ticks
@@ -202,7 +205,7 @@ func TestContextCancellation(t *testing.T) {
 	elapsed := time.Since(startTime)
 
 	// Scheduler should stop gracefully
-	if err != nil && err != context.Canceled {
+	if err != nil && !errors.Is(err, context.Canceled) {
 		t.Errorf("Expected context.Canceled, got: %v", err)
 	}
 
@@ -238,7 +241,9 @@ func TestIntervalLogic_DailyRecurring(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_ = scheduler.Start(ctx)
+		if startErr := scheduler.Start(ctx); startErr != nil && !errors.Is(startErr, context.Canceled) {
+			t.Errorf("scheduler.Start: %v", startErr)
+		}
 	}()
 
 	// Wait for multiple executions
@@ -290,7 +295,9 @@ func TestOneTimeTask(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_ = scheduler.Start(ctx)
+		if startErr := scheduler.Start(ctx); startErr != nil && !errors.Is(startErr, context.Canceled) {
+			t.Errorf("scheduler.Start: %v", startErr)
+		}
 	}()
 
 	// Wait for execution
@@ -323,7 +330,9 @@ func TestHourlyRecurring(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_ = scheduler.Start(ctx)
+		if startErr := scheduler.Start(ctx); startErr != nil && !errors.Is(startErr, context.Canceled) {
+			t.Errorf("scheduler.Start: %v", startErr)
+		}
 	}()
 
 	time.Sleep(150 * time.Millisecond)
@@ -356,7 +365,9 @@ func TestWeeklyRecurring(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_ = scheduler.Start(ctx)
+		if startErr := scheduler.Start(ctx); startErr != nil && !errors.Is(startErr, context.Canceled) {
+			t.Errorf("scheduler.Start: %v", startErr)
+		}
 	}()
 
 	time.Sleep(150 * time.Millisecond)
@@ -389,7 +400,9 @@ func TestMonthlyRecurring(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_ = scheduler.Start(ctx)
+		if startErr := scheduler.Start(ctx); startErr != nil && !errors.Is(startErr, context.Canceled) {
+			t.Errorf("scheduler.Start: %v", startErr)
+		}
 	}()
 
 	time.Sleep(150 * time.Millisecond)
@@ -411,7 +424,9 @@ func TestTaskAdditionWhileRunning(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_ = scheduler.Start(ctx)
+		if startErr := scheduler.Start(ctx); startErr != nil && !errors.Is(startErr, context.Canceled) {
+			t.Errorf("scheduler.Start: %v", startErr)
+		}
 	}()
 
 	// Add task after scheduler started
@@ -467,7 +482,9 @@ func TestMultipleTasksDifferentModes(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_ = scheduler.Start(ctx)
+		if startErr := scheduler.Start(ctx); startErr != nil && !errors.Is(startErr, context.Canceled) {
+			t.Errorf("scheduler.Start: %v", startErr)
+		}
 	}()
 
 	time.Sleep(200 * time.Millisecond)
@@ -501,7 +518,9 @@ func TestTaskWithPastStartTime(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_ = scheduler.Start(ctx)
+		if startErr := scheduler.Start(ctx); startErr != nil && !errors.Is(startErr, context.Canceled) {
+			t.Errorf("scheduler.Start: %v", startErr)
+		}
 	}()
 
 	time.Sleep(100 * time.Millisecond)
@@ -533,7 +552,9 @@ func TestTaskWithFutureStartTime(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_ = scheduler.Start(ctx)
+		if startErr := scheduler.Start(ctx); startErr != nil && !errors.Is(startErr, context.Canceled) {
+			t.Errorf("scheduler.Start: %v", startErr)
+		}
 	}()
 
 	// Wait less than futureTime - task should not execute yet
@@ -583,7 +604,9 @@ func TestErrorHandling(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_ = scheduler.Start(ctx)
+		if startErr := scheduler.Start(ctx); startErr != nil && !errors.Is(startErr, context.Canceled) {
+			t.Errorf("scheduler.Start: %v", startErr)
+		}
 	}()
 
 	time.Sleep(150 * time.Millisecond)
@@ -676,14 +699,14 @@ func TestShutdown(t *testing.T) {
 
 	// AddTask should fail after shutdown
 	_, err = scheduler.AddTask(&TestTask{id: "new-task"}, OneTime, time.Now())
-	if err != ErrSchedulerShutdown {
+	if !errors.Is(err, ErrSchedulerShutdown) {
 		t.Errorf("AddTask should return ErrSchedulerShutdown after Shutdown, got: %v", err)
 	}
 
 	// Start should fail after shutdown
 	ctx := t.Context()
 	err = scheduler.Start(ctx)
-	if err != ErrSchedulerShutdown {
+	if !errors.Is(err, ErrSchedulerShutdown) {
 		t.Errorf("Start should return ErrSchedulerShutdown after Shutdown, got: %v", err)
 	}
 }
@@ -699,7 +722,9 @@ func TestShutdownWhileRunning(t *testing.T) {
 	startDone := make(chan struct{})
 	go func() {
 		defer close(startDone)
-		_ = scheduler.Start(ctx)
+		if startErr := scheduler.Start(ctx); startErr != nil && !errors.Is(startErr, context.Canceled) {
+			t.Errorf("scheduler.Start: %v", startErr)
+		}
 	}()
 
 	// Wait a bit to ensure Start is running
@@ -707,7 +732,7 @@ func TestShutdownWhileRunning(t *testing.T) {
 
 	// Shutdown should return error immediately
 	err := scheduler.Shutdown()
-	if err != ErrSchedulerRunning {
+	if !errors.Is(err, ErrSchedulerRunning) {
 		t.Errorf("Shutdown should return ErrSchedulerRunning when Start is running, got: %v", err)
 	}
 
@@ -753,7 +778,9 @@ func TestRemoveTask(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_ = scheduler.Start(ctx)
+		if startErr := scheduler.Start(ctx); startErr != nil && !errors.Is(startErr, context.Canceled) {
+			t.Errorf("scheduler.Start: %v", startErr)
+		}
 	}()
 
 	// Wait for scheduler to check tasks
@@ -772,7 +799,7 @@ func TestRemoveTask_NotFound(t *testing.T) {
 	scheduler := NewScheduler(1)
 
 	err := scheduler.RemoveTask("nonexistent")
-	if err != ErrTaskNotFound {
+	if !errors.Is(err, ErrTaskNotFound) {
 		t.Errorf("Expected ErrTaskNotFound, got: %v", err)
 	}
 }
@@ -798,7 +825,9 @@ func TestRemoveTask_ExecutingTask(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_ = scheduler.Start(ctx)
+		if startErr := scheduler.Start(ctx); startErr != nil && !errors.Is(startErr, context.Canceled) {
+			t.Errorf("scheduler.Start: %v", startErr)
+		}
 	}()
 
 	// Wait a bit for task to start executing
@@ -842,7 +871,9 @@ func TestRemoveTask_RecurringTask(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_ = scheduler.Start(ctx)
+		if startErr := scheduler.Start(ctx); startErr != nil && !errors.Is(startErr, context.Canceled) {
+			t.Errorf("scheduler.Start: %v", startErr)
+		}
 	}()
 
 	// Wait for first execution

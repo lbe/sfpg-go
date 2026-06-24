@@ -28,7 +28,8 @@ func TestSessionManagerExpandedInterface(t *testing.T) {
 	// Test GetSession
 	t.Run("GetSession", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/", nil)
-		sess, err := mgr.GetSession(req)
+		rec := httptest.NewRecorder()
+		sess, err := mgr.GetSession(rec, req)
 		if err != nil {
 			t.Errorf("GetSession() error = %v", err)
 		}
@@ -44,7 +45,7 @@ func TestSessionManagerExpandedInterface(t *testing.T) {
 	t.Run("SaveSession", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/", nil)
 		rec := httptest.NewRecorder()
-		sess, _ := mgr.GetSession(req)
+		sess, _ := mgr.GetSession(rec, req)
 		sess.Values["test_key"] = "test_value"
 
 		err := mgr.SaveSession(rec, req, sess)
@@ -330,8 +331,9 @@ func TestManagerGetSession_InvalidCookie(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.AddCookie(&http.Cookie{Name: SessionName, Value: "bad"})
+	rec := httptest.NewRecorder()
 
-	sess, err := mgr.GetSession(req)
+	sess, err := mgr.GetSession(rec, req)
 	if err != nil {
 		t.Fatalf("GetSession error = %v", err)
 	}
@@ -340,6 +342,19 @@ func TestManagerGetSession_InvalidCookie(t *testing.T) {
 	}
 	if !sess.IsNew {
 		t.Error("expected new session when cookie is invalid")
+	}
+
+	// Verify the invalid cookie was cleared from the browser
+	cookies := rec.Result().Cookies()
+	var cleared bool
+	for _, c := range cookies {
+		if c.Name == SessionName && c.MaxAge == -1 && c.Value == "" {
+			cleared = true
+			break
+		}
+	}
+	if !cleared {
+		t.Error("expected Set-Cookie with MaxAge=-1 to clear invalid session cookie")
 	}
 }
 

@@ -6,6 +6,7 @@ package handlers
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -293,7 +294,7 @@ func (h *GalleryHandlers) GalleryByID(w http.ResponseWriter, r *http.Request) {
 
 	gd, err := h.fetchGalleryData(folderID)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			http.NotFound(w, r)
 			return
 		}
@@ -367,7 +368,7 @@ func (h *GalleryHandlers) ImageByID(w http.ResponseWriter, r *http.Request) {
 
 	file, err := qh.GetFileViewByID(h.Ctx, fileID)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			http.NotFound(w, r)
 			return
 		}
@@ -418,7 +419,7 @@ func (h *GalleryHandlers) RawImageByID(w http.ResponseWriter, r *http.Request) {
 
 	file, err := qh.GetFileViewByID(h.Ctx, fileID)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			http.NotFound(w, r)
 			return
 		}
@@ -473,7 +474,7 @@ func (h *GalleryHandlers) ThumbnailByID(w http.ResponseWriter, r *http.Request) 
 
 	thumbnailMeta, err := qh.GetThumbnailsByFileID(h.Ctx, fileID)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			h.NoThumbnail(w, r)
 			return
 		}
@@ -483,7 +484,7 @@ func (h *GalleryHandlers) ThumbnailByID(w http.ResponseWriter, r *http.Request) 
 
 	thumb, err := qh.GetThumbnailBlobDataByID(h.Ctx, thumbnailMeta.ID)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			h.NoThumbnail(w, r)
 			return
 		}
@@ -517,7 +518,7 @@ func (h *GalleryHandlers) FolderThumbnailByID(w http.ResponseWriter, r *http.Req
 
 	folder, err := qh.GetFolderByID(h.Ctx, folderID)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			h.NoThumbnail(w, r)
 			return
 		}
@@ -532,7 +533,7 @@ func (h *GalleryHandlers) FolderThumbnailByID(w http.ResponseWriter, r *http.Req
 
 	thumbnailMeta, err := qh.GetThumbnailsByFileID(h.Ctx, folder.TileID.Int64)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			h.NoThumbnail(w, r)
 			return
 		}
@@ -542,7 +543,7 @@ func (h *GalleryHandlers) FolderThumbnailByID(w http.ResponseWriter, r *http.Req
 
 	thumb, err := qh.GetThumbnailBlobDataByID(h.Ctx, thumbnailMeta.ID)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			h.NoThumbnail(w, r)
 			return
 		}
@@ -575,7 +576,7 @@ func (h *GalleryHandlers) LightboxByID(w http.ResponseWriter, r *http.Request) {
 
 	file, err := qh.GetFileViewByID(h.Ctx, fileID)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			http.NotFound(w, r)
 			return
 		}
@@ -678,7 +679,7 @@ func (h *GalleryHandlers) InfoBoxFolder(w http.ResponseWriter, r *http.Request) 
 
 	folder, err := qh.GetFolderByID(h.Ctx, folderID)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			http.NotFound(w, r)
 			return
 		}
@@ -754,7 +755,7 @@ func (h *GalleryHandlers) InfoBoxImage(w http.ResponseWriter, r *http.Request) {
 
 	file, err := qh.GetFileViewByID(h.Ctx, fileID)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			http.NotFound(w, r)
 			return
 		}
@@ -787,7 +788,7 @@ func (h *GalleryHandlers) InfoBoxImage(w http.ResponseWriter, r *http.Request) {
 
 	mq := h.GetMetadataQueries(cpc)
 	exif, err := mq.GetExifByFile(h.Ctx, fileID)
-	if err != nil && err != sql.ErrNoRows {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		h.ServerError(w, r, err)
 		return
 	}
@@ -797,7 +798,7 @@ func (h *GalleryHandlers) InfoBoxImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	iptc, err := mq.GetIPTCByFile(h.Ctx, fileID)
-	if err != nil && err != sql.ErrNoRows {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		h.ServerError(w, r, err)
 		return
 	}

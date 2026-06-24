@@ -38,7 +38,9 @@ func benchmarkEnqueue(b *testing.B, turbo bool) {
 		b.Fatal("Error creating new dque:", err)
 	}
 	if turbo {
-		_ = q.TurboOn()
+		if err := q.TurboOn(); err != nil {
+			b.Fatal("TurboOn:", err)
+		}
 	}
 	b.StartTimer()
 
@@ -71,7 +73,9 @@ func benchmarkDequeue(b *testing.B, turbo bool) {
 	}
 	iterations := 5000
 	if turbo {
-		_ = q.TurboOn()
+		if err := q.TurboOn(); err != nil {
+			b.Fatal("TurboOn:", err)
+		}
 		iterations *= 10
 	}
 

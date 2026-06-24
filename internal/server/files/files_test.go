@@ -1038,7 +1038,7 @@ func drainQueue(t *testing.T, q *queue.Queue[string]) []string {
 	items := []string{}
 	for {
 		item, err := q.Dequeue()
-		if err == queue.ErrEmptyQueue || err == queue.ErrClosedQueue {
+		if errors.Is(err, queue.ErrEmptyQueue) || errors.Is(err, queue.ErrClosedQueue) {
 			break
 		}
 		if err != nil {

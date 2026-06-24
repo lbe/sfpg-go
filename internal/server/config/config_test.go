@@ -1,11 +1,13 @@
 package config
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -54,7 +56,7 @@ func setupTestDB(t *testing.T) (*sql.DB, *gallerydb.Queries, context.Context) {
 		t.Fatalf("failed to create migrate instance: %v", err)
 	}
 
-	if upErr := m.Up(); upErr != nil && upErr != migrate.ErrNoChange {
+	if upErr := m.Up(); upErr != nil && !errors.Is(upErr, migrate.ErrNoChange) {
 		db.Close()
 		t.Fatalf("failed to apply migrations: %v", upErr)
 	}
@@ -162,7 +164,7 @@ func createTestService(t *testing.T) ConfigService {
 		t.Fatalf("failed to create migrate instance: %v", err)
 	}
 
-	if upErr := m.Up(); upErr != nil && upErr != migrate.ErrNoChange {
+	if upErr := m.Up(); upErr != nil && !errors.Is(upErr, migrate.ErrNoChange) {
 		db.Close()
 		t.Fatalf("failed to apply migrations: %v", upErr)
 	}
@@ -172,7 +174,7 @@ func createTestService(t *testing.T) ConfigService {
 	if err != nil {
 		t.Fatalf("failed to create thumbs migrator: %v", err)
 	}
-	if thumbsErr := m2.Up(); thumbsErr != nil && thumbsErr != migrate.ErrNoChange {
+	if thumbsErr := m2.Up(); thumbsErr != nil && !errors.Is(thumbsErr, migrate.ErrNoChange) {
 		m2.Close()
 		t.Fatalf("failed to run thumbs migrations: %v", thumbsErr)
 	}
@@ -655,8 +657,13 @@ func TestJSONSerialization(t *testing.T) {
 	if len(themes) != 3 {
 		t.Errorf("expected 3 themes, got %d", len(themes))
 	}
-	if themes[0] != "dark" || themes[1] != "light" || themes[2] != "auto" {
-		t.Errorf("themes not deserialized correctly: %v", themes)
+
+	// Themes are stored sorted (order-independent), verify by set membership
+	expected := map[string]bool{"dark": true, "light": true, "auto": true}
+	for _, th := range themes {
+		if !expected[th] {
+			t.Errorf("unexpected theme %q", th)
+		}
 	}
 }
 
@@ -1115,14 +1122,14 @@ func TestValidateSetting_Comprehensive(t *testing.T) {
 			key:     "cache_max_size",
 			value:   "-1",
 			wantErr: true,
-			errMsg:  "size must be non-negative",
+			errMsg:  "cache max size must be non-negative",
 		},
 		{
 			name:    "cache max size invalid format",
 			key:     "cache_max_size",
 			value:   "not-a-number",
 			wantErr: true,
-			errMsg:  "invalid size value",
+			errMsg:  "invalid cache max size",
 		},
 		// cache_max_entry_size validation
 		{
@@ -1136,7 +1143,7 @@ func TestValidateSetting_Comprehensive(t *testing.T) {
 			key:     "cache_max_entry_size",
 			value:   "-1",
 			wantErr: true,
-			errMsg:  "size must be non-negative",
+			errMsg:  "cache max entry size must be non-negative",
 		},
 		// db_max_pool_size validation
 		{
@@ -1189,15 +1196,14 @@ func TestValidateSetting_Comprehensive(t *testing.T) {
 			name:    "db min idle exceeds max",
 			key:     "db_min_idle_connections",
 			value:   "200",
-			wantErr: true,
-			errMsg:  "cannot exceed max pool size",
+			wantErr: false, // cross-field check is handled by Validate(), not ValidateSetting
 		},
 		{
 			name:    "db min idle invalid format",
 			key:     "db_min_idle_connections",
 			value:   "not-a-number",
 			wantErr: true,
-			errMsg:  "invalid min idle connections value",
+			errMsg:  "invalid db min idle connections",
 		},
 		// worker_pool_max validation
 		{
@@ -1224,7 +1230,7 @@ func TestValidateSetting_Comprehensive(t *testing.T) {
 			key:     "worker_pool_max",
 			value:   "not-a-number",
 			wantErr: true,
-			errMsg:  "invalid worker pool max value",
+			errMsg:  "invalid worker pool max",
 		},
 		// worker_pool_min_idle validation
 		{
@@ -1250,15 +1256,14 @@ func TestValidateSetting_Comprehensive(t *testing.T) {
 			name:    "worker pool min idle exceeds max",
 			key:     "worker_pool_min_idle",
 			value:   "20",
-			wantErr: true,
-			errMsg:  "cannot exceed max",
+			wantErr: false, // cross-field check is handled by Validate(), not ValidateSetting
 		},
 		{
 			name:    "worker pool min idle invalid format",
 			key:     "worker_pool_min_idle",
 			value:   "not-a-number",
 			wantErr: true,
-			errMsg:  "invalid worker pool min idle value",
+			errMsg:  "invalid worker pool min idle",
 		},
 		// queue_size validation
 		{
@@ -1279,7 +1284,7 @@ func TestValidateSetting_Comprehensive(t *testing.T) {
 			key:     "queue_size",
 			value:   "not-a-number",
 			wantErr: true,
-			errMsg:  "invalid queue size value",
+			errMsg:  "invalid queue size",
 		},
 		{
 			name:    "queue size boundary",
@@ -1446,18 +1451,14 @@ func TestFileExists(t *testing.T) {
 	}
 }
 
-func TestLoadYAML_EnableCachePreload(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.yaml")
-	if err := os.WriteFile(path, []byte("enable-cache-preload: false\n"), 0o644); err != nil {
-		t.Fatalf("failed to write yaml: %v", err)
+func TestApplyYAMLValues_EnableCachePreload(t *testing.T) {
+	raw := map[string]interface{}{"enable-cache-preload": false}
+	cfg := DefaultConfig()
+	if err := applyYAMLValues(cfg, raw); err != nil {
+		t.Fatalf("applyYAMLValues failed: %v", err)
 	}
-
-	cfg, err := loadYAMLConfigForConfig(path)
-	if err != nil {
-		t.Fatalf("loadYAMLConfigForConfig failed: %v", err)
-	}
-	if cfg.EnableCachePreload == nil || *cfg.EnableCachePreload != false {
-		t.Fatalf("expected enable-cache-preload false, got %#v", cfg.EnableCachePreload)
+	if cfg.EnableCachePreload {
+		t.Fatalf("expected EnableCachePreload false, got true")
 	}
 }
 
@@ -1479,32 +1480,29 @@ func TestConfig_ToMap_MaxHTTPCacheEntryInsertPerTransaction(t *testing.T) {
 	}
 }
 
-func TestLoadYAMLConfigForConfig(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.yaml")
-	if err := os.WriteFile(path, []byte("listener-port: 9091\nlog-level: warn\n"), 0o644); err != nil {
-		t.Fatalf("failed to write yaml: %v", err)
+func TestApplyYAMLValues(t *testing.T) {
+	raw := map[string]interface{}{
+		"listener-port": 9091,
+		"log-level":     "warn",
 	}
-
-	cfg, err := loadYAMLConfigForConfig(path)
-	if err != nil {
-		t.Fatalf("loadYAMLConfigForConfig failed: %v", err)
+	cfg := DefaultConfig()
+	if err := applyYAMLValues(cfg, raw); err != nil {
+		t.Fatalf("applyYAMLValues failed: %v", err)
 	}
-	if cfg.ListenerPort == nil || *cfg.ListenerPort != 9091 {
-		t.Fatalf("expected listener-port 9091, got %#v", cfg.ListenerPort)
+	if cfg.ListenerPort != 9091 {
+		t.Fatalf("expected listener-port 9091, got %d", cfg.ListenerPort)
 	}
-	if cfg.LogLevel == nil || *cfg.LogLevel != "warn" {
-		t.Fatalf("expected log-level warn, got %#v", cfg.LogLevel)
+	if cfg.LogLevel != "warn" {
+		t.Fatalf("expected log-level warn, got %q", cfg.LogLevel)
 	}
 }
 
-func TestLoadYAMLConfigForConfig_Invalid(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.yaml")
-	if err := os.WriteFile(path, []byte("listener-port: ["), 0o644); err != nil {
-		t.Fatalf("failed to write yaml: %v", err)
-	}
-
-	if _, err := loadYAMLConfigForConfig(path); err == nil {
-		t.Fatal("expected error for invalid yaml")
+func TestApplyYAMLValues_UnknownKey(t *testing.T) {
+	raw := map[string]interface{}{"unknown-key": "value"}
+	cfg := DefaultConfig()
+	// Unknown keys are silently skipped; the config must be unchanged.
+	if err := applyYAMLValues(cfg, raw); err != nil {
+		t.Fatalf("applyYAMLValues should skip unknown keys, got error: %v", err)
 	}
 }
 
@@ -1796,12 +1794,51 @@ func TestRestoreLastKnownGood(t *testing.T) {
 	}
 }
 
-func TestApplyYAMLConfigToConfig_InvalidDuration(t *testing.T) {
+func TestApplyYAMLValues_InvalidDuration(t *testing.T) {
+	raw := map[string]interface{}{"cache-max-time": "not-a-duration"}
 	cfg := DefaultConfig()
-	yaml := &yamlConfigForConfig{CacheMaxTime: new("not-a-duration")}
-	applyYAMLConfigToConfig(cfg, yaml)
+	if err := applyYAMLValues(cfg, raw); err == nil {
+		t.Fatal("expected error for invalid duration, got nil")
+	}
 	if cfg.CacheMaxTime != DefaultConfig().CacheMaxTime {
 		t.Fatal("expected CacheMaxTime to remain unchanged on invalid duration")
+	}
+}
+
+func TestInvalidYAMLCacheMaxTimeCausesApplyErrorButLoadFromYAMLLogsAndContinues(t *testing.T) {
+	// applyYAMLValues must surface an error for unparseable duration values.
+	cfg := DefaultConfig()
+	raw := map[string]interface{}{"cache-max-time": "notaduration"}
+	if err := applyYAMLValues(cfg, raw); err == nil {
+		t.Fatal("applyYAMLValues should return an error for invalid cache-max-time")
+	}
+
+	// LoadFromYAML must log a warning and continue, leaving the default value untouched.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	configDir := filepath.Join(home, ".config", "sfpg")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("failed to create config dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "config.yaml"), []byte("cache-max-time: notaduration\n"), 0o644); err != nil {
+		t.Fatalf("failed to write invalid config: %v", err)
+	}
+
+	var buf bytes.Buffer
+	oldLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(oldLogger) })
+
+	cfg = DefaultConfig()
+	if err := cfg.LoadFromYAML(); err != nil {
+		t.Fatalf("LoadFromYAML should continue on invalid duration, got: %v", err)
+	}
+	if cfg.CacheMaxTime != DefaultConfig().CacheMaxTime {
+		t.Fatalf("CacheMaxTime should remain at default after invalid YAML, got %v", cfg.CacheMaxTime)
+	}
+	if !strings.Contains(buf.String(), "cache-max-time") {
+		t.Fatalf("expected warning log for cache-max-time, got: %q", buf.String())
 	}
 }
 

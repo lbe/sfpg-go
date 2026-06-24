@@ -44,16 +44,21 @@ func TestMockCacheStore(t *testing.T) {
 	}
 
 	// Test Delete
-	if err := store.Delete(ctx, "test-key"); err != nil {
-		t.Fatalf("delete failed: %v", err)
+	if delErr := store.Delete(ctx, "test-key"); delErr != nil {
+		t.Fatalf("delete failed: %v", delErr)
 	}
-	got, _ = store.Get(ctx, "test-key")
+	got, err = store.Get(ctx, "test-key")
+	if err != nil {
+		t.Fatalf("unexpected Get error after delete: %v", err)
+	}
 	if got != nil {
 		t.Error("expected nil after delete")
 	}
 
 	// Test Clear
-	store.Store(ctx, entry)
+	if err := store.Store(ctx, entry); err != nil {
+		t.Fatalf("store failed: %v", err)
+	}
 	if err := store.Clear(ctx); err != nil {
 		t.Fatalf("clear failed: %v", err)
 	}
@@ -117,7 +122,11 @@ func BenchmarkMockCacheStore(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		entry.Key = string(rune(i))
-		store.Store(ctx, entry)
-		store.Get(ctx, entry.Key)
+		if err := store.Store(ctx, entry); err != nil {
+			b.Fatalf("store failed: %v", err)
+		}
+		if _, err := store.Get(ctx, entry.Key); err != nil {
+			b.Fatalf("get failed: %v", err)
+		}
 	}
 }

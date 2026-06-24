@@ -5,6 +5,7 @@ package server
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -48,7 +49,7 @@ func TestConfigHelp_DatabaseSchema_HelpTextColumn(t *testing.T) {
 	}
 	defer m.Close()
 
-	if upErr := m.Up(); upErr != nil && upErr != migrate.ErrNoChange {
+	if upErr := m.Up(); upErr != nil && !errors.Is(upErr, migrate.ErrNoChange) {
 		t.Fatalf("failed to run migrations: %v", upErr)
 	}
 
@@ -97,7 +98,7 @@ func TestConfigHelp_DatabaseSchema_ExampleValueColumn(t *testing.T) {
 	}
 	defer m.Close()
 
-	if upErr := m.Up(); upErr != nil && upErr != migrate.ErrNoChange {
+	if upErr := m.Up(); upErr != nil && !errors.Is(upErr, migrate.ErrNoChange) {
 		t.Fatalf("failed to run migrations: %v", upErr)
 	}
 

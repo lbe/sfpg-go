@@ -3,6 +3,7 @@ package parallelwalkdir
 
 import (
 	"context"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -192,8 +193,8 @@ func testWalkWithOptions(t *testing.T, root string, opts []Option, expectedFiles
 
 	// Only check details of the error if errors are expected.
 	if expectedErrors > 0 {
-		pathErr, ok := errs[0].(*fs.PathError)
-		if !ok {
+		var pathErr *fs.PathError
+		if !errors.As(errs[0], &pathErr) {
 			t.Fatalf("Expected error to be of type *fs.PathError, but got %T", errs[0])
 		}
 		if pathErr.Op != "ReadDir" {

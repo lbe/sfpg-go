@@ -88,9 +88,9 @@ func TestETagIncrement_InvalidatesHTTPCache(t *testing.T) {
 	}
 
 	// Call ConfigIncrementETag via handler (simulates user clicking "Increment ETag")
-	h := app.configHandlers
+	h := app.configETagHandler
 	if h == nil {
-		t.Fatal("app.configHandlers is nil")
+		t.Fatal("app.configETagHandler is nil")
 	}
 	formData := strings.NewReader("csrf_token=valid-token")
 	req := httptest.NewRequest("POST", "/config/increment-etag", formData)

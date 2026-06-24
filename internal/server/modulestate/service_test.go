@@ -3,6 +3,7 @@ package modulestate
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -61,7 +62,7 @@ func setupModuleStatePool(t *testing.T) (*dbconnpool.DbSQLConnPool, func()) {
 		t.Fatalf("failed to create migrate instance: %v", err)
 	}
 
-	if upErr := m.Up(); upErr != nil && upErr != migrate.ErrNoChange {
+	if upErr := m.Up(); upErr != nil && !errors.Is(upErr, migrate.ErrNoChange) {
 		db.Close()
 		t.Fatalf("failed to apply migrations: %v", upErr)
 	}
@@ -71,7 +72,7 @@ func setupModuleStatePool(t *testing.T) (*dbconnpool.DbSQLConnPool, func()) {
 		db.Close()
 		t.Fatalf("failed to create thumbs migrator: %v", err)
 	}
-	if thumbsErr := thumbsMigrator.Up(); thumbsErr != nil && thumbsErr != migrate.ErrNoChange {
+	if thumbsErr := thumbsMigrator.Up(); thumbsErr != nil && !errors.Is(thumbsErr, migrate.ErrNoChange) {
 		thumbsMigrator.Close()
 		db.Close()
 		t.Fatalf("failed to apply thumbs migrations: %v", thumbsErr)

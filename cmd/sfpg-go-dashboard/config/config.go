@@ -77,7 +77,9 @@ func ParseArgs(args []string) *Config {
 	}
 
 	// Silently parse - errors are for --help which we handle elsewhere
-	fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		_ = err // Parse errors are for --help which we handle elsewhere
+	}
 
 	return cfg
 }

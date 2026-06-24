@@ -83,7 +83,7 @@ func TestSegment(t *testing.T) {
 
 	_, err = seg.remove()
 	if err != nil {
-		if err != errEmptySegment {
+		if !errors.Is(err, errEmptySegment) {
 			t.Fatalf("Remove() failed with '%s'\n", err.Error())
 		}
 	}
@@ -170,7 +170,7 @@ func TestSegment_ErrorTypes(t *testing.T) {
 	if !strings.HasPrefix(corrupted.Error(), "segment file /tmp/segment.dque is corrupted: root cause") {
 		t.Fatalf("unexpected corrupted error message: %s", corrupted.Error())
 	}
-	if corrupted.Unwrap() != root {
+	if !errors.Is(corrupted, root) {
 		t.Fatal("ErrCorruptedSegment.Unwrap() should return the wrapped error")
 	}
 
@@ -178,7 +178,7 @@ func TestSegment_ErrorTypes(t *testing.T) {
 	if !strings.HasPrefix(decode.Error(), "object in segment file /tmp/segment.dque cannot be decoded: root cause") {
 		t.Fatalf("unexpected decode error message: %s", decode.Error())
 	}
-	if decode.Unwrap() != root {
+	if !errors.Is(decode, root) {
 		t.Fatal("ErrUnableToDecode.Unwrap() should return the wrapped error")
 	}
 }

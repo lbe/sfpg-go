@@ -2,9 +2,7 @@ package config
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
-	"time"
 )
 
 // GuardrailWarning represents a non-fatal configuration anomaly that should be
@@ -106,120 +104,13 @@ func (c *Config) Validate() error {
 // ValidateSetting validates a single configuration setting by key and value.
 // Returns an error if the value is invalid for that setting.
 func (c *Config) ValidateSetting(key, value string) error {
-	switch key {
-	case "listener_port":
-		port, err := strconv.Atoi(value)
-		if err != nil {
-			return fmt.Errorf("invalid port value %q: %w", value, err)
+	for _, f := range fields() {
+		if f.dbKey == key {
+			tmp := *c
+			return f.set(&tmp, value)
 		}
-		if port < 1 || port > 65535 {
-			return fmt.Errorf("port must be between 1 and 65535, got %d", port)
-		}
-	case "log_level":
-		validLogLevels := map[string]bool{
-			"debug": true,
-			"info":  true,
-			"warn":  true,
-			"error": true,
-		}
-		if !validLogLevels[strings.ToLower(value)] {
-			return fmt.Errorf("invalid log level %q, must be one of: debug, info, warn, error", value)
-		}
-	case "log_rollover":
-		validRollovers := map[string]bool{
-			"daily":   true,
-			"weekly":  true,
-			"monthly": true,
-		}
-		if !validRollovers[strings.ToLower(value)] {
-			return fmt.Errorf("invalid log rollover %q, must be one of: daily, weekly, monthly", value)
-		}
-	case "log_retention_count":
-		count, err := strconv.Atoi(value)
-		if err != nil {
-			return fmt.Errorf("invalid log retention count %q: %w", value, err)
-		}
-		if count < 1 {
-			return fmt.Errorf("log retention count must be at least 1, got %d", count)
-		}
-	case "session_same_site":
-		validSameSite := map[string]bool{
-			"Lax":    true,
-			"Strict": true,
-			"None":   true,
-		}
-		if !validSameSite[value] {
-			return fmt.Errorf("invalid session same-site %q, must be one of: Lax, Strict, None", value)
-		}
-	case "cache_max_size", "cache_max_entry_size":
-		size, err := strconv.ParseInt(value, 10, 64)
-		if err != nil {
-			return fmt.Errorf("invalid size value %q: %w", value, err)
-		}
-		if size < 0 {
-			return fmt.Errorf("size must be non-negative, got %d", size)
-		}
-	case "db_max_pool_size":
-		size, err := strconv.Atoi(value)
-		if err != nil {
-			return fmt.Errorf("invalid db max pool size %q: %w", value, err)
-		}
-		if size < 1 {
-			return fmt.Errorf("database max pool size must be at least 1, got %d", size)
-		}
-	case "db_min_idle_connections":
-		count, err := strconv.Atoi(value)
-		if err != nil {
-			return fmt.Errorf("invalid min idle connections value %q: %w", value, err)
-		}
-		if count < 0 {
-			return fmt.Errorf("database min idle connections must be non-negative, got %d", count)
-		}
-		// Check if it exceeds max pool size (if max is set)
-		if c.DBMaxPoolSize > 0 && count > c.DBMaxPoolSize {
-			return fmt.Errorf("database min idle connections (%d) cannot exceed max pool size (%d)", count, c.DBMaxPoolSize)
-		}
-	case "worker_pool_max":
-		max, err := strconv.Atoi(value)
-		if err != nil {
-			return fmt.Errorf("invalid worker pool max value %q: %w", value, err)
-		}
-		if max < 0 {
-			return fmt.Errorf("worker pool max must be non-negative, got %d", max)
-		}
-	case "worker_pool_min_idle":
-		min, err := strconv.Atoi(value)
-		if err != nil {
-			return fmt.Errorf("invalid worker pool min idle value %q: %w", value, err)
-		}
-		if min < 0 {
-			return fmt.Errorf("worker pool min idle must be non-negative, got %d", min)
-		}
-		// Check if it exceeds max (if both are set)
-		if c.WorkerPoolMax > 0 && min > 0 && min > c.WorkerPoolMax {
-			return fmt.Errorf("worker pool min idle (%d) cannot exceed max (%d)", min, c.WorkerPoolMax)
-		}
-	case "db_pool_monitor_interval":
-		duration, err := time.ParseDuration(value)
-		if err != nil {
-			return fmt.Errorf("invalid db pool monitor interval %q: %w", value, err)
-		}
-		if duration < 0 {
-			return fmt.Errorf("db pool monitor interval must be non-negative, got %v", duration)
-		}
-	case "queue_size":
-		size, err := strconv.Atoi(value)
-		if err != nil {
-			return fmt.Errorf("invalid queue size value %q: %w", value, err)
-		}
-		if size < 1 {
-			return fmt.Errorf("queue size must be at least 1, got %d", size)
-		}
-	default:
-		// Unknown keys are not validated (they might be valid but not yet implemented)
-		return nil
 	}
-	return nil
+	return nil // unknown keys are not validated
 }
 
 // ValidateGuardrails returns non-fatal warnings for dangerous or contradictory

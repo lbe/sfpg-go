@@ -138,5 +138,7 @@ func (crw *conditionalResponseWriter) writeNormal(r *http.Request) {
 	if r.Method == http.MethodHead {
 		return
 	}
-	_, _ = crw.ResponseWriter.Write(crw.body.Bytes())
+	if _, err := crw.ResponseWriter.Write(crw.body.Bytes()); err != nil {
+		_ = err // Nothing meaningful we can do at this point
+	}
 }

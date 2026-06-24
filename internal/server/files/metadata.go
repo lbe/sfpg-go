@@ -46,7 +46,7 @@ func DetectMimeType(f *File, imageFile *os.File) error {
 	bufPtr := BufPool.Get()
 	bytesRead, err := io.ReadAtLeast(imageFile, *bufPtr, l)
 	if err != nil {
-		if err != io.EOF && err != io.ErrUnexpectedEOF {
+		if !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
 			slog.Error("error while detecting MIME type", "err", err, "path", f.Path)
 			BufPool.Put(bufPtr)
 			return fmt.Errorf("failed to read file for MIME type detection: %w", err)

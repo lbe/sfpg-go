@@ -760,7 +760,7 @@ func TestSubmit_OverflowToDQue(t *testing.T) {
 
 	// Submit third item — channel is full, should overflow to dque.
 	err = wb.Submit(overflowItem{Val: 3})
-	if err == ErrFull {
+	if errors.Is(err, ErrFull) {
 		t.Error("Submit returned ErrFull but should have overflowed to dque when DQueDirPath is configured")
 	}
 	if err != nil {
@@ -831,7 +831,7 @@ func TestSubmit_Overflow_IncrementsOverflowCount(t *testing.T) {
 	const overflowCount = 3
 	for i := range overflowCount {
 		err = wb.Submit(overflowItem{Val: 10 + i})
-		if err == ErrFull {
+		if errors.Is(err, ErrFull) {
 			t.Errorf("overflow %d: expected dque overflow, got ErrFull", i)
 		}
 		if err != nil {
@@ -892,7 +892,7 @@ func TestSubmit_Overflow_IncrementsPendingCount(t *testing.T) {
 	const overflowCount = 3
 	for i := range overflowCount {
 		err = wb.Submit(overflowItem{Val: 10 + i})
-		if err == ErrFull {
+		if errors.Is(err, ErrFull) {
 			t.Errorf("overflow %d: expected dque overflow, got ErrFull", i)
 		}
 		if err != nil {
@@ -953,7 +953,7 @@ func TestSubmit_Overflow_SendsDqNotify(t *testing.T) {
 
 	// Submit overflow item — should signal dqNotify
 	err = wb.Submit(overflowItem{Val: 3})
-	if err == ErrFull {
+	if errors.Is(err, ErrFull) {
 		t.Error("Submit returned ErrFull but should have overflowed to dque")
 	}
 	if err != nil {
@@ -1276,7 +1276,7 @@ func TestPendingCount_NeverNegative(t *testing.T) {
 	for i := range 100 {
 		for {
 			err := wb.Submit(negItem{Val: i})
-			if err == ErrFull {
+			if errors.Is(err, ErrFull) {
 				time.Sleep(time.Millisecond)
 				continue
 			}

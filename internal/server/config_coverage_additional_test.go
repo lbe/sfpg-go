@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/lbe/sfpg-go/internal/gallerydb"
+	"github.com/lbe/sfpg-go/internal/server/config"
 )
 
 // testConfigSaver implements ConfigSaver for testing.
@@ -29,7 +30,7 @@ func (tcs *testConfigSaver) UpsertConfigValueOnly(ctx context.Context, arg galle
 // including cases where no config files exist, valid files, and invalid YAML syntax.
 func TestConfigLoadFromYAML_Comprehensive(t *testing.T) {
 	t.Run("no config files exist", func(t *testing.T) {
-		cfg := DefaultConfig()
+		cfg := config.DefaultConfig()
 		// Use a temp dir that definitely won't have config files
 		originalRoot := cfg.ImageDirectory
 		defer func() {
@@ -57,7 +58,7 @@ log-level: "info"
 
 		// Temporarily override getopt.FindConfigFiles to return our test file
 		// This is a bit tricky, but we can test the function directly
-		cfg := DefaultConfig()
+		cfg := config.DefaultConfig()
 		// We can't easily mock getopt.FindConfigFiles, so we'll test the integration
 		// by ensuring the function handles the case where files exist
 		_ = cfg
@@ -67,7 +68,7 @@ log-level: "info"
 	t.Run("invalid YAML file continues to next", func(t *testing.T) {
 		// This tests the error handling path in LoadFromYAML
 		// where it logs a warning and continues
-		cfg := DefaultConfig()
+		cfg := config.DefaultConfig()
 		err := cfg.LoadFromYAML()
 		// Should not error even if files are invalid (they're logged and skipped)
 		if err != nil {
@@ -79,8 +80,8 @@ log-level: "info"
 // TestConfigIdentifyChanges_Comprehensive tests identifyChanges with various change scenarios,
 // ensuring all config fields are correctly detected as changed when modified.
 func TestConfigIdentifyChanges_Comprehensive(t *testing.T) {
-	cfg1 := DefaultConfig()
-	cfg2 := DefaultConfig()
+	cfg1 := config.DefaultConfig()
+	cfg2 := config.DefaultConfig()
 
 	t.Run("no changes", func(t *testing.T) {
 		changes := cfg1.IdentifyChanges(cfg2)
@@ -132,42 +133,42 @@ func TestConfigIdentifyChanges_Comprehensive(t *testing.T) {
 		// Test each field type to ensure all paths are covered
 		testCases := []struct {
 			name     string
-			modify   func(*Config)
+			modify   func(*config.Config)
 			expected string
 		}{
-			{"listener_address", func(c *Config) { c.ListenerAddress = "1.2.3.4" }, "listener-address"},
-			{"listener_port", func(c *Config) { c.ListenerPort = 9999 }, "listener-port"},
-			{"log_directory", func(c *Config) { c.LogDirectory = "/tmp/logs" }, "log-directory"},
-			{"log_level", func(c *Config) { c.LogLevel = "warn" }, "log-level"},
-			{"log_rollover", func(c *Config) { c.LogRollover = "daily" }, "log-rollover"},
-			{"log_retention_count", func(c *Config) { c.LogRetentionCount = 10 }, "log-retention-count"},
-			{"site_name", func(c *Config) { c.SiteName = "New Site" }, "site-name"},
-			{"current_theme", func(c *Config) { c.CurrentTheme = "light" }, "current-theme"},
-			{"image_directory", func(c *Config) { c.ImageDirectory = "/tmp/images" }, "image-directory"},
-			{"session_max_age", func(c *Config) { c.SessionMaxAge = 3600 }, "session-max-age"},
-			{"session_http_only", func(c *Config) { c.SessionHttpOnly = false }, "session-http-only"},
-			{"session_secure", func(c *Config) { c.SessionSecure = false }, "session-secure"},
-			{"session_same_site", func(c *Config) { c.SessionSameSite = "Strict" }, "session-same-site"},
-			{"server_compression_enable", func(c *Config) { c.ServerCompressionEnable = false }, "compression"},
-			{"enable_http_cache", func(c *Config) { c.EnableHTTPCache = false }, "http-cache"},
-			{"cache_max_size", func(c *Config) { c.CacheMaxSize = 1000000 }, "cache-max-size"},
-			{"cache_max_time", func(c *Config) { c.CacheMaxTime = 1 * time.Hour }, "cache-max-time"},
-			{"cache_max_entry_size", func(c *Config) { c.CacheMaxEntrySize = 5000000 }, "cache-max-entry-size"},
-			{"cache_cleanup_interval", func(c *Config) { c.CacheCleanupInterval = 10 * time.Minute }, "cache-cleanup-interval"},
-			{"db_max_pool_size", func(c *Config) { c.DBMaxPoolSize = 50 }, "db-max-pool-size"},
-			{"db_min_idle_connections", func(c *Config) { c.DBMinIdleConnections = 5 }, "db-min-idle-connections"},
-			{"db_optimize_interval", func(c *Config) { c.DBOptimizeInterval = 2 * time.Hour }, "db-optimize-interval"},
-			{"worker_pool_max", func(c *Config) { c.WorkerPoolMax = 20 }, "worker-pool-max"},
-			{"worker_pool_min_idle", func(c *Config) { c.WorkerPoolMinIdle = 5 }, "worker-pool-min-idle"},
-			{"worker_pool_max_idle_time", func(c *Config) { c.WorkerPoolMaxIdleTime = 20 * time.Second }, "worker-pool-max-idle-time"},
-			{"db_pool_monitor_interval", func(c *Config) { c.DBPoolMonitorInterval = 30 * time.Second }, "db-pool-monitor-interval"},
-			{"queue_size", func(c *Config) { c.QueueSize = 5000 }, "queue-size"},
-			{"run_file_discovery", func(c *Config) { c.RunFileDiscovery = false }, "discover"},
+			{"listener_address", func(c *config.Config) { c.ListenerAddress = "1.2.3.4" }, "listener-address"},
+			{"listener_port", func(c *config.Config) { c.ListenerPort = 9999 }, "listener-port"},
+			{"log_directory", func(c *config.Config) { c.LogDirectory = "/tmp/logs" }, "log-directory"},
+			{"log_level", func(c *config.Config) { c.LogLevel = "warn" }, "log-level"},
+			{"log_rollover", func(c *config.Config) { c.LogRollover = "daily" }, "log-rollover"},
+			{"log_retention_count", func(c *config.Config) { c.LogRetentionCount = 10 }, "log-retention-count"},
+			{"site_name", func(c *config.Config) { c.SiteName = "New Site" }, "site-name"},
+			{"current_theme", func(c *config.Config) { c.CurrentTheme = "light" }, "current-theme"},
+			{"image_directory", func(c *config.Config) { c.ImageDirectory = "/tmp/images" }, "image-directory"},
+			{"session_max_age", func(c *config.Config) { c.SessionMaxAge = 3600 }, "session-max-age"},
+			{"session_http_only", func(c *config.Config) { c.SessionHttpOnly = false }, "session-http-only"},
+			{"session_secure", func(c *config.Config) { c.SessionSecure = false }, "session-secure"},
+			{"session_same_site", func(c *config.Config) { c.SessionSameSite = "Strict" }, "session-same-site"},
+			{"server_compression_enable", func(c *config.Config) { c.ServerCompressionEnable = false }, "compression"},
+			{"enable_http_cache", func(c *config.Config) { c.EnableHTTPCache = false }, "http-cache"},
+			{"cache_max_size", func(c *config.Config) { c.CacheMaxSize = 1000000 }, "cache-max-size"},
+			{"cache_max_time", func(c *config.Config) { c.CacheMaxTime = 1 * time.Hour }, "cache-max-time"},
+			{"cache_max_entry_size", func(c *config.Config) { c.CacheMaxEntrySize = 5000000 }, "cache-max-entry-size"},
+			{"cache_cleanup_interval", func(c *config.Config) { c.CacheCleanupInterval = 10 * time.Minute }, "cache-cleanup-interval"},
+			{"db_max_pool_size", func(c *config.Config) { c.DBMaxPoolSize = 50 }, "db-max-pool-size"},
+			{"db_min_idle_connections", func(c *config.Config) { c.DBMinIdleConnections = 5 }, "db-min-idle-connections"},
+			{"db_optimize_interval", func(c *config.Config) { c.DBOptimizeInterval = 2 * time.Hour }, "db-optimize-interval"},
+			{"worker_pool_max", func(c *config.Config) { c.WorkerPoolMax = 20 }, "worker-pool-max"},
+			{"worker_pool_min_idle", func(c *config.Config) { c.WorkerPoolMinIdle = 5 }, "worker-pool-min-idle"},
+			{"worker_pool_max_idle_time", func(c *config.Config) { c.WorkerPoolMaxIdleTime = 20 * time.Second }, "worker-pool-max-idle-time"},
+			{"db_pool_monitor_interval", func(c *config.Config) { c.DBPoolMonitorInterval = 30 * time.Second }, "db-pool-monitor-interval"},
+			{"queue_size", func(c *config.Config) { c.QueueSize = 5000 }, "queue-size"},
+			{"run_file_discovery", func(c *config.Config) { c.RunFileDiscovery = false }, "discover"},
 		}
 
 		for _, tc := range testCases {
 			t.Run(tc.name, func(t *testing.T) {
-				testCfg := DefaultConfig()
+				testCfg := config.DefaultConfig()
 				tc.modify(testCfg)
 				changes := cfg1.IdentifyChanges(testCfg)
 				found := slices.Contains(changes, tc.expected)
@@ -188,7 +189,7 @@ func TestConfigImportFromYAML_ErrorPaths(t *testing.T) {
 	saver := &testConfigSaver{queries: q}
 
 	t.Run("invalid YAML syntax", func(t *testing.T) {
-		cfg := DefaultConfig()
+		cfg := config.DefaultConfig()
 		invalidYAML := `
 listener-address: "0.0.0.0"
   invalid-indentation: "bad"
@@ -203,7 +204,7 @@ listener-address: "0.0.0.0"
 	})
 
 	t.Run("session-secret rejection", func(t *testing.T) {
-		cfg := DefaultConfig()
+		cfg := config.DefaultConfig()
 		yamlWithSecret := `
 listener-port: 8081
 session-secret: "should-be-rejected"
@@ -218,7 +219,7 @@ session-secret: "should-be-rejected"
 	})
 
 	t.Run("valid YAML import", func(t *testing.T) {
-		cfg := DefaultConfig()
+		cfg := config.DefaultConfig()
 		validYAML := `
 listener-address: "127.0.0.1"
 listener-port: 9090

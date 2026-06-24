@@ -133,7 +133,10 @@ func main() {
 	// Output results
 	if *jsonOutput {
 		enc := json.NewEncoder(os.Stdout)
-		enc.Encode(report)
+		if err := enc.Encode(report); err != nil {
+			fmt.Fprintf(os.Stderr, "error encoding JSON: %v\n", err)
+			os.Exit(1)
+		}
 	} else {
 		printHumanReadable(report, *quiet)
 	}

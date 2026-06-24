@@ -510,3 +510,88 @@ func TestE2E_RawImage_Lightbox_InfoBox(t *testing.T) {
 	}
 	resp.Body.Close()
 }
+
+// TestE2E_Serve_RestartSignal verifies that Serve()'s event loop handles
+// a restart signal by shutting down the HTTP server, applying config changes,
+// and restarting on the same port. This closes the coverage gap for the
+// restart signal path in server.go's Serve() loop.
+func TestE2E_Serve_RestartSignal(t *testing.T) {
+	t.Setenv("SEPG_SESSION_SECURE", "false")
+
+	app := CreateApp(t, true)
+
+	// Pick an ephemeral free port
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to find free port: %v", err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	ln.Close()
+	app.opt.Port = getopt.OptInt{Int: port, IsSet: true}
+
+	// Start the server in a goroutine
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = app.Serve()
+	}()
+
+	baseURL := fmt.Sprintf("http://127.0.0.1:%d", port)
+	client := &http.Client{Timeout: 2 * time.Second}
+
+	// Wait for server to be ready
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		resp, err := client.Get(baseURL + "/gallery/1")
+		if err == nil {
+			resp.Body.Close()
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("server did not start: %v", err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	// Verify server responds before restart
+	t.Logf("server started on port %d, sending restart signal", port)
+
+	// Send restart signal via the restart channel
+	app.restartMu.RLock()
+	restartCh := app.restartCh
+	app.restartMu.RUnlock()
+
+	select {
+	case restartCh <- struct{}{}:
+	default:
+		t.Fatal("restart channel full, cannot send signal")
+	}
+
+	// Wait for the server to restart.
+	// During shutdown+rebind the server will be briefly unreachable;
+	// poll until it responds again.
+	deadline = time.Now().Add(5 * time.Second)
+	restarted := false
+	for time.Now().Before(deadline) {
+		resp, err := client.Get(baseURL + "/gallery/1")
+		if err == nil {
+			resp.Body.Close()
+			restarted = true
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	if !restarted {
+		t.Fatal("server did not restart within 5 seconds")
+	}
+
+	// Verify the server handles requests after restart
+	resp, err := client.Get(baseURL + "/gallery/1")
+	if err != nil {
+		t.Fatalf("server not responding after restart: %v", err)
+	}
+	resp.Body.Close()
+
+	t.Log("server restarted successfully")
+}

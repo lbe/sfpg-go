@@ -60,9 +60,18 @@ func ParseCoordinate(coord string) (float64, error) {
 // parseDMS converts a Degrees, Minutes, Seconds (DMS) coordinate from string matches
 // into a float64 decimal value.
 func parseDMS(matches []string) (float64, error) {
-	degrees, _ := strconv.ParseFloat(matches[1], 64)
-	minutes, _ := strconv.ParseFloat(matches[2], 64)
-	seconds, _ := strconv.ParseFloat(matches[3], 64)
+	degrees, err := strconv.ParseFloat(matches[1], 64)
+	if err != nil {
+		return 0, err
+	}
+	minutes, err := strconv.ParseFloat(matches[2], 64)
+	if err != nil {
+		return 0, err
+	}
+	seconds, err := strconv.ParseFloat(matches[3], 64)
+	if err != nil {
+		return 0, err
+	}
 	direction := strings.ToUpper(matches[4])
 
 	decimal := degrees + minutes/60 + seconds/3600
@@ -77,8 +86,14 @@ func parseDMS(matches []string) (float64, error) {
 // parseDM converts a Degrees, Minutes (DM) coordinate from string matches
 // into a float64 decimal value.
 func parseDM(matches []string) (float64, error) {
-	degrees, _ := strconv.ParseFloat(matches[1], 64)
-	minutes, _ := strconv.ParseFloat(matches[2], 64)
+	degrees, err := strconv.ParseFloat(matches[1], 64)
+	if err != nil {
+		return 0, err
+	}
+	minutes, err := strconv.ParseFloat(matches[2], 64)
+	if err != nil {
+		return 0, err
+	}
 	direction := strings.ToUpper(matches[3])
 
 	decimal := degrees + minutes/60
@@ -93,7 +108,10 @@ func parseDM(matches []string) (float64, error) {
 // parseDecimalCompass adjusts a decimal coordinate value based on a compass direction
 // (N, S, E, W) to return a float64 decimal value.
 func parseDecimalCompass(matches []string) (float64, error) {
-	value, _ := strconv.ParseFloat(matches[1], 64)
+	value, err := strconv.ParseFloat(matches[1], 64)
+	if err != nil {
+		return 0, err
+	}
 	direction := strings.ToUpper(matches[2])
 
 	if direction == "S" || direction == "W" {

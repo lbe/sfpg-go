@@ -12,7 +12,6 @@ import (
 type File struct {
 	Ok                  bool
 	Exists              bool
-	HadInvalidEntry     bool // true if an invalid_files row existed for this path (set in checkIfFileModifiedCore)
 	ImagesDir           string
 	Path                string
 	File                gallerydb.File

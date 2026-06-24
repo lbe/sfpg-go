@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -149,7 +150,7 @@ func TestCreateDatabasePools(t *testing.T) {
 		t.Fatalf("failed to create migrate instance: %v", err)
 	}
 
-	if upErr := m.Up(); upErr != nil && upErr != migrate.ErrNoChange {
+	if upErr := m.Up(); upErr != nil && !errors.Is(upErr, migrate.ErrNoChange) {
 		db.Close()
 		t.Fatalf("failed to apply migrations: %v", upErr)
 	}

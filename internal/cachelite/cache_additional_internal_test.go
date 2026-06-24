@@ -33,7 +33,9 @@ func TestStoreCacheEntryInTx_Commits(t *testing.T) {
 		CreatedAt: time.Now().Unix(),
 	}
 	if err = StoreCacheEntryInTx(ctx, tx, entry); err != nil {
-		_ = tx.Rollback()
+		if rbErr := tx.Rollback(); rbErr != nil {
+			t.Logf("rollback error: %v", rbErr)
+		}
 		t.Fatalf("StoreCacheEntryInTx: %v", err)
 	}
 	if err = tx.Commit(); err != nil {
@@ -64,7 +66,9 @@ func TestStoreCacheEntryInTx_NilEntry(t *testing.T) {
 		t.Fatalf("BeginTx: %v", err)
 	}
 	if err := StoreCacheEntryInTx(ctx, tx, nil); err != nil {
-		_ = tx.Rollback()
+		if rbErr := tx.Rollback(); rbErr != nil {
+			t.Logf("rollback error: %v", rbErr)
+		}
 		t.Fatalf("StoreCacheEntryInTx(nil): %v", err)
 	}
 	if err := tx.Commit(); err != nil {

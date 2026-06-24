@@ -71,7 +71,9 @@ func (s *Service) Authenticate(ctx context.Context, username, password string) (
 	user, err := s.store.GetUser(ctx, username)
 	if err != nil {
 		if errors.Is(err, ErrUserNotFound) {
-			_ = s.store.RecordFailedLoginAttempt(ctx, username)
+			if recErr := s.store.RecordFailedLoginAttempt(ctx, username); recErr != nil {
+				return nil, errors.Join(ErrInvalidCredentials, recErr)
+			}
 			return nil, ErrInvalidCredentials
 		}
 		return nil, err
@@ -79,12 +81,16 @@ func (s *Service) Authenticate(ctx context.Context, username, password string) (
 
 	// Validate password
 	if err := verifyPassword(user.Password, password); err != nil {
-		_ = s.store.RecordFailedLoginAttempt(ctx, username)
+		if recErr := s.store.RecordFailedLoginAttempt(ctx, username); recErr != nil {
+			return nil, errors.Join(ErrInvalidCredentials, recErr)
+		}
 		return nil, ErrInvalidCredentials
 	}
 
 	// Success - clear failed attempts
-	_ = s.store.ClearLoginAttempts(ctx, username)
+	if clrErr := s.store.ClearLoginAttempts(ctx, username); clrErr != nil {
+		return nil, clrErr
+	}
 
 	return user, nil
 }

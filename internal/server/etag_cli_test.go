@@ -54,9 +54,8 @@ func TestApp_IncrementETag(t *testing.T) {
 
 func TestApp_InitForIncrementETag(t *testing.T) {
 	// Create app with minimal initialization
-	app := &App{
-		ctx: context.Background(),
-	}
+	app := &App{}
+	app.ctx = context.Background()
 
 	opt := getopt.Opt{}
 	err := app.InitForIncrementETag(opt)

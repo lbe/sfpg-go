@@ -17,9 +17,8 @@ import (
 // ErrNilConfig is returned when a nil config is passed to Save or Validate.
 var ErrNilConfig = errors.New("config cannot be nil")
 
-// ConfigService provides a high-level interface for configuration management.
-// It abstracts away the details of loading, saving, validating, and exporting configuration.
-type ConfigService interface {
+// ConfigStore provides loading, saving, and validating configuration data.
+type ConfigStore interface {
 	// Load loads the current configuration from the database.
 	Load(ctx context.Context) (*Config, error)
 
@@ -28,7 +27,10 @@ type ConfigService interface {
 
 	// Validate validates the configuration and returns an error if invalid.
 	Validate(cfg *Config) error
+}
 
+// ConfigAdmin provides admin-level configuration operations.
+type ConfigAdmin interface {
 	// Export exports the configuration as a YAML string.
 	Export() (string, error)
 
@@ -39,7 +41,7 @@ type ConfigService interface {
 	RestoreLastKnownGood(ctx context.Context) (*Config, error)
 
 	// EnsureDefaults ensures default config (admin creds, default keys) exists in the database.
-	// rootDir is used for default paths (e.g. log_directory). Call when configService is available.
+	// rootDir is used for default paths (e.g. log_directory).
 	EnsureDefaults(ctx context.Context, rootDir string) error
 
 	// GetConfigValue returns the value for key from the config table, or error if not found.
@@ -47,6 +49,12 @@ type ConfigService interface {
 
 	// IncrementETag increments the ETag version in the database and returns the new value.
 	IncrementETag(ctx context.Context) (string, error)
+}
+
+// ConfigService is the union of ConfigStore and ConfigAdmin for backward compatibility.
+type ConfigService interface {
+	ConfigStore
+	ConfigAdmin
 }
 
 // configService is the default implementation of ConfigService.

@@ -99,6 +99,18 @@ type Config struct {
 
 	// Discovery settings (runtime)
 	RunFileDiscovery bool
+
+	// Security settings
+	// LockoutDuration is the account lockout period in seconds after
+	// LockoutThreshold failed login attempts.
+	LockoutDuration int
+
+	// HelpText and ExampleValues are populated by LoadFromDatabase from the
+	// metadata columns stored alongside each config row. Nil when loaded
+	// through other paths (DefaultConfig, YAML, CLI). Used by the config UI
+	// to render inline tooltips; not serialised into exports or saved to DB.
+	HelpText      map[string]string
+	ExampleValues map[string]string
 }
 
 // DefaultConfig returns a Config with all default values.
@@ -148,6 +160,9 @@ func DefaultConfig() *Config {
 
 		// Discovery
 		RunFileDiscovery: true,
+
+		// Security
+		LockoutDuration: 3600, // 1 hour
 	}
 }
 
@@ -166,39 +181,7 @@ func (c *Config) RecoverFromCorruption(defaults *Config) {
 	if defaults == nil {
 		return
 	}
-
-	// Restore all fields from defaults
-	c.ListenerAddress = defaults.ListenerAddress
-	c.ListenerPort = defaults.ListenerPort
-	c.LogDirectory = defaults.LogDirectory
-	c.LogLevel = defaults.LogLevel
-	c.LogRollover = defaults.LogRollover
-	c.LogRetentionCount = defaults.LogRetentionCount
-	c.SiteName = defaults.SiteName
-	c.Themes = make([]string, len(defaults.Themes))
-	copy(c.Themes, defaults.Themes)
-	c.CurrentTheme = defaults.CurrentTheme
-	c.ImageDirectory = defaults.ImageDirectory
-	c.ETagVersion = defaults.ETagVersion
-	c.SessionMaxAge = defaults.SessionMaxAge
-	c.SessionHttpOnly = defaults.SessionHttpOnly
-	c.SessionSecure = defaults.SessionSecure
-	c.SessionSameSite = defaults.SessionSameSite
-	c.ServerCompressionEnable = defaults.ServerCompressionEnable
-	c.EnableHTTPCache = defaults.EnableHTTPCache
-	c.CacheMaxSize = defaults.CacheMaxSize
-	c.CacheMaxTime = defaults.CacheMaxTime
-	c.CacheMaxEntrySize = defaults.CacheMaxEntrySize
-	c.CacheCleanupInterval = defaults.CacheCleanupInterval
-	c.DBMaxPoolSize = defaults.DBMaxPoolSize
-	c.DBMinIdleConnections = defaults.DBMinIdleConnections
-	c.DBOptimizeInterval = defaults.DBOptimizeInterval
-	c.WorkerPoolMax = defaults.WorkerPoolMax
-	c.WorkerPoolMinIdle = defaults.WorkerPoolMinIdle
-	c.WorkerPoolMaxIdleTime = defaults.WorkerPoolMaxIdleTime
-	c.DBPoolMonitorInterval = defaults.DBPoolMonitorInterval
-	c.QueueSize = defaults.QueueSize
-	c.EnableCachePreload = defaults.EnableCachePreload
-	c.MaxHTTPCacheEntryInsertPerTransaction = defaults.MaxHTTPCacheEntryInsertPerTransaction
-	c.RunFileDiscovery = defaults.RunFileDiscovery
+	for _, f := range fields() {
+		f.setFrom(c, defaults)
+	}
 }

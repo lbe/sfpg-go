@@ -5,6 +5,7 @@ package gallerylib
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -85,7 +86,7 @@ func (imp *Importer) CreateRootFolderEntry(ctx context.Context, mtime int64) (in
 	// Try to find an existing root folder first to be race-safe / idempotent
 	if id, err := imp.Q.GetFolderIDByPath(ctx, ""); err == nil {
 		return id, nil
-	} else if err != sql.ErrNoRows {
+	} else if !errors.Is(err, sql.ErrNoRows) {
 		return 0, fmt.Errorf("error checking for existing root folder: %w", err)
 	}
 
@@ -147,7 +148,7 @@ func (imp *Importer) UpsertPathChain(ctx context.Context, path string, mtime, si
 	} else {
 		rootFolderID, err = imp.Q.GetFolderIDByPath(ctx, "")
 		if err != nil {
-			if err == sql.ErrNoRows {
+			if errors.Is(err, sql.ErrNoRows) {
 				// No root folder exists; create it with current time as mtime
 				rootFolderID, err = imp.CreateRootFolderEntry(ctx, time.Now().Unix())
 				if err != nil {
@@ -194,11 +195,11 @@ func (imp *Importer) UpsertPathChain(ctx context.Context, path string, mtime, si
 			}
 
 			folder, folderErr := imp.Q.GetFolderByPath(ctx, pathAccum)
-			if folderErr != nil && folderErr != sql.ErrNoRows {
+			if folderErr != nil && !errors.Is(folderErr, sql.ErrNoRows) {
 				return gallerydb.File{}, fmt.Errorf("error checking if folder exists: %w", folderErr)
 			}
 
-			if folderErr == sql.ErrNoRows { // Folder does not exist, create it
+			if errors.Is(folderErr, sql.ErrNoRows) { // Folder does not exist, create it
 				pathID, upsertErr := imp.Q.UpsertFolderPathReturningID(ctx, pathAccum)
 				if upsertErr != nil {
 					return gallerydb.File{}, fmt.Errorf("error upserting folder path: %w", upsertErr)
@@ -266,7 +267,7 @@ func (imp *Importer) UpdateFolderTileChain(ctx context.Context, folderID, tileFi
 		if err != nil {
 			// If the folder is not found, or any other error occurs, stop the chain.
 			// This might happen if a folder was deleted concurrently.
-			if err == sql.ErrNoRows {
+			if errors.Is(err, sql.ErrNoRows) {
 				return nil
 			}
 			slog.Error("error retrieving folder", "folder_id", currentFolderID, "err", err)

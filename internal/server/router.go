@@ -48,15 +48,19 @@ func (app *App) getRouter() http.Handler {
 	mux.HandleFunc("POST /theme", app.themeHandlers.ThemePostHandler)
 
 	mux.Handle("POST /logout", app.authMiddleware(http.HandlerFunc(app.authHandlers.Logout)))
-	mux.Handle("GET /config", app.authMiddleware(http.HandlerFunc(app.configHandlers.ConfigGet)))
-	mux.Handle("POST /config", app.authMiddleware(http.HandlerFunc(app.configHandlers.ConfigPost)))
-	mux.Handle("POST /config/increment-etag", app.authMiddleware(http.HandlerFunc(app.configHandlers.ConfigIncrementETag)))
-	mux.Handle("GET /config/export/download", withConditional(app.authMiddleware(http.HandlerFunc(app.configHandlers.ExportConfigDownloadHandler))))
-	mux.Handle("POST /config/export/to-file", app.authMiddleware(http.HandlerFunc(app.configHandlers.ExportConfigToFileHandler)))
-	mux.Handle("POST /config/import/preview", app.authMiddleware(http.HandlerFunc(app.configHandlers.ImportConfigPreviewHandler)))
-	mux.Handle("POST /config/import/commit", app.authMiddleware(http.HandlerFunc(app.configHandlers.ImportConfigCommitHandler)))
-	mux.Handle("POST /config/restore-last-known-good", app.authMiddleware(http.HandlerFunc(app.configHandlers.RestoreLastKnownGoodHandler)))
-	mux.Handle("POST /config/restart", app.authMiddleware(http.HandlerFunc(app.configHandlers.RestartHandler)))
+
+	cfgAuth := app.configHandlers.ConfigAuthMiddleware
+
+	mux.Handle("GET /config", app.authMiddleware(cfgAuth(app.configHandlers.ConfigGet)))
+	mux.Handle("POST /config", app.authMiddleware(cfgAuth(app.configHandlers.ConfigPost)))
+	mux.Handle("POST /config/themes", app.authMiddleware(cfgAuth(app.configThemesHandler.UpdateThemesHandler)))
+	mux.Handle("POST /config/increment-etag", app.authMiddleware(cfgAuth(app.configETagHandler.ConfigIncrementETag)))
+	mux.Handle("GET /config/export/download", withConditional(app.authMiddleware(cfgAuth(app.configHandlers.ExportConfigDownloadHandler))))
+	mux.Handle("POST /config/export/to-file", app.authMiddleware(cfgAuth(app.configHandlers.ExportConfigToFileHandler)))
+	mux.Handle("POST /config/import/preview", app.authMiddleware(cfgAuth(app.configHandlers.ImportConfigPreviewHandler)))
+	mux.Handle("POST /config/import/commit", app.authMiddleware(cfgAuth(app.configHandlers.ImportConfigCommitHandler)))
+	mux.Handle("POST /config/restore-last-known-good", app.authMiddleware(cfgAuth(app.configHandlers.RestoreLastKnownGoodHandler)))
+	mux.Handle("POST /config/restart", app.authMiddleware(cfgAuth(app.configRestartHandler.RestartHandler)))
 
 	// Dashboard routes (protected by authentication)
 	// GET /dashboard returns full page or partial based on HX-Request header
@@ -66,6 +70,7 @@ func (app *App) getRouter() http.Handler {
 	mux.Handle("POST /server/shutdown", app.authMiddleware(http.HandlerFunc(app.serverHandlers.ServerShutdownPost)))
 	mux.Handle("POST /server/discovery", app.authMiddleware(http.HandlerFunc(app.serverHandlers.ServerDiscoveryPost)))
 	mux.Handle("POST /server/cache-batch-load", app.authMiddleware(http.HandlerFunc(app.serverHandlers.ServerCacheBatchLoadPost)))
+	mux.Handle("POST /server/restart", app.authMiddleware(http.HandlerFunc(app.configRestartHandler.RestartHandler)))
 
 	mux.Handle("GET /", http.HandlerFunc(app.healthHandlers.RootRedirect))
 
