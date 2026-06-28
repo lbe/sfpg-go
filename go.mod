@@ -19,7 +19,7 @@ require (
 	github.com/pkg/profile v1.7.0
 	github.com/playwright-community/playwright-go v0.5200.1
 	golang.org/x/crypto v0.53.0
-	golang.org/x/image v0.42.0
+	golang.org/x/image v0.43.0
 	golang.org/x/net v0.56.0
 	golang.org/x/sync v0.21.0
 	gopkg.in/yaml.v3 v3.0.1
