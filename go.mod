@@ -13,7 +13,7 @@ require (
 	github.com/evanoberholster/imagemeta v1.0.0
 	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/gorilla/sessions v1.4.0
-	github.com/ncruces/go-sqlite3 v0.35.0
+	github.com/ncruces/go-sqlite3 v0.35.1
 	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646
 	github.com/phsym/console-slog v0.3.1
 	github.com/pkg/profile v1.7.0
