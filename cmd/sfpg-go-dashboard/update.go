@@ -46,13 +46,19 @@ func loginCmd(c *client.Client, username, password string) tea.Cmd {
 
 // Init initializes the model and returns initial commands.
 // It sets up the refresh ticker and, if credentials are provided,
-// initiates an automatic login attempt.
+// initiates an automatic login attempt. Otherwise it shows the
+// interactive login prompt.
 func (m Model) Init() tea.Cmd {
 	var cmds []tea.Cmd
 	cmds = append(cmds, tickCmd(m.refreshInterval))
 
 	if m.username != "" && m.password != "" {
 		cmds = append(cmds, loginCmd(m.client, m.username, m.password))
+	} else {
+		// No credentials available — show interactive login prompt
+		cmds = append(cmds, func() tea.Msg {
+			return PromptCredentialsMsg{}
+		})
 	}
 
 	return tea.Batch(cmds...)

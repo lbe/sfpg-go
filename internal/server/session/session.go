@@ -170,6 +170,19 @@ func IsAuthenticated(store *sessions.CookieStore, w http.ResponseWriter, r *http
 	return authenticated
 }
 
+// GenerateCSRFToken generates a cryptographically random CSRF token.
+// It does NOT save the token to any session; callers must persist it
+// themselves if needed. Use this for ephemeral tokens on public pages
+// where emitting a Set-Cookie is undesirable.
+func GenerateCSRFToken() string {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		slog.Error("failed to generate CSRF token", "err", err)
+		return ""
+	}
+	return hex.EncodeToString(b)
+}
+
 // SessionManager provides an interface for session management operations.
 // It encapsulates session store access, CSRF token handling, and session options.
 type SessionManager interface {
@@ -224,6 +237,10 @@ func (m *Manager) GetOptions() *sessions.Options {
 func (m *Manager) EnsureCSRFToken(w http.ResponseWriter, r *http.Request) string {
 	sess, err := m.store.Get(r, SessionName)
 	if err != nil {
+		slog.Warn("EnsureCSRFToken: clearing invalid session cookie",
+			"path", r.URL.Path,
+			"remote_addr", r.RemoteAddr,
+			"err", err)
 		ClearSessionCookie(m.store, w, r)
 		// gorilla/sessions returns a usable session even on cookie decode error.
 		sess, _ = m.store.Get(r, SessionName) //nolint:errcheck
@@ -310,9 +327,19 @@ func (m *Manager) SaveSession(w http.ResponseWriter, r *http.Request, sess *sess
 func (m *Manager) IsAuthenticated(r *http.Request) bool {
 	sess, err := m.store.Get(r, SessionName)
 	if err != nil {
+		slog.Warn("IsAuthenticated: session decode error",
+			"path", r.URL.Path,
+			"remote_addr", r.RemoteAddr,
+			"err", err)
 		return false
 	}
 	authenticated, ok := sess.Values["authenticated"].(bool)
+	if !ok {
+		slog.Debug("IsAuthenticated: no authenticated value in session",
+			"path", r.URL.Path,
+			"remote_addr", r.RemoteAddr,
+			"is_new", sess.IsNew)
+	}
 	return ok && authenticated
 }
 
@@ -320,6 +347,11 @@ func (m *Manager) IsAuthenticated(r *http.Request) bool {
 func (m *Manager) SetAuthenticated(w http.ResponseWriter, r *http.Request, authenticated bool) error {
 	sess, err := m.store.Get(r, SessionName)
 	if err != nil {
+		slog.Warn("SetAuthenticated: session decode error, creating new session",
+			"path", r.URL.Path,
+			"remote_addr", r.RemoteAddr,
+			"authenticated", authenticated,
+			"err", err)
 		// Invalid cookie - create a new session
 		// gorilla/sessions returns a usable session even on cookie decode error.
 		sess, _ = m.store.New(r, SessionName) //nolint:errcheck

@@ -126,10 +126,6 @@ type Config[T any] struct {
 	// DQueItemsPerSegment is the number of items per dque segment file.
 	// When zero or negative, defaults to 250.
 	DQueItemsPerSegment int
-
-	// DQueTurbo enables dque turbo mode (skips fsync for throughput).
-	// Turbo is always enabled when DQueDirPath is set; this field cannot disable it.
-	DQueTurbo bool
 }
 
 // WriteBatcher collects items of type T and flushes them in batched transactions
@@ -161,15 +157,15 @@ type WriteBatcher[T any] struct {
 
 // Stats holds statistics about the WriteBatcher.
 type Stats struct {
-	ChannelSize   int
-	MaxBatchSize  int
-	FlushInterval time.Duration
-	IsClosed      bool
-	TotalFlushed  int64
-	TotalErrors   int64
-	OverflowCount int64
-	DQueEnabled   bool
-	DQueSize      int
+	ChannelSize   int           `json:"channel_size"`
+	MaxBatchSize  int           `json:"max_batch_size"`
+	FlushInterval time.Duration `json:"flush_interval"`
+	IsClosed      bool          `json:"is_closed"`
+	TotalFlushed  int64         `json:"total_flushed"`
+	TotalErrors   int64         `json:"total_errors"`
+	OverflowCount int64         `json:"overflow_count"`
+	DQueEnabled   bool          `json:"dque_enabled"`
+	DQueSize      int           `json:"dque_size"`
 }
 
 // GetStats returns the current statistics of the WriteBatcher.
@@ -270,7 +266,8 @@ func New[T any](ctx context.Context, cfg Config[T]) (*WriteBatcher[T], error) {
 
 // openDQue creates or opens a dque at the configured path for crash recovery.
 // Returns nil when DQueDirPath is empty. It also applies defaults for
-// DQueItemsPerSegment (250 when <= 0) and DQueTurbo (always enabled).
+// DQueItemsPerSegment (default 250 when <= 0). Turbo mode is always enabled
+// when DQueDirPath is set.
 func openDQue[T any](cfg Config[T]) (*dque.DQue[T], error) {
 	if cfg.DQueDirPath == "" {
 		return nil, nil

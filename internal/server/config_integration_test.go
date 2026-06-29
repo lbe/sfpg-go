@@ -78,14 +78,14 @@ func extractCSRFTokenFromConfig(t *testing.T, client *http.Client, baseURL strin
 // extractCSRFTokenFromLogin extracts the CSRF token from the login form on the gallery page.
 func extractCSRFTokenFromLogin(t *testing.T, client *http.Client, baseURL string) string {
 	t.Helper()
-	resp, err := client.Get(baseURL + "/gallery/1")
+	resp, err := client.Get(baseURL + "/login-form")
 	if err != nil {
-		t.Fatalf("GET /gallery/1 failed: %v", err)
+		t.Fatalf("GET /login-form failed: %v", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200 for /gallery/1, got %d", resp.StatusCode)
+		t.Fatalf("expected 200 for /login-form, got %d", resp.StatusCode)
 	}
 
 	doc, err := html.Parse(resp.Body)
@@ -94,36 +94,17 @@ func extractCSRFTokenFromLogin(t *testing.T, client *http.Client, baseURL string
 	}
 
 	// Find login form
-	var formNode *html.Node
-	var findForm func(*html.Node)
-	findForm = func(n *html.Node) {
-		if n.Type == html.ElementNode && n.Data == "form" {
-			for _, attr := range n.Attr {
-				if attr.Key == "id" && attr.Val == "login-form" {
-					formNode = n
-					return
-				}
-			}
-		}
-		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			if formNode == nil {
-				findForm(c)
-			}
-		}
-	}
-	findForm(doc)
-
+	formNode := findElementByID(doc, "login-form")
 	if formNode == nil {
-		t.Fatal("login form not found on gallery page")
+		t.Fatal("login form not found in /login-form response")
 	}
 
 	// Find CSRF token
 	var csrfToken string
-	var findCSRF func(*html.Node)
-	findCSRF = func(n *html.Node) {
-		if n.Type == html.ElementNode && n.Data == "input" {
+	for c := formNode.FirstChild; c != nil; c = c.NextSibling {
+		if c.Type == html.ElementNode && c.Data == "input" {
 			var name, value string
-			for _, a := range n.Attr {
+			for _, a := range c.Attr {
 				if a.Key == "name" {
 					name = a.Val
 				}
@@ -133,16 +114,10 @@ func extractCSRFTokenFromLogin(t *testing.T, client *http.Client, baseURL string
 			}
 			if name == "csrf_token" && value != "" {
 				csrfToken = value
-				return
-			}
-		}
-		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			if csrfToken == "" {
-				findCSRF(c)
+				break
 			}
 		}
 	}
-	findCSRF(formNode)
 
 	if csrfToken == "" {
 		t.Fatal("CSRF token not found in login form")
@@ -334,12 +309,10 @@ func TestIntegration_ConfigPersistence_LoadFromOptDoesNotOverrideWithDefaults(t 
 	csrfToken := extractCSRFTokenFromConfig(t, client, ts1.URL)
 	formData := url.Values{}
 	formData.Set("csrf_token", csrfToken)
-	// Set server_compression_enable to false (default is true)
-	// Don't include it in form - unchecked checkbox
-	// Set enable_http_cache to false (default is true)
-	// Don't include it in form - unchecked checkbox
-	// Set run_file_discovery to false (default is true)
-	// Don't include it in form - unchecked checkbox
+	// Include with empty values to signal presence of config fields
+	formData.Set("server_compression_enable", "")
+	formData.Set("enable_http_cache", "")
+	formData.Set("run_file_discovery", "")
 
 	req, err := http.NewRequest(http.MethodPost, ts1.URL+"/config", strings.NewReader(formData.Encode()))
 	if err != nil {

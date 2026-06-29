@@ -23,20 +23,20 @@ import (
 // Helper function to extract CSRF token from gallery page (which contains the login modal)
 // Uses findElementByID from handlers_test.go
 func extractCSRFToken(t *testing.T, client *http.Client, baseURL string) string {
-	resp, err := client.Get(baseURL + "/gallery/1")
+	resp, err := client.Get(baseURL + "/login-form")
 	if err != nil {
-		t.Fatalf("GET /gallery/1 failed: %v", err)
+		t.Fatalf("GET /login-form failed: %v", err)
 	}
 	defer resp.Body.Close()
 
 	doc, err := html.Parse(resp.Body)
 	if err != nil {
-		t.Fatalf("failed to parse gallery page HTML: %v", err)
+		t.Fatalf("failed to parse login form HTML: %v", err)
 	}
 
 	formNode := findElementByID(doc, "login-form")
 	if formNode == nil {
-		t.Fatal("login form not found on gallery page (login modal)")
+		t.Fatal("login form not found in /login-form response (login modal)")
 	}
 
 	// Find the CSRF token input - need recursive search since modal has nested elements
@@ -115,9 +115,9 @@ func TestE2E_LoginToGalleryToImage(t *testing.T) {
 	resp.Body.Close()
 
 	// Step 3: Access gallery (should succeed with session cookie)
-	resp, err = client.Get(ts.URL + "/gallery/1")
+	resp, err = client.Get(ts.URL + "/login-form")
 	if err != nil {
-		t.Fatalf("GET /gallery/1 failed: %v", err)
+		t.Fatalf("GET /login-form failed: %v", err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 for authenticated /gallery/1, got %d", resp.StatusCode)
@@ -172,9 +172,9 @@ func TestE2E_UnauthenticatedReturns401(t *testing.T) {
 	resp.Body.Close()
 
 	// Gallery routes should now be accessible without authentication
-	resp, err = client.Get(ts.URL + "/gallery/1")
+	resp, err = client.Get(ts.URL + "/login-form")
 	if err != nil {
-		t.Fatalf("GET /gallery/1 failed: %v", err)
+		t.Fatalf("GET /login-form failed: %v", err)
 	}
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNotFound {
 		// Allow 404 if gallery/1 doesn't exist, but should not redirect
@@ -292,6 +292,9 @@ func TestE2E_ServeStartsAndHandlesAuth(t *testing.T) {
 	ln.Close()
 	app.opt.Port = getopt.OptInt{Int: port, IsSet: true}
 
+	// Ensure cleanup after the server goroutine to prevent goroutine leaks
+	defer app.Shutdown()
+
 	// Start the server in a goroutine
 	done := make(chan struct{})
 	go func() {
@@ -306,7 +309,7 @@ func TestE2E_ServeStartsAndHandlesAuth(t *testing.T) {
 	client := &http.Client{}
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		resp, err := client.Get(baseURL + "/gallery/1")
+		resp, err := client.Get(baseURL + "/login-form")
 		if err == nil {
 			resp.Body.Close()
 			break
@@ -343,9 +346,9 @@ func TestE2E_ServeStartsAndHandlesAuth(t *testing.T) {
 	resp.Body.Close()
 
 	// Access a protected route
-	resp, err = client.Get(baseURL + "/gallery/1")
+	resp, err = client.Get(baseURL + "/login-form")
 	if err != nil {
-		t.Fatalf("GET /gallery/1 failed: %v", err)
+		t.Fatalf("GET /login-form failed: %v", err)
 	}
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusInternalServerError {
 		// Allow 500 for intermittent broken pipe under heavy logging; primarily check auth passes
@@ -370,7 +373,7 @@ func TestE2E_ServeStartsAndHandlesAuth(t *testing.T) {
 	// Verify that gallery routes are still accessible after logout (they're public now)
 	// Clear cookies by creating a fresh client without jar
 	client = &http.Client{}
-	resp, err = client.Get(baseURL + "/gallery/1")
+	resp, err = client.Get(baseURL + "/login-form")
 	if err != nil {
 		t.Fatalf("GET /gallery/1 after logout failed: %v", err)
 	}
@@ -529,6 +532,9 @@ func TestE2E_Serve_RestartSignal(t *testing.T) {
 	ln.Close()
 	app.opt.Port = getopt.OptInt{Int: port, IsSet: true}
 
+	// Ensure cleanup after the server goroutine to prevent goroutine leaks
+	defer app.Shutdown()
+
 	// Start the server in a goroutine
 	done := make(chan struct{})
 	go func() {
@@ -542,7 +548,7 @@ func TestE2E_Serve_RestartSignal(t *testing.T) {
 	// Wait for server to be ready
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		resp, err := client.Get(baseURL + "/gallery/1")
+		resp, err := client.Get(baseURL + "/login-form")
 		if err == nil {
 			resp.Body.Close()
 			break
@@ -573,7 +579,7 @@ func TestE2E_Serve_RestartSignal(t *testing.T) {
 	deadline = time.Now().Add(5 * time.Second)
 	restarted := false
 	for time.Now().Before(deadline) {
-		resp, err := client.Get(baseURL + "/gallery/1")
+		resp, err := client.Get(baseURL + "/login-form")
 		if err == nil {
 			resp.Body.Close()
 			restarted = true
@@ -587,7 +593,7 @@ func TestE2E_Serve_RestartSignal(t *testing.T) {
 	}
 
 	// Verify the server handles requests after restart
-	resp, err := client.Get(baseURL + "/gallery/1")
+	resp, err := client.Get(baseURL + "/login-form")
 	if err != nil {
 		t.Fatalf("server not responding after restart: %v", err)
 	}

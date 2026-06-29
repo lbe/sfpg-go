@@ -179,10 +179,26 @@ echo "  To disable via the web UI:"
 echo "    1. Open $SERVER_URL in your browser"
 echo "    2. Log in and open the Configuration modal"
 echo "    3. Under 'Cache', uncheck 'Enable HTTP Cache'"
-echo "    4. Save configuration"
+echo "    4. Click 'Save' — a 'Restart Required' dialog will appear"
+echo "    5. Click 'Close' then wait for the server to restart"
 echo ""
-echo -e "  ${CYAN}Press ENTER when the HTTP cache is DISABLED to continue...${NC}"
+echo -e "  ${CYAN}Press ENTER when the server is back up and cache is DISABLED...${NC}"
 read -r
+
+echo -e "${YELLOW}→ Verifying server is back up...${NC}"
+for i in 1 2 3 4 5 6 7 8 9 10; do
+  if curl -sf "$SERVER_URL/health" > /dev/null 2>&1; then
+    echo -e "${GREEN}✓ Server is responding${NC}"
+    echo ""
+    break
+  fi
+  if [ "$i" -eq 10 ]; then
+    echo -e "${RED}✗ Server did not come back up after restart. Aborting.${NC}"
+    exit 1
+  fi
+  echo "  Waiting for server... (attempt $i/10)"
+  sleep 2
+done
 
 echo ""
 echo -e "${YELLOW}Phase 2: Tests with HTTP cache OFF${NC}"
@@ -194,8 +210,31 @@ echo ""
 echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
 echo -e "  Please ${GREEN}re-enable${NC} the HTTP cache via the Configuration modal."
-echo -e "  ${CYAN}Press ENTER when done...${NC}"
+echo ""
+echo "    1. Open $SERVER_URL in your browser"
+echo "    2. Log in and open the Configuration modal"
+echo "    3. Under 'Cache', check 'Enable HTTP Cache'"
+echo "    4. Click 'Save' — a 'Restart Required' dialog will appear"
+echo "    5. Click 'Close' then wait for the server to restart"
+echo ""
+echo -e "  ${CYAN}Press ENTER when the server is back up and cache is RE-ENABLED...${NC}"
 read -r
+
+echo -e "${YELLOW}→ Verifying server is back up...${NC}"
+for i in 1 2 3 4 5 6 7 8 9 10; do
+  if curl -sf "$SERVER_URL/health" > /dev/null 2>&1; then
+    echo -e "${GREEN}✓ Server is responding${NC}"
+    echo ""
+    break
+  fi
+  if [ "$i" -eq 10 ]; then
+    echo -e "${RED}✗ Server did not come back up after restart. Results may be incomplete.${NC}"
+    echo ""
+    break
+  fi
+  echo "  Waiting for server... (attempt $i/10)"
+  sleep 2
+done
 
 echo ""
 

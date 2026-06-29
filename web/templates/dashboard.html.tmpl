@@ -1,135 +1,448 @@
 {{ define "body" }}
-  <div id="dashboard-container" class="space-y-8 p-6">
-    <!-- Dashboard Header -->
-    <div
-      class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"
-    >
-      <div>
-        <h1 class="text-2xl font-semibold">System Dashboard</h1>
-        <p class="text-base-content/60 mt-1 text-xs">
-          Real-time performance and health metrics
-        </p>
-      </div>
-      <div class="flex items-center gap-3">
-        <div class="indicator">
-          <span
-            class="indicator-item badge badge-success badge-xs animate-ping"
-          ></span>
-          <span class="badge badge-success badge-xs"></span>
-        </div>
-        <span class="badge badge-success badge-outline">Live</span>
-        <span id="last-updated" class="text-base-content/50 text-xs">
-          {{ .Metrics.Timestamp.Format "15:04:05" }}
-        </span>
-      </div>
-    </div>
-
-    <!-- Module Status Cards -->
+  <!-- Dashboard Header -->
+  <div
+    class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"
+  >
     <div>
-      <h2 class="mb-4 text-base font-semibold">Module Status</h2>
-      <div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {{ range .Metrics.Modules }}
-          <div class="card bg-base-200 border shadow-sm">
-            <div class="card-body p-4">
-              <div class="flex items-center justify-between">
-                <span class="text-sm font-medium capitalize">{{ .Name }}</span>
-                {{ if eq .Status "active" }}
-                  <span class="badge badge-success badge-sm animate-pulse"
-                    >active</span
-                  >
-                {{ else if eq .Status "recent" }}
-                  <span class="badge badge-warning badge-sm">recent</span>
-                {{ else }}
-                  <span class="badge badge-ghost badge-sm">idle</span>
-                {{ end }}
-              </div>
-              {{ if gt .ActivityCount 0 }}
-                <div class="text-base-content/70 mt-2 text-xs">
-                  Activity count:
-                  {{ formatCount .ActivityCount }}
-                </div>
+      <h1 class="text-2xl font-semibold">System Dashboard</h1>
+      <p class="text-base-content/60 mt-1 text-xs">
+        Real-time performance and health metrics
+      </p>
+    </div>
+    <div class="flex items-center gap-3">
+      <div class="indicator">
+        <span
+          class="indicator-item badge badge-success badge-xs animate-ping"
+        ></span>
+        <span class="badge badge-success badge-xs"></span>
+      </div>
+      <span class="badge badge-success badge-outline">Live</span>
+      <span id="last-updated" class="text-base-content/50 text-xs">
+        {{ .Metrics.Timestamp.Format "15:04:05" }}
+      </span>
+    </div>
+  </div>
+
+  <!-- Module Status Cards -->
+  <div>
+    <h2 class="mb-4 text-base font-semibold">Module Status</h2>
+    <div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+      {{ range .Metrics.Modules }}
+        <div class="card bg-base-200 border shadow-sm">
+          <div class="card-body p-4">
+            <div class="flex items-center justify-between">
+              <span class="text-sm font-medium capitalize">{{ .Name }}</span>
+              {{ if eq .Status "active" }}
+                <span class="badge badge-success badge-sm animate-pulse"
+                  >active</span
+                >
+              {{ else if eq .Status "recent" }}
+                <span class="badge badge-warning badge-sm">recent</span>
+              {{ else }}
+                <span class="badge badge-ghost badge-sm">idle</span>
               {{ end }}
             </div>
+            {{ if gt .ActivityCount 0 }}
+              <div class="text-base-content/70 mt-2 text-xs">
+                Activity count:
+                {{ formatCount .ActivityCount }}
+              </div>
+            {{ end }}
           </div>
-        {{ else }}
-          <div class="card bg-base-200 border shadow-sm">
-            <div class="card-body p-4 text-center">
-              <p class="text-base-content/60 text-sm">No modules registered</p>
-            </div>
+        </div>
+      {{ else }}
+        <div class="card bg-base-200 border shadow-sm">
+          <div class="card-body p-4 text-center">
+            <p class="text-base-content/60 text-sm">No modules registered</p>
           </div>
-        {{ end }}
-      </div>
+        </div>
+      {{ end }}
     </div>
+  </div>
 
-    <!-- Runtime Metrics -->
-    <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
-      <!-- Memory Stats -->
-      <div class="card bg-base-200 border shadow-sm">
-        <div class="card-body">
-          <h3 class="flex items-center gap-2 text-sm font-semibold">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              class="h-5 w-5"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"
-              />
-            </svg>
-            Memory
-          </h3>
-          <div
-            class="stats stats-vertical bg-base-100 lg:stats-horizontal shadow-sm"
+  <!-- Runtime Metrics -->
+  <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
+    <!-- Memory Stats -->
+    <div class="card bg-base-200 border shadow-sm">
+      <div class="card-body">
+        <h3 class="flex items-center gap-2 text-sm font-semibold">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            class="h-5 w-5"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
           >
-            <div class="stat">
-              <div class="stat-title text-xs">Allocated</div>
-              <div
-                id="mem-allocated"
-                class="stat-value text-base font-semibold"
-              >
-                {{ formatBytes .Metrics.Runtime.MemAlloc }}
-              </div>
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"
+            />
+          </svg>
+          Memory
+        </h3>
+        <div
+          class="stats stats-vertical bg-base-100 lg:stats-horizontal shadow-sm"
+        >
+          <div class="stat">
+            <div class="stat-title text-xs">Allocated</div>
+            <div id="mem-allocated" class="stat-value text-base font-semibold">
+              {{ formatBytes .Metrics.Runtime.MemAlloc }}
             </div>
-            <div class="stat">
-              <div class="stat-title text-xs">Heap In Use</div>
-              <div
-                id="mem-heap-in-use"
-                class="stat-value text-base font-semibold"
-              >
-                {{ formatBytes .Metrics.Runtime.MemHeapInuse }}
-              </div>
+          </div>
+          <div class="stat">
+            <div class="stat-title text-xs">Heap In Use</div>
+            <div
+              id="mem-heap-in-use"
+              class="stat-value text-base font-semibold"
+            >
+              {{ formatBytes .Metrics.Runtime.MemHeapInuse }}
             </div>
-            <div class="stat">
-              <div class="stat-title text-xs">Heap Released</div>
-              <div
-                id="mem-heap-released"
-                class="stat-value text-base font-semibold"
-              >
-                {{ formatBytes .Metrics.Runtime.MemHeapReleased }}
-              </div>
+          </div>
+          <div class="stat">
+            <div class="stat-title text-xs">Heap Released</div>
+            <div
+              id="mem-heap-released"
+              class="stat-value text-base font-semibold"
+            >
+              {{ formatBytes .Metrics.Runtime.MemHeapReleased }}
             </div>
-            <div class="stat">
-              <div class="stat-title text-xs">Heap Objects</div>
-              <div
-                id="mem-heap-objects"
-                class="stat-value text-base font-semibold"
-              >
-                {{ formatCount .Metrics.Runtime.MemHeapObjects }}
-              </div>
+          </div>
+          <div class="stat">
+            <div class="stat-title text-xs">Heap Objects</div>
+            <div
+              id="mem-heap-objects"
+              class="stat-value text-base font-semibold"
+            >
+              {{ formatCount .Metrics.Runtime.MemHeapObjects }}
             </div>
           </div>
         </div>
       </div>
+    </div>
 
-      <!-- Goroutines & GC -->
-      <div class="card bg-base-200 border shadow-sm">
-        <div class="card-body">
-          <h3 class="flex items-center gap-2 text-sm font-semibold">
+    <!-- Goroutines & GC -->
+    <div class="card bg-base-200 border shadow-sm">
+      <div class="card-body">
+        <h3 class="flex items-center gap-2 text-sm font-semibold">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            class="h-5 w-5"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M13 10V3L4 14h7v7l9-11h-7z"
+            />
+          </svg>
+          Runtime
+        </h3>
+        <div
+          class="stats stats-vertical bg-base-100 lg:stats-horizontal shadow-sm"
+        >
+          <div class="stat">
+            <div class="stat-title text-xs">Goroutines</div>
+            <div
+              id="runtime-goroutines"
+              class="stat-value text-base font-semibold"
+            >
+              {{ formatCount .Metrics.Runtime.NumGoroutine }}
+            </div>
+          </div>
+          <div class="stat">
+            <div class="stat-title text-xs">CPU Count</div>
+            <div
+              id="runtime-cpu-count"
+              class="stat-value text-base font-semibold"
+            >
+              {{ formatCount .Metrics.Runtime.NumCPU }}
+            </div>
+          </div>
+          <div class="stat">
+            <div class="stat-title text-xs">Next GC</div>
+            <div
+              id="runtime-next-gc"
+              class="stat-value text-base font-semibold"
+            >
+              {{ formatBytes .Metrics.Runtime.NextGC }}
+            </div>
+          </div>
+          <div class="stat">
+            <div class="stat-title text-xs">Uptime</div>
+            <div id="runtime-uptime" class="stat-value text-base font-semibold">
+              {{ formatDuration .Metrics.Runtime.Uptime }}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- WriteBatcher Stats -->
+  <div>
+    <h2 class="mb-4 text-base font-semibold">Write Batcher</h2>
+    <div class="card bg-base-200 border shadow-sm">
+      <div class="card-body">
+        <div
+          class="stats stats-vertical bg-base-100 lg:stats-horizontal shadow-sm"
+        >
+          <div class="stat">
+            <div class="stat-title text-xs">Pending</div>
+            <div id="wb-pending" class="stat-value text-lg font-semibold">
+              {{ formatCount .Metrics.WriteBatcher.PendingCount }}
+            </div>
+            <div id="wb-channel-size-desc" class="stat-desc text-xs">
+              of
+              {{ formatCount .Metrics.WriteBatcher.ChannelSize }}
+            </div>
+            <progress
+              class="progress progress-primary mt-2 w-full"
+              value="{{ writeBatcherQueuePercent .Metrics.WriteBatcher }}"
+              max="100"
+            ></progress>
+          </div>
+          <div class="stat">
+            <div class="stat-title text-xs">Total Flushed</div>
+            <div id="wb-flushed" class="stat-value text-lg font-semibold">
+              {{ formatCount .Metrics.WriteBatcher.TotalFlushed }}
+            </div>
+          </div>
+          <div class="stat">
+            <div class="stat-title text-xs">Errors</div>
+            <div
+              id="wb-errors"
+              class="stat-value {{ if gt .Metrics.WriteBatcher.TotalErrors 0 }}
+                text-error
+              {{ end }} text-lg font-semibold"
+            >
+              {{ formatCount .Metrics.WriteBatcher.TotalErrors }}
+            </div>
+          </div>
+          <div class="stat">
+            <div class="stat-title text-xs">Batch Size</div>
+            <div id="wb-batch-size" class="stat-value text-lg font-semibold">
+              {{ formatCount .Metrics.WriteBatcher.MaxBatchSize }}
+            </div>
+          </div>
+          <div class="stat">
+            <div class="stat-title text-xs">DQue Overflow</div>
+            <div id="wb-dque" class="stat-value text-base font-semibold">
+              {{ if .Metrics.WriteBatcher.DQueEnabled }}
+                <span class="text-success">Enabled</span>
+              {{ else }}
+                <span class="text-warning">Off</span>
+              {{ end }}
+            </div>
+            <div class="stat-desc text-xs">
+              <span id="wb-dque-size"
+                >{{ formatCount .Metrics.WriteBatcher.DQueSize }}</span
+              >
+              queued,
+              <span id="wb-dque-overflow"
+                >{{ formatCount .Metrics.WriteBatcher.OverflowCount }}</span
+              >
+              overflowed
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Worker Pool & Queue -->
+  <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
+    <!-- Worker Pool Stats -->
+    <div class="card bg-base-200 border shadow-sm">
+      <div class="card-body">
+        <h3 class="flex items-center gap-2 text-sm font-semibold">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            class="h-5 w-5"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"
+            />
+          </svg>
+          Worker Pool
+        </h3>
+        <div
+          class="stats stats-vertical bg-base-100 lg:stats-horizontal shadow-sm"
+        >
+          <div class="stat">
+            <div class="stat-title text-xs">Running Workers</div>
+            <div id="wp-running" class="stat-value text-base font-semibold">
+              {{ formatCount .Metrics.WorkerPool.RunningWorkers }} /
+              {{ formatCount .Metrics.WorkerPool.MaxWorkers }}
+            </div>
+          </div>
+          <div class="stat">
+            <div class="stat-title text-xs">Completed Tasks</div>
+            <div id="wp-completed" class="stat-value text-base font-semibold">
+              {{ formatCount .Metrics.WorkerPool.CompletedTasks }}
+            </div>
+          </div>
+          <div class="stat">
+            <div class="stat-title text-xs">Successful</div>
+            <div
+              id="wp-successful"
+              class="stat-value text-success text-base font-semibold"
+            >
+              {{ formatCount .Metrics.WorkerPool.SuccessfulTasks }}
+            </div>
+          </div>
+          <div class="stat">
+            <div class="stat-title text-xs">Failed</div>
+            <div
+              id="wp-failed"
+              class="stat-value {{ if gt .Metrics.WorkerPool.FailedTasks 0 }}
+                text-error
+              {{ end }} text-base font-semibold"
+            >
+              {{ formatCount .Metrics.WorkerPool.FailedTasks }}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Queue Stats -->
+    <div class="card bg-base-200 border shadow-sm">
+      <div class="card-body">
+        <h3 class="flex items-center gap-2 text-sm font-semibold">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            class="h-5 w-5"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M4 6h16M4 12h16M4 18h16"
+            />
+          </svg>
+          File Queue
+        </h3>
+        <div class="stats stats-vertical bg-base-100 shadow-sm">
+          <div class="stat">
+            <div class="stat-title text-xs">Queued Items</div>
+            <div id="queue-queued" class="stat-value text-lg font-semibold">
+              {{ formatCount .Metrics.QueueLength }}
+            </div>
+            <div id="queue-capacity-desc" class="stat-desc text-xs">
+              of {{ formatCount .Metrics.QueueCapacity }} items
+            </div>
+            <progress
+              class="progress {{ queueUtilizationColor .Metrics.QueueLength .Metrics.QueueCapacity }} mt-2 w-full"
+              value="{{ queueUtilizationPercent .Metrics.QueueLength .Metrics.QueueCapacity }}"
+              max="100"
+            ></progress>
+          </div>
+        </div>
+        <div
+          class="stats stats-vertical bg-base-100 sm:stats-horizontal shadow-sm"
+        >
+          <div class="stat">
+            <div class="stat-title text-xs">Utilization</div>
+            <div
+              id="queue-utilization"
+              class="stat-value text-base font-semibold"
+            >
+              {{ queueUtilizationPercent .Metrics.QueueLength .Metrics.QueueCapacity }}%
+            </div>
+          </div>
+          <div class="stat">
+            <div class="stat-title text-xs">Available</div>
+            <div
+              id="queue-available"
+              class="stat-value text-base font-semibold"
+            >
+              {{ formatCount (sub .Metrics.QueueCapacity .Metrics.QueueLength) }}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- File Processing Stats -->
+  <div>
+    <h2 class="mb-4 text-base font-semibold">File Processing</h2>
+    <div class="card bg-base-200 border shadow-sm">
+      <div class="card-body">
+        <div
+          class="stats stats-vertical bg-base-100 lg:stats-horizontal shadow-sm"
+        >
+          <div class="stat">
+            <div class="stat-title text-xs">Total Found</div>
+            <div id="fp-total" class="stat-value text-base font-semibold">
+              {{ formatCount .Metrics.FileProcessing.TotalFound }}
+            </div>
+          </div>
+          <div class="stat">
+            <div class="stat-title text-xs">Existing</div>
+            <div
+              id="fp-existing"
+              class="stat-value text-warning text-base font-semibold"
+            >
+              {{ formatCount .Metrics.FileProcessing.AlreadyExisting }}
+            </div>
+          </div>
+          <div class="stat">
+            <div class="stat-title text-xs">New</div>
+            <div
+              id="fp-new"
+              class="stat-value text-success text-base font-semibold"
+            >
+              {{ formatCount .Metrics.FileProcessing.NewlyInserted }}
+            </div>
+          </div>
+          <div class="stat">
+            <div class="stat-title text-xs">Invalid</div>
+            <div
+              id="fp-invalid"
+              class="stat-value text-error text-base font-semibold"
+            >
+              {{ formatCount .Metrics.FileProcessing.SkippedInvalid }}
+            </div>
+          </div>
+          <div class="stat">
+            <div class="stat-title text-xs">In Flight</div>
+            <div
+              id="fp-inflight"
+              class="stat-value text-primary text-base font-semibold"
+            >
+              {{ formatCount .Metrics.FileProcessing.InFlight }}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Cache Preload, Cache Batch Load & HTTP Cache -->
+  <div class="grid grid-cols-1 gap-6 lg:grid-cols-3">
+    <!-- Cache Preload -->
+    <div class="card bg-base-200 border shadow-sm">
+      <div class="card-body">
+        <div class="flex items-center justify-between">
+          <h3
+            id="card-cache-preload"
+            class="card-title flex items-center gap-2 text-base font-semibold"
+          >
             <svg
               xmlns="http://www.w3.org/2000/svg"
               class="h-5 w-5"
@@ -144,129 +457,71 @@
                 d="M13 10V3L4 14h7v7l9-11h-7z"
               />
             </svg>
-            Runtime
+            Cache Preload
           </h3>
-          <div
-            class="stats stats-vertical bg-base-100 lg:stats-horizontal shadow-sm"
-          >
-            <div class="stat">
-              <div class="stat-title text-xs">Goroutines</div>
-              <div
-                id="runtime-goroutines"
-                class="stat-value text-base font-semibold"
-              >
-                {{ formatCount .Metrics.Runtime.NumGoroutine }}
-              </div>
+          {{ if .Metrics.CachePreload.IsEnabled }}
+            <span id="preload-status" class="badge badge-success badge-sm"
+              >Enabled</span
+            >
+          {{ else }}
+            <span id="preload-status" class="badge badge-ghost badge-sm"
+              >Disabled</span
+            >
+          {{ end }}
+        </div>
+        <div
+          class="stats stats-vertical bg-base-100 sm:stats-horizontal shadow-sm"
+        >
+          <div class="stat">
+            <div class="stat-title text-xs">Scheduled</div>
+            <div
+              id="preload-scheduled"
+              class="stat-value text-base font-semibold"
+            >
+              {{ formatCount .Metrics.CachePreload.TasksScheduled }}
             </div>
-            <div class="stat">
-              <div class="stat-title text-xs">CPU Count</div>
-              <div
-                id="runtime-cpu-count"
-                class="stat-value text-base font-semibold"
-              >
-                {{ formatCount .Metrics.Runtime.NumCPU }}
-              </div>
+          </div>
+          <div class="stat">
+            <div class="stat-title text-xs">Completed</div>
+            <div
+              id="preload-completed"
+              class="stat-value text-success text-base font-semibold"
+            >
+              {{ formatCount .Metrics.CachePreload.TasksCompleted }}
             </div>
-            <div class="stat">
-              <div class="stat-title text-xs">Next GC</div>
-              <div
-                id="runtime-next-gc"
-                class="stat-value text-base font-semibold"
-              >
-                {{ formatBytes .Metrics.Runtime.NextGC }}
-              </div>
+          </div>
+          <div class="stat">
+            <div class="stat-title text-xs">Failed</div>
+            <div
+              id="preload-failed"
+              class="stat-value {{ if gt .Metrics.CachePreload.TasksFailed 0 }}
+                text-error
+              {{ end }} text-base font-semibold"
+            >
+              {{ formatCount .Metrics.CachePreload.TasksFailed }}
             </div>
-            <div class="stat">
-              <div class="stat-title text-xs">Uptime</div>
-              <div
-                id="runtime-uptime"
-                class="stat-value text-base font-semibold"
-              >
-                {{ formatDuration .Metrics.Runtime.Uptime }}
-              </div>
+          </div>
+          <div class="stat">
+            <div class="stat-title text-xs">Skipped</div>
+            <div
+              id="preload-skipped"
+              class="stat-value text-base font-semibold"
+            >
+              {{ formatCount .Metrics.CachePreload.TasksSkipped }}
             </div>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- WriteBatcher Stats -->
-    <div>
-      <h2 class="mb-4 text-base font-semibold">Write Batcher</h2>
-      <div class="card bg-base-200 border shadow-sm">
-        <div class="card-body">
-          <div
-            class="stats stats-vertical bg-base-100 lg:stats-horizontal shadow-sm"
+    <!-- Cache Batch Load -->
+    <div class="card bg-base-200 border shadow-sm">
+      <div class="card-body">
+        <div class="flex items-center justify-between">
+          <h3
+            id="card-cache-batch-load"
+            class="card-title flex items-center gap-2 text-base font-semibold"
           >
-            <div class="stat">
-              <div class="stat-title text-xs">Pending</div>
-              <div id="wb-pending" class="stat-value text-lg font-semibold">
-                {{ formatCount .Metrics.WriteBatcher.PendingCount }}
-              </div>
-              <div id="wb-channel-size-desc" class="stat-desc text-xs">
-                of
-                {{ formatCount .Metrics.WriteBatcher.ChannelSize }}
-              </div>
-              <progress
-                class="progress progress-primary mt-2 w-full"
-                value="{{ writeBatcherQueuePercent .Metrics.WriteBatcher }}"
-                max="100"
-              ></progress>
-            </div>
-            <div class="stat">
-              <div class="stat-title text-xs">Total Flushed</div>
-              <div id="wb-flushed" class="stat-value text-lg font-semibold">
-                {{ formatCount .Metrics.WriteBatcher.TotalFlushed }}
-              </div>
-            </div>
-            <div class="stat">
-              <div class="stat-title text-xs">Errors</div>
-              <div
-                id="wb-errors"
-                class="stat-value {{ if gt .Metrics.WriteBatcher.TotalErrors 0 }}
-                  text-error
-                {{ end }} text-lg font-semibold"
-              >
-                {{ formatCount .Metrics.WriteBatcher.TotalErrors }}
-              </div>
-            </div>
-            <div class="stat">
-              <div class="stat-title text-xs">Batch Size</div>
-              <div id="wb-batch-size" class="stat-value text-lg font-semibold">
-                {{ formatCount .Metrics.WriteBatcher.MaxBatchSize }}
-              </div>
-            </div>
-            <div class="stat">
-              <div class="stat-title text-xs">DQue Overflow</div>
-              <div id="wb-dque" class="stat-value text-base font-semibold">
-                {{ if .Metrics.WriteBatcher.DQueEnabled }}
-                  <span class="text-success">Enabled</span>
-                {{ else }}
-                  <span class="text-warning">Off</span>
-                {{ end }}
-              </div>
-              <div class="stat-desc text-xs">
-                <span id="wb-dque-size"
-                  >{{ formatCount .Metrics.WriteBatcher.DQueSize }}</span
-                >
-                queued,
-                <span id="wb-dque-overflow"
-                  >{{ formatCount .Metrics.WriteBatcher.OverflowCount }}</span
-                >
-                overflowed
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Worker Pool & Queue -->
-    <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
-      <!-- Worker Pool Stats -->
-      <div class="card bg-base-200 border shadow-sm">
-        <div class="card-body">
-          <h3 class="flex items-center gap-2 text-sm font-semibold">
             <svg
               xmlns="http://www.w3.org/2000/svg"
               class="h-5 w-5"
@@ -278,55 +533,72 @@
                 stroke-linecap="round"
                 stroke-linejoin="round"
                 stroke-width="2"
-                d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"
+                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
               />
             </svg>
-            Worker Pool
+            Cache Batch Load
           </h3>
-          <div
-            class="stats stats-vertical bg-base-100 lg:stats-horizontal shadow-sm"
-          >
-            <div class="stat">
-              <div class="stat-title text-xs">Running Workers</div>
-              <div id="wp-running" class="stat-value text-base font-semibold">
-                {{ formatCount .Metrics.WorkerPool.RunningWorkers }} /
-                {{ formatCount .Metrics.WorkerPool.MaxWorkers }}
-              </div>
+          {{ if .Metrics.CacheBatchLoad.IsRunning }}
+            <span
+              id="batch-status"
+              class="badge badge-success badge-sm animate-pulse"
+              >Running</span
+            >
+          {{ else }}
+            <span id="batch-status" class="badge badge-ghost badge-sm"
+              >Idle</span
+            >
+          {{ end }}
+        </div>
+        <div class="stats stats-vertical bg-base-100 shadow-sm">
+          <div class="stat">
+            <div class="stat-title text-xs">Progress</div>
+            <div id="batch-progress" class="stat-value text-base font-semibold">
+              {{ formatCount .Metrics.CacheBatchLoad.TargetsCompleted }} /
+              {{ formatCount .Metrics.CacheBatchLoad.TargetsScheduled }}
             </div>
-            <div class="stat">
-              <div class="stat-title text-xs">Completed Tasks</div>
-              <div id="wp-completed" class="stat-value text-base font-semibold">
-                {{ formatCount .Metrics.WorkerPool.CompletedTasks }}
-              </div>
+            <div id="batch-total-desc" class="stat-desc text-xs">
+              {{ formatCount .Metrics.CacheBatchLoad.TargetsTotal }} total
             </div>
-            <div class="stat">
-              <div class="stat-title text-xs">Successful</div>
-              <div
-                id="wp-successful"
-                class="stat-value text-success text-base font-semibold"
-              >
-                {{ formatCount .Metrics.WorkerPool.SuccessfulTasks }}
-              </div>
+            <progress
+              class="progress progress-primary mt-2 w-full"
+              value="{{ cacheBatchLoadProgressPercent .Metrics.CacheBatchLoad }}"
+              max="100"
+            ></progress>
+          </div>
+        </div>
+        <div
+          class="stats stats-vertical bg-base-100 sm:stats-horizontal shadow-sm"
+        >
+          <div class="stat">
+            <div class="stat-title text-xs">Failed</div>
+            <div
+              id="batch-failed"
+              class="stat-value {{ if gt .Metrics.CacheBatchLoad.TargetsFailed 0 }}
+                text-error
+              {{ end }} text-base font-semibold"
+            >
+              {{ formatCount .Metrics.CacheBatchLoad.TargetsFailed }}
             </div>
-            <div class="stat">
-              <div class="stat-title text-xs">Failed</div>
-              <div
-                id="wp-failed"
-                class="stat-value {{ if gt .Metrics.WorkerPool.FailedTasks 0 }}
-                  text-error
-                {{ end }} text-base font-semibold"
-              >
-                {{ formatCount .Metrics.WorkerPool.FailedTasks }}
-              </div>
+          </div>
+          <div class="stat">
+            <div class="stat-title text-xs">Skipped</div>
+            <div id="batch-skipped" class="stat-value text-base font-semibold">
+              {{ formatCount .Metrics.CacheBatchLoad.TargetsSkipped }}
             </div>
           </div>
         </div>
       </div>
+    </div>
 
-      <!-- Queue Stats -->
-      <div class="card bg-base-200 border shadow-sm">
-        <div class="card-body">
-          <h3 class="flex items-center gap-2 text-sm font-semibold">
+    <!-- HTTP Cache -->
+    <div class="card bg-base-200 border shadow-sm">
+      <div class="card-body">
+        <div class="flex items-center justify-between">
+          <h3
+            id="card-http-cache"
+            class="card-title flex items-center gap-2 text-base font-semibold"
+          >
             <svg
               xmlns="http://www.w3.org/2000/svg"
               class="h-5 w-5"
@@ -338,347 +610,55 @@
                 stroke-linecap="round"
                 stroke-linejoin="round"
                 stroke-width="2"
-                d="M4 6h16M4 12h16M4 18h16"
+                d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2"
               />
             </svg>
-            File Queue
+            HTTP Cache
           </h3>
-          <div class="stats stats-vertical bg-base-100 shadow-sm">
-            <div class="stat">
-              <div class="stat-title text-xs">Queued Items</div>
-              <div id="queue-queued" class="stat-value text-lg font-semibold">
-                {{ formatCount .Metrics.QueueLength }}
-              </div>
-              <div id="queue-capacity-desc" class="stat-desc text-xs">
-                of {{ formatCount .Metrics.QueueCapacity }} items
-              </div>
-              <progress
-                class="progress {{ queueUtilizationColor .Metrics.QueueLength .Metrics.QueueCapacity }} mt-2 w-full"
-                value="{{ queueUtilizationPercent .Metrics.QueueLength .Metrics.QueueCapacity }}"
-                max="100"
-              ></progress>
-            </div>
-          </div>
-          <div
-            class="stats stats-vertical bg-base-100 sm:stats-horizontal shadow-sm"
-          >
-            <div class="stat">
-              <div class="stat-title text-xs">Utilization</div>
-              <div
-                id="queue-utilization"
-                class="stat-value text-base font-semibold"
-              >
-                {{ queueUtilizationPercent .Metrics.QueueLength .Metrics.QueueCapacity }}%
-              </div>
-            </div>
-            <div class="stat">
-              <div class="stat-title text-xs">Available</div>
-              <div
-                id="queue-available"
-                class="stat-value text-base font-semibold"
-              >
-                {{ formatCount (sub .Metrics.QueueCapacity .Metrics.QueueLength) }}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- File Processing Stats -->
-    <div>
-      <h2 class="mb-4 text-base font-semibold">File Processing</h2>
-      <div class="card bg-base-200 border shadow-sm">
-        <div class="card-body">
-          <div
-            class="stats stats-vertical bg-base-100 lg:stats-horizontal shadow-sm"
-          >
-            <div class="stat">
-              <div class="stat-title text-xs">Total Found</div>
-              <div id="fp-total" class="stat-value text-base font-semibold">
-                {{ formatCount .Metrics.FileProcessing.TotalFound }}
-              </div>
-            </div>
-            <div class="stat">
-              <div class="stat-title text-xs">Existing</div>
-              <div
-                id="fp-existing"
-                class="stat-value text-warning text-base font-semibold"
-              >
-                {{ formatCount .Metrics.FileProcessing.AlreadyExisting }}
-              </div>
-            </div>
-            <div class="stat">
-              <div class="stat-title text-xs">New</div>
-              <div
-                id="fp-new"
-                class="stat-value text-success text-base font-semibold"
-              >
-                {{ formatCount .Metrics.FileProcessing.NewlyInserted }}
-              </div>
-            </div>
-            <div class="stat">
-              <div class="stat-title text-xs">Invalid</div>
-              <div
-                id="fp-invalid"
-                class="stat-value text-error text-base font-semibold"
-              >
-                {{ formatCount .Metrics.FileProcessing.SkippedInvalid }}
-              </div>
-            </div>
-            <div class="stat">
-              <div class="stat-title text-xs">In Flight</div>
-              <div
-                id="fp-inflight"
-                class="stat-value text-primary text-base font-semibold"
-              >
-                {{ formatCount .Metrics.FileProcessing.InFlight }}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Cache Preload, Cache Batch Load & HTTP Cache -->
-    <div class="grid grid-cols-1 gap-6 lg:grid-cols-3">
-      <!-- Cache Preload -->
-      <div class="card bg-base-200 border shadow-sm">
-        <div class="card-body">
-          <div class="flex items-center justify-between">
-            <h3
-              id="card-cache-preload"
-              class="card-title flex items-center gap-2 text-base font-semibold"
+          {{ if .Metrics.HTTPCache.Enabled }}
+            <span id="http-status" class="badge badge-success badge-sm"
+              >Enabled</span
             >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                class="h-5 w-5"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M13 10V3L4 14h7v7l9-11h-7z"
-                />
-              </svg>
-              Cache Preload
-            </h3>
-            {{ if .Metrics.CachePreload.IsEnabled }}
-              <span id="preload-status" class="badge badge-success badge-sm"
-                >Enabled</span
-              >
-            {{ else }}
-              <span id="preload-status" class="badge badge-ghost badge-sm"
-                >Disabled</span
-              >
-            {{ end }}
-          </div>
-          <div
-            class="stats stats-vertical bg-base-100 sm:stats-horizontal shadow-sm"
-          >
-            <div class="stat">
-              <div class="stat-title text-xs">Scheduled</div>
-              <div
-                id="preload-scheduled"
-                class="stat-value text-base font-semibold"
-              >
-                {{ formatCount .Metrics.CachePreload.TasksScheduled }}
-              </div>
-            </div>
-            <div class="stat">
-              <div class="stat-title text-xs">Completed</div>
-              <div
-                id="preload-completed"
-                class="stat-value text-success text-base font-semibold"
-              >
-                {{ formatCount .Metrics.CachePreload.TasksCompleted }}
-              </div>
-            </div>
-            <div class="stat">
-              <div class="stat-title text-xs">Failed</div>
-              <div
-                id="preload-failed"
-                class="stat-value {{ if gt .Metrics.CachePreload.TasksFailed 0 }}
-                  text-error
-                {{ end }} text-base font-semibold"
-              >
-                {{ formatCount .Metrics.CachePreload.TasksFailed }}
-              </div>
-            </div>
-            <div class="stat">
-              <div class="stat-title text-xs">Skipped</div>
-              <div
-                id="preload-skipped"
-                class="stat-value text-base font-semibold"
-              >
-                {{ formatCount .Metrics.CachePreload.TasksSkipped }}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Cache Batch Load -->
-      <div class="card bg-base-200 border shadow-sm">
-        <div class="card-body">
-          <div class="flex items-center justify-between">
-            <h3
-              id="card-cache-batch-load"
-              class="card-title flex items-center gap-2 text-base font-semibold"
+          {{ else }}
+            <span id="http-status" class="badge badge-ghost badge-sm"
+              >Disabled</span
             >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                class="h-5 w-5"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                />
-              </svg>
-              Cache Batch Load
-            </h3>
-            {{ if .Metrics.CacheBatchLoad.IsRunning }}
-              <span
-                id="batch-status"
-                class="badge badge-success badge-sm animate-pulse"
-                >Running</span
-              >
-            {{ else }}
-              <span id="batch-status" class="badge badge-ghost badge-sm"
-                >Idle</span
-              >
-            {{ end }}
-          </div>
-          <div class="stats stats-vertical bg-base-100 shadow-sm">
-            <div class="stat">
-              <div class="stat-title text-xs">Progress</div>
-              <div
-                id="batch-progress"
-                class="stat-value text-base font-semibold"
-              >
-                {{ formatCount .Metrics.CacheBatchLoad.TargetsCompleted }} /
-                {{ formatCount .Metrics.CacheBatchLoad.TargetsScheduled }}
-              </div>
-              <div id="batch-total-desc" class="stat-desc text-xs">
-                {{ formatCount .Metrics.CacheBatchLoad.TargetsTotal }} total
-              </div>
-              <progress
-                class="progress progress-primary mt-2 w-full"
-                value="{{ cacheBatchLoadProgressPercent .Metrics.CacheBatchLoad }}"
-                max="100"
-              ></progress>
-            </div>
-          </div>
-          <div
-            class="stats stats-vertical bg-base-100 sm:stats-horizontal shadow-sm"
-          >
-            <div class="stat">
-              <div class="stat-title text-xs">Failed</div>
-              <div
-                id="batch-failed"
-                class="stat-value {{ if gt .Metrics.CacheBatchLoad.TargetsFailed 0 }}
-                  text-error
-                {{ end }} text-base font-semibold"
-              >
-                {{ formatCount .Metrics.CacheBatchLoad.TargetsFailed }}
-              </div>
-            </div>
-            <div class="stat">
-              <div class="stat-title text-xs">Skipped</div>
-              <div
-                id="batch-skipped"
-                class="stat-value text-base font-semibold"
-              >
-                {{ formatCount .Metrics.CacheBatchLoad.TargetsSkipped }}
-              </div>
-            </div>
-          </div>
+          {{ end }}
         </div>
-      </div>
-
-      <!-- HTTP Cache -->
-      <div class="card bg-base-200 border shadow-sm">
-        <div class="card-body">
-          <div class="flex items-center justify-between">
-            <h3
-              id="card-http-cache"
-              class="card-title flex items-center gap-2 text-base font-semibold"
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                class="h-5 w-5"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2"
-                />
-              </svg>
-              HTTP Cache
-            </h3>
-            {{ if .Metrics.HTTPCache.Enabled }}
-              <span id="http-status" class="badge badge-success badge-sm"
-                >Enabled</span
-              >
-            {{ else }}
-              <span id="http-status" class="badge badge-ghost badge-sm"
-                >Disabled</span
-              >
-            {{ end }}
+        <div
+          class="stats stats-vertical bg-base-100 grid w-full grid-cols-2 gap-2 shadow-sm sm:grid-cols-2"
+        >
+          <div class="stat place-items-start py-2">
+            <div class="stat-title text-xs">Entries</div>
+            <div id="http-entries" class="stat-value text-base font-semibold">
+              {{ formatCount .Metrics.HTTPCache.EntryCount }}
+            </div>
           </div>
-          <div
-            class="stats stats-vertical bg-base-100 grid w-full grid-cols-2 gap-2 shadow-sm sm:grid-cols-2"
-          >
-            <div class="stat place-items-start py-2">
-              <div class="stat-title text-xs">Entries</div>
-              <div id="http-entries" class="stat-value text-base font-semibold">
-                {{ formatCount .Metrics.HTTPCache.EntryCount }}
-              </div>
+          <div class="stat place-items-start py-2">
+            <div class="stat-title text-xs">Size</div>
+            <div id="http-size" class="stat-value text-base font-semibold">
+              {{ formatBytesInt64 .Metrics.HTTPCache.SizeBytes }}
             </div>
-            <div class="stat place-items-start py-2">
-              <div class="stat-title text-xs">Size</div>
-              <div id="http-size" class="stat-value text-base font-semibold">
-                {{ formatBytesInt64 .Metrics.HTTPCache.SizeBytes }}
-              </div>
+          </div>
+          <div class="stat place-items-start py-2">
+            <div class="stat-title text-xs">Max Total</div>
+            <div id="http-max-total" class="stat-value text-base font-semibold">
+              {{ formatBytesInt64 .Metrics.HTTPCache.MaxTotalSize }}
             </div>
-            <div class="stat place-items-start py-2">
-              <div class="stat-title text-xs">Max Total</div>
-              <div
-                id="http-max-total"
-                class="stat-value text-base font-semibold"
-              >
-                {{ formatBytesInt64 .Metrics.HTTPCache.MaxTotalSize }}
-              </div>
+          </div>
+          <div class="stat place-items-start py-2">
+            <div class="stat-title text-xs">Max Entry</div>
+            <div id="http-max-entry" class="stat-value text-base font-semibold">
+              {{ formatBytesInt64 .Metrics.HTTPCache.MaxEntrySize }}
             </div>
-            <div class="stat place-items-start py-2">
-              <div class="stat-title text-xs">Max Entry</div>
-              <div
-                id="http-max-entry"
-                class="stat-value text-base font-semibold"
-              >
-                {{ formatBytesInt64 .Metrics.HTTPCache.MaxEntrySize }}
-              </div>
-            </div>
-            <div class="stat col-span-2 place-items-start py-2">
-              <div class="stat-title text-xs">Utilization</div>
-              <div
-                id="http-utilization"
-                class="stat-value text-base font-semibold"
-              >
-                {{ httpCacheUtilizationPercent .Metrics.HTTPCache }}%
-              </div>
+          </div>
+          <div class="stat col-span-2 place-items-start py-2">
+            <div class="stat-title text-xs">Utilization</div>
+            <div
+              id="http-utilization"
+              class="stat-value text-base font-semibold"
+            >
+              {{ httpCacheUtilizationPercent .Metrics.HTTPCache }}%
             </div>
           </div>
         </div>

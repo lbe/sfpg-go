@@ -45,11 +45,68 @@ go run ./scripts/validate-hyperscript.go -ext=".html,.tmpl" web/templates zarchi
 - Script blocks: `<script type="text/hyperscript"> ... </script>`
 - HTML entities inside attributes are decoded before validation (e.g., `&quot;` → `"`)
 
+## Forward Reference Detection
+
+The validator also detects **forward references** — cases where `install <BehaviorName>`
+appears before the corresponding `behavior <BehaviorName>` definition in the same file.
+Hyperscript behaviors must be parsed before they can be installed.
+
+### How It Works
+
+After extracting all hyperscript snippets from a file, the validator parses each snippet
+using the hyperscript AST and collects all `behavior` and `install` features. Features
+are sorted by line number and checked in order:
+
+- `behavior <Name>` registers the behavior as defined at that line
+- `install <Name>` is flagged if no matching behavior has been defined yet
+
+### Cross-File Mitigation
+
+If a behavior is defined in a different file (e.g., a layout template that wraps partial
+content), `install` references to it in the partial will not find a matching `behavior`
+within the same file. These are reported as **WARNING** (not ERROR) since the behavior
+may be defined elsewhere.
+
+Example output:
+
+```
+[⚠ WARNING] web/templates/config-modal.html.tmpl:86
+  forward reference: install "TabSwitcher" at line 86, behavior not found in same file
+```
+
+### Best Practice
+
+Behaviors used across multiple templates should be defined in the layout template
+(`layout.html.tmpl`), which is parsed first. The installs in partial templates will
+show warnings (not errors), confirming the cross-file dependency.
+
 ## Recommended Workflow
 
 1. Write Hyperscript directly in your template.
 2. Run the CLI validator against the changed file or `web/templates`.
 3. Fix any reported errors and re-run until clean.
+4. Check forward reference warnings: ensure cross-file behaviors are defined in the correct template.
+
+## Go Template Escaping Detection
+
+The validator warns when hyperscript code inside `<script type="text/hyperscript">` blocks
+contains `<` characters that Go's `html/template` will escape at render time.
+
+Go's template engine does NOT recognize `text/hyperscript` as a JavaScript MIME type, so
+it remains in HTML context where `<` followed by a character that cannot start an HTML tag
+(such as `.` in `<.class/>` selectors) gets escaped to `&amp;lt;`. This breaks hyperscript
+at runtime even though the validator sees valid syntax in the source file.
+
+To avoid this, use `querySelectorAll('.class')` instead of `<.class/>` inside script blocks,
+or use `@attr` syntax instead of `getAttribute()`. Attribute-based hyperscript (`_="..."`)
+is not affected because Go handles attribute content differently.
+
+Example warning output:
+
+```
+[WARNING] web/templates/layout.html.tmpl:1132
+  Go html/template may escape `<` to `&amp;lt;` in script block: hidden to <.tab-panel/> in
+```
 
 ## Common Issues
 
@@ -61,6 +118,11 @@ go run ./scripts/validate-hyperscript.go -ext=".html,.tmpl" web/templates zarchi
 - Avoid backticks in Hyperscript strings within Go templates.
   - If needed, build strings via concatenation instead of template literals.
   - Example: `'template ' + var` instead of `` `template ${var}` ``.
+
+- Inside `<script type="text/hyperscript">` blocks, prefer `@attr` syntax over
+  `getAttribute('attr')` — it is more idiomatic and avoids Go template escaping issues.
+  Use `querySelectorAll('.class')` instead of `<.class/>` selectors to avoid `<` characters
+  that Go's template engine may escape.
 
 ## Integration Tips
 

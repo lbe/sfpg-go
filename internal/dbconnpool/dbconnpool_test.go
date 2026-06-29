@@ -388,6 +388,52 @@ func TestClose_DoubleClose(t *testing.T) {
 	}
 }
 
+// waitForIdle polls until the pool has at least want idle connections or the
+// timeout expires. It returns the final idle count.
+func waitForIdle(t *testing.T, pool *DbSQLConnPool, want int, timeout time.Duration) int {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if n := pool.NumIdleConnections(); n >= want {
+			return n
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return pool.NumIdleConnections()
+}
+
+// waitForIdleAtMost polls until the pool has at most want idle connections or the
+// timeout expires. It returns the final idle count.
+func waitForIdleAtMost(t *testing.T, pool *DbSQLConnPool, want int, timeout time.Duration) int {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if n := pool.NumIdleConnections(); n <= want {
+			return n
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return pool.NumIdleConnections()
+}
+
+// stabilizeIdle polls briefly to let the concurrent monitor settle before a
+// pre-condition check. It waits until idle count stays stable for two consecutive
+// reads or the short timeout expires.
+func stabilizeIdle(t *testing.T, pool *DbSQLConnPool, timeout time.Duration) int {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	prev := -1
+	for time.Now().Before(deadline) {
+		n := pool.NumIdleConnections()
+		if n == prev && n >= 0 {
+			return n
+		}
+		prev = n
+		time.Sleep(50 * time.Millisecond)
+	}
+	return pool.NumIdleConnections()
+}
+
 func TestMonitor_Scaling(t *testing.T) {
 	dbPath, thumbsDBPath, cleanup := setupTestDB(t)
 	defer cleanup()
@@ -410,14 +456,10 @@ func TestMonitor_Scaling(t *testing.T) {
 		}
 		defer pool.Close()
 
-		// Monitor auto-starts because MonitorInterval > 0
-
-		// Wait for the monitor to create connections
-		time.Sleep(300 * time.Millisecond)
-
-		idleCount := pool.NumIdleConnections()
-		if idleCount < int(config.MinIdleConnections) {
-			t.Errorf("pool did not grow to minIdleConnections. got %d, want %d", idleCount, config.MinIdleConnections)
+		// Monitor auto-starts because MonitorInterval > 0.
+		// Poll until the monitor grows idle connections to minIdle.
+		if n := waitForIdle(t, pool, int(config.MinIdleConnections), 3*time.Second); n < int(config.MinIdleConnections) {
+			t.Errorf("pool did not grow to minIdleConnections. got %d, want %d", n, config.MinIdleConnections)
 		}
 	})
 
@@ -439,7 +481,9 @@ func TestMonitor_Scaling(t *testing.T) {
 		}
 		defer pool.Close()
 
-		// Manually create connections to exceed minIdle
+		// Manually create connections to exceed minIdle.
+		// Get enough connections to leave 0 idle so the monitor
+		// does not race with us.
 		conns := make([]*CpConn, 5)
 		for i := range 5 {
 			c, err := pool.Get()
@@ -448,22 +492,20 @@ func TestMonitor_Scaling(t *testing.T) {
 			}
 			conns[i] = c
 		}
+		// Put them back and let the monitor settle before checking.
 		for _, c := range conns {
 			pool.Put(c)
 		}
 
-		if pool.NumIdleConnections() != 5 {
-			t.Fatalf("pre-condition failed: expected 5 idle connections, got %d", pool.NumIdleConnections())
+		// Allow the channel to settle before the pre-condition check.
+		if n := stabilizeIdle(t, pool, 500*time.Millisecond); n < 5 {
+			t.Fatalf("pre-condition failed: expected at least 5 idle connections, got %d", n)
 		}
 
-		// Monitor auto-starts because MonitorInterval > 0
-
-		// Wait for the monitor to close connections
-		time.Sleep(300 * time.Millisecond)
-
-		idleCount := pool.NumIdleConnections()
-		if idleCount > int(config.MinIdleConnections) {
-			t.Errorf("pool did not shrink to minIdleConnections. got %d, want %d", idleCount, config.MinIdleConnections)
+		// Monitor auto-starts because MonitorInterval > 0.
+		// Poll until the monitor shrinks idle connections to minIdle.
+		if n := waitForIdleAtMost(t, pool, int(config.MinIdleConnections), 3*time.Second); n > int(config.MinIdleConnections) {
+			t.Errorf("pool did not shrink to minIdleConnections. got %d, want %d", n, config.MinIdleConnections)
 		}
 	})
 }
@@ -488,7 +530,8 @@ func TestMonitor_StartsAutomatically(t *testing.T) {
 	}
 	defer pool.Close()
 
-	// Fill 8 idle connections (6 above minIdle=2)
+	// Fill idle connections (6 above minIdle=2).
+	// Get all connections first so the monitor sees 0 idle while we work.
 	conns := make([]*CpConn, 8)
 	for i := range 8 {
 		c, err := pool.Get()
@@ -501,23 +544,17 @@ func TestMonitor_StartsAutomatically(t *testing.T) {
 		pool.Put(c)
 	}
 
-	if pool.NumIdleConnections() != 8 {
-		t.Fatalf("pre-condition: expected 8 idle connections, got %d",
-			pool.NumIdleConnections())
+	// Allow the channel to settle before the pre-condition check.
+	if n := stabilizeIdle(t, pool, 500*time.Millisecond); n < 8 {
+		t.Fatalf("pre-condition: expected at least 8 idle connections, got %d", n)
 	}
 
-	// Monitor should be auto-started (MonitorInterval=10ms > 0).
+	// Monitor should be auto-started (MonitorInterval=200ms > 0).
 	// Must NOT call pool.monitor() explicitly — that's the wiring we're testing.
 	// Wait for Monitor to drain all excess down to minIdle (2).
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if pool.NumIdleConnections() <= 2 {
-			return // success
-		}
-		time.Sleep(50 * time.Millisecond)
+	if n := waitForIdleAtMost(t, pool, 2, 3*time.Second); n > 2 {
+		t.Fatalf("Monitor did not drain excess idle connections within timeout: got %d idle, want <= 2", n)
 	}
-	t.Fatalf("Monitor did not drain excess idle connections within timeout: got %d idle, want <= 2",
-		pool.NumIdleConnections())
 }
 
 func TestGet(t *testing.T) {

@@ -19,6 +19,10 @@ import (
 var (
 	cacheVersionMu sync.RWMutex
 	cacheVersion   string
+
+	// parseMu protects the template globals against concurrent writes (ParseTemplates)
+	// and reads (RenderTemplate, RenderPage).
+	parseMu sync.RWMutex
 )
 
 // SetCacheVersion updates the application-wide cache version.
@@ -39,6 +43,7 @@ func GetCacheVersion() string {
 // Pre-parsed HTML templates for various application pages and partials.
 var (
 	loginFormTemplate               *template.Template
+	loginFormInnerTemplate          *template.Template
 	galleryTemplate                 *template.Template
 	configModalTemplate             *template.Template
 	imageTemplate                   *template.Template
@@ -82,7 +87,12 @@ func EscapeHash(s string) string {
 
 // ParseTemplates parses all embedded HTML templates and the associated function map.
 // It uses GetCacheVersion() for cache-busting in templates.
+// A mutex serializes concurrent calls to prevent data races on the package-level
+// template variables.
 func ParseTemplates(templateFS fs.FS) (err error) {
+	parseMu.Lock()
+	defer parseMu.Unlock()
+
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("templates panic: %v", r)
@@ -226,6 +236,9 @@ func ParseTemplates(templateFS fs.FS) (err error) {
 
 	loginFormTemplate = template.Must(template.New("login-form.html.tmpl").Funcs(funcMap).
 		ParseFS(templateFS, "templates/login-form.html.tmpl"))
+
+	loginFormInnerTemplate = template.Must(template.New("login-form-inner.html.tmpl").Funcs(funcMap).
+		ParseFS(templateFS, "templates/login-form-inner.html.tmpl"))
 
 	infoBoxFolderTemplate = template.Must(template.New("infobox-folder.html.tmpl").Funcs(funcMap).
 		ParseFS(templateFS, "templates/infobox-folder.html.tmpl"))

@@ -26,6 +26,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/dop251/goja"
@@ -58,6 +59,8 @@ type ValidationReport struct {
 	ValidCount   int                `json:"valid_count"`
 	InvalidCount int                `json:"invalid_count"`
 	Results      []ValidationResult `json:"results"`
+	FwdRefCount  int                `json:"fwd_ref_count"`
+	FwdRefIssues []ForwardRefIssue  `json:"fwd_ref_issues,omitempty"`
 }
 
 func main() {
@@ -118,14 +121,36 @@ func main() {
 		}
 		report.TotalFiles++
 
+		var fileSources []HyperscriptSource
 		for _, src := range sources {
 			result := validateHyperscript(vm, src)
 			report.Results = append(report.Results, result)
+			fileSources = append(fileSources, src)
 			report.TotalScripts++
 			if result.Valid {
 				report.ValidCount++
 			} else {
 				report.InvalidCount++
+			}
+		}
+
+		// Check for Go template escaping issues in script blocks
+		escapeIssues := checkGoTemplateEscaping(fileSources)
+		if len(escapeIssues) > 0 {
+			report.FwdRefIssues = append(report.FwdRefIssues, escapeIssues...)
+			report.FwdRefCount += len(escapeIssues)
+		}
+
+		// Check for forward references across all snippets in this file
+		issues := checkFileForwardReferences(vm, fileSources)
+		if len(issues) > 0 {
+			report.FwdRefIssues = append(report.FwdRefIssues, issues...)
+			for _, issue := range issues {
+				if issue.Type == "error" {
+					report.InvalidCount++
+				} else {
+					report.FwdRefCount++
+				}
 			}
 		}
 	}
@@ -419,6 +444,47 @@ func initVM(hsCode string) (*goja.Runtime, error) {
 		return nil, fmt.Errorf("setting up validator: %w", err)
 	}
 
+	// Feature extraction function: returns JSON array of {keyword, name} for behavior/install features
+	featureExtractorCode := `
+		function __extractHyperscriptFeatures(code) {
+			try {
+				var hs = window._hyperscript || _hyperscript;
+				if (!hs) {
+					return '[]';
+				}
+				var result = hs.parse(code);
+				var features = [];
+				if (result && result.features) {
+					for (var i = 0; i < result.features.length; i++) {
+						var f = result.features[i];
+						if (f.keyword === 'behavior' || f.keyword === 'install') {
+							var src = f.programSource || '';
+							var name = '';
+							var idx = src.indexOf(f.keyword);
+							if (idx >= 0) {
+								var afterKeyword = src.substring(idx + f.keyword.length).trim();
+								var spaceIdx = afterKeyword.indexOf(' ');
+								if (spaceIdx > 0) {
+									name = afterKeyword.substring(0, spaceIdx);
+								} else {
+									name = afterKeyword;
+								}
+							}
+							features.push({keyword: f.keyword, name: name});
+						}
+					}
+				}
+				return JSON.stringify(features);
+			} catch (e) {
+				return '[]';
+			}
+		}
+	`
+
+	if _, err := vm.RunString(featureExtractorCode); err != nil {
+		return nil, fmt.Errorf("setting up feature extractor: %w", err)
+	}
+
 	return vm, nil
 }
 
@@ -691,13 +757,163 @@ func validateHyperscript(vm *goja.Runtime, src HyperscriptSource) ValidationResu
 	return result
 }
 
+// HyperscriptFeature represents a parsed feature from a hyperscript snippet.
+type HyperscriptFeature struct {
+	Keyword string `json:"keyword"` // "behavior" or "install"
+	Name    string `json:"name"`
+}
+
+// FeatureRef associates a feature with its source location.
+type FeatureRef struct {
+	Kind string // "behavior" or "install"
+	Name string
+	File string
+	Line int
+}
+
+// ForwardRefIssue represents a forward-reference problem.
+type ForwardRefIssue struct {
+	Type   string `json:"type"` // "error" or "warning"
+	File   string `json:"file"`
+	Line   int    `json:"line"`
+	Name   string `json:"name"`
+	Detail string `json:"detail"`
+}
+
+// extractFeatures calls the JS __extractHyperscriptFeatures on a snippet and
+// returns the list of features found.
+func extractFeatures(vm *goja.Runtime, src HyperscriptSource) ([]HyperscriptFeature, error) {
+	extractFn, ok := goja.AssertFunction(vm.Get("__extractHyperscriptFeatures"))
+	if !ok {
+		return nil, fmt.Errorf("__extractHyperscriptFeatures not found")
+	}
+
+	res, err := extractFn(goja.Undefined(), vm.ToValue(src.Code))
+	if err != nil {
+		return nil, fmt.Errorf("extract call failed: %w", err)
+	}
+
+	var features []HyperscriptFeature
+	if err := json.Unmarshal([]byte(res.String()), &features); err != nil {
+		return nil, fmt.Errorf("unmarshal features: %w", err)
+	}
+
+	return features, nil
+}
+
+// checkGoTemplateEscaping checks for hyperscript code in <script type="text/hyperscript">
+// blocks that contains `<` characters Go's html/template will escape to `&amp;lt;` at
+// render time. Go only treats `<` as a tag start when followed by valid tag-name
+// characters (letters, /, !, ?). When followed by other chars (like `.` in
+// `<.class/>` selectors), Go escapes it, breaking hyperscript at runtime.
+func checkGoTemplateEscaping(snippets []HyperscriptSource) []ForwardRefIssue {
+	var issues []ForwardRefIssue
+	for _, s := range snippets {
+		if s.SourceType != "script_block" {
+			continue
+		}
+		// Check for `<` followed by a character that doesn't start a valid HTML tag.
+		// Valid starts: letters, /, !, ?
+		for i := 0; i < len(s.Code); i++ {
+			if s.Code[i] != '<' {
+				continue
+			}
+			if i+1 >= len(s.Code) {
+				continue
+			}
+			next := s.Code[i+1]
+			isTagStart := (next >= 'a' && next <= 'z') || (next >= 'A' && next <= 'Z') ||
+				next == '/' || next == '!' || next == '?'
+			if !isTagStart {
+				// Get a snippet of context around the problematic `<`
+				ctxStart := i - 10
+				if ctxStart < 0 {
+					ctxStart = 0
+				}
+				ctxEnd := i + 20
+				if ctxEnd > len(s.Code) {
+					ctxEnd = len(s.Code)
+				}
+				context := strings.TrimSpace(s.Code[ctxStart:ctxEnd])
+				issues = append(issues, ForwardRefIssue{
+					Type: "warning",
+					File: s.File,
+					Line: s.Line,
+					Name: "go-escape",
+					Detail: fmt.Sprintf(
+						"Go html/template may escape `<` to `&amp;lt;` in script block: %s",
+						context),
+				})
+				break // one warning per snippet is enough
+			}
+		}
+	}
+	return issues
+}
+
+// checkFileForwardReferences extracts features from all snippets in a file and
+// checks for forward references (install before behavior). Returns issues.
+// Install references whose behavior is not found in the same file are reported
+// as WARNING (the behavior may be defined in another file like layout.html.tmpl).
+func checkFileForwardReferences(vm *goja.Runtime, snippets []HyperscriptSource) []ForwardRefIssue {
+	var issues []ForwardRefIssue
+	var refs []FeatureRef
+
+	for _, s := range snippets {
+		features, err := extractFeatures(vm, s)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: feature extraction failed for %s:%d: %v\n", s.File, s.Line, err)
+			continue
+		}
+		for _, f := range features {
+			refs = append(refs, FeatureRef{
+				Kind: f.Keyword,
+				Name: f.Name,
+				File: s.File,
+				Line: s.Line,
+			})
+		}
+	}
+
+	if len(refs) == 0 {
+		return nil
+	}
+
+	// Sort by line number. Stable sort preserves order within same line.
+	sort.SliceStable(refs, func(i, j int) bool {
+		return refs[i].Line < refs[j].Line
+	})
+
+	defined := make(map[string]bool) // behavior name -> defined
+
+	for _, r := range refs {
+		switch r.Kind {
+		case "behavior":
+			defined[r.Name] = true
+		case "install":
+			if !defined[r.Name] {
+				// Behavior not found in this file — emit WARNING (might be in layout)
+				issues = append(issues, ForwardRefIssue{
+					Type:   "warning",
+					File:   r.File,
+					Line:   r.Line,
+					Name:   r.Name,
+					Detail: fmt.Sprintf("forward reference: install %q at line %d, behavior not found in same file", r.Name, r.Line),
+				})
+			}
+		}
+	}
+
+	return issues
+}
+
 // printHumanReadable outputs the report in a format readable by both humans and AI.
 func printHumanReadable(report ValidationReport, quiet bool) {
 	fmt.Println("=" + strings.Repeat("=", 79))
 	fmt.Println("HYPERSCRIPT VALIDATION REPORT")
 	fmt.Println("=" + strings.Repeat("=", 79))
-	fmt.Printf("Files scanned: %d | Scripts found: %d | Valid: %d | Invalid: %d\n",
-		report.TotalFiles, report.TotalScripts, report.ValidCount, report.InvalidCount)
+	fmt.Printf("Files scanned: %d | Scripts found: %d | Valid: %d | Invalid: %d | Warnings: %d\n",
+		report.TotalFiles, report.TotalScripts, report.ValidCount, report.InvalidCount, report.FwdRefCount)
 	fmt.Println(strings.Repeat("-", 80))
 
 	for _, r := range report.Results {
@@ -724,6 +940,22 @@ func printHumanReadable(report ValidationReport, quiet bool) {
 		}
 	}
 
+	// Print forward reference issues
+	if len(report.FwdRefIssues) > 0 {
+		fmt.Println()
+		fmt.Println(strings.Repeat("-", 80))
+		fmt.Println("FORWARD REFERENCE ISSUES")
+		fmt.Println(strings.Repeat("-", 80))
+		for _, issue := range report.FwdRefIssues {
+			tag := "⚠ WARNING"
+			if issue.Type == "error" {
+				tag = "✗ ERROR"
+			}
+			fmt.Printf("\n[%s] %s:%d\n", tag, issue.File, issue.Line)
+			fmt.Printf("  %s\n", issue.Detail)
+		}
+	}
+
 	fmt.Println()
 	fmt.Println(strings.Repeat("=", 80))
 	switch {
@@ -733,6 +965,9 @@ func printHumanReadable(report ValidationReport, quiet bool) {
 		fmt.Println("RESULT: NO HYPERSCRIPT FOUND")
 	default:
 		fmt.Println("RESULT: PASSED")
+	}
+	if report.FwdRefCount > 0 {
+		fmt.Printf("NOTE: %d forward reference warnings (behaviors may be defined in another file)\n", report.FwdRefCount)
 	}
 	fmt.Println(strings.Repeat("=", 80))
 }

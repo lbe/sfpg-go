@@ -85,7 +85,7 @@ func TestNew_WithDQueDirPath(t *testing.T) {
 		t.Errorf("expected pendingCount 0 for fresh dque, got %d", pc)
 	}
 
-	// DQueTurbo should default to true
+	// Turbo mode should be enabled
 	if wb.dq != nil {
 		if err := wb.dq.TurboOn(); err == nil {
 			t.Error("expected TurboOn to fail because turbo should already be on by default")
@@ -203,13 +203,12 @@ func TestNew_WithDQueDirPath_DefaultItemsPerSegment(t *testing.T) {
 	}
 }
 
-func TestNew_WithDQueTurbo_DefaultTrue(t *testing.T) {
+func TestNew_DQueTurboAlwaysEnabled(t *testing.T) {
 	dir := t.TempDir()
 	cfg := Config[int]{
 		BeginTx:     func(ctx context.Context) (*sql.Tx, error) { return nil, nil },
 		Flush:       func(ctx context.Context, tx *sql.Tx, batch []int) error { return nil },
 		DQueDirPath: dir,
-		// DQueTurbo not set — should default to true
 	}
 	wb, err := New(context.Background(), cfg)
 	if err != nil {
@@ -221,7 +220,7 @@ func TestNew_WithDQueTurbo_DefaultTrue(t *testing.T) {
 		t.Fatal("expected dq to be non-nil")
 	}
 	if err := wb.dq.TurboOn(); err == nil {
-		t.Error("expected TurboOn to fail because turbo should already be on by default")
+		t.Error("expected TurboOn to fail because turbo is always enabled with DQueDirPath")
 	}
 }
 

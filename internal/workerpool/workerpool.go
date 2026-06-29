@@ -196,15 +196,15 @@ func (p *Pool) TimeSinceLastCompletion() time.Duration {
 
 // Stats holds a snapshot of pool statistics.
 type Stats struct {
-	RunningWorkers  int64
-	SubmittedTasks  uint64
-	WaitingTasks    uint64
-	SuccessfulTasks uint64
-	FailedTasks     uint64
-	CompletedTasks  uint64
-	DroppedTasks    uint64
-	MaxWorkers      int
-	MinWorkers      int
+	RunningWorkers  int64  `json:"running_workers"`
+	SubmittedTasks  uint64 `json:"submitted_tasks"`
+	WaitingTasks    uint64 `json:"waiting_tasks"`
+	SuccessfulTasks uint64 `json:"successful_tasks"`
+	FailedTasks     uint64 `json:"failed_tasks"`
+	CompletedTasks  uint64 `json:"completed_tasks"`
+	DroppedTasks    uint64 `json:"dropped_tasks"`
+	MaxWorkers      int    `json:"max_workers"`
+	MinWorkers      int    `json:"min_workers"`
 }
 
 // GetStats returns a snapshot of the current pool statistics.

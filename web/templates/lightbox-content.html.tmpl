@@ -10,11 +10,11 @@
             
             -- Find the slot with the requested URL
             for s in allSlots
-              if s.getAttribute('src') == url set targetSlot to s end
+              if s@src == url set targetSlot to s end
             end
             
             -- Swap Visibility
-            if targetSlot is not null
+            if targetSlot exists
                for s in allSlots
                  if s == targetSlot
                     remove .hidden from s
@@ -32,6 +32,7 @@
                
                -- Recalculate scale for newly visible image
                call updateLightboxScale(targetSlot)
+               call updateScaled()
             end
           end"
     >
@@ -92,7 +93,7 @@
       class="absolute inset-0 z-20 h-full w-full"
       {{/* We can remove the data attributes if we pass the values directly to the function */}}
       hx-get="/info/image/{{ .CurrentImageID }}?v={{ cacheVersion }}"
-      hx-trigger="manual-load"
+      hx-trigger="load, manual-load"
       hx-target="#box_info"
       hx-indicator="#info_box_spinner"
       _="init 

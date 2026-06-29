@@ -12,4 +12,5 @@ type appHandlerDeps struct {
 	dashboardHandlers *handlers.DashboardHandlers
 	serverHandlers    *handlers.ServerHandlers
 	themeHandlers     *handlers.ThemeHandlers
+	menuHandlers      *handlers.MenuHandlers
 }

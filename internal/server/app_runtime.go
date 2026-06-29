@@ -14,8 +14,7 @@ import (
 // Embedded into App to promote its fields.
 type appRuntimeState struct {
 	cancel context.CancelFunc
-	ctx    context.Context
-	ctxMu  sync.RWMutex // protects ctx from concurrent access (ORDER: 1)
+	ctx    context.Context // INVARIANT: set exactly once in New(); never reassigned after Run() starts
 	wg     sync.WaitGroup
 
 	stopProfiler     func()

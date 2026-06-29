@@ -39,13 +39,16 @@ func (app *App) getRouter() http.Handler {
 
 	// Use new split handler groups
 	mux.HandleFunc("POST /login", func(w http.ResponseWriter, r *http.Request) {
-		app.authHandlers.Login(w, r, app.GetETagVersion())
+		app.authHandlers.Login(w, r)
 	})
 	mux.HandleFunc("GET /health", app.healthHandlers.Health)
 
 	// Theme routes (available to all users, authenticated or not)
 	mux.HandleFunc("GET /theme/modal", app.themeHandlers.ThemeModalHandler)
 	mux.HandleFunc("POST /theme", app.themeHandlers.ThemePostHandler)
+
+	mux.HandleFunc("GET /hamburger-menu", app.menuHandlers.HamburgerMenu)
+	mux.HandleFunc("GET /login-form", app.authHandlers.LoginFormHandler)
 
 	mux.Handle("POST /logout", app.authMiddleware(http.HandlerFunc(app.authHandlers.Logout)))
 

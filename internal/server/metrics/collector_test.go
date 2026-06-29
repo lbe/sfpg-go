@@ -4,38 +4,42 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/lbe/sfpg-go/internal/server/cachepreload"
+	"github.com/lbe/sfpg-go/internal/workerpool"
+	"github.com/lbe/sfpg-go/internal/writebatcher"
 )
 
 // mockWriteBatcher is a mock implementation of WriteBatcherSource for testing.
 type mockWriteBatcher struct {
 	pendingCount int64
-	stats        WriteBatcherStats
+	stats        writebatcher.Stats
 }
 
 func (m *mockWriteBatcher) PendingCount() int64 {
 	return m.pendingCount
 }
 
-func (m *mockWriteBatcher) GetStats() WriteBatcherStats {
+func (m *mockWriteBatcher) GetStats() writebatcher.Stats {
 	return m.stats
 }
 
 // mockWorkerPool is a mock implementation of WorkerPoolSource for testing.
 type mockWorkerPool struct {
-	stats WorkerPoolStats
+	stats workerpool.Stats
 }
 
-func (m *mockWorkerPool) GetStats() WorkerPoolStats {
+func (m *mockWorkerPool) GetStats() workerpool.Stats {
 	return m.stats
 }
 
 // mockCachePreload is a mock implementation of CachePreloadSource for testing.
 type mockCachePreload struct {
-	metrics   CachePreloadSnapshot
+	metrics   cachepreload.PreloadMetricsSnapshot
 	isEnabled bool
 }
 
-func (m *mockCachePreload) GetMetrics() CachePreloadSnapshot {
+func (m *mockCachePreload) GetMetrics() cachepreload.PreloadMetricsSnapshot {
 	return m.metrics
 }
 
@@ -107,7 +111,7 @@ func TestCollector_SetWriteBatcher(t *testing.T) {
 
 func TestCollector_SetWorkerPool(t *testing.T) {
 	c := NewCollector()
-	mock := &mockWorkerPool{stats: WorkerPoolStats{RunningWorkers: 5}}
+	mock := &mockWorkerPool{stats: workerpool.Stats{RunningWorkers: 5}}
 
 	c.SetWorkerPool(mock)
 
@@ -239,7 +243,7 @@ func TestCollector_Collect(t *testing.T) {
 	// Set up mocks
 	wb := &mockWriteBatcher{
 		pendingCount: 10,
-		stats: WriteBatcherStats{
+		stats: writebatcher.Stats{
 			ChannelSize:   100,
 			MaxBatchSize:  50,
 			FlushInterval: 200 * time.Millisecond,
@@ -251,7 +255,7 @@ func TestCollector_Collect(t *testing.T) {
 	c.SetWriteBatcher(wb)
 
 	wp := &mockWorkerPool{
-		stats: WorkerPoolStats{
+		stats: workerpool.Stats{
 			RunningWorkers:  3,
 			SubmittedTasks:  100,
 			WaitingTasks:    5,
@@ -266,7 +270,7 @@ func TestCollector_Collect(t *testing.T) {
 	c.SetWorkerPool(wp)
 
 	cp := &mockCachePreload{
-		metrics: CachePreloadSnapshot{
+		metrics: cachepreload.PreloadMetricsSnapshot{
 			TasksScheduled: 50,
 			TasksCompleted: 45,
 			TasksFailed:    3,

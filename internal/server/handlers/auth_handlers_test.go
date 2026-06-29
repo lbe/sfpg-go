@@ -208,6 +208,8 @@ func (m *mockSessionManagerExistingSessionNoToken) SetAuthenticated(w http.Respo
 	return nil
 }
 
+// errorResponseWriter simulates a writer that fails on Write.
+// Used by tests across the handlers package for render-error paths.
 type errorResponseWriter struct {
 	header http.Header
 	status int
@@ -270,9 +272,8 @@ func (m *mockSessionManagerWithError) SetAuthenticated(w http.ResponseWriter, r 
 func TestNewAuthHandlers(t *testing.T) {
 	authSvc := &mockAuthService{}
 	sm := &mockSessionManagerAuth{}
-	ensureCsrf := func(w http.ResponseWriter, r *http.Request) string { return "test-csrf" }
 
-	h := NewAuthHandlers(authSvc, sm, ensureCsrf)
+	h := NewAuthHandlers(authSvc, sm)
 
 	if h == nil {
 		t.Fatal("NewAuthHandlers returned nil")
@@ -282,9 +283,6 @@ func TestNewAuthHandlers(t *testing.T) {
 	}
 	if h.SessionManager == nil {
 		t.Error("SessionManager not set correctly")
-	}
-	if h.EnsureCsrfToken == nil {
-		t.Error("EnsureCsrfToken not set correctly")
 	}
 }
 
@@ -303,15 +301,13 @@ func TestAuthHandlers_Login_Success(t *testing.T) {
 		},
 	}
 
-	authHandlers := NewAuthHandlers(authSvc, &mockSessionManagerAuth{}, func(w http.ResponseWriter, r *http.Request) string {
-		return "test-csrf-token"
-	})
+	authHandlers := NewAuthHandlers(authSvc, &mockSessionManagerAuth{})
 
 	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("username=testuser&password=anypassword"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 
-	authHandlers.Login(w, req, "test-etag")
+	authHandlers.Login(w, req)
 
 	// Should return OK since mock auth succeeds
 	if w.Code != http.StatusOK {
@@ -319,8 +315,8 @@ func TestAuthHandlers_Login_Success(t *testing.T) {
 	}
 
 	// Should have HX-Trigger header for successful login
-	if w.Header().Get("HX-Trigger") != "login-success" {
-		t.Errorf("expected HX-Trigger 'login-success', got '%s'", w.Header().Get("HX-Trigger"))
+	if w.Header().Get("HX-Trigger") != "auth-changed" {
+		t.Errorf("expected HX-Trigger 'auth-changed', got '%s'", w.Header().Get("HX-Trigger"))
 	}
 }
 
@@ -338,15 +334,13 @@ func TestAuthHandlers_Login_InvalidCredentials(t *testing.T) {
 		},
 	}
 
-	authHandlers := NewAuthHandlers(authSvc, &mockSessionManagerAuth{}, func(w http.ResponseWriter, r *http.Request) string {
-		return "test-csrf-token"
-	})
+	authHandlers := NewAuthHandlers(authSvc, &mockSessionManagerAuth{})
 
 	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("username=testuser&password=wrongpassword"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 
-	authHandlers.Login(w, req, "test-etag")
+	authHandlers.Login(w, req)
 
 	// Should return 200 with error message in body
 	if w.Code != http.StatusOK {
@@ -377,15 +371,13 @@ func TestAuthHandlers_Login_AccountLocked(t *testing.T) {
 		},
 	}
 
-	authHandlers := NewAuthHandlers(authSvc, &mockSessionManagerAuth{}, func(w http.ResponseWriter, r *http.Request) string {
-		return "test-csrf-token"
-	})
+	authHandlers := NewAuthHandlers(authSvc, &mockSessionManagerAuth{})
 
 	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("username=lockeduser&password=anypassword"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 
-	authHandlers.Login(w, req, "test-etag")
+	authHandlers.Login(w, req)
 
 	// Should return 200 with lockout message in body
 	if w.Code != http.StatusOK {
@@ -412,15 +404,13 @@ func TestAuthHandlers_Login_InvalidCSRF(t *testing.T) {
 
 	authSvc := &mockAuthService{}
 	// Use a session manager that rejects CSRF on existing session
-	authHandlers := NewAuthHandlers(authSvc, &mockSessionManagerWithExistingSession{}, func(w http.ResponseWriter, r *http.Request) string {
-		return "test-csrf-token"
-	})
+	authHandlers := NewAuthHandlers(authSvc, &mockSessionManagerWithExistingSession{})
 
 	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("username=testuser&password=password"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 
-	authHandlers.Login(w, req, "test-etag")
+	authHandlers.Login(w, req)
 
 	// Should return 403 Forbidden
 	if w.Code != http.StatusForbidden {
@@ -430,9 +420,7 @@ func TestAuthHandlers_Login_InvalidCSRF(t *testing.T) {
 
 func TestAuthHandlers_Logout(t *testing.T) {
 	authSvc := &mockAuthService{}
-	authHandlers := NewAuthHandlers(authSvc, &mockSessionManagerAuth{}, func(w http.ResponseWriter, r *http.Request) string {
-		return "test-csrf-token"
-	})
+	authHandlers := NewAuthHandlers(authSvc, &mockSessionManagerAuth{})
 
 	req := httptest.NewRequest(http.MethodPost, "/logout", nil)
 	w := httptest.NewRecorder()
@@ -443,27 +431,16 @@ func TestAuthHandlers_Logout(t *testing.T) {
 		t.Errorf("expected status 200, got %d", w.Code)
 	}
 
-	// Check content type
-	if w.Header().Get("Content-Type") != "text/html" {
-		t.Errorf("expected Content-Type 'text/html', got '%s'", w.Header().Get("Content-Type"))
-	}
-
-	doc, err := testutil.ParseHTML(w.Body)
-	if err != nil {
-		t.Fatalf("parse HTML: %v", err)
-	}
-	menu := testutil.FindElementByID(doc, "hamburger-menu-items")
-	if menu == nil {
-		t.Fatal("missing #hamburger-menu-items")
+	// Should have HX-Trigger header for auth-changed event
+	if w.Header().Get("HX-Trigger") != "auth-changed" {
+		t.Errorf("expected HX-Trigger 'auth-changed', got '%s'", w.Header().Get("HX-Trigger"))
 	}
 }
 
 func TestAuthHandlers_Logout_SessionError(t *testing.T) {
 	authSvc := &mockAuthService{}
 	// Use a mock that returns error on SetAuthenticated
-	authHandlers := NewAuthHandlers(authSvc, &mockSessionManagerWithError{}, func(w http.ResponseWriter, r *http.Request) string {
-		return "test-csrf-token"
-	})
+	authHandlers := NewAuthHandlers(authSvc, &mockSessionManagerWithError{})
 
 	req := httptest.NewRequest(http.MethodPost, "/logout", nil)
 	w := httptest.NewRecorder()
@@ -490,15 +467,13 @@ func TestAuthHandlers_Login_InvalidCSRF_NewSessionAllowed(t *testing.T) {
 		},
 	}
 
-	authHandlers := NewAuthHandlers(authSvc, &mockSessionManagerNewSessionInvalidCSRF{}, func(w http.ResponseWriter, r *http.Request) string {
-		return "test-csrf-token"
-	})
+	authHandlers := NewAuthHandlers(authSvc, &mockSessionManagerNewSessionInvalidCSRF{})
 
 	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("username=testuser&password=wrong"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 
-	authHandlers.Login(w, req, "test-etag")
+	authHandlers.Login(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", w.Code)
@@ -530,15 +505,13 @@ func TestAuthHandlers_Login_InvalidCSRF_ExistingSessionNoTokenAllowed(t *testing
 		},
 	}
 
-	authHandlers := NewAuthHandlers(authSvc, &mockSessionManagerExistingSessionNoToken{}, func(w http.ResponseWriter, r *http.Request) string {
-		return "test-csrf-token"
-	})
+	authHandlers := NewAuthHandlers(authSvc, &mockSessionManagerExistingSessionNoToken{})
 
 	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("username=testuser&password=wrong"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 
-	authHandlers.Login(w, req, "test-etag")
+	authHandlers.Login(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", w.Code)
@@ -563,15 +536,13 @@ func TestAuthHandlers_Login_CheckLockoutError(t *testing.T) {
 		},
 	}
 
-	authHandlers := NewAuthHandlers(authSvc, &mockSessionManagerAuth{}, func(w http.ResponseWriter, r *http.Request) string {
-		return "test-csrf-token"
-	})
+	authHandlers := NewAuthHandlers(authSvc, &mockSessionManagerAuth{})
 
 	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("username=testuser&password=any"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 
-	authHandlers.Login(w, req, "test-etag")
+	authHandlers.Login(w, req)
 
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("expected status 500, got %d", w.Code)
@@ -588,15 +559,13 @@ func TestAuthHandlers_Login_AuthServiceError(t *testing.T) {
 		},
 	}
 
-	authHandlers := NewAuthHandlers(authSvc, &mockSessionManagerAuth{}, func(w http.ResponseWriter, r *http.Request) string {
-		return "test-csrf-token"
-	})
+	authHandlers := NewAuthHandlers(authSvc, &mockSessionManagerAuth{})
 
 	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("username=testuser&password=any"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 
-	authHandlers.Login(w, req, "test-etag")
+	authHandlers.Login(w, req)
 
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("expected status 500, got %d", w.Code)
@@ -613,42 +582,15 @@ func TestAuthHandlers_Login_SetAuthenticatedError(t *testing.T) {
 		},
 	}
 
-	authHandlers := NewAuthHandlers(authSvc, &mockSessionManagerWithError{}, func(w http.ResponseWriter, r *http.Request) string {
-		return "test-csrf-token"
-	})
+	authHandlers := NewAuthHandlers(authSvc, &mockSessionManagerWithError{})
 
 	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("username=testuser&password=any"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 
-	authHandlers.Login(w, req, "test-etag")
+	authHandlers.Login(w, req)
 
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("expected status 500, got %d", w.Code)
-	}
-}
-
-func TestAuthHandlers_Login_RenderFailure(t *testing.T) {
-	authSvc := &mockAuthService{
-		checkLockoutFunc: func(ctx context.Context, username string) (bool, error) {
-			return false, nil
-		},
-		authenticateFunc: func(ctx context.Context, username, password string) (*session.User, error) {
-			return &session.User{Username: username, Password: "hashed"}, nil
-		},
-	}
-
-	authHandlers := NewAuthHandlers(authSvc, &mockSessionManagerAuth{}, func(w http.ResponseWriter, r *http.Request) string {
-		return "test-csrf-token"
-	})
-
-	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("username=testuser&password=any"))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	writer := &errorResponseWriter{}
-
-	authHandlers.Login(writer, req, "test-etag")
-
-	if writer.status != http.StatusInternalServerError {
-		t.Errorf("expected status 500, got %d", writer.status)
 	}
 }

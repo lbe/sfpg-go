@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/lbe/sfpg-go/internal/dbconnpool"
@@ -20,6 +19,8 @@ import (
 	"github.com/lbe/sfpg-go/internal/server/cachepreload"
 	"github.com/lbe/sfpg-go/internal/server/files"
 	"github.com/lbe/sfpg-go/internal/server/interfaces"
+	"github.com/lbe/sfpg-go/internal/server/pathutil"
+	"github.com/lbe/sfpg-go/internal/server/session"
 	"github.com/lbe/sfpg-go/internal/server/ui"
 )
 
@@ -122,7 +123,7 @@ func fixupFileName(name string) string {
 // getSessionIDForPreload extracts a session identifier for cache preloading.
 // Uses the session cookie if available, otherwise falls back to RemoteAddr.
 func getSessionIDForPreload(r *http.Request) string {
-	if c, err := r.Cookie("session-name"); err == nil && c.Value != "" {
+	if c, err := r.Cookie(session.SessionName); err == nil && c.Value != "" {
 		return c.Value
 	}
 	return r.RemoteAddr
@@ -431,25 +432,18 @@ func (h *GalleryHandlers) RawImageByID(w http.ResponseWriter, r *http.Request) {
 	if h.GetImagesDir != nil {
 		imagesDir = h.GetImagesDir()
 	}
-	path := filepath.Join(imagesDir, file.Path)
-	absPath, err := filepath.Abs(path)
-	if err != nil {
-		http.Error(w, "Invalid file path", http.StatusBadRequest)
-		return
-	}
 
-	absImagesDir, err := filepath.Abs(imagesDir)
+	absPath, err := pathutil.SafeImagePath(imagesDir, file.Path)
 	if err != nil {
-		slog.Error("failed to get absolute images directory", "err", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-
-	if !strings.HasSuffix(absImagesDir, string(filepath.Separator)) {
-		absImagesDir += string(filepath.Separator)
-	}
-	if !strings.HasPrefix(absPath+string(filepath.Separator), absImagesDir) {
-		http.Error(w, "Forbidden", http.StatusForbidden)
+		switch {
+		case errors.Is(err, pathutil.ErrPathTraversal):
+			http.Error(w, "Forbidden", http.StatusForbidden)
+		case errors.Is(err, pathutil.ErrInvalidImagesDir):
+			slog.Error("failed to get absolute images directory", "err", err)
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		default:
+			http.Error(w, "Invalid file path", http.StatusBadRequest)
+		}
 		return
 	}
 
@@ -689,7 +683,8 @@ func (h *GalleryHandlers) InfoBoxFolder(w http.ResponseWriter, r *http.Request) 
 
 	updatedAt, ok := folder.UpdatedAt.(int64)
 	if !ok {
-		updatedAt = time.Now().Unix()
+		slog.Warn("folder.UpdatedAt is not int64, using epoch", "folder_id", folderID, "type", fmt.Sprintf("%T", folder.UpdatedAt))
+		updatedAt = 0
 	}
 	w.Header().Set("Last-Modified", time.Unix(updatedAt, 0).UTC().Format(http.TimeFormat))
 	h.setCacheHeaders(w, "")
@@ -765,7 +760,8 @@ func (h *GalleryHandlers) InfoBoxImage(w http.ResponseWriter, r *http.Request) {
 
 	updatedAt, ok := file.UpdatedAt.(int64)
 	if !ok {
-		updatedAt = time.Now().Unix()
+		slog.Warn("file.UpdatedAt is not int64, using epoch", "file_id", fileID, "type", fmt.Sprintf("%T", file.UpdatedAt))
+		updatedAt = 0
 	}
 	w.Header().Set("Last-Modified", time.Unix(updatedAt, 0).UTC().Format(http.TimeFormat))
 	h.setCacheHeaders(w, "")
@@ -826,13 +822,9 @@ func (h *GalleryHandlers) InfoBoxImage(w http.ResponseWriter, r *http.Request) {
 func (h *GalleryHandlers) NoThumbnail(w http.ResponseWriter, r *http.Request) {
 	_ = r
 	thumb := []byte(`<svg viewBox="-12 -6 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
-	//  <g id="SVGRepo_bgCarrier" stroke-width="0"></g>
-	//  <g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g>
-	//  <g id="SVGRepo_iconCarrier"> 
-	//  	  <path d="M12.4615 4V9C12.4615 9.55228 12.9093 10 13.4615 10H18M12.4615 4L18 10M12.4615 4H8.5M18 10V15M15 20H7C6.44772 20 6 19.5523 6 19V10" stroke="#333333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path> 
-	//  	  <line x1="3.4137" y1="3.03821" x2="20.0382" y2="20.5863" stroke="#333333" stroke-width="2" stroke-linecap="round"></line> 
-	//  </g>
-	//</svg>`)
+	<path d="M12.4615 4V9C12.4615 9.55228 12.9093 10 13.4615 10H18M12.4615 4L18 10M12.4615 4H8.5M18 10V15M15 20H7C6.44772 20 6 19.5523 6 19V10" stroke="#333333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
+	<line x1="3.4137" y1="3.03821" x2="20.0382" y2="20.5863" stroke="#333333" stroke-width="2" stroke-linecap="round"></line>
+</svg>`)
 	w.Header().Set("Content-Type", "image/svg+xml")
 	if _, err := w.Write(thumb); err != nil {
 		slog.Error("failed to write no-thumbnail response", "err", err)

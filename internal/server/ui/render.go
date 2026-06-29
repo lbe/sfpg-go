@@ -11,6 +11,9 @@ import (
 // base "layout" template. If partial is true, it renders only the "body"
 // block for htmx partial updates.
 func RenderPage(w io.Writer, name string, data any, partial bool) error {
+	parseMu.RLock()
+	defer parseMu.RUnlock()
+
 	slog.Debug("renderPage called", "name", name, "partial", partial)
 	if partial {
 		switch name {
@@ -24,8 +27,9 @@ func RenderPage(w io.Writer, name string, data any, partial bool) error {
 			if err := dashboardPartialTemplate.Execute(w, data); err != nil {
 				return err
 			}
-			// Include hamburger menu items to preserve dashboard link on refresh
-			return hamburgerMenuItemsTemplate.Execute(w, data)
+			// Menu items are loaded independently via /hamburger-menu
+			// (no longer rendered as OOB swap in partial responses)
+			return nil
 		default:
 			return fmt.Errorf("no partial definition for page: %s", name)
 		}
@@ -60,6 +64,9 @@ func RenderPage(w io.Writer, name string, data any, partial bool) error {
 // RenderTemplate renders a single, standalone template by name. It is used for
 // partials or components that are not part of a full page layout.
 func RenderTemplate(w io.Writer, name string, data any) error {
+	parseMu.RLock()
+	defer parseMu.RUnlock()
+
 	var t *template.Template
 	switch name {
 	case "lightbox-content.html.tmpl":
@@ -80,6 +87,8 @@ func RenderTemplate(w io.Writer, name string, data any) error {
 		t = configModalTemplate
 	case "login-form.html.tmpl":
 		t = loginFormTemplate
+	case "login-form-inner.html.tmpl":
+		t = loginFormInnerTemplate
 	case "infobox-folder.html.tmpl":
 		t = infoBoxFolderTemplate
 	case "infobox-image.html.tmpl":

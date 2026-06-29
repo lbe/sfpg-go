@@ -433,12 +433,16 @@ graph TB
 
 Routes are organized into handler groups by domain:
 
-| Handler Group       | Routes                                  | Purpose            |
-| ------------------- | --------------------------------------- | ------------------ |
-| **AuthHandlers**    | /login, /logout, /auth/status           | Authentication     |
-| **GalleryHandlers** | /gallery, /image, /info, /thumbnail     | Browsing & viewing |
-| **ConfigHandlers**  | /config, /config/export, /config/import | Configuration      |
-| **HealthHandlers**  | /health, /version, /debug/pprof/\*      | Health & profiling |
+| Handler Group         | Routes                                             | Purpose                      |
+| --------------------- | -------------------------------------------------- | ---------------------------- |
+| **AuthHandlers**      | POST /login, GET /login-form, POST /logout         | Authentication               |
+| **ConfigHandlers**    | GET+POST /config, /config/export, /config/import   | Configuration                |
+| **DashboardHandlers** | GET /dashboard                                     | Admin dashboard              |
+| **GalleryHandlers**   | /gallery, /image, /thumbnail, /lightbox, /info     | Browsing & viewing           |
+| **HealthHandlers**    | /health, /version, root redirect                   | Health & profiling           |
+| **MenuHandlers**      | GET /hamburger-menu                                | Session-aware menu rendering |
+| **ServerHandlers**    | POST /server/{shutdown,discovery,cache-batch-load} | Server management            |
+| **ThemeHandlers**     | GET /theme/modal, POST /theme                      | Theme selection              |
 
 **Example:**
 
@@ -803,17 +807,23 @@ graph TB
 ```mermaid
 stateDiagram-v2
     [*] --> Unauthenticated: Visit site
-    Unauthenticated --> LoginForm: GET /login
-    LoginForm --> Validating: POST /login
-    Validating --> CheckLockout{Account<br/>locked?}
-    CheckLockout -->|Yes| LoginFail: Show locked error
-    CheckLockout -->|No| CheckCredentials{bcrypt<br/>verify}
-    CheckCredentials -->|Invalid| LoginFail
-    CheckCredentials -->|Valid| CheckAttempts{Failed<br/>attempts?}
-    CheckAttempts -->|Yes| ResetAttempts[Reset counter]
-    CheckAttempts -->|No| CreateSession
+    Unauthenticated --> ModalOpened: Click login button
+    ModalOpened --> LoginFetched: HTMX GET /login-form
+    LoginFetched --> LoginSubmit: POST /login
+    LoginSubmit --> CheckLockout{HX-Trigger:
+auth-changed}
+    CheckLockout -->|Account locked| LoginFail: Show error in modal
+    CheckLockout -->|CSRF invalid| LoginFail: Show error in modal
+    CheckLockout -->|Valid + locked| LockedCheck{Account<br/>locked?}
+    LockedCheck -->|Yes| LoginFail: Show locked error
+    LockedCheck -->|No| CredentialsCheck{bcrypt<br/>verify}
+    CredentialsCheck -->|Invalid| LoginFail
+    CredentialsCheck -->|Valid| AttemptsCheck{Failed<br/>attempts?}
+    AttemptsCheck -->|Yes| ResetAttempts[Reset counter]
+    AttemptsCheck -->|No| CreateSession
     ResetAttempts --> CreateSession
-    CreateSession --> Authenticated: Set session cookie
+    CreateSession --> Authenticated: HX-Trigger:
+auth-changed
     Authenticated --> Authenticated: Request with cookie
     Authenticated --> Unauthenticated: Logout / expire
 ```

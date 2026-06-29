@@ -174,7 +174,8 @@ func TestE2E_ConfigCompression_ServerUsesConfig(t *testing.T) {
 	csrfToken := extractCSRFTokenFromConfig(t, client, ts.URL)
 	formData := url.Values{}
 	formData.Set("csrf_token", csrfToken)
-	// Don't include server_compression_enable - unchecked = false
+	// Include with empty value to signal presence of config fields
+	formData.Set("server_compression_enable", "")
 
 	req, err := http.NewRequest(http.MethodPost, ts.URL+"/config", strings.NewReader(formData.Encode()))
 	if err != nil {
@@ -287,7 +288,8 @@ func TestE2E_ConfigCache_ServerUsesConfig(t *testing.T) {
 	csrfToken := extractCSRFTokenFromConfig(t, client, ts.URL)
 	formData := url.Values{}
 	formData.Set("csrf_token", csrfToken)
-	// Don't include enable_http_cache - unchecked = false
+	// Include with empty value to signal presence of config fields
+	formData.Set("enable_http_cache", "")
 
 	req, err := http.NewRequest(http.MethodPost, ts.URL+"/config", strings.NewReader(formData.Encode()))
 	if err != nil {

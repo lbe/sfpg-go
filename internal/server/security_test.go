@@ -381,12 +381,11 @@ func TestSessionSecurity_HttpOnly(t *testing.T) {
 		},
 	}
 
-	// Fetch CSRF token from GET /gallery/1 (which contains login modal)
-	galleryURL := server.URL + "/gallery/1"
-	reqGet, _ := http.NewRequest("GET", galleryURL, nil)
+	// Fetch CSRF token from /login-form (which contains login modal)
+	reqGet, _ := http.NewRequest("GET", server.URL+"/login-form", nil)
 	respGet, err := client.Do(reqGet)
 	if err != nil {
-		t.Fatalf("GET /gallery/1 failed: %v", err)
+		t.Fatalf("GET /login-form failed: %v", err)
 	}
 	defer respGet.Body.Close()
 	bodyBytes, _ := io.ReadAll(respGet.Body)
@@ -464,12 +463,11 @@ func TestSessionSecurity_Secure(t *testing.T) {
 		},
 	}
 
-	// Fetch CSRF token from GET /gallery/1 (which contains login modal)
-	galleryURL := server.URL + "/gallery/1"
-	reqGet, _ := http.NewRequest("GET", galleryURL, nil)
+	// Fetch CSRF token from /login-form (which contains login modal)
+	reqGet, _ := http.NewRequest("GET", server.URL+"/login-form", nil)
 	respGet, err := client.Do(reqGet)
 	if err != nil {
-		t.Fatalf("GET /gallery/1 failed: %v", err)
+		t.Fatalf("GET /login-form failed: %v", err)
 	}
 	defer respGet.Body.Close()
 	bodyBytes, _ := io.ReadAll(respGet.Body)
@@ -628,12 +626,11 @@ func TestSessionSecurity_DevMode(t *testing.T) {
 		},
 	}
 
-	// Fetch CSRF token from GET /gallery/1 (which contains login modal)
-	galleryURL := server.URL + "/gallery/1"
-	reqGet, _ := http.NewRequest("GET", galleryURL, nil)
+	// Fetch CSRF token from /login-form (which contains login modal)
+	reqGet, _ := http.NewRequest("GET", server.URL+"/login-form", nil)
 	respGet, err := client.Do(reqGet)
 	if err != nil {
-		t.Fatalf("GET /gallery/1 failed: %v", err)
+		t.Fatalf("GET /login-form failed: %v", err)
 	}
 	defer respGet.Body.Close()
 	bodyBytes, _ := io.ReadAll(respGet.Body)

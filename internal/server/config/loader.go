@@ -182,11 +182,11 @@ func yamlFieldsMap() map[string]*configField {
 }
 
 // yamlValueToSetString converts a yaml.v3-decoded interface{} value to a
-// string suitable for configField.set(). Returns an empty string for nil.
+// string suitable for configField.set(). Returns an error for nil values.
 func yamlValueToSetString(v interface{}) (string, error) {
 	switch val := v.(type) {
 	case nil:
-		return "", nil
+		return "", fmt.Errorf("value is null, expected a valid value")
 	case string:
 		return val, nil
 	case int:
@@ -217,9 +217,6 @@ func applyYAMLValues(c *Config, raw map[string]interface{}) error {
 		strVal, err := yamlValueToSetString(rawVal)
 		if err != nil {
 			return fmt.Errorf("yaml key %q: %w", yamlKey, err)
-		}
-		if strVal == "" {
-			continue
 		}
 		if err := f.set(c, strVal); err != nil {
 			return fmt.Errorf("yaml key %q: %w", yamlKey, err)

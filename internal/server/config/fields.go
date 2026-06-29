@@ -13,7 +13,7 @@ import (
 // configField describes a single configuration field for the table-driven
 // refactor. It holds the database key, YAML key, closures for getting,
 // setting, and copying the field's value, plus form presentation metadata
-// (IsCheckbox, skipInForm).
+// (IsCheckbox).
 type configField struct {
 	dbKey      string                          // "listener_port"
 	yamlKey    string                          // "listener-port"
@@ -24,7 +24,6 @@ type configField struct {
 	restart    bool                            // requires restart
 	setFrom    func(dst, src *Config)          // copy src's value to dst
 	IsCheckbox bool                            // HTML checkbox field
-	skipInForm bool                            // omit from main config form
 }
 
 // durationFriendlyNames maps YAML duration keys to human-readable field names
@@ -617,9 +616,8 @@ func fields() []configField {
 			},
 			// --- Themes ([]string) ---
 			{
-				dbKey:      "themes",
-				skipInForm: true,
-				yamlKey:    "themes",
+				dbKey:   "themes",
+				yamlKey: "themes",
 				set: func(c *Config, v string) error {
 					var themes []string
 					if err := json.Unmarshal([]byte(v), &themes); err != nil {
@@ -657,7 +655,6 @@ type FieldInfo struct {
 	DBKey      string
 	Set        func(c *Config, v string) error
 	IsCheckbox bool // render as HTML checkbox
-	SkipInForm bool // omit from main config form
 }
 
 var (
@@ -674,7 +671,6 @@ func Fields() []FieldInfo {
 				DBKey:      f.dbKey,
 				Set:        f.set,
 				IsCheckbox: f.IsCheckbox,
-				SkipInForm: f.skipInForm,
 			})
 		}
 		fieldsInfoCache = result

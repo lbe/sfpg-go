@@ -83,19 +83,7 @@
             data-tab="tab-server"
             aria-controls="tab-server"
             aria-selected="true"
-            _="on click 
-                     set targetPanelId to my.getAttribute('data-tab')
-                     set targetPanel to document.getElementById(targetPanelId)
-                     set tabList to me.closest('[role=tablist]')
-                     set allTabs to tabList.querySelectorAll('button[role=tab]')
-                     for tab in allTabs
-                       remove .tab-active from tab
-                       set tab@aria-selected to 'false'
-                     end
-                     add .tab-active to me
-                     set my@aria-selected to 'true'
-                     add .hidden to <.tab-panel/> in #tab-panels
-                     remove .hidden from targetPanel"
+            _="install TabSwitcher"
           >
             Server
           </button>
@@ -107,19 +95,7 @@
             data-tab="tab-logging"
             aria-controls="tab-logging"
             aria-selected="false"
-            _="on click 
-                     set targetPanelId to my.getAttribute('data-tab')
-                     set targetPanel to document.getElementById(targetPanelId)
-                     set tabList to me.closest('[role=tablist]')
-                     set allTabs to tabList.querySelectorAll('button[role=tab]')
-                     for tab in allTabs
-                       remove .tab-active from tab
-                       set tab@aria-selected to 'false'
-                     end
-                     add .tab-active to me
-                     set my@aria-selected to 'true'
-                     add .hidden to <.tab-panel/> in #tab-panels
-                     remove .hidden from targetPanel"
+            _="install TabSwitcher"
           >
             Logging
           </button>
@@ -131,19 +107,7 @@
             data-tab="tab-application"
             aria-controls="tab-application"
             aria-selected="false"
-            _="on click 
-                     set targetPanelId to my.getAttribute('data-tab')
-                     set targetPanel to document.getElementById(targetPanelId)
-                     set tabList to me.closest('[role=tablist]')
-                     set allTabs to tabList.querySelectorAll('button[role=tab]')
-                     for tab in allTabs
-                       remove .tab-active from tab
-                       set tab@aria-selected to 'false'
-                     end
-                     add .tab-active to me
-                     set my@aria-selected to 'true'
-                     add .hidden to <.tab-panel/> in #tab-panels
-                     remove .hidden from targetPanel"
+            _="install TabSwitcher"
           >
             Application
           </button>
@@ -155,19 +119,7 @@
             data-tab="tab-session"
             aria-controls="tab-session"
             aria-selected="false"
-            _="on click 
-                     set targetPanelId to my.getAttribute('data-tab')
-                     set targetPanel to document.getElementById(targetPanelId)
-                     set tabList to me.closest('[role=tablist]')
-                     set allTabs to tabList.querySelectorAll('button[role=tab]')
-                     for tab in allTabs
-                       remove .tab-active from tab
-                       set tab@aria-selected to 'false'
-                     end
-                     add .tab-active to me
-                     set my@aria-selected to 'true'
-                     add .hidden to <.tab-panel/> in #tab-panels
-                     remove .hidden from targetPanel"
+            _="install TabSwitcher"
           >
             Session
           </button>
@@ -179,19 +131,7 @@
             data-tab="tab-performance"
             aria-controls="tab-performance"
             aria-selected="false"
-            _="on click 
-                     set targetPanelId to my.getAttribute('data-tab')
-                     set targetPanel to document.getElementById(targetPanelId)
-                     set tabList to me.closest('[role=tablist]')
-                     set allTabs to tabList.querySelectorAll('button[role=tab]')
-                     for tab in allTabs
-                       remove .tab-active from tab
-                       set tab@aria-selected to 'false'
-                     end
-                     add .tab-active to me
-                     set my@aria-selected to 'true'
-                     add .hidden to <.tab-panel/> in #tab-panels
-                     remove .hidden from targetPanel"
+            _="install TabSwitcher"
           >
             Performance
           </button>
@@ -203,19 +143,7 @@
             data-tab="tab-discovery"
             aria-controls="tab-discovery"
             aria-selected="false"
-            _="on click 
-                     set targetPanelId to my.getAttribute('data-tab')
-                     set targetPanel to document.getElementById(targetPanelId)
-                     set tabList to me.closest('[role=tablist]')
-                     set allTabs to tabList.querySelectorAll('button[role=tab]')
-                     for tab in allTabs
-                       remove .tab-active from tab
-                       set tab@aria-selected to 'false'
-                     end
-                     add .tab-active to me
-                     set my@aria-selected to 'true'
-                     add .hidden to <.tab-panel/> in #tab-panels
-                     remove .hidden from targetPanel"
+            _="install TabSwitcher"
           >
             Discovery
           </button>
@@ -227,19 +155,7 @@
             data-tab="tab-admin"
             aria-controls="tab-admin"
             aria-selected="false"
-            _="on click 
-                     set targetPanelId to my.getAttribute('data-tab')
-                     set targetPanel to document.getElementById(targetPanelId)
-                     set tabList to me.closest('[role=tablist]')
-                     set allTabs to tabList.querySelectorAll('button[role=tab]')
-                     for tab in allTabs
-                       remove .tab-active from tab
-                       set tab@aria-selected to 'false'
-                     end
-                     add .tab-active to me
-                     set my@aria-selected to 'true'
-                     add .hidden to <.tab-panel/> in #tab-panels
-                     remove .hidden from targetPanel"
+            _="install TabSwitcher"
           >
             Admin ID
           </button>
@@ -304,470 +220,77 @@
             {{ template "config-admin-tab" . }}
           </div>
         </div>
-      </form>
 
-      <!-- Themes form (separate form for submitting themes independently) -->
-      <form
-        hx-post="/config/themes"
-        hx-target="#config-success-message"
-        hx-swap="outerHTML"
-        hx-indicator="#config-loading"
-        class="flex min-h-0 flex-1 flex-col overflow-hidden"
-      >
-        <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}" />
-        <div class="form-control mb-4">
-          <label class="label">
-            <span class="label-text font-semibold">Available Themes</span>
-          </label>
-          <select
-            name="themes"
-            multiple
-            class="select select-bordered w-64"
-            size="10"
-          >
-            {{ $themes := .Config.Themes }}
-            <option
-              value="light"
-              {{- if not $themes }}
-                selected
-              {{ else }}
-                {{ range $themes }}
-                  {{ if eq . "light" }}selected{{ end }}
-                {{ end }}
-              {{ end -}}
-            >
-              Light
-            </option>
-            <option
-              value="dark"
-              {{- if not $themes }}
-                selected
-              {{ else }}
-                {{ range $themes }}
-                  {{ if eq . "dark" }}selected{{ end }}
-                {{ end }}
-              {{ end -}}
-            >
-              Dark
-            </option>
-            <option
-              value="acid"
-              {{- if $themes }}
-                {{ range $themes }}
-                  {{ if eq . "acid" }}selected{{ end }}
-                {{ end }}
-              {{ end -}}
-            >
-              Acid
-            </option>
-            <option
-              value="aqua"
-              {{- if $themes }}
-                {{ range $themes }}
-                  {{ if eq . "aqua" }}selected{{ end }}
-                {{ end }}
-              {{ end -}}
-            >
-              Aqua
-            </option>
-            <option
-              value="autumn"
-              {{- if $themes }}
-                {{ range $themes }}
-                  {{ if eq . "autumn" }}selected{{ end }}
-                {{ end }}
-              {{ end -}}
-            >
-              Autumn
-            </option>
-            <option
-              value="black"
-              {{- if $themes }}
-                {{ range $themes }}
-                  {{ if eq . "black" }}selected{{ end }}
-                {{ end }}
-              {{ end -}}
-            >
-              Black
-            </option>
-            <option
-              value="bumblebee"
-              {{- if $themes }}
-                {{ range $themes }}
-                  {{ if eq . "bumblebee" }}selected{{ end }}
-                {{ end }}
-              {{ end -}}
-            >
-              Bumblebee
-            </option>
-            <option
-              value="business"
-              {{- if $themes }}
-                {{ range $themes }}
-                  {{ if eq . "business" }}selected{{ end }}
-                {{ end }}
-              {{ end -}}
-            >
-              Business
-            </option>
-            <option
-              value="caramellatte"
-              {{- if $themes }}
-                {{ range $themes }}
-                  {{ if eq . "caramellatte" }}selected{{ end }}
-                {{ end }}
-              {{ end -}}
-            >
-              Caramellatte
-            </option>
-            <option
-              value="coffee"
-              {{- if $themes }}
-                {{ range $themes }}
-                  {{ if eq . "coffee" }}selected{{ end }}
-                {{ end }}
-              {{ end -}}
-            >
-              Coffee
-            </option>
-            <option
-              value="corporate"
-              {{- if $themes }}
-                {{ range $themes }}
-                  {{ if eq . "corporate" }}selected{{ end }}
-                {{ end }}
-              {{ end -}}
-            >
-              Corporate
-            </option>
-            <option
-              value="cupcake"
-              {{- if $themes }}
-                {{ range $themes }}
-                  {{ if eq . "cupcake" }}selected{{ end }}
-                {{ end }}
-              {{ end -}}
-            >
-              Cupcake
-            </option>
-            <option
-              value="cmyk"
-              {{- if $themes }}
-                {{ range $themes }}
-                  {{ if eq . "cmyk" }}selected{{ end }}
-                {{ end }}
-              {{ end -}}
-            >
-              Cmyk
-            </option>
-            <option
-              value="cyberpunk"
-              {{- if $themes }}
-                {{ range $themes }}
-                  {{ if eq . "cyberpunk" }}selected{{ end }}
-                {{ end }}
-              {{ end -}}
-            >
-              Cyberpunk
-            </option>
-            <option
-              value="dim"
-              {{- if $themes }}
-                {{ range $themes }}{{ if eq . "dim" }}selected{{ end }}{{ end }}
-              {{ end -}}
-            >
-              Dim
-            </option>
-            <option
-              value="dracula"
-              {{- if $themes }}
-                {{ range $themes }}
-                  {{ if eq . "dracula" }}selected{{ end }}
-                {{ end }}
-              {{ end -}}
-            >
-              Dracula
-            </option>
-            <option
-              value="emerald"
-              {{- if $themes }}
-                {{ range $themes }}
-                  {{ if eq . "emerald" }}selected{{ end }}
-                {{ end }}
-              {{ end -}}
-            >
-              Emerald
-            </option>
-            <option
-              value="fantasy"
-              {{- if $themes }}
-                {{ range $themes }}
-                  {{ if eq . "fantasy" }}selected{{ end }}
-                {{ end }}
-              {{ end -}}
-            >
-              Fantasy
-            </option>
-            <option
-              value="forest"
-              {{- if $themes }}
-                {{ range $themes }}
-                  {{ if eq . "forest" }}selected{{ end }}
-                {{ end }}
-              {{ end -}}
-            >
-              Forest
-            </option>
-            <option
-              value="garden"
-              {{- if $themes }}
-                {{ range $themes }}
-                  {{ if eq . "garden" }}selected{{ end }}
-                {{ end }}
-              {{ end -}}
-            >
-              Garden
-            </option>
-            <option
-              value="halloween"
-              {{- if $themes }}
-                {{ range $themes }}
-                  {{ if eq . "halloween" }}selected{{ end }}
-                {{ end }}
-              {{ end -}}
-            >
-              Halloween
-            </option>
-            <option
-              value="lemonade"
-              {{- if $themes }}
-                {{ range $themes }}
-                  {{ if eq . "lemonade" }}selected{{ end }}
-                {{ end }}
-              {{ end -}}
-            >
-              Lemonade
-            </option>
-            <option
-              value="lofi"
-              {{- if $themes }}
-                {{ range $themes }}
-                  {{ if eq . "lofi" }}selected{{ end }}
-                {{ end }}
-              {{ end -}}
-            >
-              Lofi
-            </option>
-            <option
-              value="luxury"
-              {{- if $themes }}
-                {{ range $themes }}
-                  {{ if eq . "luxury" }}selected{{ end }}
-                {{ end }}
-              {{ end -}}
-            >
-              Luxury
-            </option>
-            <option
-              value="nord"
-              {{- if $themes }}
-                {{ range $themes }}
-                  {{ if eq . "nord" }}selected{{ end }}
-                {{ end }}
-              {{ end -}}
-            >
-              Nord
-            </option>
-            <option
-              value="night"
-              {{- if $themes }}
-                {{ range $themes }}
-                  {{ if eq . "night" }}selected{{ end }}
-                {{ end }}
-              {{ end -}}
-            >
-              Night
-            </option>
-            <option
-              value="pastel"
-              {{- if $themes }}
-                {{ range $themes }}
-                  {{ if eq . "pastel" }}selected{{ end }}
-                {{ end }}
-              {{ end -}}
-            >
-              Pastel
-            </option>
-            <option
-              value="retro"
-              {{- if $themes }}
-                {{ range $themes }}
-                  {{ if eq . "retro" }}selected{{ end }}
-                {{ end }}
-              {{ end -}}
-            >
-              Retro
-            </option>
-            <option
-              value="silk"
-              {{- if $themes }}
-                {{ range $themes }}
-                  {{ if eq . "silk" }}selected{{ end }}
-                {{ end }}
-              {{ end -}}
-            >
-              Silk
-            </option>
-            <option
-              value="sunset"
-              {{- if $themes }}
-                {{ range $themes }}
-                  {{ if eq . "sunset" }}selected{{ end }}
-                {{ end }}
-              {{ end -}}
-            >
-              Sunset
-            </option>
-            <option
-              value="synthwave"
-              {{- if $themes }}
-                {{ range $themes }}
-                  {{ if eq . "synthwave" }}selected{{ end }}
-                {{ end }}
-              {{ end -}}
-            >
-              Synthwave
-            </option>
-            <option
-              value="valentine"
-              {{- if $themes }}
-                {{ range $themes }}
-                  {{ if eq . "valentine" }}selected{{ end }}
-                {{ end }}
-              {{ end -}}
-            >
-              Valentine
-            </option>
-            <option
-              value="wireframe"
-              {{- if $themes }}
-                {{ range $themes }}
-                  {{ if eq . "wireframe" }}selected{{ end }}
-                {{ end }}
-              {{ end -}}
-            >
-              Wireframe
-            </option>
-            <option
-              value="winter"
-              {{- if $themes }}
-                {{ range $themes }}
-                  {{ if eq . "winter" }}selected{{ end }}
-                {{ end }}
-              {{ end -}}
-            >
-              Winter
-            </option>
-            <option
-              value="abyss"
-              {{- if $themes }}
-                {{ range $themes }}
-                  {{ if eq . "abyss" }}selected{{ end }}
-                {{ end }}
-              {{ end -}}
-            >
-              Abyss
-            </option>
-          </select>
-          <label class="label">
-            <span class="label-text-alt"
-              >Select which DaisyUI themes are available to users</span
-            >
-          </label>
-        </div>
-        <div class="flex justify-end">
-          <button type="submit" class="btn btn-primary btn-sm">
-            Save Themes
-          </button>
-        </div>
-      </form>
-
-      <!-- Fixed Footer with buttons and info area -->
-      <div class="border-base-300 flex-shrink-0 border-t p-6 pt-4">
-        <!-- Button explanation and badge area (fixed height) -->
-        <div class="mb-2 flex h-8 items-center justify-end">
-          <div class="flex items-center gap-2">
-            <div
-              id="button-explanation-text"
-              class="text-base-content/70 w-[452px] overflow-hidden text-center text-sm text-ellipsis whitespace-nowrap"
-            ></div>
-            <div
-              id="button-explanation-area-right"
-              class="flex items-center justify-center"
-            >
-              <span id="config-restart-badge" class="badge badge-warning hidden"
-                >Restart Required</span
+        <!-- Fixed Footer with buttons and info area -->
+        <div class="border-base-300 flex-shrink-0 border-t p-6 pt-4">
+          <!-- Button explanation and badge area (fixed height) -->
+          <div class="mb-2 flex h-8 items-center justify-end">
+            <div class="flex items-center gap-2">
+              <div
+                id="button-explanation-text"
+                class="text-base-content/70 w-[452px] overflow-hidden text-center text-sm text-ellipsis whitespace-nowrap"
+              ></div>
+              <div
+                id="button-explanation-area-right"
+                class="flex items-center justify-center"
               >
+                <span
+                  id="config-restart-badge"
+                  class="badge badge-warning hidden"
+                  >Restart Required</span
+                >
+              </div>
             </div>
           </div>
-        </div>
 
-        <!-- Footer with buttons (right-aligned) -->
-        <div class="modal-action justify-end">
-          <div class="flex items-center gap-2">
-            <button
-              class="btn btn-outline btn-sm"
-              hx-post="/config/restore-last-known-good?action=preview"
-              hx-target="#restore-diff-modal"
-              hx-swap="innerHTML"
-              _="on mouseenter set #button-explanation-text.textContent to 'Restore the last known good configuration from the database' on mouseleave set #button-explanation-text.textContent to ''"
-            >
-              Restore
-            </button>
-            <button
-              class="btn btn-outline btn-primary btn-sm"
-              hx-post="/config/export/to-file"
-              hx-target="#export-diff-modal"
-              hx-swap="innerHTML"
-              _="on mouseenter set #button-explanation-text.textContent to 'Export current configuration to a YAML file for backup' on mouseleave set #button-explanation-text.textContent to ''"
-            >
-              Export
-            </button>
-            <a
-              class="btn btn-outline btn-primary btn-sm"
-              href="/config/export/download"
-              download="config.yaml"
-              _="on mouseenter set #button-explanation-text.textContent to 'Download current configuration as a YAML file' on mouseleave set #button-explanation-text.textContent to ''"
-            >
-              Download
-            </a>
-            <button
-              class="btn btn-outline btn-primary btn-sm"
-              _="on click click() on #import-file-input on mouseenter set #button-explanation-text.textContent to 'Import configuration from a YAML file' on mouseleave set #button-explanation-text.textContent to ''"
-            >
-              Import
-            </button>
-            <input
-              type="file"
-              id="import-file-input"
-              accept=".yaml,.yml"
-              class="hidden"
-              hx-post="/config/import/preview"
-              hx-target="#import-diff-modal"
-              hx-swap="innerHTML"
-              hx-trigger="change"
-              hx-encoding="multipart/form-data"
-              name="yaml"
-              _="on change
+          <!-- Footer with buttons (right-aligned) -->
+          <div class="modal-action justify-end">
+            <div class="flex items-center gap-2">
+              <button
+                class="btn btn-outline btn-sm"
+                hx-post="/config/restore-last-known-good?action=preview"
+                hx-target="#restore-diff-modal"
+                hx-swap="innerHTML"
+                _="on mouseenter set #button-explanation-text.textContent to 'Restore the last known good configuration from the database' on mouseleave set #button-explanation-text.textContent to ''"
+              >
+                Restore
+              </button>
+              <button
+                class="btn btn-outline btn-primary btn-sm"
+                hx-post="/config/export/to-file"
+                hx-target="#export-diff-modal"
+                hx-swap="innerHTML"
+                _="on mouseenter set #button-explanation-text.textContent to 'Export current configuration to a YAML file for backup' on mouseleave set #button-explanation-text.textContent to ''"
+              >
+                Export
+              </button>
+              <button
+                class="btn btn-outline btn-primary btn-sm"
+                _="on click click() on #import-file-input on mouseenter set #button-explanation-text.textContent to 'Import configuration from a YAML file' on mouseleave set #button-explanation-text.textContent to ''"
+              >
+                Import
+              </button>
+              <input
+                type="file"
+                id="import-file-input"
+                accept=".yaml,.yml"
+                class="hidden"
+                hx-post="/config/import/preview"
+                hx-target="#import-diff-modal"
+                hx-swap="innerHTML"
+                hx-trigger="change"
+                hx-encoding="multipart/form-data"
+                name="yaml"
+                _="on change
                 if my.files.length > 0
                   set #import-diff-modal-toggle.checked to true
                 end"
-            />
-            <button
-              type="button"
-              class="btn btn-sm"
-              id="config-cancel-btn"
-              _="on click
+              />
+              <button
+                type="button"
+                class="btn btn-sm"
+                id="config-cancel-btn"
+                _="on click
                 set hasChanges to false
                 set configFields to ['listener_address', 'listener_port', 'server_compression_enable',
                                      'log_directory', 'log_level', 'log_rollover', 'log_retention_count',
@@ -841,24 +364,24 @@
                   wait 300ms
                   remove #config-modal-container from body
                 end"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              form="config-form"
-              class="btn btn-primary btn-sm relative text-center"
-              id="config-loading"
-            >
-              <span class="text-center">Save Settings</span>
-              <span
-                id="config-spinner"
-                class="loading loading-spinner loading-sm htmx-indicator absolute inset-0 flex items-center justify-center"
-              ></span>
-            </button>
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                class="btn btn-primary btn-sm relative text-center"
+                id="config-loading"
+              >
+                <span class="text-center">Save Settings</span>
+                <span
+                  id="config-spinner"
+                  class="loading loading-spinner loading-sm htmx-indicator absolute inset-0 flex items-center justify-center"
+                ></span>
+              </button>
+            </div>
           </div>
         </div>
-      </div>
+      </form>
     </div>
 
     <!-- Modals for diff display -->
@@ -1021,8 +544,8 @@
   on htmx:afterSettle from document
     set badge to #config-restart-badge
     -- Check if badge exists first, then check visibility and content
-    if badge is not null
-      if badge.textContent == 'Restart Required' and badge.classList.contains('hidden') == false and badge.classList.contains('restart-modal-shown') == false
+    if badge exists
+      if badge.textContent == 'Restart Required' and badge does not match .hidden and badge does not match .restart-modal-shown
         wait 100ms
         set configFields to ['listener_address', 'listener_port', 'server_compression_enable', 'log_directory', 'log_level', 'log_rollover', 'log_retention_count', 'site_name', 'image_directory', 'current_theme', 'session_max_age', 'session_http_only', 'session_secure', 'session_same_site', 'enable_http_cache', 'enable_cache_preload', 'cache_max_size', 'cache_max_entry_size', 'cache_max_time', 'cache_cleanup_interval', 'db_max_pool_size', 'db_min_idle_connections', 'db_optimize_interval', 'db_pool_monitor_interval', 'worker_pool_max', 'worker_pool_min_idle', 'worker_pool_max_idle_time', 'queue_size', 'run_file_discovery']
         call buildConfigDiff(configFields, #restart-diff-content, true)
@@ -1071,7 +594,7 @@
 
       -- Get the field that triggered the change
       set changedField to event.target
-      set changedFieldName to changedField.getAttribute('name')
+      set changedFieldName to changedField@name
 
       -- Ignore admin credential fields - they never require restart
       set adminFields to ['admin_username', 'admin_current_password', 'admin_new_password', 'admin_confirm_password']
@@ -1086,38 +609,18 @@
         for field in restartFields
           set fieldName to field@name
           set originalValue to window.configOriginalValues[fieldName]
-          if originalValue is not undefined
-            if field.type == 'checkbox'
-              if field.checked != originalValue set needsRestart to true end
-            else
-              if field.value != originalValue set needsRestart to true end
-            end
-          end
-        end
-      -- Themes also requires restart (hardcoded check since it's a special multi-select)
-      set themesSelect to form.querySelector('select[name=themes]')
-      if themesSelect
-        set originalThemes to window.configOriginalValues['themes']
-        set selectedOptions to themesSelect.selectedOptions
-
-        if originalThemes and originalThemes.length != selectedOptions.length
-          set needsRestart to true
-        else if originalThemes
-          for option in selectedOptions
-            if originalThemes.indexOf(option.value) == -1
-              set needsRestart to true
-            end
+          if originalValue is not undefined and field.value != originalValue
+            set needsRestart to true
           end
         end
       end
-    end
 
-    if needsRestart
-      remove .hidden from #config-restart-badge
-    else
-      add .hidden to #config-restart-badge
+      if needsRestart
+        remove .hidden from #config-restart-badge
+      else
+        add .hidden to #config-restart-badge
+      end
     end
-  end
 </script>
 
 {{ define "config-server-tab" }}
@@ -1402,6 +905,311 @@
     <label class="label">
       <span class="label-text-alt"
         >Directory path containing images. Restart required.</span
+      >
+    </label>
+  </div>
+
+  <div class="form-control mb-4">
+    <label class="label">
+      <span class="label-text font-semibold">Available Themes</span>
+    </label>
+    <select
+      name="themes"
+      multiple
+      class="select select-bordered w-64"
+      size="10"
+    >
+      {{ $themes := .Config.Themes }}
+      <option
+        value="light"
+        {{- if not $themes }}
+          selected
+        {{ else }}
+          {{ range $themes }}{{ if eq . "light" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Light
+      </option>
+      <option
+        value="dark"
+        {{- if not $themes }}
+          selected
+        {{ else }}
+          {{ range $themes }}{{ if eq . "dark" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Dark
+      </option>
+      <option
+        value="acid"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "acid" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Acid
+      </option>
+      <option
+        value="aqua"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "aqua" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Aqua
+      </option>
+      <option
+        value="autumn"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "autumn" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Autumn
+      </option>
+      <option
+        value="black"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "black" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Black
+      </option>
+      <option
+        value="bumblebee"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "bumblebee" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Bumblebee
+      </option>
+      <option
+        value="business"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "business" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Business
+      </option>
+      <option
+        value="caramellatte"
+        {{- if $themes }}
+          {{ range $themes }}
+            {{ if eq . "caramellatte" }}selected{{ end }}
+          {{ end }}
+        {{ end -}}
+      >
+        Caramellatte
+      </option>
+      <option
+        value="coffee"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "coffee" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Coffee
+      </option>
+      <option
+        value="corporate"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "corporate" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Corporate
+      </option>
+      <option
+        value="cupcake"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "cupcake" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Cupcake
+      </option>
+      <option
+        value="cmyk"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "cmyk" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Cmyk
+      </option>
+      <option
+        value="cyberpunk"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "cyberpunk" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Cyberpunk
+      </option>
+      <option
+        value="dim"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "dim" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Dim
+      </option>
+      <option
+        value="dracula"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "dracula" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Dracula
+      </option>
+      <option
+        value="emerald"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "emerald" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Emerald
+      </option>
+      <option
+        value="fantasy"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "fantasy" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Fantasy
+      </option>
+      <option
+        value="forest"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "forest" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Forest
+      </option>
+      <option
+        value="garden"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "garden" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Garden
+      </option>
+      <option
+        value="halloween"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "halloween" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Halloween
+      </option>
+      <option
+        value="lemonade"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "lemonade" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Lemonade
+      </option>
+      <option
+        value="lofi"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "lofi" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Lofi
+      </option>
+      <option
+        value="luxury"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "luxury" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Luxury
+      </option>
+      <option
+        value="nord"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "nord" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Nord
+      </option>
+      <option
+        value="night"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "night" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Night
+      </option>
+      <option
+        value="pastel"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "pastel" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Pastel
+      </option>
+      <option
+        value="retro"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "retro" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Retro
+      </option>
+      <option
+        value="silk"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "silk" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Silk
+      </option>
+      <option
+        value="sunset"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "sunset" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Sunset
+      </option>
+      <option
+        value="synthwave"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "synthwave" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Synthwave
+      </option>
+      <option
+        value="valentine"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "valentine" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Valentine
+      </option>
+      <option
+        value="wireframe"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "wireframe" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Wireframe
+      </option>
+      <option
+        value="winter"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "winter" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Winter
+      </option>
+      <option
+        value="abyss"
+        {{- if $themes }}
+          {{ range $themes }}{{ if eq . "abyss" }}selected{{ end }}{{ end }}
+        {{ end -}}
+      >
+        Abyss
+      </option>
+    </select>
+    <label class="label">
+      <span class="label-text-alt"
+        >Select which DaisyUI themes are available to users</span
       >
     </label>
   </div>

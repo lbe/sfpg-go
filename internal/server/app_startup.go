@@ -173,9 +173,7 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 		go app.walkImageDir()
 	} else if app.moduleStateService != nil {
 		go func() {
-			app.ctxMu.RLock()
-			ctx := app.ctx
-			app.ctxMu.RUnlock()
+			ctx := app.getCtx()
 			lastStarted, ok, err := app.moduleStateService.GetLastStartedAt(ctx, "discovery")
 			if err != nil {
 				slog.Error("failed to get last started at", "err", err)
@@ -282,16 +280,11 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 			defer ticker.Stop()
 
 			for {
-				app.ctxMu.RLock()
-				ctx := app.ctx
-				app.ctxMu.RUnlock()
+				ctx := app.getCtx()
 				select {
 				case <-ctx.Done():
 					return
 				case <-ticker.C:
-					app.ctxMu.RLock()
-					ctx = app.ctx
-					app.ctxMu.RUnlock()
 					deleted, err := cachelite.CleanupExpired(ctx, app.dbRwPool)
 					if err != nil {
 						slog.Error("HTTP cache cleanup failed", "err", err)

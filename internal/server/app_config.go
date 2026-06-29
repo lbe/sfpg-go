@@ -20,3 +20,17 @@ type appConfigState struct {
 	configRestartHandler *handlers.ConfigRestartHandler
 	configETagHandler    *handlers.ConfigETagHandler
 }
+
+// UpdateConfigWithPrecedence applies the new config and re-applies CLI/env
+// overrides for fields NOT in changedFields. This enforces the precedence:
+// Defaults → DB → Env → CLI, ensuring user-changed fields persist while
+// CLI/env values take precedence for fields the user didn't change.
+//
+// Lock ordering: must hold configMu (ORDER: 1). The caller must NOT hold
+// restartMu (ORDER: 2) when calling this.
+func (app *App) UpdateConfigWithPrecedence(c *config.Config, changedFields []string) {
+	app.configMu.Lock()
+	app.config = c
+	c.LoadFromOptExcluding(app.opt, changedFields)
+	app.configMu.Unlock()
+}

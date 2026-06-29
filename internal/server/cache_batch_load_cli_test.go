@@ -56,9 +56,7 @@ func TestRunCacheBatchLoad_SuccessWhenIdle(t *testing.T) {
 
 func TestRunCacheBatchLoad_ErrorWhenManagerNil(t *testing.T) {
 	app := &App{}
-	app.ctxMu.Lock()
 	app.ctx = context.Background()
-	app.ctxMu.Unlock()
 
 	code := app.RunCacheBatchLoad()
 	if code != 1 {

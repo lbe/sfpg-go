@@ -1037,6 +1037,28 @@ Workflow:
 
 See HYPSCRIPT_VALIDATION.md for full details.
 
+### Forward-Reference Detection
+
+The validator now includes a **forward-reference check** that runs after syntax
+validation. It parses each hyperscript snippet's AST to find `behavior` and
+`install` features, then checks that installs don't appear before their
+corresponding behavior definition in the same file.
+
+**Cross-file behaviors:** If `install <Name>` is used but the behavior is
+defined in a different template (e.g., a layout wrapping a partial), the
+validator emits a **WARNING** (not ERROR), since the behavior exists elsewhere.
+
+See `scripts/hyperscript_validation.md` for full details.
+
+### Go Template Escaping Detection
+
+The validator also checks for hyperscript syntax in `<script type="text/hyperscript">` blocks
+that Go's `html/template` will escape at render time. Go does not recognize `text/hyperscript`
+as a JavaScript MIME type, so `<` characters followed by non-tag-start characters (like `.`
+in `<.class/>`) are HTML-escaped to `&amp;lt;`.
+
+See `scripts/hyperscript_validation.md` for full details.
+
 ### Trace Execution
 
     on click

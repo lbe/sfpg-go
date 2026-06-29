@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
@@ -284,24 +285,46 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 	// Create a copy to modify
 	newConfig := *oldConfig
 
-	// Process config fields by iterating the single source of truth.
-	// Fields marked SkipInForm are excluded; side effects (e.g. cache preload)
-	// are handled inline.
-	for _, f := range config.Fields() {
-		if f.SkipInForm {
-			continue
+	// Check if the form contains actual config fields beyond csrf_token.
+	// Only default unchecked checkboxes to false for genuine config updates,
+	// not for partial or empty submissions (e.g. themes-only or bare csrf).
+	hasConfigFields := false
+	for key := range r.Form {
+		if key != "csrf_token" {
+			hasConfigFields = true
+			break
 		}
+	}
+
+	// Process config fields by iterating the single source of truth.
+	// Side effects (e.g. cache preload) are handled inline.
+	for _, f := range config.Fields() {
 		_, inForm := r.Form[f.DBKey]
 
 		var value string
 		if !inForm {
-			if f.IsCheckbox {
+			if f.IsCheckbox && hasConfigFields {
 				value = "false"
 			} else {
 				continue
 			}
 		} else {
-			value = r.FormValue(f.DBKey)
+			// Themes is a multi-select: collect all values and encode as JSON.
+			if f.DBKey == "themes" {
+				if themeValues, ok := r.Form[f.DBKey]; ok {
+					var b []byte
+					b, err = json.Marshal(themeValues)
+					if err != nil {
+						validationErrors[f.DBKey] = err.Error()
+						continue
+					}
+					value = string(b)
+				} else {
+					continue
+				}
+			} else {
+				value = r.FormValue(f.DBKey)
+			}
 			if f.IsCheckbox {
 				if value == "on" {
 					value = "true"

@@ -10,6 +10,16 @@ import (
 	"github.com/lbe/sfpg-go/internal/server/interfaces"
 )
 
+// waitForSched polls until the scheduler is available.
+func waitForSched(pm *PreloadManager) {
+	for range 50 {
+		if pm.GetScheduler() != nil {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 // TestPreloadManager_Configure verifies Configure behavior.
 func TestPreloadManager_Configure(t *testing.T) {
 	t.Run("configures all dependencies", func(t *testing.T) {
@@ -152,7 +162,7 @@ func TestPreloadManager_ConfigureAndSchedule(t *testing.T) {
 	t.Run("ScheduleFolderPreload with full config", func(t *testing.T) {
 		pm := NewPreloadManager([]string{"/gallery/"}, true)
 		defer pm.Shutdown()
-		pm.waitForSchedulerStart()
+		waitForSched(pm)
 
 		// Configure with minimal dependencies
 		taskTracker := &TaskTracker{}

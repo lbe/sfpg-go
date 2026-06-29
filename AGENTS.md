@@ -158,7 +158,25 @@ make validate-hyperscript
 go run ./scripts/validate-hyperscript.go web/templates/gallery.html
 ```
 
+**After validating, also verify the RENDERED output with curl** — the validator checks
+source syntax only. Go's `html/template` may HTML-escape `<` characters inside
+`<script type="text/hyperscript">` blocks (it does not recognize `text/hyperscript` as
+a JavaScript MIME type). Always check for `&amp;lt;` in the rendered HTML:
+
+```bash
+curl -s http://localhost:8083/gallery/1 | grep -c '&amp;lt;'
+```
+
 See [references/hyperscript-reference.md](references/hyperscript-reference.md) for Hyperscript patterns.
+
+### Hyperscript Style Conventions
+
+- Use `@attr` syntax (e.g., `element@data-id`) instead of `getAttribute('data-id')`.
+- Use `exists` instead of `is not null` (e.g., `if element exists`).
+- Use `matches` instead of `classList.contains` (e.g., `if element matches .hidden`).
+- Use `halt the event` instead of bare `halt`.
+- Inside `<script type="text/hyperscript">` blocks, use `querySelectorAll('.class')`
+  instead of `<.class/>` to avoid Go template escaping of `<` characters.
 
 ### Template Validation
 

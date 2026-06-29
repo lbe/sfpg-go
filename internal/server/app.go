@@ -39,9 +39,8 @@ const (
 // and a task scheduler for recurring and one-time tasks.
 //
 // Lock Ordering: To prevent deadlocks, always acquire locks in this order when holding multiple locks:
-// 1. ctxMu
-// 2. configMu
-// 3. restartMu
+// 1. configMu
+// 2. restartMu
 // Never acquire a lower-ordered lock while holding a higher-ordered one.
 type App struct {
 	appInfra
@@ -64,9 +63,7 @@ func New(opt getopt.Opt, version string) *App {
 	app.sessionSecret = opt.SessionSecret.String
 	app.version = version
 	// Initialize context - WithCancel allows graceful shutdown
-	app.ctxMu.Lock()
 	app.ctx, app.cancel = context.WithCancel(context.Background())
-	app.ctxMu.Unlock()
 
 	// Default ImporterFactory constructs a normal gallerylib.Importer and
 	// returns it as the Importer interface.
@@ -166,13 +163,10 @@ func (app *App) reloadLoggingFromConfig() error {
 // During initial startup before app.ctx is set, Background ensures that
 // critical operations (cache rotation, state persistence) still complete.
 func (app *App) getCtx() context.Context {
-	app.ctxMu.RLock()
-	ctx := app.ctx
-	app.ctxMu.RUnlock()
-	if ctx == nil {
-		return context.Background()
+	if app.ctx != nil {
+		return app.ctx
 	}
-	return ctx
+	return context.Background()
 }
 
 // buildWriteBatcher creates a WriteBatcher configured with the shared callbacks.
@@ -538,9 +532,7 @@ func (app *App) memoryReclaimer(cfg MemoryReclaimerConfig) {
 
 	// Start checking after an initial delay.
 	initialDelay := time.NewTimer(cfg.InitialDelay)
-	app.ctxMu.RLock()
-	ctx := app.ctx
-	app.ctxMu.RUnlock()
+	ctx := app.getCtx()
 	select {
 	case <-initialDelay.C:
 	case <-ctx.Done():
@@ -552,17 +544,13 @@ func (app *App) memoryReclaimer(cfg MemoryReclaimerConfig) {
 	defer ticker.Stop()
 
 	for {
-		app.ctxMu.RLock()
-		ctx = app.ctx
-		app.ctxMu.RUnlock()
+		ctx := app.getCtx()
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			app.ctxMu.RLock()
 			isQueueEmpty := app.q.IsEmpty()
 			timeSinceLastCompletion := app.pool.TimeSinceLastCompletion()
-			app.ctxMu.RUnlock()
 
 			if isQueueEmpty && timeSinceLastCompletion > cfg.IdleThreshold {
 				runtime.GC()      // 1. Trigger a GC

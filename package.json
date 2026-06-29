@@ -1,9 +1,14 @@
 {
   "devDependencies": {
     "@executeautomation/playwright-mcp-server": "^1.0.12",
+    "@playwright/test": "^1.61.1",
+    "@types/node": "^26.0.1",
     "prettier": "^3.8.1",
     "prettier-plugin-go-template": "^0.0.15",
     "prettier-plugin-sh": "^0.18.0",
     "prettier-plugin-tailwindcss": "^0.7.1"
+  },
+  "scripts": {
+    "postinstall": "npx playwright install --with-deps"
   }
 }

@@ -8,6 +8,16 @@ import (
 	"github.com/lbe/sfpg-go/internal/scheduler"
 )
 
+// waitForScheduler polls until the scheduler is available.
+func waitForScheduler(pm *PreloadManager) {
+	for range 50 {
+		if pm.GetScheduler() != nil {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func TestPreloadManager_IsEnabled_InitialState(t *testing.T) {
 	pm := NewPreloadManager([]string{"/gallery/"}, true)
 	defer pm.Shutdown()
@@ -41,7 +51,7 @@ func TestPreloadManager_SetEnabled_DisableWhenEnabled(t *testing.T) {
 	pm := NewPreloadManager([]string{"/gallery/"}, true)
 	defer pm.Shutdown()
 
-	pm.waitForSchedulerStart()
+	waitForScheduler(pm)
 	pm.SetEnabled(false)
 	if pm.IsEnabled() {
 		t.Error("expected IsEnabled false after SetEnabled(false)")
@@ -54,7 +64,7 @@ func TestPreloadManager_SetEnabled_DisableWhenEnabled(t *testing.T) {
 func TestPreloadManager_SetEnabled_EnableWhenAlreadyEnabled_NoOp(t *testing.T) {
 	pm := NewPreloadManager([]string{"/gallery/"}, true)
 	defer pm.Shutdown()
-	pm.waitForSchedulerStart()
+	waitForScheduler(pm)
 
 	origSched := pm.GetScheduler()
 	pm.SetEnabled(true)
@@ -101,7 +111,7 @@ func TestPreloadManager_ScheduleFolderPreload_WhenDisabled_NoOp(t *testing.T) {
 
 func TestPreloadManager_Shutdown(t *testing.T) {
 	pm := NewPreloadManager([]string{"/gallery/"}, true)
-	pm.waitForSchedulerStart()
+	waitForScheduler(pm)
 	pm.Shutdown()
 	if pm.IsEnabled() {
 		t.Error("expected IsEnabled false after Shutdown")
@@ -114,7 +124,7 @@ func TestPreloadManager_Shutdown(t *testing.T) {
 func TestPreloadManager_ConcurrentSetEnabled(t *testing.T) {
 	pm := NewPreloadManager([]string{"/gallery/"}, true)
 	defer pm.Shutdown()
-	pm.waitForSchedulerStart()
+	waitForScheduler(pm)
 
 	done := make(chan struct{})
 	go func() {
@@ -132,7 +142,7 @@ func TestPreloadManager_ConcurrentSetEnabled(t *testing.T) {
 func TestPreloadManager_SchedulerAcceptsTask(t *testing.T) {
 	pm := NewPreloadManager([]string{"/gallery/"}, true)
 	defer pm.Shutdown()
-	pm.waitForSchedulerStart()
+	waitForScheduler(pm)
 
 	sched := pm.GetScheduler()
 	if sched == nil {

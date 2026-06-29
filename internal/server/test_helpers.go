@@ -162,6 +162,10 @@ func CreateAppWithOpt(tb testing.TB, startPool bool, opt getopt.Opt) *App {
 		tb.Fatalf("build handlers: %v", err)
 	}
 
+	// Register cleanup to shut down background goroutines (writebatcher, DB pools, worker pool).
+	// This prevents goroutine leaks across tests, which otherwise cause timeouts under -race.
+	tb.Cleanup(func() { app.Shutdown() })
+
 	return app
 }
 

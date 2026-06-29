@@ -1,0 +1,42 @@
+<form
+  id="login-form"
+  hx-post="/login"
+  hx-swap="none"
+  _="on 'auth-changed' from body
+       wait 50ms
+       set #login_modal.checked to false"
+>
+  <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}" />
+  <div id="login-error-message" class="text-error mb-4 min-h-[1.5rem]">
+    {{ .ErrorMessage }}
+  </div>
+  <div class="form-control mb-4">
+    <label class="label">
+      <span class="label-text">Username</span>
+    </label>
+    <input
+      type="text"
+      name="username"
+      placeholder="username"
+      class="input input-bordered w-full"
+      required
+      value="{{ .Username }}"
+    />
+  </div>
+  <div class="form-control mb-4">
+    <label class="label">
+      <span class="label-text">Password</span>
+    </label>
+    <input
+      type="password"
+      name="password"
+      placeholder="password"
+      class="input input-bordered w-full"
+      required
+    />
+  </div>
+  <div class="modal-action">
+    <button class="btn btn-primary" type="submit">Login</button>
+    <label for="login_modal" class="btn">Cancel</label>
+  </div>
+</form>

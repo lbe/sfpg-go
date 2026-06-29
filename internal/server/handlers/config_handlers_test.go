@@ -5,11 +5,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -22,6 +25,27 @@ import (
 	"github.com/lbe/sfpg-go/internal/testutil"
 	"github.com/lbe/sfpg-go/web"
 )
+
+// safeBuffer is a thread-safe wrapper around bytes.Buffer for use in tests
+// where log output is written by a goroutine and read by the test.
+type safeBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (sb *safeBuffer) Write(p []byte) (int, error) {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+	return sb.buf.Write(p)
+}
+
+func (sb *safeBuffer) String() string {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+	return sb.buf.String()
+}
+
+var _ io.Writer = (*safeBuffer)(nil)
 
 type mockAuthServiceForConfig struct {
 	updateCredentialsFunc func(ctx context.Context, opts auth.CredentialUpdateOptions, store auth.CredentialStore) (*auth.CredentialUpdateResult, error)
@@ -273,8 +297,58 @@ func TestConfigHandlers_ConfigPost_WithThemesInPayload(t *testing.T) {
 	if savedCfg == nil {
 		t.Fatal("expected config to be saved")
 	}
-	if len(savedCfg.Themes) != 2 || savedCfg.Themes[0] != "dark" || savedCfg.Themes[1] != "light" {
-		t.Errorf("Themes should be unchanged [dark light], got %v", savedCfg.Themes)
+	if len(savedCfg.Themes) != 2 || !slices.Contains(savedCfg.Themes, "dark") || !slices.Contains(savedCfg.Themes, "light") {
+		t.Errorf("Themes should contain dark and light, got %v", savedCfg.Themes)
+	}
+}
+
+// TestConfigHandlers_ConfigPost_ThemesPersisted proves that themes submitted in the
+// main config form are actually applied to the saved config. This is a regression
+// guard against skipInForm: true which silently ignored themes from form data.
+func TestConfigHandlers_ConfigPost_ThemesPersisted(t *testing.T) {
+	if err := ui.ParseTemplates(web.FS); err != nil {
+		t.Fatalf("ParseTemplates failed: %v", err)
+	}
+
+	oldCfg := config.DefaultConfig()
+	oldCfg.Themes = []string{"light"}
+	oldCfg.CurrentTheme = "light"
+
+	var savedCfg *config.Config
+	mockSvc := &mockConfigServiceForConfig{
+		loadFunc: func(ctx context.Context) (*config.Config, error) {
+			return oldCfg, nil
+		},
+		saveFunc: func(ctx context.Context, cfg *config.Config) error {
+			savedCfg = cfg
+			return nil
+		},
+	}
+	ch := setupTestConfigHandlers(t, mockSvc, &mockAuthServiceForConfig{}, &mockCredentialStore{})
+	ch.SessionManager.(*mockSessionManagerAuth).authenticated = true
+
+	// Submit new themes via the form — includes a theme NOT in the old config.
+	body := "themes=light&themes=dark&themes=coffee&csrf_token=valid"
+	req := httptest.NewRequest(http.MethodPost, "/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+
+	ch.ConfigPost(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	if savedCfg == nil {
+		t.Fatal("expected config to be saved")
+	}
+	if len(savedCfg.Themes) != 3 {
+		t.Fatalf("expected 3 themes, got %d: %v", len(savedCfg.Themes), savedCfg.Themes)
+	}
+	for _, want := range []string{"light", "dark", "coffee"} {
+		if !slices.Contains(savedCfg.Themes, want) {
+			t.Errorf("themes should include %q, got %v", want, savedCfg.Themes)
+		}
 	}
 }
 
@@ -598,7 +672,6 @@ func TestConfigHandlers_ConfigPost_UncheckedCheckboxes(t *testing.T) {
 		t.Fatalf("ParseTemplates failed: %v", err)
 	}
 
-	var preloadValue bool
 	var preloadCalled bool
 
 	mockSvc := &mockConfigServiceForConfig{
@@ -609,10 +682,12 @@ func TestConfigHandlers_ConfigPost_UncheckedCheckboxes(t *testing.T) {
 	ch := setupTestConfigHandlers(t, mockSvc, &mockAuthServiceForConfig{}, &mockCredentialStore{})
 	ch.SetPreloadEnabled = func(enabled bool) {
 		preloadCalled = true
-		preloadValue = enabled
 	}
 	ch.SessionManager.(*mockSessionManagerAuth).authenticated = true
 
+	// POST with only csrf_token — no config fields. Should NOT trigger any field
+	// processing because missing checkboxes are only defaulted when the form
+	// contains actual config fields.
 	req := httptest.NewRequest(http.MethodPost, "/config", strings.NewReader("csrf_token=valid"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
@@ -622,11 +697,8 @@ func TestConfigHandlers_ConfigPost_UncheckedCheckboxes(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", w.Code)
 	}
-	if !preloadCalled {
-		t.Fatal("expected SetPreloadEnabled to be called")
-	}
-	if preloadValue {
-		t.Error("expected SetPreloadEnabled(false) when checkbox is unchecked")
+	if preloadCalled {
+		t.Error("SetPreloadEnabled should not be called when no config fields are in the form")
 	}
 }
 
@@ -887,7 +959,9 @@ func TestConfigHandlers_RestartHandler_FlushesResponseAndWarnsOnFullChannel(t *t
 	}
 
 	// Capture log output to verify warning for full channel.
-	var logBuf bytes.Buffer
+	// Use a synchronized buffer to avoid data races between the test and
+	// the triggerRestart goroutine which writes slog output via this handler.
+	var logBuf safeBuffer
 	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	prevLogger := slog.Default()
 	slog.SetDefault(logger)

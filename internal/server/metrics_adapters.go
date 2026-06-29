@@ -22,19 +22,8 @@ func (a *writeBatcherAdapter) PendingCount() int64 {
 	return a.wb.PendingCount()
 }
 
-func (a *writeBatcherAdapter) GetStats() metrics.WriteBatcherStats {
-	stats := a.wb.GetStats()
-	return metrics.WriteBatcherStats{
-		ChannelSize:   stats.ChannelSize,
-		MaxBatchSize:  stats.MaxBatchSize,
-		FlushInterval: stats.FlushInterval,
-		IsClosed:      stats.IsClosed,
-		TotalFlushed:  stats.TotalFlushed,
-		TotalErrors:   stats.TotalErrors,
-		OverflowCount: stats.OverflowCount,
-		DQueEnabled:   stats.DQueEnabled,
-		DQueSize:      stats.DQueSize,
-	}
+func (a *writeBatcherAdapter) GetStats() writebatcher.Stats {
+	return a.wb.GetStats()
 }
 
 // workerPoolAdapter adapts *workerpool.Pool to metrics.WorkerPoolSource.
@@ -43,19 +32,8 @@ type workerPoolAdapter struct {
 	pool *workerpool.Pool
 }
 
-func (a *workerPoolAdapter) GetStats() metrics.WorkerPoolStats {
-	stats := a.pool.GetStats()
-	return metrics.WorkerPoolStats{
-		RunningWorkers:  stats.RunningWorkers,
-		SubmittedTasks:  stats.SubmittedTasks,
-		WaitingTasks:    stats.WaitingTasks,
-		SuccessfulTasks: stats.SuccessfulTasks,
-		FailedTasks:     stats.FailedTasks,
-		CompletedTasks:  stats.CompletedTasks,
-		DroppedTasks:    stats.DroppedTasks,
-		MaxWorkers:      stats.MaxWorkers,
-		MinWorkers:      stats.MinWorkers,
-	}
+func (a *workerPoolAdapter) GetStats() workerpool.Stats {
+	return a.pool.GetStats()
 }
 
 // cachePreloadAdapter adapts *cachepreload.PreloadManager to metrics.CachePreloadSource.
@@ -64,16 +42,8 @@ type cachePreloadAdapter struct {
 	pm *cachepreload.PreloadManager
 }
 
-func (a *cachePreloadAdapter) GetMetrics() metrics.CachePreloadSnapshot {
-	m := a.pm.GetMetrics()
-	return metrics.CachePreloadSnapshot{
-		TasksScheduled: m.TasksScheduled,
-		TasksCompleted: m.TasksCompleted,
-		TasksFailed:    m.TasksFailed,
-		TasksCancelled: m.TasksCancelled,
-		TasksSkipped:   m.TasksSkipped,
-		TotalDuration:  m.TotalDuration,
-	}
+func (a *cachePreloadAdapter) GetMetrics() cachepreload.PreloadMetricsSnapshot {
+	return a.pm.GetMetrics()
 }
 
 func (a *cachePreloadAdapter) IsEnabled() bool {

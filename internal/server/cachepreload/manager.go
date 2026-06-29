@@ -250,27 +250,14 @@ func (pm *PreloadManager) GetScheduler() *scheduler.Scheduler {
 	return pm.scheduler
 }
 
-// For test synchronization: wait briefly for scheduler to start.
-func (pm *PreloadManager) waitForSchedulerStart() {
-	for range 50 {
-		pm.mu.RLock()
-		sched := pm.scheduler
-		pm.mu.RUnlock()
-		if sched != nil {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-}
-
 // PreloadMetricsSnapshot holds a snapshot of preload metrics.
 type PreloadMetricsSnapshot struct {
-	TasksScheduled int64
-	TasksCompleted int64
-	TasksFailed    int64
-	TasksCancelled int64
-	TasksSkipped   int64
-	TotalDuration  time.Duration
+	TasksScheduled int64         `json:"tasks_scheduled"`
+	TasksCompleted int64         `json:"tasks_completed"`
+	TasksFailed    int64         `json:"tasks_failed"`
+	TasksCancelled int64         `json:"tasks_cancelled"`
+	TasksSkipped   int64         `json:"tasks_skipped"`
+	TotalDuration  time.Duration `json:"total_duration"`
 }
 
 // GetMetrics returns the current preload metrics snapshot.

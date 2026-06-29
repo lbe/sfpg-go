@@ -20,14 +20,6 @@ type DiscardingResponseWriter struct {
 	header     http.Header
 }
 
-// NewDiscardingResponseWriter creates a new DiscardingResponseWriter.
-func NewDiscardingResponseWriter() *DiscardingResponseWriter {
-	return &DiscardingResponseWriter{
-		statusCode: http.StatusOK, // Default 200
-		header:     make(http.Header),
-	}
-}
-
 func (w *DiscardingResponseWriter) Header() http.Header {
 	return w.header
 }

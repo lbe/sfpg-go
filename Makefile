@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 
 # Default package for tests/benchmarks. Override with: make test PKG=./...
-PKG ?= ./internal/server
+PKG ?= ./...
 
 STAMP := $(shell date +%Y%m%d-%H%M%S)
 BENCH_DIR := bench
@@ -20,6 +20,7 @@ help:
 	@echo "  make run           - Build and run the server"
 	@echo "  make test          - Run tests for $(PKG)"
 	@echo "  make test-all      - Run tests across all packages"
+	@echo "  make test-browser  - Run browser-based menu/auth tests via Playwright"
 	@echo "  make test-race     - Run tests with race detector"
 	@echo "  make lint          - Run golangci-lint"
 	@echo "  make perf-test     - Run full performance test suite"
@@ -34,17 +35,22 @@ help:
 test:
 	# Run all tests with session env for compatibility
 	# Extra go test flags can be passed via ARGS: make test ARGS="-count=1 -v"
-	time SEPG_SESSION_SECURE=false go test -tags "integration" $(PKG) $(ARGS)
-
-.PHONY: test-race
-test-race:
-	# Run all tests with race detector
-	time SEPG_SESSION_SECURE=false go test -tags "integration" $(PKG) -race $(ARGS)
+	time SEPG_SESSION_SECURE=false go test $(PKG) $(ARGS)
 
 .PHONY: test-all
 test-all:
 	# Run tests across all packages
-	time SEPG_SESSION_SECURE=false go test -tags "integration" ./... $(ARGS)
+	time SEPG_SESSION_SECURE=false go test -tags "integration e2e e2eweb" ./... $(ARGS)
+
+.PHONY: test-browser
+test-browser:
+	# Run browser-based menu/auth tests via Playwright (requires air on :8083)
+	npx playwright test --project=chromium --reporter=list
+
+.PHONY: test-race
+test-race:
+	# Run all tests with race detector
+	time SEPG_SESSION_SECURE=false go test -tags "integration" $(PKG) -race -timeout=1200s $(ARGS)
 
 .PHONY: lint
 lint:
@@ -63,14 +69,14 @@ cover:
 bench:
 	@mkdir -p $(BENCH_DIR)
 	# Run only benchmarks (skip tests), include mem stats, and allow HTTP cookies in tests
-	SEPG_SESSION_SECURE=false go test $(PKG) -run ^$$ -bench . -benchmem -count=1 | tee "$(BENCH_OUT)"
+	SEPG_SESSION_SECURE=false go test $(PKG) -run ^Bench -bench . -benchmem -count=1 | tee "$(BENCH_OUT)"
 	@echo "Saved: $(BENCH_OUT)"
 
 .PHONY: bench5
 bench5:
 	@mkdir -p $(BENCH_DIR)
 	# Run each benchmark 5 times for stability; save last run
-	SEPG_SESSION_SECURE=false go test $(PKG) -run ^$$ -bench . -benchmem -count=5 | tee "$(BENCH_OUT)"
+	SEPG_SESSION_SECURE=false go test $(PKG) -run ^Bench -bench . -benchmem -count=5 | tee "$(BENCH_OUT)"
 	@echo "Saved: $(BENCH_OUT)"
 
 # Allow cross-compilation via GOOS/GOARCH

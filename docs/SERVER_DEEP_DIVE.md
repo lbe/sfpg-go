@@ -489,21 +489,22 @@ The authentication system uses event-driven communication between the frontend a
 1. Client posts credentials to `/login` endpoint
 2. Username and password are validated against bcrypt hash in database
 3. On success: Session is created with `session.Values["authenticated"] = true`
-4. Response sets HTTP header `HX-Trigger: login-success` to signal frontend success
-5. Response includes OOB swap to update the hamburger menu with authenticated options
+4. Response sets HTTP header `HX-Trigger: auth-changed` to signal frontend success
+5. Response body is empty (menu refreshes independently via GET /hamburger-menu)
 
 **Frontend** (`login-modal.html.tmpl`):
 
 1. Form posts via HTMX with `hx-post="/login"` and `hx-swap="none"`
-2. Hyperscript listens for the `login-success` event from the body: `on 'login-success' from body`
+2. Hyperscript listens for the `auth-changed` event from the body: `on 'auth-changed' from body`
 3. On event receipt, modal checkbox is unchecked: `set #login_modal.checked to false`
-4. Modal closes and menu updates automatically via OOB swap
+4. The `auth-changed` event also triggers the hamburger menu refresh via the `<ul>`'s `hx-trigger="pageshow from:window, auth-changed from:body"`
+5. The menu fetches items from `GET /hamburger-menu` which reads the session directly
 
 **Why Event-Driven?**
 
 - Previous approach: Content-sniffing detection (checking if response includes 'Configuration' text) - brittle and unreliable
 - Current approach: Explicit `HX-Trigger` header signals success cleanly
-- Ensures modal closes only on successful login, not on validation errors
+- The hamburger menu is decoupled from cached pages via a dedicated uncached endpoint (`GET /hamburger-menu`), avoiding stale auth state in HTTP cache
 
 #### Logout Flow
 

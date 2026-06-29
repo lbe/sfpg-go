@@ -11,6 +11,9 @@ import (
 	"time"
 
 	"github.com/lbe/sfpg-go/internal/humanize"
+	"github.com/lbe/sfpg-go/internal/server/cachepreload"
+	"github.com/lbe/sfpg-go/internal/workerpool"
+	"github.com/lbe/sfpg-go/internal/writebatcher"
 )
 
 // WriteBatcherMetrics holds statistics from the WriteBatcher.
@@ -31,20 +34,7 @@ type WriteBatcherMetrics struct {
 // WriteBatcherSource provides metrics from a WriteBatcher.
 type WriteBatcherSource interface {
 	PendingCount() int64
-	GetStats() WriteBatcherStats
-}
-
-// WriteBatcherStats holds internal stats from WriteBatcher.
-type WriteBatcherStats struct {
-	ChannelSize   int
-	MaxBatchSize  int
-	FlushInterval time.Duration
-	IsClosed      bool
-	TotalFlushed  int64
-	TotalErrors   int64
-	OverflowCount int64
-	DQueEnabled   bool
-	DQueSize      int
+	GetStats() writebatcher.Stats
 }
 
 // WorkerPoolMetrics holds statistics from the worker pool.
@@ -62,20 +52,7 @@ type WorkerPoolMetrics struct {
 
 // WorkerPoolSource provides metrics from a worker pool.
 type WorkerPoolSource interface {
-	GetStats() WorkerPoolStats
-}
-
-// WorkerPoolStats holds internal stats from WorkerPool.
-type WorkerPoolStats struct {
-	RunningWorkers  int64
-	SubmittedTasks  uint64
-	WaitingTasks    uint64
-	SuccessfulTasks uint64
-	FailedTasks     uint64
-	CompletedTasks  uint64
-	DroppedTasks    uint64
-	MaxWorkers      int
-	MinWorkers      int
+	GetStats() workerpool.Stats
 }
 
 // CachePreloadMetrics holds statistics from the cache preload manager.
@@ -89,19 +66,9 @@ type CachePreloadMetrics struct {
 	IsEnabled      bool          `json:"is_enabled"`
 }
 
-// CachePreloadSnapshot holds a snapshot of cache preload metrics.
-type CachePreloadSnapshot struct {
-	TasksScheduled int64
-	TasksCompleted int64
-	TasksFailed    int64
-	TasksCancelled int64
-	TasksSkipped   int64
-	TotalDuration  time.Duration
-}
-
 // CachePreloadSource provides metrics from the cache preload manager.
 type CachePreloadSource interface {
-	GetMetrics() CachePreloadSnapshot
+	GetMetrics() cachepreload.PreloadMetricsSnapshot
 	IsEnabled() bool
 }
 
@@ -356,7 +323,7 @@ func (c *Collector) Collect(ctx context.Context) Snapshot {
 
 	if c.workerPool != nil {
 		stats := c.workerPool.GetStats()
-		// Convert WorkerPoolStats to WorkerPoolMetrics (same field types)
+		// Convert workerpool.Stats to WorkerPoolMetrics (same field types)
 		snapshot.WorkerPool = WorkerPoolMetrics(stats)
 	}
 

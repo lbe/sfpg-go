@@ -98,7 +98,14 @@ func (a *metadataQueriesAdapter) GetIPTCByFile(ctx context.Context, fileID int64
 func (app *App) ensureSessionAndRestart() {
 	if app.store == nil {
 		app.store = sessions.NewCookieStore([]byte(app.sessionSecret))
-		app.store.Options = app.getSessionOptions()
+		opts := app.getSessionOptions()
+		app.store.Options = opts
+		// Sync SecureCookie maxAge with Options.MaxAge so the internal timestamp
+		// check (securecookie.Decode) is consistent with the cookie header expiry.
+		// Without this, the SecureCookie retains the default 30d maxAge even when
+		// Options.MaxAge is different (e.g., 7d), causing a mismatch between the
+		// browser's cookie lifetime and the server's internal timestamp validation.
+		app.store.MaxAge(opts.MaxAge)
 	}
 	if app.sessionManager == nil && app.store != nil {
 		app.sessionManager = session.NewManager(app.store, app.getSessionOptionsConfig)
@@ -125,7 +132,6 @@ func (app *App) buildHandlers(templateFS fs.FS) error {
 	app.authHandlers = handlers.NewAuthHandlers(
 		app.authService,
 		sm,
-		app.ensureCsrfToken,
 	)
 
 	app.configHandlers = handlers.NewConfigHandlers(
@@ -139,21 +145,14 @@ func (app *App) buildHandlers(templateFS fs.FS) error {
 		app.ctx,
 	)
 	// Set callback fields on ConfigHandlers
-	app.configHandlers.UpdateConfig = func(c *config.Config, changedFields []string) {
-		app.configMu.Lock()
-		app.config = c
-		// Apply CLI/opt overrides only to fields NOT changed by the user.
-		// This ensures:
-		// 1. User changes persist for fields they explicitly changed
-		// 2. CLI/env values take precedence for fields they didn't change (Case 1)
-		c.LoadFromOptExcluding(app.opt, changedFields)
-		app.configMu.Unlock()
-	}
+	app.configHandlers.UpdateConfig = app.UpdateConfigWithPrecedence
 	app.configHandlers.ApplyConfig = app.applyConfig
 	app.configHandlers.InvalidateHTTPCache = app.invalidateHTTPCache
 	app.configHandlers.SetPreloadEnabled = func(enabled bool) {
 		if app.preloadManager != nil {
 			app.preloadManager.SetEnabled(enabled)
+		} else {
+			slog.Warn("preloadManager is nil, ignoring SetPreloadEnabled", "enabled", enabled)
 		}
 	}
 	app.configHandlers.SetRestartRequired = func(b bool) { app.restartRequired = b }
@@ -217,6 +216,9 @@ func (app *App) buildHandlers(templateFS fs.FS) error {
 		app.serverError,
 	)
 
+	// Initialize menu handlers
+	app.menuHandlers = handlers.NewMenuHandlers(sm, app.serverError)
+
 	// Initialize theme handlers
 	app.themeHandlers = handlers.NewThemeHandlers(
 		func() *config.Config {
@@ -278,23 +280,34 @@ func (app *App) getSessionOptions() *sessions.Options {
 }
 
 // ensureCsrfToken ensures a CSRF token exists in the session and returns it.
-// It delegates to the session manager.
+// It generates and saves a new token if none exists. Only use this from
+// handlers that need to persist a CSRF token (e.g., login, config).
 func (app *App) ensureCsrfToken(w http.ResponseWriter, r *http.Request) string {
 	if app.sessionManager != nil {
 		return app.sessionManager.EnsureCSRFToken(w, r)
 	}
-	// Fallback for tests or early initialization
 	return session.EnsureCsrfToken(app.store, w, r)
 }
 
-// validateCsrfToken validates the CSRF token in the request form against the session.
-// It delegates to the session manager.
-func (app *App) validateCsrfToken(r *http.Request) bool {
-	if app.sessionManager != nil {
-		return app.sessionManager.ValidateCSRFToken(r)
+// csrfTokenForPage returns a CSRF token for template rendering.
+// For authenticated users: persists the token in the session as usual.
+// For unauthenticated users: generates a random token but does NOT save
+// to the session, avoiding Set-Cookie on cached public pages.
+func (app *App) csrfTokenForPage(w http.ResponseWriter, r *http.Request, authenticated bool) string {
+	if authenticated {
+		return app.ensureCsrfToken(w, r)
 	}
-	// Fallback for tests or early initialization
-	return session.ValidateCsrfToken(app.store, r)
+	sess, err := app.store.Get(r, session.SessionName)
+	if err != nil {
+		slog.Debug("failed to get session for CSRF token", "err", err)
+		return session.GenerateCSRFToken()
+	}
+	if token, ok := sess.Values["csrf_token"].(string); ok && token != "" {
+		return token
+	}
+	// Generate an ephemeral token for the login form without saving.
+	// The login handler allows new sessions without a persisted CSRF token.
+	return session.GenerateCSRFToken()
 }
 
 // Serve initializes the session store and starts the HTTP server on the configured port.
@@ -444,63 +457,6 @@ func (app *App) GetETagVersion() string {
 	return v
 }
 
-// responseWriter wraps http.ResponseWriter to capture status code and bytes written.
-type responseWriter struct {
-	http.ResponseWriter
-	status       int
-	bytesWritten int
-	wroteHeader  bool
-	etag         string
-	lastModified string
-}
-
-// SetETag stores the ETag value for later retrieval
-func (rw *responseWriter) SetETag(etag string) {
-	rw.etag = etag
-}
-
-// GetETag returns the stored ETag value
-func (rw *responseWriter) GetETag() string {
-	return rw.etag
-}
-
-// SetLastModified stores the Last-Modified time in HTTP format
-func (rw *responseWriter) SetLastModified(t time.Time) {
-	rw.lastModified = t.UTC().Format(http.TimeFormat)
-}
-
-// GetLastModified returns the stored Last-Modified value
-func (rw *responseWriter) GetLastModified() string {
-	return rw.lastModified
-}
-
-// GetContentType extracts Content-Type from response headers
-func (rw *responseWriter) GetContentType() string {
-	return rw.Header().Get("Content-Type")
-}
-
-// GetCacheControl extracts Cache-Control from response headers
-func (rw *responseWriter) GetCacheControl() string {
-	return rw.Header().Get("Cache-Control")
-}
-
-func (rw *responseWriter) WriteHeader(code int) {
-	if !rw.wroteHeader {
-		rw.status = code
-		rw.wroteHeader = true
-		rw.ResponseWriter.WriteHeader(code)
-	}
-}
-
-func (rw *responseWriter) Write(b []byte) (int, error) {
-	if !rw.wroteHeader {
-		rw.WriteHeader(http.StatusOK)
-	}
-	n, err := rw.ResponseWriter.Write(b)
-	rw.bytesWritten += n
-	return n, err
-}
-
 // authMiddleware is a middleware that protects routes by checking for a valid session.
 // It delegates to middleware.AuthMiddleware, using the current store and sessionManager.
 // If sessionManager is nil (e.g., in tests before Serve() is called), it creates a temporary one.
@@ -547,17 +503,12 @@ func (app *App) isAuthenticated(w http.ResponseWriter, r *http.Request) bool {
 	return session.IsAuthenticated(app.store, w, r)
 }
 
-// addAuthToTemplateData adds authentication state to template data map
-// Delegates to template.AddAuthToData
-func (app *App) addAuthToTemplateData(w http.ResponseWriter, r *http.Request, data map[string]any) map[string]any {
-	return template.AddAuthToData(data, app.isAuthenticated(w, r))
-}
-
 // addCommonTemplateData adds common template data (auth state, CSRF token, theme, and gallery statistics) to template data map.
 // When partial is true, skips GalleryStats (expensive getGalleryStatistics) since partials (HTMX swaps, modals, toasts)
 // don't include the about modal. Full pages need GalleryStats for the about modal in the layout.
 func (app *App) addCommonTemplateData(w http.ResponseWriter, r *http.Request, data map[string]any, partial bool) map[string]any {
-	data = template.AddCommonData(data, app.isAuthenticated(w, r), app.ensureCsrfToken(w, r))
+	authenticated := app.isAuthenticated(w, r)
+	data = template.AddCommonData(data, authenticated, app.csrfTokenForPage(w, r, authenticated))
 	data["Theme"] = app.getEffectiveTheme(r)
 	data["Version"] = app.version
 
@@ -661,11 +612,15 @@ func (app *App) getGalleryStatistics(ctx context.Context) (GalleryStats, error) 
 	if stats.MinCreatedAt != nil {
 		if ts, ok := stats.MinCreatedAt.(int64); ok {
 			result.FirstDiscovery = time.Unix(ts, 0).Format("2006-01-02 15:04:05")
+		} else {
+			slog.Warn("stats.MinCreatedAt is not int64", "type", fmt.Sprintf("%T", stats.MinCreatedAt))
 		}
 	}
 	if stats.MaxUpdatedAt != nil {
 		if ts, ok := stats.MaxUpdatedAt.(int64); ok {
 			result.LastDiscovery = time.Unix(ts, 0).Format("2006-01-02 15:04:05")
+		} else {
+			slog.Warn("stats.MaxUpdatedAt is not int64", "type", fmt.Sprintf("%T", stats.MaxUpdatedAt))
 		}
 	}
 
@@ -842,9 +797,7 @@ func (app *App) unlockAccountFromTask(ctx context.Context, username string) erro
 // It delegates to files.WalkImageDir with app-specific deps.
 // Updates module_state for "discovery" so batch load can guard against concurrent discovery.
 func (app *App) walkImageDir() {
-	app.ctxMu.RLock()
-	ctx := app.ctx
-	app.ctxMu.RUnlock()
+	ctx := app.getCtx()
 
 	if app.moduleStateService != nil {
 		if err := app.moduleStateService.SetActive(ctx, "discovery", true); err != nil {

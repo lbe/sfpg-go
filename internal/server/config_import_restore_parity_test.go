@@ -41,11 +41,15 @@ func TestConfigImport_ValidationParityWithModal(t *testing.T) {
 	client := &http.Client{Jar: jar}
 
 	// Login to get session
-	csrfToken := extractCSRFTokenForTest(t, client, ts.URL)
-	loginResp := loginForTest(t, client, ts.URL, csrfToken, "admin", "admin")
+	loginCSRF := extractCSRFTokenForTest(t, client, ts.URL)
+	loginResp := loginForTest(t, client, ts.URL, loginCSRF, "admin", "admin")
 	if loginResp.StatusCode != http.StatusOK {
 		t.Fatalf("login failed with status %d", loginResp.StatusCode)
 	}
+
+	// Fetch the config page to get the persisted CSRF token (the login form's
+	// token is ephemeral for unauthenticated users to avoid cached Set-Cookie).
+	configCSRF := extractCSRFTokenFromConfigForTest(t, client, ts.URL)
 
 	// Create a YAML config with pool settings that differ from current
 	// YAML format is what the config handlers expect
@@ -72,7 +76,7 @@ db_min_idle_connections: 10`
 	}
 
 	// Then, POST to /config/import/commit to commit the changes
-	commitData := "yaml=" + yamlConfig + "&csrf_token=" + csrfToken
+	commitData := "yaml=" + yamlConfig + "&csrf_token=" + configCSRF
 	commitReq, err := http.NewRequest("POST", ts.URL+"/config/import/commit", strings.NewReader(commitData))
 	if err != nil {
 		t.Fatalf("failed to create commit request: %v", err)
@@ -207,23 +211,76 @@ func TestConfigRestore_PoolSettingsRequireRestart(t *testing.T) {
 
 // Helper functions for testing
 
-func extractCSRFTokenForTest(t *testing.T, client *http.Client, baseURL string) string {
+// extractCSRFTokenFromConfigForTest fetches the config page and extracts the
+// CSRF token from it. This returns the persisted session token, which differs
+// from the ephemeral token on the gallery page's login form.
+func extractCSRFTokenFromConfigForTest(t *testing.T, client *http.Client, baseURL string) string {
 	t.Helper()
 
-	resp, err := client.Get(baseURL + "/gallery/1")
+	req, err := http.NewRequest("GET", baseURL+"/config", nil)
 	if err != nil {
-		t.Fatalf("GET /gallery/1 failed: %v", err)
+		t.Fatalf("failed to create config request: %v", err)
+	}
+	req.Header.Set("Hx-Request", "true")
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("GET /config failed: %v", err)
 	}
 	defer resp.Body.Close()
 
 	doc, err := html.Parse(resp.Body)
 	if err != nil {
-		t.Fatalf("failed to parse gallery page HTML: %v", err)
+		t.Fatalf("failed to parse config page HTML: %v", err)
+	}
+
+	var token string
+	var findCSRF func(*html.Node)
+	findCSRF = func(n *html.Node) {
+		if n.Type == html.ElementNode && n.Data == "input" {
+			var name, value string
+			for _, a := range n.Attr {
+				if a.Key == "name" {
+					name = a.Val
+				}
+				if a.Key == "value" {
+					value = a.Val
+				}
+			}
+			if name == "csrf_token" && value != "" {
+				token = value
+				return
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			if token == "" {
+				findCSRF(c)
+			}
+		}
+	}
+	findCSRF(doc)
+	if token == "" {
+		t.Fatal("CSRF token not found in config page")
+	}
+	return token
+}
+
+func extractCSRFTokenForTest(t *testing.T, client *http.Client, baseURL string) string {
+	t.Helper()
+
+	resp, err := client.Get(baseURL + "/login-form")
+	if err != nil {
+		t.Fatalf("GET /login-form failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	doc, err := html.Parse(resp.Body)
+	if err != nil {
+		t.Fatalf("failed to parse login form HTML: %v", err)
 	}
 
 	formNode := findElementByID(doc, "login-form")
 	if formNode == nil {
-		t.Fatal("login form not found on gallery page")
+		t.Fatal("login form not found in /login-form response")
 	}
 
 	var csrfToken string
