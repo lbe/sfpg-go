@@ -1001,11 +1001,14 @@ func TestConcurrent_SubmitFromMultipleGoroutines(t *testing.T) {
 func TestSubmit_DQueDisabled_ReturnsErrFull(t *testing.T) {
 	var blockMu sync.Mutex
 	blockMu.Lock()
+	flushEntered := make(chan struct{})
+	var flushOnce sync.Once
 
 	db := testDB(t)
 	cfg := Config[int]{
 		BeginTx: testBeginTx(db),
 		Flush: func(ctx context.Context, tx *sql.Tx, batch []int) error {
+			flushOnce.Do(func() { close(flushEntered) })
 			blockMu.Lock()
 			_ = len(batch)
 			blockMu.Unlock()
@@ -1025,6 +1028,7 @@ func TestSubmit_DQueDisabled_ReturnsErrFull(t *testing.T) {
 	}()
 
 	_ = wb.Submit(1)
+	<-flushEntered // worker has consumed item 1 and is blocked in Flush
 	_ = wb.Submit(2)
 	err = wb.Submit(3)
 	if !errors.Is(err, ErrFull) {

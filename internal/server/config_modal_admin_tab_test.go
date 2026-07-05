@@ -16,7 +16,7 @@ import (
 
 // TestConfigModal_AdminTab_PasswordVisibilityToggles verifies that password visibility toggles exist.
 func TestConfigModal_AdminTab_PasswordVisibilityToggles(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 	t.Parallel()
 	if err := app.loadConfig(); err != nil {
@@ -105,7 +105,7 @@ func TestConfigModal_AdminTab_PasswordVisibilityToggles(t *testing.T) {
 
 // TestConfigModal_AdminTab_UsernamePrepopulated verifies that the admin username field is prepopulated with current username.
 func TestConfigModal_AdminTab_UsernamePrepopulated(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 	t.Parallel()
 	if err := app.loadConfig(); err != nil {

@@ -10,24 +10,24 @@
                 trigger closeModal on #lightbox_modal
                 wait 200ms
               end
+              -- Signal HTMX to load logout form with fresh CSRF token from uncached endpoint
+              send logoutModalOpened to body
             end"
 />
 <div class="modal" role="dialog">
   <div class="modal-box">
     <h3 class="mb-4 text-lg font-bold">Confirm Logout</h3>
     <p class="py-4">Are you sure you want to log out?</p>
-    <form
-      id="logout-form"
-      hx-post="/logout"
-      hx-swap="none"
-      _="on htmx:afterRequest if event.detail.successful then set #logout_modal.checked to false end"
+    <div
+      id="logout-form-container"
+      hx-get="/logout-form"
+      hx-trigger="logoutModalOpened from:body"
+      hx-swap="innerHTML"
     >
-      <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}" />
-      <div class="modal-action">
-        <button class="btn btn-primary" type="submit">Confirm</button>
-        <label for="logout_modal" class="btn">Cancel</label>
+      <div class="flex items-center justify-center py-8">
+        <span class="loading loading-spinner loading-md"></span>
       </div>
-    </form>
+    </div>
   </div>
   <label class="modal-backdrop" for="logout_modal">Close</label>
 </div>

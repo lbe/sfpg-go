@@ -15,7 +15,7 @@ import (
 // TestDashboardPageRendering verifies the dashboard page renders correctly
 // with proper authentication and template setup.
 func TestDashboardPageRendering(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// Parse templates
@@ -72,7 +72,7 @@ func TestDashboardPageRendering(t *testing.T) {
 
 // TestDashboardHTMXPartialEndpoint verifies the dashboard returns HTML partial for HTMX requests
 func TestDashboardHTMXPartialEndpoint(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	if err := app.buildHandlers(web.FS); err != nil {
@@ -139,7 +139,7 @@ func TestDashboardHTMXPartialEndpoint(t *testing.T) {
 // TestDashboardPollingPersistsAcrossMultipleRequests verifies that the session
 // and authentication persist across multiple HTMX polling requests.
 func TestDashboardPollingPersistsAcrossMultipleRequests(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	if err := app.buildHandlers(web.FS); err != nil {
@@ -190,7 +190,7 @@ func TestDashboardPollingPersistsAcrossMultipleRequests(t *testing.T) {
 
 // TestDashboardUnauthorized verifies unauthorized access is rejected
 func TestDashboardUnauthorized(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	if err := app.buildHandlers(web.FS); err != nil {
@@ -210,9 +210,10 @@ func TestDashboardUnauthorized(t *testing.T) {
 
 // TestMetricsCollectorWiring verifies metrics sources are properly wired
 func TestMetricsCollectorWiring(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
+	app.metricsCollector = metrics.NewCollector()
 	if app.metricsCollector == nil {
 		t.Fatal("metricsCollector should be initialized")
 	}
@@ -242,7 +243,7 @@ func TestMetricsCollectorWiring(t *testing.T) {
 
 // TestDashboardMetricsWithSources verifies dashboard shows metrics from actual sources
 func TestDashboardMetricsWithSources(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// Wire up metrics sources

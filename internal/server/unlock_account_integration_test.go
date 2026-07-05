@@ -13,7 +13,7 @@ import (
 // TestApp_UnlockAccountFromTask verifies unlockAccountFromTask behavior.
 func TestApp_UnlockAccountFromTask(t *testing.T) {
 	t.Run("successfully unlocks an account", func(t *testing.T) {
-		app := CreateApp(t, false)
+		app := CreateApp(t)
 		defer app.Shutdown()
 
 		username := "testuser"
@@ -60,7 +60,7 @@ func TestApp_UnlockAccountFromTask(t *testing.T) {
 
 	t.Run("returns error when database connection fails", func(t *testing.T) {
 		// Create app and then close the pool to simulate connection failure
-		app := CreateApp(t, false)
+		app := CreateApp(t)
 		app.dbRwPool.Close()
 		defer app.Shutdown()
 
@@ -74,7 +74,7 @@ func TestApp_UnlockAccountFromTask(t *testing.T) {
 	})
 
 	t.Run("handles non-existent username gracefully", func(t *testing.T) {
-		app := CreateApp(t, false)
+		app := CreateApp(t)
 		defer app.Shutdown()
 
 		username := "nonexistentuser"

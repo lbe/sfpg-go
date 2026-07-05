@@ -1,6 +1,8 @@
 package config
 
 import (
+	"context"
+	"strings"
 	"testing"
 	"time"
 )
@@ -82,4 +84,43 @@ func TestIncrementETagIntegration(t *testing.T) {
 			})
 		}
 	})
+}
+
+// TestConfigService_IncrementETag_ValidationFailure verifies that IncrementETag
+// validates the config before saving and returns an error without persisting
+// the new ETag when validation fails.
+func TestConfigService_IncrementETag_ValidationFailure(t *testing.T) {
+	svc := createTestService(t)
+	ctx := context.Background()
+
+	cfg, err := svc.Load(ctx)
+	if err != nil {
+		t.Fatalf("Load config: %v", err)
+	}
+	originalETag := cfg.ETagVersion
+
+	// Corrupt the config with a cross-field violation that LoadFromDatabase
+	// accepts but Validate rejects.
+	cfg.DBMaxPoolSize = 5
+	cfg.DBMinIdleConnections = 10
+	if err = svc.Save(ctx, cfg); err != nil {
+		t.Fatalf("Save corrupted config: %v", err)
+	}
+
+	_, err = svc.IncrementETag(ctx)
+	if err == nil {
+		t.Fatal("IncrementETag expected validation error, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid config after ETag increment") {
+		t.Fatalf("IncrementETag error = %v, want wrapped validation error", err)
+	}
+
+	// Verify the ETag was not changed in the database.
+	reloaded, err := svc.Load(ctx)
+	if err != nil {
+		t.Fatalf("Reload config: %v", err)
+	}
+	if reloaded.ETagVersion != originalETag {
+		t.Errorf("ETag changed to %q after failed IncrementETag, want %q", reloaded.ETagVersion, originalETag)
+	}
 }

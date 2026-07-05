@@ -74,7 +74,7 @@
               trigger openModal on #lightbox_modal 
               halt the event
             end"
-            class="card bg-base-200 border-base-300 block h-[188px] w-[224px] cursor-pointer rounded-[6px] border text-center text-xs shadow-md transition-all duration-200 ease-in-out hover:shadow-xl"
+            class="card block h-[188px] w-[224px] cursor-pointer rounded-[6px] border border-base-300 bg-base-200 text-center text-xs shadow-md transition-all duration-200 ease-in-out hover:shadow-xl"
             aria-label="View {{ .DispName }}"
           >
             <figure class="flex h-[168px] items-center justify-center p-2">
@@ -115,7 +115,7 @@
             hx-get="{{ .Path }}?v={{ cacheVersion }}"
             hx-target="#gallery-content"
             hx-push-url="true"
-            class="card bg-base-200 border-base-300 block h-[188px] w-[224px] cursor-pointer rounded-[6px] border text-center text-xs shadow-md transition-all duration-200 ease-in-out hover:shadow-xl"
+            class="card block h-[188px] w-[224px] cursor-pointer rounded-[6px] border border-base-300 bg-base-200 text-center text-xs shadow-md transition-all duration-200 ease-in-out hover:shadow-xl"
             aria-label="View {{ .DispName }}"
           >
             <figure class="flex h-[168px] items-center justify-center p-2">

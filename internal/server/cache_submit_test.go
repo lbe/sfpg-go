@@ -23,7 +23,9 @@ func TestApp_SubmitCacheWrite(t *testing.T) {
 		}
 		defer wb.Close()
 
-		app := &App{}
+		app := &App{
+			InfrastructureService: NewInfrastructureService(),
+		}
 		app.writeBatcher = wb
 
 		entry := cachelite.GetHTTPCacheEntry()
@@ -41,7 +43,9 @@ func TestApp_SubmitCacheWrite(t *testing.T) {
 	})
 
 	t.Run("handles nil batcher gracefully", func(t *testing.T) {
-		app := &App{}
+		app := &App{
+			InfrastructureService: NewInfrastructureService(),
+		}
 		app.writeBatcher = nil
 
 		entry := cachelite.GetHTTPCacheEntry()
@@ -68,7 +72,9 @@ func TestApp_SubmitCacheWrite(t *testing.T) {
 		}
 		defer wb.Close()
 
-		app := &App{}
+		app := &App{
+			InfrastructureService: NewInfrastructureService(),
+		}
 		app.writeBatcher = wb
 
 		// We test the submitCacheWrite behavior statically:

@@ -17,7 +17,7 @@ import (
 // See TestAuthMiddleware_* in server_test.go.
 
 func TestConfigIncrementETag_MissingCSRF(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	h := app.configETagHandler
 
 	req := httptest.NewRequest("POST", "/config/increment-etag", nil)
@@ -34,7 +34,7 @@ func TestConfigIncrementETag_MissingCSRF(t *testing.T) {
 }
 
 func TestConfigIncrementETag_Success(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	h := app.configETagHandler
 	ctx := context.Background()
 

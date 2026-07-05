@@ -56,7 +56,7 @@ func createCacheMWWithSyncSubmit(app *App, cfg cachelite.CacheConfig) *cachelite
 
 // TestCacheMiss_HandlerCalledAndStored verifies cache miss calls handler and stores result
 func TestCacheMiss_HandlerCalledAndStored(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 
 	handlerCalls := 0
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -107,7 +107,7 @@ func TestCacheMiss_HandlerCalledAndStored(t *testing.T) {
 
 // TestCacheHit_HandlerNotCalled_CachedResponseReturned verifies cache hit skips handler
 func TestCacheHit_HandlerNotCalled_CachedResponseReturned(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 
 	handlerCalls := 0
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -168,7 +168,7 @@ func TestCacheHit_HandlerNotCalled_CachedResponseReturned(t *testing.T) {
 
 // TestEncodingSeparation_GzipVsBrotli verifies separate cache entries per encoding
 func TestEncodingSeparation_GzipVsBrotli(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
@@ -219,7 +219,7 @@ func TestEncodingSeparation_GzipVsBrotli(t *testing.T) {
 
 // TestSizeLimit_SkipOversized verifies large responses are not cached
 func TestSizeLimit_SkipOversized(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 
 	largeBody := make([]byte, 11*1024*1024) // 11MB
 	for i := range largeBody {
@@ -257,7 +257,7 @@ func TestSizeLimit_SkipOversized(t *testing.T) {
 
 // TestBudgetEviction_LRU verifies LRU eviction when budget exceeded
 func TestBudgetEviction_LRU(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 
 	cfg := cachelite.CacheConfig{
 		Enabled:      true,
@@ -301,7 +301,7 @@ func TestBudgetEviction_LRU(t *testing.T) {
 
 // TestBudgetEviction_LRU_UnifiedBatcher verifies LRU eviction works when using unified batcher
 func TestBudgetEviction_LRU_UnifiedBatcher(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 
 	cfg := cachelite.CacheConfig{
 		Enabled:         true,
@@ -362,7 +362,7 @@ func TestBudgetEviction_LRU_UnifiedBatcher(t *testing.T) {
 
 // TestCacheInvalidation_ClearCache verifies cachelite.ClearCache removes all entries
 func TestCacheInvalidation_ClearCache(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 
 	// Populate cache
 	now := time.Now().Unix()
@@ -402,7 +402,7 @@ func TestCacheInvalidation_ClearCache(t *testing.T) {
 
 // TestExpiration_ExpiredNotReturned verifies expired entries are not returned
 func TestExpiration_ExpiredNotReturned(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 
 	now := time.Now().Unix()
 	expiredEntry := &cachelite.HTTPCacheEntry{
@@ -426,7 +426,7 @@ func TestExpiration_ExpiredNotReturned(t *testing.T) {
 
 // TestSkipPOST verifies POST requests bypass cache
 func TestSkipPOST(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -461,7 +461,7 @@ func TestSkipPOST(t *testing.T) {
 // is not in CacheableRoutes. (no-store on cacheable routes like /gallery/ is stored
 // in server cache so we can HIT; the client still receives no-store so the browser does not cache.)
 func TestSkipNoCacheDirective(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
@@ -498,7 +498,7 @@ func TestSkipNoCacheDirective(t *testing.T) {
 // cacheable routes (e.g. gallery partials) are stored in server cache and replayed
 // with no-store so the browser does not cache but we get X-Cache: HIT.
 func TestNoStoreOnCacheableRoute_StoredInServerCache(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
@@ -549,7 +549,7 @@ func TestNoStoreOnCacheableRoute_StoredInServerCache(t *testing.T) {
 // TestPreloadAndHTMXVariants_Integration verifies cache hit/miss behavior across
 // normal, HTMX-targeted, internal preload, and encoding variants.
 func TestPreloadAndHTMXVariants_Integration(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 
 	handlerCalls := 0
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -634,7 +634,7 @@ func TestPreloadAndHTMXVariants_Integration(t *testing.T) {
 
 // TestSkip404 verifies non-200 responses are not cached
 func TestSkip404(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
@@ -670,7 +670,7 @@ func TestSkip404(t *testing.T) {
 // with HX-Target: lightbox_content (and vice versa). Both should normalize to
 // the same cache key.
 func TestCacheLightbox_NavigationVariantHit(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 
 	callCount := 0
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

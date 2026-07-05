@@ -1,5 +1,5 @@
 <!-- Configuration Modal - Loaded on demand via HTMX -->
-<div id="config-modal-container">
+<div id="config-modal-container" _="init set #config_modal.checked to true">
   <input type="checkbox" id="config_modal" class="modal-toggle" />
   <div class="modal" role="dialog">
     <div
@@ -7,12 +7,12 @@
     >
       <!-- Fixed Header -->
       <div
-        class="border-base-300 flex flex-shrink-0 items-center justify-between border-b p-6 pb-4"
+        class="flex flex-shrink-0 items-center justify-between border-b border-base-300 p-6 pb-4"
       >
         <h3 class="text-2xl font-bold">Configuration</h3>
         <label
           for="config_modal"
-          class="btn btn-sm btn-circle btn-ghost"
+          class="btn btn-circle btn-ghost btn-sm"
           _="on click
                   wait 300ms
                   remove #config-modal-container from body"
@@ -56,7 +56,7 @@
         <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}" />
         <div
           id="config-error-message"
-          class="text-error mb-4 px-6"
+          class="mb-4 px-6 text-error"
           _="on htmx:afterSwap from me
                 remove .htmx-request from #config-form
                 remove .htmx-request from body
@@ -74,7 +74,7 @@
         ></div>
 
         <!-- Fixed Tabs Navigation -->
-        <div role="tablist" class="tabs tabs-boxed mx-6 mb-4 flex-shrink-0">
+        <div role="tablist" class="tabs-boxed tabs mx-6 mb-4 flex-shrink-0">
           <button
             id="tab-server-btn"
             type="button"
@@ -167,7 +167,7 @@
             id="tab-server"
             role="tabpanel"
             aria-labelledby="tab-server-btn"
-            class="tab-panel bg-base-100 border-base-300 rounded-box border p-6"
+            class="tab-panel rounded-box border border-base-300 bg-base-100 p-6"
           >
             {{ template "config-server-tab" . }}
           </div>
@@ -175,7 +175,7 @@
             id="tab-logging"
             role="tabpanel"
             aria-labelledby="tab-logging-btn"
-            class="tab-panel bg-base-100 border-base-300 rounded-box hidden border p-6"
+            class="tab-panel hidden rounded-box border border-base-300 bg-base-100 p-6"
           >
             {{ template "config-logging-tab" . }}
           </div>
@@ -183,7 +183,7 @@
             id="tab-application"
             role="tabpanel"
             aria-labelledby="tab-application-btn"
-            class="tab-panel bg-base-100 border-base-300 rounded-box hidden border p-6"
+            class="tab-panel hidden rounded-box border border-base-300 bg-base-100 p-6"
           >
             {{ template "config-application-tab" . }}
           </div>
@@ -191,7 +191,7 @@
             id="tab-session"
             role="tabpanel"
             aria-labelledby="tab-session-btn"
-            class="tab-panel bg-base-100 border-base-300 rounded-box hidden border p-6"
+            class="tab-panel hidden rounded-box border border-base-300 bg-base-100 p-6"
           >
             {{ template "config-session-tab" . }}
           </div>
@@ -199,7 +199,7 @@
             id="tab-performance"
             role="tabpanel"
             aria-labelledby="tab-performance-btn"
-            class="tab-panel bg-base-100 border-base-300 rounded-box hidden border p-6"
+            class="tab-panel hidden rounded-box border border-base-300 bg-base-100 p-6"
           >
             {{ template "config-performance-tab" . }}
           </div>
@@ -207,7 +207,7 @@
             id="tab-discovery"
             role="tabpanel"
             aria-labelledby="tab-discovery-btn"
-            class="tab-panel bg-base-100 border-base-300 rounded-box hidden border p-6"
+            class="tab-panel hidden rounded-box border border-base-300 bg-base-100 p-6"
           >
             {{ template "config-discovery-tab" . }}
           </div>
@@ -215,20 +215,20 @@
             id="tab-admin"
             role="tabpanel"
             aria-labelledby="tab-admin-btn"
-            class="tab-panel bg-base-100 border-base-300 rounded-box hidden border p-6"
+            class="tab-panel hidden rounded-box border border-base-300 bg-base-100 p-6"
           >
             {{ template "config-admin-tab" . }}
           </div>
         </div>
 
         <!-- Fixed Footer with buttons and info area -->
-        <div class="border-base-300 flex-shrink-0 border-t p-6 pt-4">
+        <div class="flex-shrink-0 border-t border-base-300 p-6 pt-4">
           <!-- Button explanation and badge area (fixed height) -->
           <div class="mb-2 flex h-8 items-center justify-end">
             <div class="flex items-center gap-2">
               <div
                 id="button-explanation-text"
-                class="text-base-content/70 w-[452px] overflow-hidden text-center text-sm text-ellipsis whitespace-nowrap"
+                class="w-[452px] overflow-hidden text-ellipsis whitespace-nowrap text-center text-sm text-base-content/70"
               ></div>
               <div
                 id="button-explanation-area-right"
@@ -375,7 +375,7 @@
                 <span class="text-center">Save Settings</span>
                 <span
                   id="config-spinner"
-                  class="loading loading-spinner loading-sm htmx-indicator absolute inset-0 flex items-center justify-center"
+                  class="htmx-indicator loading loading-spinner loading-sm absolute inset-0 flex items-center justify-center"
                 ></span>
               </button>
             </div>
@@ -404,7 +404,7 @@
         </p>
         <div
           id="cancel-diff-content"
-          class="border-base-300 mb-4 max-h-96 overflow-y-auto rounded border p-4"
+          class="mb-4 max-h-96 overflow-y-auto rounded border border-base-300 p-4"
         >
           <!-- Diff content will be inserted here -->
         </div>
@@ -433,7 +433,7 @@
         </p>
         <div
           id="restart-diff-content"
-          class="border-base-300 mb-4 max-h-96 overflow-y-auto rounded border p-4"
+          class="mb-4 max-h-96 overflow-y-auto rounded border border-base-300 p-4"
         >
           <!-- Diff content will be inserted here -->
         </div>
@@ -741,7 +741,7 @@
         type="checkbox"
         name="server_compression_enable"
         data-requires-restart="true"
-        class="checkbox checkbox-primary"
+        class="checkbox-primary checkbox"
         {{ if and .Config .Config.ServerCompressionEnable }}checked{{ end }}
       />
       <span class="label-text">Enable gzip/brotli compression</span>
@@ -1255,7 +1255,7 @@
         above)</span
       >
     </label>
-    <div id="theme-validation-error" class="text-error mt-1 hidden text-sm">
+    <div id="theme-validation-error" class="mt-1 hidden text-sm text-error">
       Default theme must be one of the selected themes
     </div>
   </div>
@@ -1292,7 +1292,7 @@
         type="checkbox"
         name="session_http_only"
         data-requires-restart="true"
-        class="checkbox checkbox-primary"
+        class="checkbox-primary checkbox"
         {{ if and .Config .Config.SessionHttpOnly }}checked{{ end }}
       />
       <span class="label-text"
@@ -1317,7 +1317,7 @@
         type="checkbox"
         name="session_secure"
         data-requires-restart="true"
-        class="checkbox checkbox-primary"
+        class="checkbox-primary checkbox"
         {{ if and .Config .Config.SessionSecure }}checked{{ end }}
       />
       <span class="label-text">Only send cookies over HTTPS</span>
@@ -1373,7 +1373,7 @@
 
 {{ define "config-performance-tab" }}
   <fieldset
-    class="fieldset border-base-300 bg-base-200/30 mb-6 rounded-lg border p-4"
+    class="fieldset mb-6 rounded-lg border border-base-300 bg-base-200/30 p-4"
   >
     <legend class="fieldset-legend text-base font-semibold">Cache</legend>
     <div class="form-control mb-4">
@@ -1382,7 +1382,7 @@
           type="checkbox"
           name="enable_http_cache"
           data-requires-restart="true"
-          class="checkbox checkbox-primary"
+          class="checkbox-primary checkbox"
           {{ if and .Config .Config.EnableHTTPCache }}checked{{ end }}
         />
         <span class="label-text font-semibold">HTTP Cache Enabled</span>
@@ -1488,7 +1488,7 @@
   </fieldset>
 
   <fieldset
-    class="fieldset border-base-300 bg-base-200/30 mb-6 rounded-lg border p-4"
+    class="fieldset mb-6 rounded-lg border border-base-300 bg-base-200/30 p-4"
   >
     <legend class="fieldset-legend text-base font-semibold">DB Pool</legend>
     <div class="form-control mb-4">
@@ -1573,7 +1573,7 @@
   </fieldset>
 
   <fieldset
-    class="fieldset border-base-300 bg-base-200/30 mb-6 rounded-lg border p-4"
+    class="fieldset mb-6 rounded-lg border border-base-300 bg-base-200/30 p-4"
   >
     <legend class="fieldset-legend text-base font-semibold">Worker Pool</legend>
     <div class="form-control mb-4">
@@ -1640,7 +1640,7 @@
   </fieldset>
 
   <fieldset
-    class="fieldset border-base-300 bg-base-200/30 mb-6 rounded-lg border p-4"
+    class="fieldset mb-6 rounded-lg border border-base-300 bg-base-200/30 p-4"
   >
     <legend class="fieldset-legend text-base font-semibold">Queue</legend>
     <div class="form-control mb-4">
@@ -1665,7 +1665,7 @@
   </fieldset>
 
   <fieldset
-    class="fieldset border-base-300 bg-base-200/30 mb-6 rounded-lg border p-4"
+    class="fieldset mb-6 rounded-lg border border-base-300 bg-base-200/30 p-4"
   >
     <legend class="fieldset-legend text-base font-semibold">
       Cache Preload
@@ -1675,7 +1675,7 @@
         <input
           type="checkbox"
           name="enable_cache_preload"
-          class="checkbox checkbox-primary"
+          class="checkbox-primary checkbox"
           {{ if and .Config .Config.EnableCachePreload }}checked{{ end }}
         />
         <span class="label-text font-semibold">Enable Cache Preload</span>
@@ -1699,7 +1699,7 @@
       <input
         type="checkbox"
         name="run_file_discovery"
-        class="checkbox checkbox-primary"
+        class="checkbox-primary checkbox"
         {{ if and .Config .Config.RunFileDiscovery }}checked{{ end }}
       />
       <span class="label-text"
@@ -1745,7 +1745,7 @@
       <button
         type="button"
         tabindex="-1"
-        class="btn btn-ghost btn-sm absolute top-1/2 right-2 h-auto min-h-0 -translate-y-1/2 p-1"
+        class="btn btn-ghost btn-sm absolute right-2 top-1/2 h-auto min-h-0 -translate-y-1/2 p-1"
         id="toggle_admin_current_password"
         _="on click
            set input to #admin_current_password
@@ -1783,7 +1783,7 @@
       <button
         type="button"
         tabindex="-1"
-        class="btn btn-ghost btn-sm absolute top-1/2 right-2 h-auto min-h-0 -translate-y-1/2 p-1"
+        class="btn btn-ghost btn-sm absolute right-2 top-1/2 h-auto min-h-0 -translate-y-1/2 p-1"
         id="toggle_admin_new_password"
         _="on click
            set input to #admin_new_password
@@ -1800,7 +1800,7 @@
     </div>
     <div
       id="admin_new_password_error"
-      class="label-text-alt text-error hidden"
+      class="label-text-alt hidden text-error"
     ></div>
     <label class="label">
       <span class="label-text-alt"
@@ -1826,7 +1826,7 @@
       <button
         type="button"
         tabindex="-1"
-        class="btn btn-ghost btn-sm absolute top-1/2 right-2 h-auto min-h-0 -translate-y-1/2 p-1"
+        class="btn btn-ghost btn-sm absolute right-2 top-1/2 h-auto min-h-0 -translate-y-1/2 p-1"
         id="toggle_admin_confirm_password"
         _="on click
            set input to #admin_confirm_password
@@ -1843,7 +1843,7 @@
     </div>
     <div
       id="admin_confirm_password_error"
-      class="label-text-alt text-error hidden"
+      class="label-text-alt hidden text-error"
     ></div>
     <label class="label">
       <span class="label-text-alt">Must match new password</span>

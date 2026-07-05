@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 // =========================================================================
@@ -127,11 +128,6 @@ func TestAuthRoutes_Auth(t *testing.T) {
 		{num: 35, name: "config-restore-preview", method: "POST", path: "/config/restore-last-known-good?action=preview",
 			// No CSRF needed; may return 400 if no prior config saved
 			expCode: http.StatusOK, note: "may return 400 if no prior config saved (acceptable)"},
-		{num: 37, name: "config-restart", method: "POST", path: "/config/restart",
-			bodyFn: func(t *testing.T, client *http.Client) url.Values {
-				token := csrfTokenFromConfig(t, client)
-				return url.Values{"csrf_token": {token}}
-			}, expCode: http.StatusOK, skip: true, note: "SKIP: destructive (triggers server restart)"},
 
 		// Dashboard
 		{num: 39, name: "dashboard", method: "GET", path: "/dashboard", expCode: http.StatusOK},
@@ -140,10 +136,16 @@ func TestAuthRoutes_Auth(t *testing.T) {
 		// Server Management
 		{num: 42, name: "server-shutdown", method: "POST", path: "/server/shutdown",
 			skip: true, note: "SKIP: destructive (shuts down server)"},
-		{num: 44, name: "server-discovery", method: "POST", path: "/server/discovery", expCode: http.StatusOK},
-		{num: 46, name: "server-cache-batch-load", method: "POST", path: "/server/cache-batch-load", expCode: http.StatusOK},
-		{num: 48, name: "server-restart", method: "POST", path: "/server/restart",
-			skip: true, note: "SKIP: destructive (triggers server restart)"},
+		{num: 44, name: "server-discovery", method: "POST", path: "/server/discovery",
+			bodyFn: func(t *testing.T, client *http.Client) url.Values {
+				token := csrfTokenFromConfig(t, client)
+				return url.Values{"csrf_token": {token}}
+			}, expCode: http.StatusOK},
+		{num: 46, name: "server-cache-batch-load", method: "POST", path: "/server/cache-batch-load",
+			bodyFn: func(t *testing.T, client *http.Client) url.Values {
+				token := csrfTokenFromConfig(t, client)
+				return url.Values{"csrf_token": {token}}
+			}, expCode: http.StatusOK},
 
 		// Debug
 		{num: 50, name: "pprof", method: "GET", path: "/debug/pprof/", expCode: http.StatusOK},
@@ -203,7 +205,9 @@ func TestLogout(t *testing.T) {
 		client := newClient()
 		login(t, client)
 
-		resp := doRequest(t, client, "POST", "/logout", nil, false)
+		// Get CSRF token for logout POST
+		token := csrfTokenFromConfig(t, client)
+		resp := doRequest(t, client, "POST", "/logout", url.Values{"csrf_token": {token}}, false)
 		defer resp.Body.Close()
 
 		expected := http.StatusOK
@@ -340,5 +344,92 @@ func TestDashboardClientLoginFlow(t *testing.T) {
 		}
 
 		reportResult(t, 55, "/dashboard", "GET", "Yes", http.StatusOK, http.StatusOK, "PASS", "dashboard client e2e login flow OK")
+	})
+}
+
+// =========================================================================
+// =========================================================================
+// =========================================================================
+// Section 5: Restart — runs serially, polls for recovery
+//
+// Triggers server restart, polls /gallery/1 every second for up to 15 seconds,
+// then verifies the server is fully responsive (login + authenticated endpoint).
+// =========================================================================
+
+func TestRestart(t *testing.T) {
+	// #37: POST /config/restart (authenticated) → 200, server restarts, comes back healthy
+	t.Run("#37-config-restart", func(t *testing.T) {
+		client := newClient()
+		login(t, client)
+
+		token := csrfTokenFromConfig(t, client)
+		resp := doRequest(t, client, "POST", "/config/restart", url.Values{"csrf_token": {token}}, false)
+		resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			reportResult(t, 37, "/config/restart", "POST", "Yes", http.StatusOK, resp.StatusCode, "FAIL", "restart POST failed")
+			return
+		}
+
+		if !waitForServer(t, 15*time.Second) {
+			reportResult(t, 37, "/config/restart", "POST", "Yes", http.StatusOK, 0, "FAIL", "server did not respond after restart")
+			return
+		}
+
+		// Give the server a moment for all services to fully initialize
+		time.Sleep(2 * time.Second)
+
+		// Verify full functionality: login + dashboard
+		verifyClient := newClient()
+		login(t, verifyClient)
+		dashResp := doRequest(t, verifyClient, "GET", "/dashboard", nil, false)
+		dashResp.Body.Close()
+		if dashResp.StatusCode != http.StatusOK {
+			reportResult(t, 37, "/config/restart", "POST", "Yes", http.StatusOK, dashResp.StatusCode, "FAIL", "dashboard not reachable after restart")
+			return
+		}
+
+		reportResult(t, 37, "/config/restart", "POST", "Yes", http.StatusOK, http.StatusOK, "PASS", "server restarted and full functionality verified")
+	})
+
+	// #48: POST /server/restart (authenticated) → 200, server restarts, comes back healthy
+	t.Run("#48-server-restart", func(t *testing.T) {
+		// Ensure server is settled by polling before starting
+		if !waitForServer(t, 5*time.Second) {
+			t.Fatal("server not reachable before restart test")
+		}
+		time.Sleep(1 * time.Second)
+
+		client := newClient()
+		login(t, client)
+
+		token := csrfTokenFromConfig(t, client)
+		resp := doRequest(t, client, "POST", "/server/restart", url.Values{"csrf_token": {token}}, false)
+		resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			reportResult(t, 48, "/server/restart", "POST", "Yes", http.StatusOK, resp.StatusCode, "FAIL", "restart POST failed")
+			return
+		}
+
+		if !waitForServer(t, 15*time.Second) {
+			reportResult(t, 48, "/server/restart", "POST", "Yes", http.StatusOK, 0, "FAIL", "server did not respond after restart")
+			return
+		}
+
+		// Give the server a moment for all services to fully initialize
+		time.Sleep(2 * time.Second)
+
+		// Verify full functionality: login + gallery
+		verifyClient := newClient()
+		login(t, verifyClient)
+		galResp := doRequest(t, verifyClient, "GET", "/gallery/1", nil, false)
+		galResp.Body.Close()
+		if galResp.StatusCode != http.StatusOK {
+			reportResult(t, 48, "/server/restart", "POST", "Yes", http.StatusOK, galResp.StatusCode, "FAIL", "gallery not reachable after restart")
+			return
+		}
+
+		reportResult(t, 48, "/server/restart", "POST", "Yes", http.StatusOK, http.StatusOK, "PASS", "server restarted and full functionality verified")
 	})
 }

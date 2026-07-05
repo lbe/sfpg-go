@@ -1,13 +1,6 @@
-<form
-  id="login-form"
-  hx-post="/login"
-  hx-swap="none"
-  _="on 'auth-changed' from body
-       wait 50ms
-       set #login_modal.checked to false"
->
+<form id="login-form" hx-post="/login" hx-swap="none">
   <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}" />
-  <div id="login-error-message" class="text-error mb-4 min-h-[1.5rem]">
+  <div id="login-error-message" class="mb-4 min-h-[1.5rem] text-error">
     {{ .ErrorMessage }}
   </div>
   <div class="form-control mb-4">

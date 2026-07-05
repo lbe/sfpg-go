@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"slices"
 
-	"github.com/lbe/sfpg-go/internal/server/config"
+	"github.com/lbe/sfpg-go/internal/server/interfaces"
 )
 
 // ThemeCookieName is the name of the theme cookie.
@@ -15,30 +15,17 @@ const ThemeCookieMaxAge = 365 * 24 * 60 * 60
 
 // ThemeHandlers holds dependencies for theme-related HTTP handlers.
 type ThemeHandlers struct {
-	GetConfig             func() *config.Config
-	AddCommonTemplateData func(http.ResponseWriter, *http.Request, map[string]any, bool) map[string]any
-	RenderThemeModal      func(http.ResponseWriter, any) error
-	ServerError           func(http.ResponseWriter, *http.Request, error)
+	deps interfaces.ServerDeps
 }
 
 // NewThemeHandlers creates a new ThemeHandlers with the given dependencies.
-func NewThemeHandlers(
-	getConfig func() *config.Config,
-	addCommonTemplateData func(http.ResponseWriter, *http.Request, map[string]any, bool) map[string]any,
-	renderThemeModal func(http.ResponseWriter, any) error,
-	serverError func(http.ResponseWriter, *http.Request, error),
-) *ThemeHandlers {
-	return &ThemeHandlers{
-		GetConfig:             getConfig,
-		AddCommonTemplateData: addCommonTemplateData,
-		RenderThemeModal:      renderThemeModal,
-		ServerError:           serverError,
-	}
+func NewThemeHandlers(deps interfaces.ServerDeps) *ThemeHandlers {
+	return &ThemeHandlers{deps: deps}
 }
 
 // ThemeModalHandler returns the theme selector modal.
 func (h *ThemeHandlers) ThemeModalHandler(w http.ResponseWriter, r *http.Request) {
-	cfg := h.GetConfig()
+	cfg := h.deps.GetConfig()
 	if cfg == nil {
 		http.Error(w, "Configuration not loaded", http.StatusInternalServerError)
 		return
@@ -51,17 +38,12 @@ func (h *ThemeHandlers) ThemeModalHandler(w http.ResponseWriter, r *http.Request
 		"CurrentTheme": currentTheme,
 	}
 
-	data = h.AddCommonTemplateData(w, r, data, true)
+	data = h.deps.AddCommonTemplateData(w, r, data, true)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
-	if h.RenderThemeModal == nil {
-		http.Error(w, "Theme modal template not initialized", http.StatusInternalServerError)
-		return
-	}
-
-	if err := h.RenderThemeModal(w, data); err != nil {
-		h.ServerError(w, r, err)
+	if err := h.deps.RenderTemplate(w, "theme-modal.html.tmpl", data); err != nil {
+		h.deps.ServerError(w, r, err)
 		return
 	}
 }
@@ -79,7 +61,7 @@ func (h *ThemeHandlers) ThemePostHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	cfg := h.GetConfig()
+	cfg := h.deps.GetConfig()
 	if cfg == nil {
 		http.Error(w, "Configuration not loaded", http.StatusInternalServerError)
 		return
@@ -108,7 +90,7 @@ func (h *ThemeHandlers) ThemePostHandler(w http.ResponseWriter, r *http.Request)
 // GetEffectiveTheme returns the effective theme for a request.
 // Priority: 1) Cookie (if valid), 2) Server default.
 func (h *ThemeHandlers) GetEffectiveTheme(r *http.Request) string {
-	cfg := h.GetConfig()
+	cfg := h.deps.GetConfig()
 	if cfg == nil {
 		return "dark"
 	}

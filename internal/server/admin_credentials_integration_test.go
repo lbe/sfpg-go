@@ -22,7 +22,7 @@ import (
 // 4. Submit form
 // 5. Verify credentials were updated in database
 func TestAdminCredentials_E2E_UpdateFlow(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 	t.Parallel()
 	if loadErr := app.loadConfig(); loadErr != nil {
@@ -55,7 +55,7 @@ func TestAdminCredentials_E2E_UpdateFlow(t *testing.T) {
 		t.Fatalf("failed to get session: %v", err)
 	}
 	session.Values["authenticated"] = true
-	csrfToken := app.ensureCsrfToken(w, req)
+	csrfToken := app.EnsureCSRFToken(w, req)
 	session.Values["csrf_token"] = csrfToken
 	if saveErr := session.Save(req, w); saveErr != nil {
 		t.Fatalf("failed to save session: %v", saveErr)
@@ -146,7 +146,7 @@ func TestAdminCredentials_E2E_UpdateFlow(t *testing.T) {
 // TestAdminCredentials_E2E_ValidationErrors tests that validation errors are properly displayed
 // in the UI when invalid credentials are submitted.
 func TestAdminCredentials_E2E_ValidationErrors(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 	t.Parallel()
 	if loadErr := app.loadConfig(); loadErr != nil {
@@ -163,7 +163,7 @@ func TestAdminCredentials_E2E_ValidationErrors(t *testing.T) {
 		t.Fatalf("failed to get session: %v", err)
 	}
 	session.Values["authenticated"] = true
-	csrfToken := app.ensureCsrfToken(w, req)
+	csrfToken := app.EnsureCSRFToken(w, req)
 	session.Values["csrf_token"] = csrfToken
 	if saveErr := session.Save(req, w); saveErr != nil {
 		t.Fatalf("failed to save session: %v", saveErr)
@@ -217,7 +217,7 @@ func TestAdminCredentials_E2E_ValidationErrors(t *testing.T) {
 // TestAdminCredentials_E2E_WrongCurrentPassword tests that the system rejects updates
 // when the current password is incorrect.
 func TestAdminCredentials_E2E_WrongCurrentPassword(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 	t.Parallel()
 	if loadErr := app.loadConfig(); loadErr != nil {
@@ -240,7 +240,7 @@ func TestAdminCredentials_E2E_WrongCurrentPassword(t *testing.T) {
 		t.Fatalf("failed to get session: %v", err)
 	}
 	session.Values["authenticated"] = true
-	csrfToken := app.ensureCsrfToken(w, req)
+	csrfToken := app.EnsureCSRFToken(w, req)
 	session.Values["csrf_token"] = csrfToken
 	if saveErr := session.Save(req, w); saveErr != nil {
 		t.Fatalf("failed to save session: %v", saveErr)

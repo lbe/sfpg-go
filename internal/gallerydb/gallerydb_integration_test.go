@@ -1583,8 +1583,8 @@ func TestHttpCacheQueries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("HttpCacheExistsByKey (existing) failed: %v", err)
 		}
-		if exists != 1 {
-			t.Errorf("Expected exists=1 for existing key, got %d", exists)
+		if !exists {
+			t.Errorf("Expected exists=true for existing key, got %v", exists)
 		}
 
 		// Check non-existing key
@@ -1592,8 +1592,8 @@ func TestHttpCacheQueries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("HttpCacheExistsByKey (non-existing) failed: %v", err)
 		}
-		if exists != 0 {
-			t.Errorf("Expected exists=0 for non-existing key, got %d", exists)
+		if exists {
+			t.Errorf("Expected exists=false for non-existing key, got %v", exists)
 		}
 	})
 

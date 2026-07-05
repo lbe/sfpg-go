@@ -15,14 +15,14 @@ import (
 // TestAuthMiddleware tests the authMiddleware to ensure it correctly protects
 // routes, redirecting unauthenticated requests and allowing authenticated ones.
 func TestAddCommonTemplateData_Additional(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	data := make(map[string]any)
 	req := httptest.NewRequest("GET", "/test", nil)
 	rr := httptest.NewRecorder()
 
-	result := app.addCommonTemplateData(rr, req, data, false)
+	result := app.AddCommonTemplateData(rr, req, data, false)
 
 	// addCommonTemplateData adds IsAuthenticated and CSRFToken
 	if _, ok := result["IsAuthenticated"]; !ok {
@@ -37,14 +37,14 @@ func TestAddCommonTemplateData_Additional(t *testing.T) {
 // addCommonTemplateData does NOT fetch GalleryStats (expensive DB query).
 // Partials (HTMX swaps, modals, toasts) don't include the about modal.
 func TestAddCommonTemplateData_PartialSkipsGalleryStats(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	data := make(map[string]any)
 	req := httptest.NewRequest("GET", "/test", nil)
 	rr := httptest.NewRecorder()
 
-	result := app.addCommonTemplateData(rr, req, data, true)
+	result := app.AddCommonTemplateData(rr, req, data, true)
 
 	// Still adds cheap common data
 	if _, ok := result["IsAuthenticated"]; !ok {
@@ -62,7 +62,7 @@ func TestAddCommonTemplateData_PartialSkipsGalleryStats(t *testing.T) {
 // TestRefreshGalleryStatsCache_AndGetCached tests that refreshGalleryStatsCache populates
 // the cache and getGalleryStatsCached returns it when LastStartedAt matches.
 func TestRefreshGalleryStatsCache_AndGetCached(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	ctx := context.Background()
@@ -88,7 +88,7 @@ func TestRefreshGalleryStatsCache_AndGetCached(t *testing.T) {
 // TestGetGalleryStatsCached_ReturnsNilWhenStale tests that getGalleryStatsCached
 // returns nil when LastStartedAt differs from cached.
 func TestGetGalleryStatsCached_ReturnsNilWhenStale(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	ctx := context.Background()
@@ -105,14 +105,14 @@ func TestGetGalleryStatsCached_ReturnsNilWhenStale(t *testing.T) {
 // TestAddCommonTemplateData_FullPageIncludesGalleryStats tests that when partial=false,
 // addCommonTemplateData includes GalleryStats for the about modal.
 func TestAddCommonTemplateData_FullPageIncludesGalleryStats(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	data := make(map[string]any)
 	req := httptest.NewRequest("GET", "/test", nil)
 	rr := httptest.NewRecorder()
 
-	result := app.addCommonTemplateData(rr, req, data, false)
+	result := app.AddCommonTemplateData(rr, req, data, false)
 
 	if _, ok := result["GalleryStats"]; !ok {
 		t.Error("Expected GalleryStats when partial=false (full page has about modal)")
@@ -121,14 +121,14 @@ func TestAddCommonTemplateData_FullPageIncludesGalleryStats(t *testing.T) {
 
 // TestGetUser_Additional tests user retrieval from database
 func TestAddCommonTemplateData_EdgeCases(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	t.Run("nil data map", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/test", nil)
 		rr := httptest.NewRecorder()
 
-		result := app.addCommonTemplateData(rr, req, nil, false)
+		result := app.AddCommonTemplateData(rr, req, nil, false)
 
 		if result == nil {
 			t.Error("Expected non-nil result")
@@ -141,7 +141,7 @@ func TestAddCommonTemplateData_EdgeCases(t *testing.T) {
 
 // TestBuildHandlers tests handler building
 func TestAddCommonTemplateData_AboutModal(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// Create test request and response recorder
@@ -150,7 +150,7 @@ func TestAddCommonTemplateData_AboutModal(t *testing.T) {
 
 	// Call addCommonTemplateData which is used for pages that include the about-modal
 	data := make(map[string]any)
-	result := app.addCommonTemplateData(rr, req, data, false)
+	result := app.AddCommonTemplateData(rr, req, data, false)
 
 	// Verify Version is present and is a string
 	if version, ok := result["Version"].(string); !ok {

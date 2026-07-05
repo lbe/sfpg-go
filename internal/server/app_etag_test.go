@@ -11,13 +11,13 @@ import (
 )
 
 func testTableExists(ctx context.Context, app *App, tableName string) (bool, error) {
-	cpc, err := app.dbRwPool.Get()
+	cpcRw, err := app.dbRwPool.Get()
 	if err != nil {
 		return false, fmt.Errorf("failed to get rw pool connection: %w", err)
 	}
-	defer app.dbRwPool.Put(cpc)
+	defer app.dbRwPool.Put(cpcRw)
 
-	row := cpc.Conn.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?)`, tableName)
+	row := cpcRw.Conn.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?)`, tableName)
 	var exists int64
 	if err := row.Scan(&exists); err != nil {
 		return false, fmt.Errorf("scan table exists query failed: %w", err)
@@ -26,7 +26,7 @@ func testTableExists(ctx context.Context, app *App, tableName string) (bool, err
 }
 
 func TestIncrementETag_ClearsCache(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// Pre-populate cache with an entry

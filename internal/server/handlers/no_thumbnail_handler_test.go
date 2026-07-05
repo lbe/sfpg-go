@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -13,10 +12,9 @@ import (
 func TestNoThumbnail_ReturnsSVG(t *testing.T) {
 	gh := setupTestGalleryHandlers(t, &fakeHandlerQueries{})
 
-	req := httptest.NewRequest(http.MethodGet, "/thumbnail/1", nil)
 	w := httptest.NewRecorder()
 
-	gh.NoThumbnail(w, req)
+	gh.NoThumbnail(w)
 
 	if w.Header().Get("Content-Type") != "image/svg+xml" {
 		t.Errorf("expected svg content type, got %s", w.Header().Get("Content-Type"))

@@ -11,6 +11,12 @@ import (
 
 func TestRunCacheBatchLoad_BlockedWhenDiscoveryActive(t *testing.T) {
 	// Reset flags so getopt.Parse sees clean state
+	oldCommandLine := flag.CommandLine
+	oldArgs := os.Args
+	t.Cleanup(func() {
+		flag.CommandLine = oldCommandLine
+		os.Args = oldArgs
+	})
 	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 	os.Args = []string{"cmd"}
 	t.Setenv("SEPG_SESSION_SECRET", "test-secret")
@@ -36,6 +42,12 @@ func TestRunCacheBatchLoad_BlockedWhenDiscoveryActive(t *testing.T) {
 }
 
 func TestRunCacheBatchLoad_SuccessWhenIdle(t *testing.T) {
+	oldCommandLine := flag.CommandLine
+	oldArgs := os.Args
+	t.Cleanup(func() {
+		flag.CommandLine = oldCommandLine
+		os.Args = oldArgs
+	})
 	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 	os.Args = []string{"cmd"}
 	t.Setenv("SEPG_SESSION_SECRET", "test-secret")
@@ -55,8 +67,11 @@ func TestRunCacheBatchLoad_SuccessWhenIdle(t *testing.T) {
 }
 
 func TestRunCacheBatchLoad_ErrorWhenManagerNil(t *testing.T) {
-	app := &App{}
-	app.ctx = context.Background()
+	// Initialize enough of App so getCtx() works without panic.
+	app := &App{
+		RuntimeManager:   NewRuntimeManager(context.Background()),
+		SubsystemManager: NewSubsystemManager(nil),
+	}
 
 	code := app.RunCacheBatchLoad()
 	if code != 1 {

@@ -147,7 +147,7 @@ func TestStartupWithDBConfig_PoolSizeHonored(t *testing.T) {
 // Note: Pool sizes cannot be changed at runtime without full restart, but other
 // config values (compression, cache, session settings) should be reloadable.
 func TestRestartWithModifiedDBConfig_AppliesNewValues(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// Verify initial config values (from defaults)

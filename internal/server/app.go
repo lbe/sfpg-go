@@ -13,17 +13,18 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/lbe/sfpg-go/internal/cachelite"
 	"github.com/lbe/sfpg-go/internal/gallerydb"
 	"github.com/lbe/sfpg-go/internal/gallerylib" // Added for ImporterFactory
 	"github.com/lbe/sfpg-go/internal/getopt"
 	"github.com/lbe/sfpg-go/internal/log"
+	"github.com/lbe/sfpg-go/internal/profiler"
 	"github.com/lbe/sfpg-go/internal/server/cachebatch"
 	"github.com/lbe/sfpg-go/internal/server/cachepreload"
 	"github.com/lbe/sfpg-go/internal/server/config"
 	"github.com/lbe/sfpg-go/internal/server/database"
 	"github.com/lbe/sfpg-go/internal/server/files"
 	"github.com/lbe/sfpg-go/internal/server/handlers"
+	"github.com/lbe/sfpg-go/internal/server/interfaces"
 	"github.com/lbe/sfpg-go/internal/server/logging"
 	"github.com/lbe/sfpg-go/internal/server/ui"
 	"github.com/lbe/sfpg-go/web"
@@ -40,15 +41,15 @@ const (
 //
 // Lock Ordering: To prevent deadlocks, always acquire locks in this order when holding multiple locks:
 // 1. configMu
-// 2. restartMu
+// 2. httpServerMu
 // Never acquire a lower-ordered lock while holding a higher-ordered one.
 type App struct {
-	appInfra
-	appConfigState
-	appRuntimeState
-	appHandlerDeps
-	appSubsystems
-	appAuth
+	*InfrastructureService
+	*ConfigManager
+	*AuthService
+	*HandlerManager
+	*RuntimeManager
+	*SubsystemManager
 
 	logger *log.Logger // Logger manages all logging functionality including rollover and retention
 	opt    getopt.Opt
@@ -57,13 +58,17 @@ type App struct {
 // New creates and initializes a new App instance. It sets up the application
 // context, session secret, importer factory, and other core components.
 func New(opt getopt.Opt, version string) *App {
+	infra := NewInfrastructureService()
 	app := &App{
-		opt: opt,
+		opt:                   opt,
+		InfrastructureService: infra,
+		ConfigManager:         NewConfigManager(),
+		AuthService:           NewAuthService(opt.SessionSecret.String),
+		SubsystemManager:      NewSubsystemManager(infra),
+		HandlerManager:        NewHandlerManager(),
+		RuntimeManager:        NewRuntimeManager(context.Background()),
 	}
-	app.sessionSecret = opt.SessionSecret.String
 	app.version = version
-	// Initialize context - WithCancel allows graceful shutdown
-	app.ctx, app.cancel = context.WithCancel(context.Background())
 
 	// Default ImporterFactory constructs a normal gallerylib.Importer and
 	// returns it as the Importer interface.
@@ -185,11 +190,7 @@ func (app *App) setConfigDefaults() {
 func (app *App) loadConfig() error {
 	cfg, err := config.Load(app.ctx, app.rootDir, app.configService, app.opt)
 
-	// Write lock to update app.config atomically
-	app.configMu.Lock()
-	app.config = cfg
-	app.configMu.Unlock()
-
+	app.SetConfig(cfg)
 	app.logLoadedConfigDiagnostics(cfg)
 
 	return err
@@ -197,80 +198,9 @@ func (app *App) loadConfig() error {
 
 // logLoadedConfigDiagnostics emits startup diagnostics for loaded configuration.
 // It keeps normal startup logs low-noise while surfacing anomalies immediately.
-func (app *App) logLoadedConfigDiagnostics(cfg *config.Config) {
-	if cfg == nil {
-		return
-	}
-
-	if err := cfg.Validate(); err != nil {
-		slog.Warn("loaded configuration failed strict validation",
-			"err", err,
-			"hint", "Review admin configuration values and ensure env/CLI overrides are valid.")
-	}
-
-	for _, warning := range cfg.ValidateGuardrails() {
-		slog.Warn("configuration guardrail warning",
-			"check", warning.Check,
-			"configured", warning.Configured,
-			"effective", warning.Effective,
-			"hint", warning.Hint)
-	}
-}
 
 // logDBPoolConfiguredVsEffective logs configured pool settings along with the
 // effective values currently applied by the active read-write/read-only pools.
-func (app *App) logDBPoolConfiguredVsEffective(source string, configuredMax, configuredMinIdle int) {
-	if app.dbRwPool == nil || app.dbRoPool == nil {
-		return
-	}
-
-	rwEffectiveMax := app.dbRwPool.Config.MaxConnections
-	rwEffectiveMinIdle := app.dbRwPool.Config.MinIdleConnections
-	roEffectiveMax := app.dbRoPool.Config.MaxConnections
-	roEffectiveMinIdle := app.dbRoPool.Config.MinIdleConnections
-
-	slog.Info("pool config applied",
-		"source", source,
-		"rw_configured_max", configuredMax,
-		"rw_effective_max", rwEffectiveMax,
-		"rw_configured_min_idle", configuredMinIdle,
-		"rw_effective_min_idle", rwEffectiveMinIdle,
-		"ro_configured_max", configuredMax,
-		"ro_effective_max", roEffectiveMax,
-		"ro_configured_min_idle", configuredMinIdle,
-		"ro_effective_min_idle", roEffectiveMinIdle)
-
-	if configuredMinIdle > configuredMax {
-		slog.Warn("invalid DB pool combination detected",
-			"configured_max", configuredMax,
-			"configured_min_idle", configuredMinIdle,
-			"hint", "Set db_min_idle_connections <= db_max_pool_size.")
-	}
-
-	if int64(configuredMax) != rwEffectiveMax || int64(configuredMinIdle) != rwEffectiveMinIdle ||
-		int64(configuredMax) != roEffectiveMax || int64(configuredMinIdle) != roEffectiveMinIdle {
-		level := slog.LevelWarn
-		hint := "Verify DB pool settings and restart if needed."
-		reason := "configured values differ from effective pool values"
-		if configuredMinIdle == 0 {
-			level = slog.LevelInfo
-			hint = "db_min_idle_connections=0 enables automatic min-idle sizing by the pool."
-			reason = "automatic min-idle sizing"
-		}
-		slog.Log(context.Background(), level, "configured/effective DB pool mismatch",
-			"source", source,
-			"reason", reason,
-			"hint", hint,
-			"rw_configured_max", configuredMax,
-			"rw_effective_max", rwEffectiveMax,
-			"rw_configured_min_idle", configuredMinIdle,
-			"rw_effective_min_idle", rwEffectiveMinIdle,
-			"ro_configured_max", configuredMax,
-			"ro_effective_max", roEffectiveMax,
-			"ro_configured_min_idle", configuredMinIdle,
-			"ro_effective_min_idle", roEffectiveMinIdle)
-	}
-}
 
 // logStartupConfigSummary emits one low-noise startup summary of configured
 // versus effective values for critical subsystems.
@@ -333,7 +263,7 @@ func (app *App) logStartupConfigSummary(queueSize int, runDiscovery bool) {
 // (from database, YAML, or CLI/env) are applied to the connection pools.
 // This enforces the precedence: Defaults -> DB -> Env -> CLI.
 // applyConfig applies configuration values to App struct fields.
-func (app *App) applyConfig() {
+func (app *App) ApplyConfig() {
 	app.configMu.RLock()
 	if app.config == nil {
 		app.configMu.RUnlock()
@@ -373,7 +303,7 @@ func (app *App) applyConfig() {
 	app.configMu.RUnlock()
 	oldETag := ui.GetCacheVersion()
 	if oldETag != "" && oldETag != currentETag {
-		app.invalidateHTTPCache()
+		app.InvalidateHTTPCache()
 	}
 	ui.SetCacheVersion(currentETag)
 
@@ -386,18 +316,18 @@ func (app *App) applyConfig() {
 	}
 }
 
-// startCacheBatchLoad attempts to start cache batch load. Returns blocked=true when
+// StartCacheBatchLoad attempts to start cache batch load. Returns blocked=true when
 // discovery is active (caller should return 409). Starts the run in a goroutine on success.
-func (app *App) startCacheBatchLoad() (handlers.StartCacheBatchLoadResult, error) {
+func (app *App) StartCacheBatchLoad() (interfaces.StartCacheBatchLoadResult, error) {
 	ctx := app.getCtx()
 
 	if app.moduleStateService != nil {
 		active, err := app.moduleStateService.IsActive(ctx, "discovery")
 		if err != nil {
-			return handlers.StartCacheBatchLoadResult{}, err
+			return interfaces.StartCacheBatchLoadResult{}, err
 		}
 		if active {
-			return handlers.StartCacheBatchLoadResult{
+			return interfaces.StartCacheBatchLoadResult{
 				Blocked: true,
 				Message: "Cache batch load blocked: discovery active",
 			}, nil
@@ -405,7 +335,7 @@ func (app *App) startCacheBatchLoad() (handlers.StartCacheBatchLoadResult, error
 	}
 
 	if app.batchLoadManager == nil {
-		return handlers.StartCacheBatchLoadResult{
+		return interfaces.StartCacheBatchLoadResult{
 			Blocked: false,
 			Message: "Cache batch load not available",
 		}, nil
@@ -418,7 +348,7 @@ func (app *App) startCacheBatchLoad() (handlers.StartCacheBatchLoadResult, error
 		}
 	}()
 
-	return handlers.StartCacheBatchLoadResult{
+	return interfaces.StartCacheBatchLoadResult{
 		Blocked: false,
 		Message: "Cache batch load started",
 	}, nil
@@ -428,64 +358,58 @@ func (app *App) startCacheBatchLoad() (handlers.StartCacheBatchLoadResult, error
 // first, then cancels the main context, waits for background goroutines and
 // the worker pool to finish, closes database connections, and closes the log
 // file.
+// Shutdown gracefully stops all background goroutines, closes the write
+// batcher, database pools, and logger. It is safe to call multiple times.
 func (app *App) Shutdown() {
-	// Close WriteBatcher first so it drains and flushes pending cache writes
-	// before we cancel context or close database pools.
-	if app.writeBatcher != nil {
-		if err := app.writeBatcher.Close(); err != nil {
-			slog.Error("error closing write batcher", "err", err)
+	app.shutdownOnce.Do(func() {
+		app.InfrastructureService.Shutdown()
+
+		if app.cancel != nil {
+			app.cancel()
 		}
-	}
-
-	// Signal everything to stop
-	if app.cancel != nil {
-		app.cancel()
-	}
-
-	// Wait for worker pool goroutine to exit (StartWorkerPool blocks on errgroup.Wait;
-	// we avoid calling pool.G.Wait() here to prevent race with Go() during startup).
-	if app.poolDone != nil {
-		<-app.poolDone
-	}
-
-	// Wait for all background tasks except the worker pool
-	app.wg.Wait()
-
-	// Shutdown preload manager (stops cache preload scheduler)
-	if app.preloadManager != nil {
-		app.preloadManager.Shutdown()
-	}
-
-	// Shutdown scheduler
-	if app.scheduler != nil {
-		if err := app.scheduler.Shutdown(); err != nil {
-			slog.Error("error shutting down scheduler", "err", err)
+		if app.poolDone != nil {
+			<-app.poolDone
 		}
-	}
+		app.wg.Wait()
 
-	// Close file processor (flushes invalid file batches)
-	if app.fileProcessor != nil {
-		if err := app.fileProcessor.Close(); err != nil {
-			slog.Error("error closing file processor", "err", err)
+		if app.preloadManager != nil {
+			app.preloadManager.Shutdown()
 		}
-	}
+		if app.scheduler != nil {
+			if err := app.scheduler.Shutdown(); err != nil {
+				slog.Error("error shutting down scheduler", "err", err)
+			}
+		}
+		if app.fileProcessor != nil {
+			app.fileProcessor.Close()
+		}
 
-	// Close database pools in sequence
-	if app.dbRoPool != nil {
-		if err := app.dbRoPool.Close(); err != nil {
-			slog.Error("error closing read-only pool", "err", err)
+		if app.dbRoPool != nil {
+			if err := app.dbRoPool.Close(); err != nil {
+				slog.Error("error closing read-only pool", "err", err)
+			}
 		}
-	}
-	if app.dbRwPool != nil {
-		if err := app.dbRwPool.Close(); err != nil {
-			slog.Error("error closing read-write pool", "err", err)
+		if app.dbRwPool != nil {
+			if err := app.dbRwPool.Close(); err != nil {
+				slog.Error("error closing read-write pool", "err", err)
+			}
 		}
-	}
+		if app.logger != nil {
+			if err := app.logger.Shutdown(); err != nil {
+				slog.Error("error shutting down logger", "err", err)
+			}
+		}
+	})
+}
 
-	// Shutdown logger (closes log file)
-	if app.logger != nil {
-		if err := app.logger.Shutdown(); err != nil {
-			slog.Error("failed to shutdown logger", "err", err)
+// LogProfileLocation logs the profile directory and stops the profiler if active.
+// This should be called before shutdown to ensure profile location is logged to both console and file.
+func (app *App) LogProfileLocation() {
+	if app.stopProfiler != nil {
+		app.stopProfiler()
+		// Log after stopping to ensure profile is flushed
+		if dir := profiler.Dir(); dir != "" {
+			slog.Info("Profile artifacts written", "dir", dir)
 		}
 	}
 }
@@ -615,27 +539,7 @@ func (app *App) InitForIncrementETag(opt getopt.Opt) error {
 
 // IncrementETag loads current ETag, increments it, saves to database, and returns new value.
 func (app *App) IncrementETag() (string, error) {
-	cfg, err := app.configService.Load(app.ctx)
-	if err != nil {
-		return "", fmt.Errorf("failed to load config: %w", err)
-	}
-
-	newETag := config.IncrementETagVersion(cfg.ETagVersion)
-	cfg.ETagVersion = newETag
-
-	if err := app.configService.Save(app.ctx, cfg); err != nil {
-		return "", fmt.Errorf("failed to save config: %w", err)
-	}
-
-	// Rotate HTTP cache table to invalidate all cached entries quickly.
-	if err := cachelite.RotateCacheTable(app.ctx, app.dbRwPool); err != nil {
-		slog.Warn("failed to rotate HTTP cache after ETag increment", "err", err)
-		// Non-fatal: log and continue, cache will be stale but won't crash
-	} else {
-		app.cacheSizeBytes.Store(0)
-	}
-
-	return newETag, nil
+	return app.InfrastructureService.IncrementETag(app.ctx, app.configService)
 }
 
 // InitForBatchLoad performs minimal initialization for cache batch load CLI.
@@ -653,7 +557,7 @@ func (app *App) InitForBatchLoad(opt getopt.Opt) error {
 	if err := app.reconfigurePoolsFromConfig(); err != nil {
 		return fmt.Errorf("reconfigure pools: %w", err)
 	}
-	app.applyConfig()
+	app.ApplyConfig()
 	app.initializeHTTPCache()
 
 	routes := []string{"/gallery/", "/lightbox/", "/info/folder/", "/info/image/"}
@@ -665,14 +569,14 @@ func (app *App) InitForBatchLoad(opt getopt.Opt) error {
 		TaskTracker:    &cachepreload.TaskTracker{},
 		SessionTracker: &cachepreload.SessionTracker{},
 		DBRoPool:       app.dbRoPool,
-		GetQueries:     app.getHandlerQueries,
+		GetQueries:     app.GetHandlerQueries,
 		GetHandler:     app.getRouter,
 		GetETagVersion: app.GetETagVersion,
 		Metrics:        &cachepreload.PreloadMetrics{},
 	})
 
 	app.processingStats = &files.ProcessingStats{}
-	app.ensureSessionAndRestart()
+	app.ensureSession()
 	if err := app.buildHandlers(web.FS); err != nil {
 		return fmt.Errorf("build handlers: %w", err)
 	}
@@ -684,11 +588,11 @@ func (app *App) InitForBatchLoad(opt getopt.Opt) error {
 	if cacheEnabled && app.moduleStateService != nil {
 		app.batchLoadManager = cachebatch.NewManager(cachebatch.Config{
 			GetQueries: func() (cachebatch.BatchLoadQueries, func()) {
-				cpc, err := app.dbRoPool.Get()
+				cpcRo, err := app.dbRoPool.Get()
 				if err != nil {
 					return nil, nil
 				}
-				return cpc.Queries, func() { app.dbRoPool.Put(cpc) }
+				return cpcRo.Queries, func() { app.dbRoPool.Put(cpcRo) }
 			},
 			GetHandler:         app.getRouter,
 			GetETagVersion:     app.GetETagVersion,

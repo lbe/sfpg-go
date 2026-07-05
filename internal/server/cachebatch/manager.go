@@ -165,7 +165,7 @@ func (m *Manager) Run(ctx context.Context) error {
 			slog.Warn("batch load: HttpCacheExistsByKey failed", "path", t.Path, "err", err)
 			continue
 		}
-		if exists != 0 {
+		if exists {
 			metrics.RecordSkipped()
 			continue
 		}

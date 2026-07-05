@@ -46,7 +46,7 @@
       */}}
       <img
         id="slot-1"
-        class="lightbox-slot absolute top-1/2 left-1/2 hidden max-h-full max-w-full object-contain"
+        class="lightbox-slot absolute left-1/2 top-1/2 hidden max-h-full max-w-full object-contain"
         src=""
         style="transform: translate(-50%, -50%);"
         _="on load
@@ -57,7 +57,7 @@
       />
       <img
         id="slot-2"
-        class="lightbox-slot absolute top-1/2 left-1/2 hidden max-h-full max-w-full object-contain"
+        class="lightbox-slot absolute left-1/2 top-1/2 hidden max-h-full max-w-full object-contain"
         src=""
         style="transform: translate(-50%, -50%);"
         _="on load
@@ -68,7 +68,7 @@
       />
       <img
         id="slot-3"
-        class="lightbox-slot absolute top-1/2 left-1/2 hidden max-h-full max-w-full object-contain"
+        class="lightbox-slot absolute left-1/2 top-1/2 hidden max-h-full max-w-full object-contain"
         src=""
         style="transform: translate(-50%, -50%);"
         _="on load
@@ -182,7 +182,7 @@
   <span
     id="image-count-display"
     hx-swap-oob="true"
-    class="text-base-content/80 text-xs font-medium tracking-[-0.01em]"
+    class="text-xs font-medium tracking-[-0.01em] text-base-content/80"
     data-current-index="{{ .CurrentIndex }}"
     data-image-count="{{ .ImageCount }}"
     >{{ .CurrentIndex | plus 1 }} / {{ .ImageCount }}</span
@@ -192,12 +192,13 @@
     id="lightbox-first-btn"
     type="button"
     hx-swap-oob="true"
-    class="border-base-content/5 bg-base-300/60 text-base-content/70 hover:bg-base-300 hover:text-primary hover:border-primary/20 relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none"
+    class="relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border border-base-content/5 bg-base-300/60 text-base-content/70 transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:border-primary/20 hover:bg-base-300 hover:text-primary hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none"
     title="First"
     hx-get="/lightbox/{{ .FirstIndex }}?v={{ cacheVersion }}"
     hx-target="#lightbox-ui"
     hx-select="#lightbox-ui"
     hx-swap="outerHTML"
+    hx-indicator="#info_box_spinner"
     _="on click call lightboxNav('/raw-image/{{ .FirstIndex }}', '{{ .FirstIndex }}')"
     {{ if not .HasPrev }}disabled{{ end }}
   >
@@ -220,12 +221,13 @@
     id="lightbox-prev-btn"
     type="button"
     hx-swap-oob="true"
-    class="border-base-content/5 bg-base-300/60 text-base-content/70 hover:bg-base-300 hover:text-primary hover:border-primary/20 relative hidden h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none sm:flex"
+    class="relative hidden h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border border-base-content/5 bg-base-300/60 text-base-content/70 transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:border-primary/20 hover:bg-base-300 hover:text-primary hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none sm:flex"
     title="Previous"
     hx-get="/lightbox/{{ .PrevIndex }}?v={{ cacheVersion }}"
     hx-target="#lightbox-ui"
     hx-select="#lightbox-ui"
     hx-swap="outerHTML"
+    hx-indicator="#info_box_spinner"
     _="on click call lightboxNav('/raw-image/{{ .PrevIndex }}', '{{ .PrevIndex }}')"
     {{ if not .HasPrev }}disabled{{ end }}
   >
@@ -247,12 +249,13 @@
     id="lightbox-next-btn"
     type="button"
     hx-swap-oob="true"
-    class="border-base-content/5 bg-base-300/60 text-base-content/70 hover:bg-base-300 hover:text-primary hover:border-primary/20 relative hidden h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none sm:flex"
+    class="relative hidden h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border border-base-content/5 bg-base-300/60 text-base-content/70 transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:border-primary/20 hover:bg-base-300 hover:text-primary hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none sm:flex"
     title="Next"
     hx-get="/lightbox/{{ .NextIndex }}?v={{ cacheVersion }}"
     hx-target="#lightbox-ui"
     hx-select="#lightbox-ui"
     hx-swap="outerHTML"
+    hx-indicator="#info_box_spinner"
     _="on click call lightboxNav('/raw-image/{{ .NextIndex }}', '{{ .NextIndex }}')"
     {{ if not .HasNext }}disabled{{ end }}
   >
@@ -274,12 +277,13 @@
     id="lightbox-last-btn"
     type="button"
     hx-swap-oob="true"
-    class="border-base-content/5 bg-base-300/60 text-base-content/70 hover:bg-base-300 hover:text-primary hover:border-primary/20 relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none"
+    class="relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border border-base-content/5 bg-base-300/60 text-base-content/70 transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:border-primary/20 hover:bg-base-300 hover:text-primary hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none"
     title="Last"
     hx-get="/lightbox/{{ .LastIndex }}?v={{ cacheVersion }}"
     hx-target="#lightbox-ui"
     hx-select="#lightbox-ui"
     hx-swap="outerHTML"
+    hx-indicator="#info_box_spinner"
     _="on click call lightboxNav('/raw-image/{{ .LastIndex }}', '{{ .LastIndex }}')"
     {{ if not .HasNext }}disabled{{ end }}
   >

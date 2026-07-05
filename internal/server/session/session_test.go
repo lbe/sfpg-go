@@ -474,3 +474,110 @@ func TestManagerSetAuthenticated_LogoutClearsCookie(t *testing.T) {
 		t.Error("expected logout to set MaxAge=-1")
 	}
 }
+
+func TestManagerSetAuthenticated_RotatesSessionOnLogin(t *testing.T) {
+	store := sessions.NewCookieStore([]byte("test-secret"))
+	mgr := NewManager(store, func() *OptionsConfig { return &OptionsConfig{} })
+
+	// Create an unauthenticated session with a CSRF token.
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	sess, _ := store.Get(req, SessionName)
+	sess.Values["csrf_token"] = "test-token"
+	if err := sess.Save(req, rec); err != nil {
+		t.Fatalf("failed to save initial session: %v", err)
+	}
+
+	cookies := rec.Result().Cookies()
+	if len(cookies) == 0 {
+		t.Fatal("expected initial session cookie")
+	}
+	oldValue := cookies[0].Value
+
+	// Login: privilege escalation should rotate the session ID.
+	req2 := httptest.NewRequest(http.MethodPost, "/", nil)
+	for _, c := range cookies {
+		req2.AddCookie(c)
+	}
+	rec2 := httptest.NewRecorder()
+	if err := mgr.SetAuthenticated(rec2, req2, true); err != nil {
+		t.Fatalf("SetAuthenticated error = %v", err)
+	}
+
+	cookies2 := rec2.Result().Cookies()
+	if len(cookies2) == 0 {
+		t.Fatal("expected rotated session cookie")
+	}
+	if cookies2[0].Value == oldValue {
+		t.Error("expected session cookie value to change on login")
+	}
+}
+
+func TestManagerSetAuthenticated_PreservesCSRFTokenOnRotation(t *testing.T) {
+	store := sessions.NewCookieStore([]byte("test-secret"))
+	mgr := NewManager(store, func() *OptionsConfig { return &OptionsConfig{} })
+
+	// Create an unauthenticated session with a CSRF token.
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	sess, _ := store.Get(req, SessionName)
+	sess.Values["csrf_token"] = "preserved-token"
+	if err := sess.Save(req, rec); err != nil {
+		t.Fatalf("failed to save initial session: %v", err)
+	}
+
+	// Login.
+	req2 := httptest.NewRequest(http.MethodPost, "/", nil)
+	for _, c := range rec.Result().Cookies() {
+		req2.AddCookie(c)
+	}
+	rec2 := httptest.NewRecorder()
+	if err := mgr.SetAuthenticated(rec2, req2, true); err != nil {
+		t.Fatalf("SetAuthenticated error = %v", err)
+	}
+
+	// Verify the CSRF token is preserved in the rotated session.
+	req3 := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("csrf_token=preserved-token"))
+	req3.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	for _, c := range rec2.Result().Cookies() {
+		req3.AddCookie(c)
+	}
+	if !mgr.ValidateCSRFToken(req3) {
+		t.Error("expected CSRF token to be preserved after session rotation")
+	}
+}
+
+func TestManagerSetAuthenticated_NoRotationWhenAlreadyAuthenticated(t *testing.T) {
+	store := sessions.NewCookieStore([]byte("test-secret"))
+	mgr := NewManager(store, func() *OptionsConfig { return &OptionsConfig{} })
+
+	// Login once.
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	rec := httptest.NewRecorder()
+	if err := mgr.SetAuthenticated(rec, req, true); err != nil {
+		t.Fatalf("SetAuthenticated error = %v", err)
+	}
+	cookies := rec.Result().Cookies()
+	if len(cookies) == 0 {
+		t.Fatal("expected session cookie")
+	}
+	oldValue := cookies[0].Value
+
+	// Call SetAuthenticated(true) again with the same session.
+	req2 := httptest.NewRequest(http.MethodPost, "/", nil)
+	for _, c := range cookies {
+		req2.AddCookie(c)
+	}
+	rec2 := httptest.NewRecorder()
+	if err := mgr.SetAuthenticated(rec2, req2, true); err != nil {
+		t.Fatalf("SetAuthenticated error = %v", err)
+	}
+
+	cookies2 := rec2.Result().Cookies()
+	if len(cookies2) == 0 {
+		t.Fatal("expected session cookie")
+	}
+	if cookies2[0].Value != oldValue {
+		t.Error("expected session cookie value to remain unchanged when already authenticated")
+	}
+}

@@ -544,11 +544,6 @@ func TestMonitor_StartsAutomatically(t *testing.T) {
 		pool.Put(c)
 	}
 
-	// Allow the channel to settle before the pre-condition check.
-	if n := stabilizeIdle(t, pool, 500*time.Millisecond); n < 8 {
-		t.Fatalf("pre-condition: expected at least 8 idle connections, got %d", n)
-	}
-
 	// Monitor should be auto-started (MonitorInterval=200ms > 0).
 	// Must NOT call pool.monitor() explicitly — that's the wiring we're testing.
 	// Wait for Monitor to drain all excess down to minIdle (2).

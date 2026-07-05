@@ -49,43 +49,69 @@ func (app *App) getRouter() http.Handler {
 
 	mux.HandleFunc("GET /hamburger-menu", app.menuHandlers.HamburgerMenu)
 	mux.HandleFunc("GET /login-form", app.authHandlers.LoginFormHandler)
+	mux.HandleFunc("GET /logout-form", app.authHandlers.LogoutFormHandler)
 
 	mux.Handle("POST /logout", app.authMiddleware(http.HandlerFunc(app.authHandlers.Logout)))
 
 	cfgAuth := app.configHandlers.ConfigAuthMiddleware
 
-	mux.Handle("GET /config", app.authMiddleware(cfgAuth(app.configHandlers.ConfigGet)))
-	mux.Handle("POST /config", app.authMiddleware(cfgAuth(app.configHandlers.ConfigPost)))
-	mux.Handle("POST /config/themes", app.authMiddleware(cfgAuth(app.configThemesHandler.UpdateThemesHandler)))
-	mux.Handle("POST /config/increment-etag", app.authMiddleware(cfgAuth(app.configETagHandler.ConfigIncrementETag)))
+	configRoutes := []struct {
+		method  string
+		pattern string
+		handler http.HandlerFunc
+	}{
+		{http.MethodGet, "/config", app.configHandlers.ConfigGet},
+		{http.MethodPost, "/config", app.configHandlers.ConfigPost},
+		{http.MethodPost, "/config/themes", app.configThemesHandler.UpdateThemesHandler},
+		{http.MethodPost, "/config/increment-etag", app.configETagHandler.ConfigIncrementETag},
+		{http.MethodPost, "/config/export/to-file", app.configHandlers.ExportConfigToFileHandler},
+		{http.MethodPost, "/config/import/preview", app.configHandlers.ImportConfigPreviewHandler},
+		{http.MethodPost, "/config/import/commit", app.configHandlers.ImportConfigCommitHandler},
+		{http.MethodPost, "/config/restore-last-known-good", app.configHandlers.RestoreLastKnownGoodHandler},
+		{http.MethodPost, "/config/restart", app.configRestartHandler.RestartHandler},
+	}
+	for _, rt := range configRoutes {
+		mux.Handle(rt.method+" "+rt.pattern, app.authMiddleware(cfgAuth(rt.handler)))
+	}
+
+	// Export download is the only config route that also uses conditional caching.
 	mux.Handle("GET /config/export/download", withConditional(app.authMiddleware(cfgAuth(app.configHandlers.ExportConfigDownloadHandler))))
-	mux.Handle("POST /config/export/to-file", app.authMiddleware(cfgAuth(app.configHandlers.ExportConfigToFileHandler)))
-	mux.Handle("POST /config/import/preview", app.authMiddleware(cfgAuth(app.configHandlers.ImportConfigPreviewHandler)))
-	mux.Handle("POST /config/import/commit", app.authMiddleware(cfgAuth(app.configHandlers.ImportConfigCommitHandler)))
-	mux.Handle("POST /config/restore-last-known-good", app.authMiddleware(cfgAuth(app.configHandlers.RestoreLastKnownGoodHandler)))
-	mux.Handle("POST /config/restart", app.authMiddleware(cfgAuth(app.configRestartHandler.RestartHandler)))
 
-	// Dashboard routes (protected by authentication)
-	// GET /dashboard returns full page or partial based on HX-Request header
-	mux.Handle("GET /dashboard", app.authMiddleware(http.HandlerFunc(app.dashboardHandlers.DashboardGet)))
-
-	// Server management routes (protected by authentication)
-	mux.Handle("POST /server/shutdown", app.authMiddleware(http.HandlerFunc(app.serverHandlers.ServerShutdownPost)))
-	mux.Handle("POST /server/discovery", app.authMiddleware(http.HandlerFunc(app.serverHandlers.ServerDiscoveryPost)))
-	mux.Handle("POST /server/cache-batch-load", app.authMiddleware(http.HandlerFunc(app.serverHandlers.ServerCacheBatchLoadPost)))
-	mux.Handle("POST /server/restart", app.authMiddleware(http.HandlerFunc(app.configRestartHandler.RestartHandler)))
+	authRoutes := []struct {
+		method  string
+		pattern string
+		handler http.HandlerFunc
+	}{
+		{http.MethodGet, "/dashboard", app.dashboardHandlers.DashboardGet},
+		{http.MethodGet, "/api/metrics", app.dashboardHandlers.MetricsJSON},
+		{http.MethodPost, "/server/shutdown", app.serverHandlers.ServerShutdownPost},
+		{http.MethodPost, "/server/discovery", app.serverHandlers.ServerDiscoveryPost},
+		{http.MethodPost, "/server/cache-batch-load", app.serverHandlers.ServerCacheBatchLoadPost},
+		{http.MethodPost, "/server/restart", app.configRestartHandler.RestartHandler},
+	}
+	for _, rt := range authRoutes {
+		mux.Handle(rt.method+" "+rt.pattern, app.authMiddleware(http.HandlerFunc(rt.handler)))
+	}
 
 	mux.Handle("GET /", http.HandlerFunc(app.healthHandlers.RootRedirect))
 
-	mux.Handle("GET /gallery/{id}", withConditional(http.HandlerFunc(app.galleryHandlers.GalleryByID)))
-	mux.Handle("GET /image/{id}", withConditional(http.HandlerFunc(app.galleryHandlers.ImageByID)))
-	mux.Handle("GET /raw-image/{id}", http.HandlerFunc(app.galleryHandlers.RawImageByID))
-	mux.Handle("GET /thumbnail/file/{id}", withConditional(http.HandlerFunc(app.galleryHandlers.ThumbnailByID)))
-	mux.Handle("GET /thumbnail/folder/{id}", http.HandlerFunc(app.galleryHandlers.FolderThumbnailByID))
-	mux.Handle("GET /lightbox/{id}", withConditional(http.HandlerFunc(app.galleryHandlers.LightboxByID)))
+	conditionalRoutes := []struct {
+		pattern string
+		handler http.HandlerFunc
+	}{
+		{"GET /gallery/{id}", app.galleryHandlers.GalleryByID},
+		{"GET /image/{id}", app.galleryHandlers.ImageByID},
+		{"GET /thumbnail/file/{id}", app.galleryHandlers.ThumbnailByID},
+		{"GET /lightbox/{id}", app.galleryHandlers.LightboxByID},
+		{"GET /info/folder/{id}", app.galleryHandlers.InfoBoxFolder},
+		{"GET /info/image/{id}", app.galleryHandlers.InfoBoxImage},
+	}
+	for _, rt := range conditionalRoutes {
+		mux.Handle(rt.pattern, withConditional(http.HandlerFunc(rt.handler)))
+	}
 
-	mux.Handle("GET /info/folder/{id}", withConditional(http.HandlerFunc(app.galleryHandlers.InfoBoxFolder)))
-	mux.Handle("GET /info/image/{id}", withConditional(http.HandlerFunc(app.galleryHandlers.InfoBoxImage)))
+	mux.Handle("GET /raw-image/{id}", http.HandlerFunc(app.galleryHandlers.RawImageByID))
+	mux.Handle("GET /thumbnail/folder/{id}", http.HandlerFunc(app.galleryHandlers.FolderThumbnailByID))
 
 	// Register pprof routes (protected by authentication)
 	// These expose profiling data and should only be accessible to authenticated users

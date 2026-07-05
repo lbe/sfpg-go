@@ -121,7 +121,7 @@ func TestConfigHelp_DatabaseSchema_ExampleValueColumn(t *testing.T) {
 // TestConfigHelp_RetrieveHelpText verifies that help text can be retrieved from the database
 // and is correctly associated with configuration keys.
 func TestConfigHelp_RetrieveHelpText(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	cpcRw, err := app.dbRwPool.Get()
@@ -163,7 +163,7 @@ func TestConfigHelp_RetrieveHelpText(t *testing.T) {
 // TestConfigHelp_DisplayedInUI verifies that help text is displayed in the configuration UI
 // using HTML parsing to check for help text in label-text-alt spans.
 func TestConfigHelp_DisplayedInUI(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// Set up authenticated session
@@ -242,7 +242,7 @@ func TestConfigHelp_DisplayedInUI(t *testing.T) {
 // TestConfigHelp_TooltipsWork verifies that tooltips display help text on hover
 // by checking the data-tip attribute value in the rendered HTML.
 func TestConfigHelp_TooltipsWork(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// Set up authenticated session
@@ -350,7 +350,7 @@ func TestConfigHelp_TooltipsWork(t *testing.T) {
 // TestConfigHelp_ExamplesShown verifies that example values are displayed correctly
 // in the configuration UI for fields that have example_value set in the database.
 func TestConfigHelp_ExamplesShown(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// Set up authenticated session

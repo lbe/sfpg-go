@@ -119,9 +119,29 @@ func (h *AuthHandlers) LoginFormHandler(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
+// LogoutFormHandler handles GET /logout-form and returns the logout form HTML with a
+// fresh CSRF token from an uncached endpoint. This prevents 403 failures caused by
+// stale CSRF tokens baked into the 30-day cached gallery page.
+func (h *AuthHandlers) LogoutFormHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+	if err := ui.RenderTemplate(w, "logout-form-inner.html.tmpl", map[string]any{
+		"CSRFToken": h.SessionManager.EnsureCSRFToken(w, r),
+	}); err != nil {
+		slog.Error("failed to render logout form", "err", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+	}
+}
+
 // Logout handles POST /logout, destroying the session and triggering the auth-changed event
 // to refresh the hamburger menu via the /hamburger-menu endpoint.
 func (h *AuthHandlers) Logout(w http.ResponseWriter, r *http.Request) {
+	// Validate CSRF token
+	if !h.SessionManager.ValidateCSRFToken(r) {
+		slog.Warn("CSRF validation failed for logout", "remote_addr", r.RemoteAddr)
+		http.Error(w, "Forbidden - CSRF token invalid", http.StatusForbidden)
+		return
+	}
+
 	// Clear the session via SessionManager
 	if err := h.SessionManager.SetAuthenticated(w, r, false); err != nil {
 		slog.Error("failed to clear authenticated session", "err", err)

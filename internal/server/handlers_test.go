@@ -16,7 +16,7 @@ import (
 // ============================================================================
 
 func TestRootHandler(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	server := httptest.NewServer(app.getRouter())
@@ -106,7 +106,7 @@ func TestRootHandler(t *testing.T) {
 }
 
 func TestHXPushURLRegression(t *testing.T) {
-	app := CreateApp(t, true)
+	app := CreateApp(t, WithPool())
 	time.Sleep(200 * time.Millisecond)
 	defer app.Shutdown()
 
@@ -114,14 +114,14 @@ func TestHXPushURLRegression(t *testing.T) {
 	server := httptest.NewServer(router)
 	defer server.Close()
 
-	cpc, err := app.dbRwPool.Get()
+	cpcRw, err := app.dbRwPool.Get()
 	if err != nil {
 		t.Fatalf("failed to get db connection: %v", err)
 	}
-	defer app.dbRwPool.Put(cpc)
+	defer app.dbRwPool.Put(cpcRw)
 
 	// Create test folder and image
-	importer := gallerylib.Importer{Q: cpc.Queries}
+	importer := gallerylib.Importer{Q: cpcRw.Queries}
 	file, err := importer.UpsertPathChain(app.ctx, "/test-gallery/test-image.jpg", 100, 0, "", 0, 0, 0, "image/jpeg")
 	if err != nil {
 		t.Fatalf("failed to import test file: %v", err)

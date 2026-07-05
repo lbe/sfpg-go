@@ -46,13 +46,13 @@ type FolderPreloadTask struct {
 func (t *FolderPreloadTask) Run(ctx context.Context) error {
 	slog.Debug("folder preload task running", "folder_id", t.FolderID, "session_id", truncateSessionID(t.SessionID, 8))
 
-	cpc, err := t.DBRoPool.Get()
+	cpcRo, err := t.DBRoPool.Get()
 	if err != nil {
 		return fmt.Errorf("get db connection: %w", err)
 	}
-	defer t.DBRoPool.Put(cpc)
+	defer t.DBRoPool.Put(cpcRo)
 
-	q := t.GetQueries(cpc)
+	q := t.GetQueries(cpcRo)
 	rows, err := q.GetPreloadRoutesByFolderID(ctx,
 		sql.NullInt64{Int64: t.FolderID, Valid: true})
 	if err != nil {
@@ -74,7 +74,7 @@ func (t *FolderPreloadTask) Run(ctx context.Context) error {
 		if !isCacheablePath(path, t.CacheableRoutes) {
 			continue
 		}
-		if t.schedulePreload(ctx, path, query, cpc.Queries) {
+		if t.schedulePreload(ctx, path, query, cpcRo.Queries) {
 			scheduled++
 		}
 	}
@@ -104,8 +104,8 @@ func (t *FolderPreloadTask) schedulePreload(ctx context.Context, path, query str
 
 	// Check if cache entry already exists (lightweight check, no body loaded)
 	exists, err := queries.HttpCacheExistsByKey(ctx, cacheKey)
-	if err == nil && exists != 0 {
-		// Cache entry exists (exists is 1 for true, 0 for false in SQLite)
+	if err == nil && exists {
+		// Cache entry exists
 		if t.Metrics != nil {
 			t.Metrics.RecordSkipped("already_cached")
 		}

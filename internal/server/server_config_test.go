@@ -228,26 +228,26 @@ func TestConfigPreviewImportInvalid(t *testing.T) {
 
 // TestConfigSaveToDatabase tests saving config to database
 func TestConfigSaveToDatabase(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	cfg := config.DefaultConfig()
 	cfg.ListenerPort = 7777
 	cfg.SiteName = "Test Save"
 
-	cpc, err := app.dbRwPool.Get()
+	cpcRw, err := app.dbRwPool.Get()
 	if err != nil {
 		t.Fatalf("Failed to get DB connection: %v", err)
 	}
-	defer app.dbRwPool.Put(cpc)
+	defer app.dbRwPool.Put(cpcRw)
 
-	err = cfg.SaveToDatabase(app.ctx, cpc.Queries)
+	err = cfg.SaveToDatabase(app.ctx, cpcRw.Queries)
 	if err != nil {
 		t.Errorf("SaveToDatabase failed: %v", err)
 	}
 
 	// Verify saved
-	port, err := cpc.Queries.GetConfigValueByKey(app.ctx, "listener_port")
+	port, err := cpcRw.Queries.GetConfigValueByKey(app.ctx, "listener_port")
 	if err != nil {
 		t.Fatalf("Failed to retrieve saved port: %v", err)
 	}
@@ -258,7 +258,7 @@ func TestConfigSaveToDatabase(t *testing.T) {
 
 // TestConfigRestoreLastKnownGood tests restoring last known good config
 func TestConfigRestoreLastKnownGood(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// First save a config
@@ -266,20 +266,20 @@ func TestConfigRestoreLastKnownGood(t *testing.T) {
 	cfg.ListenerPort = 6666
 	cfg.SiteName = "Backup Config"
 
-	cpc, err := app.dbRwPool.Get()
+	cpcRw, err := app.dbRwPool.Get()
 	if err != nil {
 		t.Fatalf("Failed to get DB connection: %v", err)
 	}
-	defer app.dbRwPool.Put(cpc)
+	defer app.dbRwPool.Put(cpcRw)
 
-	err = cfg.SaveToDatabase(app.ctx, cpc.Queries)
+	err = cfg.SaveToDatabase(app.ctx, cpcRw.Queries)
 	if err != nil {
 		t.Fatalf("SaveToDatabase failed: %v", err)
 	}
 
 	// Now try to restore
 	newCfg := config.DefaultConfig()
-	restored, err := newCfg.RestoreLastKnownGood(app.ctx, cpc.Queries)
+	restored, err := newCfg.RestoreLastKnownGood(app.ctx, cpcRw.Queries)
 	if err != nil {
 		t.Errorf("RestoreLastKnownGood failed: %v", err)
 	}
@@ -291,20 +291,20 @@ func TestConfigRestoreLastKnownGood(t *testing.T) {
 
 // TestConfigGetLastKnownGoodDiff tests getting diff with last known good config
 func TestConfigGetLastKnownGoodDiff(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// Save a config first
 	cfg := config.DefaultConfig()
 	cfg.ListenerPort = 5555
 
-	cpc, err := app.dbRwPool.Get()
+	cpcRw, err := app.dbRwPool.Get()
 	if err != nil {
 		t.Fatalf("Failed to get DB connection: %v", err)
 	}
-	defer app.dbRwPool.Put(cpc)
+	defer app.dbRwPool.Put(cpcRw)
 
-	err = cfg.SaveToDatabase(app.ctx, cpc.Queries)
+	err = cfg.SaveToDatabase(app.ctx, cpcRw.Queries)
 	if err != nil {
 		t.Fatalf("SaveToDatabase failed: %v", err)
 	}
@@ -312,7 +312,7 @@ func TestConfigGetLastKnownGoodDiff(t *testing.T) {
 	// Create a different config and get diff
 	cfg2 := config.DefaultConfig()
 	cfg2.ListenerPort = 9999
-	diff, err := cfg2.GetLastKnownGoodDiff(app.ctx, cpc.Queries)
+	diff, err := cfg2.GetLastKnownGoodDiff(app.ctx, cpcRw.Queries)
 	if err != nil {
 		t.Errorf("GetLastKnownGoodDiff failed: %v", err)
 	}
@@ -325,38 +325,38 @@ func TestConfigGetLastKnownGoodDiff(t *testing.T) {
 // TestLogProfileLocation tests profile logging
 // TestGetAdminUsername tests admin username retrieval
 func TestLoadFromDatabase_EdgeCases(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	cfg := config.DefaultConfig()
 
-	cpc, err := app.dbRoPool.Get()
+	cpcRo, err := app.dbRoPool.Get()
 	if err != nil {
 		t.Fatalf("Failed to get DB connection: %v", err)
 	}
-	defer app.dbRoPool.Put(cpc)
+	defer app.dbRoPool.Put(cpcRo)
 
 	// Test loading from database when no config exists
-	err = cfg.LoadFromDatabase(app.ctx, cpc.Queries)
+	err = cfg.LoadFromDatabase(app.ctx, cpcRo.Queries)
 	// Should handle missing config gracefully
 	_ = err
 }
 
 // TestSaveToDatabase_EdgeCases tests config saving edge cases
 func TestSaveToDatabase_EdgeCases(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	cfg := config.DefaultConfig()
 
-	cpc, err := app.dbRwPool.Get()
+	cpcRw, err := app.dbRwPool.Get()
 	if err != nil {
 		t.Fatalf("Failed to get DB connection: %v", err)
 	}
-	defer app.dbRwPool.Put(cpc)
+	defer app.dbRwPool.Put(cpcRw)
 
 	// Test saving to database
-	err = cfg.SaveToDatabase(app.ctx, cpc.Queries)
+	err = cfg.SaveToDatabase(app.ctx, cpcRw.Queries)
 	if err != nil {
 		// Some errors might be expected depending on state
 		t.Logf("SaveToDatabase returned error (may be expected): %v", err)
@@ -365,26 +365,26 @@ func TestSaveToDatabase_EdgeCases(t *testing.T) {
 
 // TestGetLastKnownGoodDiff_EdgeCases tests config diff edge cases
 func TestGetLastKnownGoodDiff_EdgeCases(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	cfg := config.DefaultConfig()
 
-	cpc, err := app.dbRoPool.Get()
+	cpcRo, err := app.dbRoPool.Get()
 	if err != nil {
 		t.Fatalf("Failed to get DB connection: %v", err)
 	}
-	defer app.dbRoPool.Put(cpc)
+	defer app.dbRoPool.Put(cpcRo)
 
 	// Test getting diff when no last known good config exists
-	_, err = cfg.GetLastKnownGoodDiff(app.ctx, cpc.Queries)
+	_, err = cfg.GetLastKnownGoodDiff(app.ctx, cpcRo.Queries)
 	// Should handle missing config gracefully
 	_ = err
 }
 
 // TestSetupLogging_Variations tests setupLogging with different configurations
 func TestSetConfigDefaults_Coverage(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// setConfigDefaults should not panic - it's part of CreateApp
@@ -430,7 +430,7 @@ func TestParseConfigUITemplates_Coverage(t *testing.T) {
 
 // TestSetRootDir_WithExplicitPath verifies setRootDir with explicit directory
 func TestLoadConfig_Coverage(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	err := app.loadConfig()
@@ -445,18 +445,18 @@ func TestLoadConfig_Coverage(t *testing.T) {
 
 // TestApplyConfig_Coverage verifies config application
 func TestApplyConfig_Coverage(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// applyConfig takes no arguments and applies current config
-	app.applyConfig()
+	app.ApplyConfig()
 
 	// Should not panic, config should be applied
 }
 
 // TestInitForUnlock_Coverage verifies unlock initialization
 func TestLoadConfig_WithError(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// Load config multiple times
@@ -470,13 +470,13 @@ func TestLoadConfig_WithError(t *testing.T) {
 
 // TestApplyConfig_Multiple times tests applying config multiple times
 func TestApplyConfig_MultipleApply(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// Apply config multiple times
-	app.applyConfig()
-	app.applyConfig()
-	app.applyConfig()
+	app.ApplyConfig()
+	app.ApplyConfig()
+	app.ApplyConfig()
 
 	// Should handle multiple applications gracefully
 }

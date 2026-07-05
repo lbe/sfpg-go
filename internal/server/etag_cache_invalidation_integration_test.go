@@ -18,13 +18,13 @@ import (
 )
 
 func tableExists(ctx context.Context, app *App, tableName string) (bool, error) {
-	cpc, err := app.dbRwPool.Get()
+	cpcRw, err := app.dbRwPool.Get()
 	if err != nil {
 		return false, fmt.Errorf("failed to get rw pool connection: %w", err)
 	}
-	defer app.dbRwPool.Put(cpc)
+	defer app.dbRwPool.Put(cpcRw)
 
-	row := cpc.Conn.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?)`, tableName)
+	row := cpcRw.Conn.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?)`, tableName)
 	var exists int64
 	if err := row.Scan(&exists); err != nil {
 		return false, fmt.Errorf("scan table exists query failed: %w", err)
@@ -58,7 +58,7 @@ func TestETagIncrement_InvalidatesHTTPCache(t *testing.T) {
 	opt := getopt.Opt{}
 	opt.EnableHTTPCache = getopt.OptBool{Bool: true, IsSet: true}
 	opt.SessionSecret = getopt.OptString{String: "test-secret", IsSet: true}
-	app := CreateAppWithOpt(t, false, opt)
+	app := CreateApp(t, WithGetoptOpt(opt))
 	defer app.Shutdown()
 
 	ctx := app.ctx
@@ -126,7 +126,7 @@ func TestETagIncrement_InvalidatesHTTPCache(t *testing.T) {
 // TestApplyConfig_InvalidatesCacheWhenETagChanges verifies that applyConfig clears
 // the HTTP cache when the ETag version in config differs from the current UI cache version.
 func TestApplyConfig_InvalidatesCacheWhenETagChanges(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	ctx := app.ctx
@@ -164,7 +164,7 @@ func TestApplyConfig_InvalidatesCacheWhenETagChanges(t *testing.T) {
 		t.Fatal("expected cache entry to exist before applyConfig")
 	}
 
-	app.applyConfig()
+	app.ApplyConfig()
 
 	storedAfter, err := cachelite.GetCacheEntry(ctx, app.dbRwPool, entry.Key)
 	if err != nil && err != sql.ErrNoRows {
@@ -186,7 +186,7 @@ func TestApplyConfig_InvalidatesCacheWhenETagChanges(t *testing.T) {
 // TestApplyConfig_DoesNotInvalidateWhenETagUnchanged verifies that applyConfig
 // does NOT clear the HTTP cache when the ETag version is unchanged.
 func TestApplyConfig_DoesNotInvalidateWhenETagUnchanged(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	ctx := app.ctx
@@ -218,7 +218,7 @@ func TestApplyConfig_DoesNotInvalidateWhenETagUnchanged(t *testing.T) {
 		t.Fatalf("StoreCacheEntry: %v", err)
 	}
 
-	app.applyConfig()
+	app.ApplyConfig()
 
 	storedAfter, _ := cachelite.GetCacheEntry(ctx, app.dbRwPool, entry.Key)
 	if storedAfter == nil {
@@ -230,7 +230,7 @@ func TestApplyConfig_DoesNotInvalidateWhenETagUnchanged(t *testing.T) {
 // clear the HTTP cache when the in-memory cache version is empty (e.g. after reboot).
 // Cache should only be cleared when ETag changes from a previously known value.
 func TestApplyConfig_DoesNotInvalidateOnStartup(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	ctx := app.ctx
@@ -263,7 +263,7 @@ func TestApplyConfig_DoesNotInvalidateOnStartup(t *testing.T) {
 		t.Fatalf("StoreCacheEntry: %v", err)
 	}
 
-	app.applyConfig()
+	app.ApplyConfig()
 
 	storedAfter, err := cachelite.GetCacheEntry(ctx, app.dbRwPool, entry.Key)
 	if err != nil && err != sql.ErrNoRows {
@@ -279,7 +279,7 @@ func TestApplyConfig_DoesNotInvalidateOnStartup(t *testing.T) {
 // verifies cache creation, calls IncrementETag directly, and confirms cache
 // clearing and fresh cache creation on subsequent requests.
 func TestETagIncrementIntegration(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	ctx := app.ctx
@@ -342,7 +342,7 @@ func TestETagIncrementIntegration(t *testing.T) {
 // TestWalkImageDir_DropsStaleCacheTable verifies deferred stale cache table cleanup
 // after discovery completes.
 func TestWalkImageDir_DropsStaleCacheTable(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	ctx := app.ctx
@@ -350,12 +350,12 @@ func TestWalkImageDir_DropsStaleCacheTable(t *testing.T) {
 		ctx = context.Background()
 	}
 
-	cpc, err := app.dbRwPool.Get()
+	cpcRw, err := app.dbRwPool.Get()
 	if err != nil {
 		t.Fatalf("failed to get rw pool connection: %v", err)
 	}
-	_, err = cpc.Conn.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS http_cache_to_be_dropped (id INTEGER PRIMARY KEY, body BLOB)`)
-	app.dbRwPool.Put(cpc)
+	_, err = cpcRw.Conn.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS http_cache_to_be_dropped (id INTEGER PRIMARY KEY, body BLOB)`)
+	app.dbRwPool.Put(cpcRw)
 	if err != nil {
 		t.Fatalf("failed to create http_cache_to_be_dropped: %v", err)
 	}
@@ -368,6 +368,6 @@ func TestWalkImageDir_DropsStaleCacheTable(t *testing.T) {
 		t.Fatal("expected stale table to exist before walkImageDir")
 	}
 
-	app.walkImageDir()
+	app.TriggerDiscovery()
 	waitForTableExistence(t, ctx, app, "http_cache_to_be_dropped", false)
 }

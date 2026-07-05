@@ -19,7 +19,7 @@ import (
 
 // TestE2E_GalleryByID_CacheHeaders verifies that /gallery/{id} sets ETag, Last-Modified, and Cache-Control.
 func TestE2E_GalleryByID_CacheHeaders(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	app.opt.EnableCompression = getopt.OptBool{Bool: true, IsSet: true}
 	app.opt.EnableHTTPCache = getopt.OptBool{Bool: true, IsSet: true}
 
@@ -95,7 +95,7 @@ func TestE2E_GalleryByID_CacheHeaders(t *testing.T) {
 
 // TestE2E_ImageByID_CacheHeaders verifies that /image/{id} sets ETag, Last-Modified, and Cache-Control.
 func TestE2E_ImageByID_CacheHeaders(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	app.opt.EnableCompression = getopt.OptBool{Bool: true, IsSet: true}
 	app.opt.EnableHTTPCache = getopt.OptBool{Bool: true, IsSet: true}
 
@@ -168,7 +168,7 @@ func TestE2E_ImageByID_CacheHeaders(t *testing.T) {
 
 // TestE2E_LightboxByID_CacheHeaders verifies that /lightbox/{id} sets ETag, Last-Modified, and Cache-Control.
 func TestE2E_LightboxByID_CacheHeaders(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	app.opt.EnableCompression = getopt.OptBool{Bool: true, IsSet: true}
 	app.opt.EnableHTTPCache = getopt.OptBool{Bool: true, IsSet: true}
 
@@ -240,7 +240,7 @@ func TestE2E_LightboxByID_CacheHeaders(t *testing.T) {
 
 // TestE2E_CacheHeaders_304Revalidation verifies that all endpoints return 304 when If-None-Match matches ETag.
 func TestE2E_CacheHeaders_304Revalidation(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	app.opt.EnableCompression = getopt.OptBool{Bool: true, IsSet: true}
 	app.opt.EnableHTTPCache = getopt.OptBool{Bool: true, IsSet: true}
 

@@ -21,11 +21,11 @@ import (
 // authenticated admin can save config changes via POST /config and then
 // initiate a restart via POST /server/restart. The config POST must persist
 // the new value and render the save-success template; the restart POST must
-// render the restart-initiated template and enqueue a restart signal.
+// render the restart-initiated template and request a real process restart.
 func TestAuthenticatedConfigSaveAndRestartFlowWorksEndToEnd(t *testing.T) {
 	setenvForTest(t, "SEPG_SESSION_SECURE", "false")
 
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	ts := httptest.NewServer(app.getRouter())
@@ -95,12 +95,18 @@ func TestAuthenticatedConfigSaveAndRestartFlowWorksEndToEnd(t *testing.T) {
 	}
 	requireAlertContains(t, doc, "config-success-message", "Server restart initiated")
 
-	// Step 6: Verify a restart signal was enqueued.
-	select {
-	case <-app.restartCh:
-		// Expected: restart signal was sent.
-	case <-time.After(2 * time.Second):
-		t.Errorf("restart signal was not enqueued within timeout")
+	// Step 6: Verify a process restart was requested.
+	// The handler flushes the response and then triggers the restart in a
+	// background goroutine, so we poll briefly.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if app.restartRequested.Load() {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !app.restartRequested.Load() {
+		t.Errorf("restart was not requested after POST /server/restart")
 	}
 }
 

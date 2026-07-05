@@ -4,7 +4,6 @@
     hx-get="/theme/modal"
     hx-target="body"
     hx-swap="beforeend"
-    _="on click wait 100ms then set #theme_modal.checked to true"
     aria-label="Theme"
     >Theme</a
   >
@@ -27,23 +26,22 @@
       hx-get="/config"
       hx-target="body"
       hx-swap="beforeend"
-      _="on click wait 100ms then set #config_modal.checked to true"
       aria-label="Configuration"
       >Configuration</a
     >
   </li>
   {{/* Server submenu using DaisyUI collapse */}}
   <li>
-    <details class="bg-base-100 collapse-arrow collapse">
+    <details class="collapse collapse-arrow bg-base-100">
       <summary class="collapse-title min-h-0 py-2 text-sm font-medium">
         Server
       </summary>
       <div class="collapse-content">
-        <ul class="menu menu-compact">
+        <ul class="menu-compact menu">
           <li>
             <label
               for="shutdown_modal"
-              class="text-error cursor-pointer"
+              class="cursor-pointer text-error"
               aria-label="Shutdown"
             >
               <svg
@@ -68,6 +66,7 @@
               hx-post="/server/discovery"
               hx-target="#server-toast-container"
               hx-swap="innerHTML"
+              hx-vals='{"csrf_token": "{{ .CSRFToken }}"}'
               class="text-success"
               aria-label="Run Discovery"
             >
@@ -93,6 +92,7 @@
               hx-post="/server/cache-batch-load"
               hx-target="#server-toast-container"
               hx-swap="innerHTML"
+              hx-vals='{"csrf_token": "{{ .CSRFToken }}"}'
               class="text-success"
               aria-label="Run Cache Batch Load"
             >
@@ -107,7 +107,7 @@
                   stroke-linecap="round"
                   stroke-linejoin="round"
                   stroke-width="2"
-                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.356 2H15"
                 />
               </svg>
               Run Cache Batch Load

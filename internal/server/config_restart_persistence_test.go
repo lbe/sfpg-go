@@ -12,7 +12,7 @@ import (
 // TestConfigPersistence_RestartUsesUpdatedConfig verifies that getRouter()
 // uses updated config values after restart, not the original app.opt values.
 func TestConfigPersistence_RestartUsesUpdatedConfig(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// Set up initial config with compression and cache enabled

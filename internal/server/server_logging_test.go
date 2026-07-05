@@ -13,7 +13,7 @@ import (
 // TestAuthMiddleware tests the authMiddleware to ensure it correctly protects
 // routes, redirecting unauthenticated requests and allowing authenticated ones.
 func TestLogProfileLocation(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// Call LogProfileLocation - should not panic even if no profiler is running
@@ -34,7 +34,7 @@ func TestLogProfileLocation(t *testing.T) {
 
 // TestSetupLogging tests logging setup
 func TestSetupLogging(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// setupLogging is already called by CreateApp, but we can call it again
@@ -48,7 +48,7 @@ func TestSetupLogging(t *testing.T) {
 
 // TestSetupBootstrapLogging tests bootstrap logging setup
 func TestSetupBootstrapLogging(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// setupBootstrapLogging is called before setupLogging
@@ -70,7 +70,7 @@ func TestSetupBootstrapLogging(t *testing.T) {
 
 func TestSetupLogging_Variations(t *testing.T) {
 	t.Run("with default config", func(t *testing.T) {
-		app := CreateApp(t, false)
+		app := CreateApp(t)
 		defer app.Shutdown()
 
 		// Load config
@@ -125,7 +125,7 @@ func TestSetupBootstrapLogging_Variations(t *testing.T) {
 	})
 
 	t.Run("with existing logger", func(t *testing.T) {
-		app := CreateApp(t, false)
+		app := CreateApp(t)
 		defer app.Shutdown()
 
 		// Logger already exists from CreateApp
@@ -144,7 +144,7 @@ func TestSetupBootstrapLogging_Variations(t *testing.T) {
 
 // TestLogProfileLocation_WithProfilerDir tests profiler logging
 func TestLogProfileLocation_WithProfilerDir(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// Test with stopProfiler that actually sets profiler dir
@@ -154,7 +154,7 @@ func TestLogProfileLocation_WithProfilerDir(t *testing.T) {
 
 // TestGetSessionOptions_EdgeCases tests session options edge cases
 func TestSetupBootstrapLogging_Coverage(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	if app.logger == nil {
@@ -171,7 +171,7 @@ func TestSetupBootstrapLogging_Coverage(t *testing.T) {
 
 // TestSetupLogging_Coverage verifies deprecated setupLogging delegates properly
 func TestSetupLogging_Coverage(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// Call setupLogging
@@ -184,7 +184,7 @@ func TestSetupLogging_Coverage(t *testing.T) {
 
 // TestReloadLoggingFromConfig_Coverage verifies logging reload
 func TestReloadLoggingFromConfig_Coverage(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// Load config first
@@ -195,7 +195,7 @@ func TestReloadLoggingFromConfig_Coverage(t *testing.T) {
 
 // TestLoadConfig_Coverage verifies config loading
 func TestLogProfileLocation_Coverage(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// Should not panic
@@ -204,7 +204,7 @@ func TestLogProfileLocation_Coverage(t *testing.T) {
 
 // TestRestartRequired_Coverage verifies restart flag status
 func TestSetupBootstrapLogging_ErrorPaths(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// Call setupBootstrapLogging when already initialized
@@ -220,7 +220,7 @@ func TestSetupBootstrapLogging_ErrorPaths(t *testing.T) {
 
 // TestSetupLogging_WithConfigLogger tests setupLogging after config load
 func TestSetupLogging_WithConfigLogger(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// Load config first
@@ -236,7 +236,7 @@ func TestSetupLogging_WithConfigLogger(t *testing.T) {
 
 // TestBuildHandlers_Integration tests handler building with full setup
 func TestSetupLogging_Complete(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// setupLogging should check profiler state and call setupBootstrapLogging

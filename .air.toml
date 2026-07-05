@@ -9,14 +9,14 @@ tmp_dir = "tmp"
   bin = "tmp/main"
   cmd = "rm ./tmp/main; go build -o ./tmp/main ."
   delay = 10000
-  exclude_dir = ["assets", "tmp", "vendor", "testdata", "DB", "Images", "log", "logs", "web-testsuite", "plans"]
+  exclude_dir = ["assets", "tmp", "vendor", "testdata", "DB", "Images", "log", "logs", "web-testsuite", "plans", "test-results"]
   exclude_file = ["version.go"]
   exclude_regex = ["_test.go"]
   exclude_unchanged = false
   follow_symlink = false
-  full_bin = "go generate ./... && SEPG_SESSION_SECRET='ver_vewy_secwet' ./tmp/main -increment-etag && SEPG_SESSION_SECURE=false SEPG_SESSION_SECRET='your-very-strong-and-unique-secret-key-v2' ./tmp/main -debug-delay-ms=0 -port=8083"
+  full_bin = "go generate ./... && SEPG_SESSION_SECRET='ver_vewy_secwet' ./tmp/main -increment-etag && bash -c 'while true; do SEPG_SESSION_SECURE=false SEPG_SESSION_SECRET=\"your-very-strong-and-unique-secret-key-v2\" ./tmp/main -debug-delay-ms=0 -port=8083; sleep 2; done'"
   include_dir = []
-  include_ext = ["go", "tpl", "tmpl", "html", "html.tmpl"]
+  include_ext = ["go", "tpl", "tmpl", "html", "html.tmpl", "css"]
   include_file = []
   kill_delay = "0s"
   log = "build-errors.log"

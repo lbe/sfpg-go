@@ -15,3 +15,9 @@ SELECT value
 SELECT "key", value, created_at, updated_at, type, category, requires_restart, description, default_value, help_text, example_value
   FROM config;
 
+-- name: ConfigKeyExists :one
+SELECT EXISTS(SELECT 1 FROM config WHERE key = ?) AS key_exists;
+
+-- name: InsertConfigIfNotExists :exec
+INSERT OR IGNORE INTO config (key, value, created_at, updated_at)
+VALUES (?, ?, ?, ?);

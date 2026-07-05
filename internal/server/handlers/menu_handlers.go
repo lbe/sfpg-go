@@ -4,23 +4,24 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/lbe/sfpg-go/internal/server/interfaces"
 	"github.com/lbe/sfpg-go/internal/server/ui"
 )
 
 // MenuHandlers holds dependencies for the hamburger menu endpoint.
 type MenuHandlers struct {
 	sessionManager SessionManager
-	ServerError    func(http.ResponseWriter, *http.Request, error)
+	deps           interfaces.ServerDeps
 }
 
 // NewMenuHandlers creates a new MenuHandlers with the given dependencies.
 func NewMenuHandlers(
 	sessionManager SessionManager,
-	serverError func(http.ResponseWriter, *http.Request, error),
+	deps interfaces.ServerDeps,
 ) *MenuHandlers {
 	return &MenuHandlers{
 		sessionManager: sessionManager,
-		ServerError:    serverError,
+		deps:           deps,
 	}
 }
 
@@ -39,16 +40,17 @@ func (h *MenuHandlers) HamburgerMenu(w http.ResponseWriter, r *http.Request) {
 		// cacheVersion is resolved via FuncMap (GetCacheVersion()), not from template data
 	}
 
+	// Include CSRF token for authenticated users (needed by discovery and cache-batch-load buttons)
+	if authenticated {
+		data["CSRFToken"] = h.sessionManager.EnsureCSRFToken(w, r)
+	}
+
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 
 	if err := ui.RenderTemplate(w, "hamburger-menu-items.html.tmpl", data); err != nil {
 		slog.Error("failed to render hamburger menu", "err", err)
-		if h.ServerError != nil {
-			h.ServerError(w, r, err)
-		} else {
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		}
+		h.deps.ServerError(w, r, err)
 	}
 }

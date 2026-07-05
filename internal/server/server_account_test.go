@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -15,13 +16,13 @@ import (
 // TestAuthMiddleware tests the authMiddleware to ensure it correctly protects
 // routes, redirecting unauthenticated requests and allowing authenticated ones.
 func TestCheckAccountLockout_Additional(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	username := "lockouttest2"
 
 	// Should not be locked initially
-	isLocked, err := app.checkAccountLockout(username)
+	isLocked, err := app.CheckAccountLockout(context.Background(), username)
 	if err != nil {
 		t.Errorf("checkAccountLockout failed: %v", err)
 	}
@@ -32,18 +33,18 @@ func TestCheckAccountLockout_Additional(t *testing.T) {
 
 // TestRecordFailedLoginAttempt_Additional tests recording failed login attempts
 func TestRecordFailedLoginAttempt_Additional(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	username := "failedlogintest2"
 
-	err := app.recordFailedLoginAttempt(username)
+	err := app.RecordFailedLoginAttempt(context.Background(), username)
 	if err != nil {
 		t.Errorf("recordFailedLoginAttempt failed: %v", err)
 	}
 
 	// Record another attempt
-	err = app.recordFailedLoginAttempt(username)
+	err = app.RecordFailedLoginAttempt(context.Background(), username)
 	if err != nil {
 		t.Errorf("Second recordFailedLoginAttempt failed: %v", err)
 	}
@@ -51,19 +52,19 @@ func TestRecordFailedLoginAttempt_Additional(t *testing.T) {
 
 // TestClearLoginAttempts_Additional tests clearing login attempts
 func TestClearLoginAttempts_Additional(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	username := "cleartest2"
 
 	// Record an attempt first
-	err := app.recordFailedLoginAttempt(username)
+	err := app.RecordFailedLoginAttempt(context.Background(), username)
 	if err != nil {
 		t.Fatalf("Failed to record attempt: %v", err)
 	}
 
 	// Clear attempts
-	err = app.clearLoginAttempts(username)
+	err = app.ClearLoginAttempts(context.Background(), username)
 	if err != nil {
 		t.Errorf("clearLoginAttempts failed: %v", err)
 	}
@@ -71,25 +72,25 @@ func TestClearLoginAttempts_Additional(t *testing.T) {
 
 // TestRemoveImagesDirPrefix tests image directory prefix removal (standalone function)
 func TestClearLoginAttempts_EdgeCases(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	username := "testuser"
 
 	// Record some failed attempts
 	for i := range 3 {
-		if err := app.recordFailedLoginAttempt(username); err != nil {
+		if err := app.RecordFailedLoginAttempt(context.Background(), username); err != nil {
 			t.Fatalf("Failed to record attempt %d: %v", i, err)
 		}
 	}
 
 	// Clear them
-	if err := app.clearLoginAttempts(username); err != nil {
+	if err := app.ClearLoginAttempts(context.Background(), username); err != nil {
 		t.Errorf("clearLoginAttempts failed: %v", err)
 	}
 
 	// Check if cleared
-	locked, err := app.checkAccountLockout(username)
+	locked, err := app.CheckAccountLockout(context.Background(), username)
 	if err != nil {
 		t.Errorf("checkAccountLockout failed: %v", err)
 	}
@@ -98,27 +99,27 @@ func TestClearLoginAttempts_EdgeCases(t *testing.T) {
 	}
 
 	// Clear again (should be idempotent)
-	if err := app.clearLoginAttempts(username); err != nil {
+	if err := app.ClearLoginAttempts(context.Background(), username); err != nil {
 		t.Errorf("Second clearLoginAttempts failed: %v", err)
 	}
 }
 
 // TestUnlockAccount_EdgeCases tests account unlocking
 func TestUnlockAccount_EdgeCases(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	username := "unlocktestuser"
 
 	// Create user first
-	cpc, err := app.dbRwPool.Get()
+	cpcRw, err := app.dbRwPool.Get()
 	if err != nil {
 		t.Fatalf("Failed to get DB connection: %v", err)
 	}
-	defer app.dbRwPool.Put(cpc)
+	defer app.dbRwPool.Put(cpcRw)
 
 	// Setup user in database
-	err = cpc.Queries.UpsertConfigValueOnly(app.ctx, gallerydb.UpsertConfigValueOnlyParams{
+	err = cpcRw.Queries.UpsertConfigValueOnly(app.ctx, gallerydb.UpsertConfigValueOnlyParams{
 		Key:       "user",
 		Value:     username,
 		CreatedAt: time.Now().Unix(),
@@ -164,13 +165,13 @@ func TestInitForUnlock_Coverage(t *testing.T) {
 
 // TestUnlockAccount_Coverage verifies account unlock
 func TestUnlockAccount_Coverage(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	username := "testuser"
 
 	// Record a failed login to create account record
-	_ = app.recordFailedLoginAttempt(username)
+	_ = app.RecordFailedLoginAttempt(context.Background(), username)
 
 	// Unlock the account
 	err := app.UnlockAccount(username)
@@ -179,7 +180,7 @@ func TestUnlockAccount_Coverage(t *testing.T) {
 	}
 
 	// Verify it's unlocked
-	isLocked, _ := app.checkAccountLockout(username)
+	isLocked, _ := app.CheckAccountLockout(context.Background(), username)
 	if isLocked {
 		t.Error("Expected account to be unlocked")
 	}
@@ -187,11 +188,11 @@ func TestUnlockAccount_Coverage(t *testing.T) {
 
 // TestGetAdminUsername_Coverage verifies admin username retrieval
 func TestRecordFailedLoginAttempt_Coverage(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	username := "testuser"
-	err := app.recordFailedLoginAttempt(username)
+	err := app.RecordFailedLoginAttempt(context.Background(), username)
 	if err != nil {
 		t.Errorf("recordFailedLoginAttempt failed: %v", err)
 	}
@@ -199,13 +200,13 @@ func TestRecordFailedLoginAttempt_Coverage(t *testing.T) {
 
 // TestCheckAccountLockout_Coverage tests account lockout checking
 func TestCheckAccountLockout_Coverage(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	username := "testuser"
 
 	// Initially should not be locked
-	isLocked, err := app.checkAccountLockout(username)
+	isLocked, err := app.CheckAccountLockout(context.Background(), username)
 	if err != nil {
 		t.Errorf("checkAccountLockout failed: %v", err)
 	}
@@ -217,16 +218,16 @@ func TestCheckAccountLockout_Coverage(t *testing.T) {
 
 // TestClearLoginAttempts_Coverage tests clearing login attempts
 func TestClearLoginAttempts_Coverage(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	username := "testuser"
 
 	// Record a failed attempt
-	_ = app.recordFailedLoginAttempt(username)
+	_ = app.RecordFailedLoginAttempt(context.Background(), username)
 
 	// Clear attempts
-	err := app.clearLoginAttempts(username)
+	err := app.ClearLoginAttempts(context.Background(), username)
 	if err != nil {
 		t.Errorf("clearLoginAttempts failed: %v", err)
 	}
@@ -259,13 +260,13 @@ func TestInitForUnlock_Multiple(t *testing.T) {
 
 // TestUnlockAccount_MultipleUsers tests unlocking multiple users
 func TestUnlockAccount_MultipleUsers(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	users := []string{"user1", "user2", "user3"}
 
 	for _, username := range users {
-		_ = app.recordFailedLoginAttempt(username)
+		_ = app.RecordFailedLoginAttempt(context.Background(), username)
 		err := app.UnlockAccount(username)
 		if err != nil {
 			t.Errorf("Failed to unlock %s: %v", username, err)
@@ -274,20 +275,20 @@ func TestUnlockAccount_MultipleUsers(t *testing.T) {
 }
 
 func TestScheduledUnlockTask(t *testing.T) {
-	app := CreateApp(t, false) // Don't start pool, we don't need it for this test
+	app := CreateApp(t) // Don't start pool, we don't need it for this test
 	defer app.Shutdown()
 
 	username := "scheduledunlockuser"
 
 	// Record 3 failed attempts to trigger lockout
 	for i := range 3 {
-		if err := app.recordFailedLoginAttempt(username); err != nil {
+		if err := app.RecordFailedLoginAttempt(context.Background(), username); err != nil {
 			t.Fatalf("Failed to record attempt %d: %v", i, err)
 		}
 	}
 
 	// Verify account is locked
-	locked, err := app.checkAccountLockout(username)
+	locked, err := app.CheckAccountLockout(context.Background(), username)
 	if err != nil {
 		t.Fatalf("checkAccountLockout failed: %v", err)
 	}

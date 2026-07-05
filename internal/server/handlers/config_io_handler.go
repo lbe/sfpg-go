@@ -17,7 +17,7 @@ import (
 // This is typically called via HTMX when the user clicks 'Export to Screen'.
 // Authentication is required.
 func (h *ConfigHandlers) ExportConfigToFileHandler(w http.ResponseWriter, r *http.Request) {
-	currentYAML, err := h.ConfigService.Export()
+	currentYAML, err := h.ConfigService.Export(r.Context())
 	if err != nil {
 		slog.Error("failed to export current config", "err", err)
 		http.Error(w, "Failed to export configuration", http.StatusInternalServerError)
@@ -38,7 +38,7 @@ func (h *ConfigHandlers) ExportConfigToFileHandler(w http.ResponseWriter, r *htt
 // It sets the Content-Disposition header to 'attachment; filename=config.yaml'.
 // Authentication is required.
 func (h *ConfigHandlers) ExportConfigDownloadHandler(w http.ResponseWriter, r *http.Request) {
-	yamlContent, err := h.ConfigService.Export()
+	yamlContent, err := h.ConfigService.Export(r.Context())
 	if err != nil {
 		slog.Error("failed to export config", "err", err)
 		http.Error(w, "Failed to export configuration", http.StatusInternalServerError)
@@ -189,14 +189,10 @@ func (h *ConfigHandlers) ImportConfigCommitHandler(w http.ResponseWriter, r *htt
 		return
 	}
 
-	if h.UpdateConfig != nil {
-		h.UpdateConfig(applyResult.Config, applyResult.RestartRequiredKeys)
-	}
-	if h.ApplyConfig != nil {
-		h.ApplyConfig()
-	}
-	if applyResult.RestartRequired && h.SetRestartRequired != nil {
-		h.SetRestartRequired(true)
+	h.deps.UpdateConfigWithPrecedence(applyResult.Config, applyResult.RestartRequiredKeys)
+	h.deps.ApplyConfig()
+	if applyResult.RestartRequired {
+		h.deps.SetRestartRequired(true)
 	}
 
 	w.WriteHeader(http.StatusOK)
@@ -298,16 +294,12 @@ func (h *ConfigHandlers) RestoreLastKnownGoodHandler(w http.ResponseWriter, r *h
 		return
 	}
 
-	if h.UpdateConfig != nil {
-		h.UpdateConfig(applyResult.Config, applyResult.RestartRequiredKeys)
-	}
-	if h.ApplyConfig != nil {
-		h.ApplyConfig()
-	}
+	h.deps.UpdateConfigWithPrecedence(applyResult.Config, applyResult.RestartRequiredKeys)
+	h.deps.ApplyConfig()
 	restartRequired := applyResult.RestartRequired
 
-	if restartRequired && h.SetRestartRequired != nil {
-		h.SetRestartRequired(true)
+	if restartRequired {
+		h.deps.SetRestartRequired(true)
 	}
 
 	data := struct {

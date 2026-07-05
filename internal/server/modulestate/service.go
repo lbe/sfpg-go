@@ -27,11 +27,11 @@ func (s *Service) SetActive(ctx context.Context, name string, active bool) error
 	if s == nil || s.dbRwPool == nil {
 		return sql.ErrConnDone
 	}
-	cpc, err := s.dbRwPool.Get()
+	cpcRw, err := s.dbRwPool.Get()
 	if err != nil {
 		return err
 	}
-	defer s.dbRwPool.Put(cpc)
+	defer s.dbRwPool.Put(cpcRw)
 
 	now := time.Now().Unix()
 	var lastStarted sql.NullInt64
@@ -42,7 +42,7 @@ func (s *Service) SetActive(ctx context.Context, name string, active bool) error
 		lastFinished = sql.NullInt64{Int64: now, Valid: true}
 	}
 
-	return cpc.Queries.SetModuleState(ctx, gallerydb.SetModuleStateParams{
+	return cpcRw.Queries.SetModuleState(ctx, gallerydb.SetModuleStateParams{
 		Name:           name,
 		IsActive:       boolToInt(active),
 		LastStartedAt:  lastStarted,
@@ -56,13 +56,13 @@ func (s *Service) IsActive(ctx context.Context, name string) (bool, error) {
 	if s == nil || s.dbRwPool == nil {
 		return false, sql.ErrConnDone
 	}
-	cpc, err := s.dbRwPool.Get()
+	cpcRw, err := s.dbRwPool.Get()
 	if err != nil {
 		return false, err
 	}
-	defer s.dbRwPool.Put(cpc)
+	defer s.dbRwPool.Put(cpcRw)
 
-	row, err := cpc.Queries.GetModuleState(ctx, name)
+	row, err := cpcRw.Queries.GetModuleState(ctx, name)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return false, nil
@@ -79,13 +79,13 @@ func (s *Service) GetLastStartedAt(ctx context.Context, name string) (int64, boo
 	if s == nil || s.dbRwPool == nil {
 		return 0, false, sql.ErrConnDone
 	}
-	cpc, err := s.dbRwPool.Get()
+	cpcRw, err := s.dbRwPool.Get()
 	if err != nil {
 		return 0, false, err
 	}
-	defer s.dbRwPool.Put(cpc)
+	defer s.dbRwPool.Put(cpcRw)
 
-	row, err := cpc.Queries.GetModuleState(ctx, name)
+	row, err := cpcRw.Queries.GetModuleState(ctx, name)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return 0, false, nil

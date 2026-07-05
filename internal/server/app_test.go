@@ -373,7 +373,7 @@ func TestApp_ImageDirectory_FromConfig_NotHardcoded(t *testing.T) {
 	app.configMu.Unlock()
 
 	// Apply config
-	app.applyConfig()
+	app.ApplyConfig()
 
 	// Set image directory (should create it from config)
 
@@ -448,7 +448,7 @@ func TestApp_ImageDirectory_CreatedAfterConfigLoad(t *testing.T) {
 	app.configMu.Unlock()
 
 	// Apply config
-	app.applyConfig()
+	app.ApplyConfig()
 
 	// At this point, directory should still not exist (applyConfig doesn't create it yet)
 	// setImageDirectory() will create it
@@ -523,7 +523,7 @@ func TestApp_ImageDirectory_CustomPath(t *testing.T) {
 	app.configMu.Unlock()
 
 	// Apply config
-	app.applyConfig()
+	app.ApplyConfig()
 
 	// Set image directory
 
@@ -603,7 +603,7 @@ func TestImageDirectoryIntegration_StartupFlow(t *testing.T) {
 	app.configMu.Unlock()
 
 	// Apply config
-	app.applyConfig()
+	app.ApplyConfig()
 
 	// Set image directory (from Run() sequence)
 
@@ -675,7 +675,7 @@ func TestImageDirectoryIntegration_RuntimeChange(t *testing.T) {
 	app.config.ImageDirectory = initialImageDir
 	app.configMu.Unlock()
 
-	app.applyConfig()
+	app.ApplyConfig()
 
 	// Verify initial directory is set
 	if app.imagesDir != initialImageDir {
@@ -687,7 +687,7 @@ func TestImageDirectoryIntegration_RuntimeChange(t *testing.T) {
 	app.config.ImageDirectory = newImageDir
 	app.configMu.Unlock()
 
-	app.applyConfig()
+	app.ApplyConfig()
 
 	// After applyConfig, imagesDir should be updated
 	if app.imagesDir != newImageDir {
@@ -752,7 +752,7 @@ func TestImageDirectoryIntegration_FileDiscoveryUsesConfig(t *testing.T) {
 	app.config.ImageDirectory = customImageDir
 	app.configMu.Unlock()
 
-	app.applyConfig()
+	app.ApplyConfig()
 
 	// Verify app.imagesDir is set from config (this is what walkImageDir() would use)
 	if app.imagesDir != customImageDir {
@@ -828,11 +828,11 @@ func TestApplyConfig_PanicsWhenImageDirectoryUndefined(t *testing.T) {
 	}()
 
 	// Expect panic when ImageDirectory is undefined
-	app.applyConfig()
+	app.ApplyConfig()
 }
 
 func TestApp_LoadsETagFromConfig(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	t.Parallel()
 	ctx := context.Background()
 
@@ -849,7 +849,7 @@ func TestApp_LoadsETagFromConfig(t *testing.T) {
 	app.Shutdown()
 
 	// Create new app using same root directory (simulates restart, same database)
-	app2 := CreateAppWithRoot(t, false, app.rootDir)
+	app2 := CreateApp(t, WithRoot(app.rootDir))
 
 	// Verify ui package has correct cache version (should be set during app2 initialization)
 	cacheVer := ui.GetCacheVersion()

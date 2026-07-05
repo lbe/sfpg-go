@@ -69,7 +69,7 @@ func waitForPendingZero(t *testing.T, wb interface{ PendingCount() int64 }, time
 // this subtest ever stops panicking, the wiring has regressed.
 func TestFlushBatchedWrites_Wiring_ThreadsPreparedQueries(t *testing.T) {
 	t.Run("end_to_end", func(t *testing.T) {
-		app := CreateApp(t, false)
+		app := CreateApp(t)
 		t.Cleanup(func() {
 			if app.writeBatcher != nil {
 				_ = app.writeBatcher.Close()
@@ -119,7 +119,7 @@ func TestFlushBatchedWrites_Wiring_ThreadsPreparedQueries(t *testing.T) {
 	})
 
 	t.Run("nil_batcherQueries_panics", func(t *testing.T) {
-		app := CreateApp(t, false)
+		app := CreateApp(t)
 		t.Cleanup(func() {
 			if app.writeBatcher != nil {
 				_ = app.writeBatcher.Close()
@@ -131,12 +131,12 @@ func TestFlushBatchedWrites_Wiring_ThreadsPreparedQueries(t *testing.T) {
 		// must now dereference. Force it nil to prove the dependency exists.
 		app.batcherQueries = nil
 
-		cpc, err := app.dbRwPool.Get()
+		cpcRw, err := app.dbRwPool.Get()
 		if err != nil {
 			t.Fatalf("dbRwPool.Get: %v", err)
 		}
-		defer app.dbRwPool.Put(cpc)
-		tx, err := cpc.Conn.BeginTx(ctx, nil)
+		defer app.dbRwPool.Put(cpcRw)
+		tx, err := cpcRw.Conn.BeginTx(ctx, nil)
 		if err != nil {
 			t.Fatalf("BeginTx: %v", err)
 		}

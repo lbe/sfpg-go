@@ -29,7 +29,7 @@ import (
 // Covers the allocation site that Appendix B replaces with HTTPCacheEntryPool.
 // Run with: go test -tags integration -bench=BenchmarkE2E_CacheWritePath -benchmem
 func BenchmarkE2E_CacheWritePath(b *testing.B) {
-	app := CreateAppWithTB(b, false)
+	app := CreateApp(b)
 	defer app.Shutdown()
 
 	// Representative body size (2-5 KB range, ~46% of production)

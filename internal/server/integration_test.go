@@ -77,7 +77,7 @@ func extractCSRFToken(t *testing.T, client *http.Client, baseURL string) string 
 func TestE2E_LoginToGalleryToImage(t *testing.T) {
 	// Ensure cookies are accepted over HTTP in tests
 	t.Setenv("SEPG_SESSION_SECURE", "false")
-	app := CreateApp(t, true) // create with real DB
+	app := CreateApp(t, WithPool()) // create with real DB
 
 	// Create a test server
 	ts := httptest.NewServer(app.getRouter())
@@ -154,7 +154,7 @@ func TestE2E_LoginToGalleryToImage(t *testing.T) {
 func TestE2E_UnauthenticatedReturns401(t *testing.T) {
 	// Ensure cookies are accepted over HTTP in tests (though no cookie here)
 	t.Setenv("SEPG_SESSION_SECURE", "false")
-	app := CreateApp(t, true)
+	app := CreateApp(t, WithPool())
 	ts := httptest.NewServer(app.getRouter())
 	defer ts.Close()
 
@@ -187,7 +187,7 @@ func TestE2E_UnauthenticatedReturns401(t *testing.T) {
 // without authentication returns 401 Unauthorized
 func TestE2E_ProtectedRouteReturnsUnauthorized(t *testing.T) {
 	t.Setenv("SEPG_SESSION_SECURE", "false")
-	app := CreateApp(t, true)
+	app := CreateApp(t, WithPool())
 	ts := httptest.NewServer(app.getRouter())
 	defer ts.Close()
 
@@ -210,7 +210,7 @@ func TestE2E_ProtectedRouteReturnsUnauthorized(t *testing.T) {
 func TestE2E_LogoutClearsSession(t *testing.T) {
 	// Ensure cookies are accepted over HTTP in tests
 	t.Setenv("SEPG_SESSION_SECURE", "false")
-	app := CreateApp(t, true)
+	app := CreateApp(t, WithPool())
 	ts := httptest.NewServer(app.getRouter())
 	defer ts.Close()
 
@@ -248,11 +248,12 @@ func TestE2E_LogoutClearsSession(t *testing.T) {
 	}
 	resp.Body.Close()
 
-	// Logout (logout form uses HTMX)
-	logoutReq, err := http.NewRequest(http.MethodPost, ts.URL+"/logout", nil)
+	// Logout (logout form uses HTMX) - need CSRF token
+	logoutReq, err := http.NewRequest(http.MethodPost, ts.URL+"/logout", strings.NewReader("csrf_token="+url.QueryEscape(csrfToken)))
 	if err != nil {
 		t.Fatalf("Failed to create logout request: %v", err)
 	}
+	logoutReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	logoutReq.Header.Set("Origin", ts.URL)
 	logoutReq.Header.Set("HX-Request", "true") // Logout form uses HTMX
 	resp, err = client.Do(logoutReq)
@@ -281,7 +282,7 @@ func TestE2E_ServeStartsAndHandlesAuth(t *testing.T) {
 	// Ensure cookies are accepted over HTTP in tests
 	t.Setenv("SEPG_SESSION_SECURE", "false")
 
-	app := CreateApp(t, true)
+	app := CreateApp(t, WithPool())
 
 	// Pick an ephemeral free port
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -356,9 +357,13 @@ func TestE2E_ServeStartsAndHandlesAuth(t *testing.T) {
 	}
 	resp.Body.Close()
 
+	// Extract fresh CSRF token after login for logout POST
+	logoutCsrfToken := extractCSRFTokenFromConfig(t, client, baseURL)
+
 	// Logout (logout form uses HTMX)
-	logoutReq, _ := http.NewRequest(http.MethodPost, baseURL+"/logout", nil)
+	logoutReq, _ := http.NewRequest(http.MethodPost, baseURL+"/logout", strings.NewReader("csrf_token="+url.QueryEscape(logoutCsrfToken)))
 	logoutReq.Header.Set("Origin", baseURL)
+	logoutReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	logoutReq.Header.Set("HX-Request", "true") // Logout form uses HTMX
 	resp, err = client.Do(logoutReq)
 	if err != nil {
@@ -401,7 +406,7 @@ func TestE2E_RawImage_Lightbox_InfoBox(t *testing.T) {
 	// Accept cookies over HTTP for tests
 	t.Setenv("SEPG_SESSION_SECURE", "false")
 
-	app := CreateApp(t, true)
+	app := CreateApp(t, WithPool())
 
 	// Start test HTTP server using the real router
 	ts := httptest.NewServer(app.getRouter())
@@ -445,13 +450,13 @@ func TestE2E_RawImage_Lightbox_InfoBox(t *testing.T) {
 	}
 
 	// Insert file record
-	cpc, err := app.dbRwPool.Get()
+	cpcRw, err := app.dbRwPool.Get()
 	if err != nil {
 		t.Fatalf("db get failed: %v", err)
 	}
-	imp := app.ImporterFactory(cpc.Conn, cpc.Queries)
+	imp := app.ImporterFactory(cpcRw.Conn, cpcRw.Queries)
 	fileRow, err := imp.UpsertPathChain(app.ctx, filepath.ToSlash(testRel), 0, 4, "", 0, 0, 0, "image/jpeg")
-	app.dbRwPool.Put(cpc)
+	app.dbRwPool.Put(cpcRw)
 	if err != nil {
 		t.Fatalf("UpsertPathChain failed: %v", err)
 	}
@@ -512,92 +517,4 @@ func TestE2E_RawImage_Lightbox_InfoBox(t *testing.T) {
 		t.Fatalf("expected 200 for /info/folder/%d, got %d", folderID, resp.StatusCode)
 	}
 	resp.Body.Close()
-}
-
-// TestE2E_Serve_RestartSignal verifies that Serve()'s event loop handles
-// a restart signal by shutting down the HTTP server, applying config changes,
-// and restarting on the same port. This closes the coverage gap for the
-// restart signal path in server.go's Serve() loop.
-func TestE2E_Serve_RestartSignal(t *testing.T) {
-	t.Setenv("SEPG_SESSION_SECURE", "false")
-
-	app := CreateApp(t, true)
-
-	// Pick an ephemeral free port
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("failed to find free port: %v", err)
-	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	ln.Close()
-	app.opt.Port = getopt.OptInt{Int: port, IsSet: true}
-
-	// Ensure cleanup after the server goroutine to prevent goroutine leaks
-	defer app.Shutdown()
-
-	// Start the server in a goroutine
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		_ = app.Serve()
-	}()
-
-	baseURL := fmt.Sprintf("http://127.0.0.1:%d", port)
-	client := &http.Client{Timeout: 2 * time.Second}
-
-	// Wait for server to be ready
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		resp, err := client.Get(baseURL + "/login-form")
-		if err == nil {
-			resp.Body.Close()
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("server did not start: %v", err)
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-
-	// Verify server responds before restart
-	t.Logf("server started on port %d, sending restart signal", port)
-
-	// Send restart signal via the restart channel
-	app.restartMu.RLock()
-	restartCh := app.restartCh
-	app.restartMu.RUnlock()
-
-	select {
-	case restartCh <- struct{}{}:
-	default:
-		t.Fatal("restart channel full, cannot send signal")
-	}
-
-	// Wait for the server to restart.
-	// During shutdown+rebind the server will be briefly unreachable;
-	// poll until it responds again.
-	deadline = time.Now().Add(5 * time.Second)
-	restarted := false
-	for time.Now().Before(deadline) {
-		resp, err := client.Get(baseURL + "/login-form")
-		if err == nil {
-			resp.Body.Close()
-			restarted = true
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-
-	if !restarted {
-		t.Fatal("server did not restart within 5 seconds")
-	}
-
-	// Verify the server handles requests after restart
-	resp, err := client.Get(baseURL + "/login-form")
-	if err != nil {
-		t.Fatalf("server not responding after restart: %v", err)
-	}
-	resp.Body.Close()
-
-	t.Log("server restarted successfully")
 }

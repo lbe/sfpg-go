@@ -13,6 +13,7 @@ help:
 	@echo "  make bench         - Run benchmarks (single iteration)"
 	@echo "  make bench5        - Run benchmarks (5 iterations)"
 	@echo "  make build         - Build the binary"
+	@echo "  make build-assets  - Build static assets (CSS + JS) from npm sources"
 	@echo "  make clean         - Remove build artifacts"
 	@echo "  make cover         - Generate coverage report"
 	@echo "  make format        - Format Go, templates, and assets"
@@ -45,7 +46,8 @@ test-all:
 .PHONY: test-browser
 test-browser:
 	# Run browser-based menu/auth tests via Playwright (requires air on :8083)
-	npx playwright test --project=chromium --reporter=list
+	# chromium run first (parallel specs), then chromium-serial (config + restart, workers=1)
+	time npx playwright test --project=chromium --project=chromium-serial --reporter=list
 
 .PHONY: test-race
 test-race:
@@ -84,6 +86,14 @@ GOOS ?= $$(go env GOOS)
 GOARCH ?= $$(go env GOARCH)
 BINARY_NAME := bin/sfpg-$(GOOS)-$(GOARCH)
 BINARY_NAME2 := bin/sfpg-dashboard-$(GOOS)-$(GOARCH)
+
+.PHONY: build-assets
+build-assets:
+	# Build static CSS from Tailwind + DaisyUI sources and copy JS libraries
+	mkdir -p web/static/css web/static/js
+	npx tailwindcss -i in.css -o web/static/css/styles.css
+	cp node_modules/htmx.org/dist/htmx.min.js web/static/js/htmx.min.js
+	cp node_modules/hyperscript.org/dist/_hyperscript.min.js web/static/js/hyperscript.min.js
 
 .PHONY: build
 build:

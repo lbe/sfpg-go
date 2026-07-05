@@ -532,3 +532,25 @@ func fileParam(t *testing.T) string {
 	}
 	return fileID
 }
+
+// waitForServer polls /health every second until the server responds with 200,
+// up to the given timeout. Returns true if the server came back, false otherwise.
+func waitForServer(t *testing.T, timeout time.Duration) bool {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+	client := &http.Client{Timeout: 2 * time.Second}
+
+	for time.Now().Before(deadline) {
+		resp, err := client.Get(serverURL + "/gallery/1")
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return true
+			}
+		}
+		time.Sleep(1 * time.Second)
+	}
+
+	return false
+}

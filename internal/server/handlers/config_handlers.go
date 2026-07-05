@@ -15,6 +15,7 @@ import (
 	"github.com/lbe/sfpg-go/internal/dbconnpool"
 	"github.com/lbe/sfpg-go/internal/server/auth"
 	"github.com/lbe/sfpg-go/internal/server/config"
+	"github.com/lbe/sfpg-go/internal/server/interfaces"
 	"github.com/lbe/sfpg-go/internal/server/session"
 	"github.com/lbe/sfpg-go/internal/server/ui"
 )
@@ -32,114 +33,40 @@ type ConfigTemplates struct {
 }
 
 // ConfigHandlers holds dependencies for configuration-related HTTP handlers.
-// It has ~12 dependencies compared to ~35 in the main Handlers struct.
+// Dependencies are provided via constructor injection (concrete services) and
+// the deps field (interfaces.ServerDeps), eliminating runtime wiring checks.
 type ConfigHandlers struct {
-	ConfigService   config.ConfigService
-	AuthService     auth.AuthService
-	CredentialStore auth.CredentialStore
-	SessionManager  session.SessionManager
-	DBRoPool        dbconnpool.ConnectionPool
-	DBRwPool        dbconnpool.ConnectionPool
-	Templates       ConfigTemplates
-	Ctx             context.Context
-
-	// Callbacks
-	// UpdateConfig receives the new config and a list of fields that were changed by the user.
-	// The callback should apply CLI/env overrides only to fields NOT in the changed list.
-	UpdateConfig        func(cfg *config.Config, changedFields []string)
-	ApplyConfig         func()
-	InvalidateHTTPCache func()
-	SetPreloadEnabled   func(bool)
-	SetRestartRequired  func(bool)
-	GetRestartCh        func() chan struct{}
-
-	// Helpers
-	AddCommonTemplateData func(http.ResponseWriter, *http.Request, map[string]any, bool) map[string]any
-	ServerError           func(http.ResponseWriter, *http.Request, error)
+	ConfigService  config.ConfigService
+	AuthService    auth.AuthService
+	SessionManager session.SessionManager
+	DBRoPool       dbconnpool.ConnectionPool
+	DBRwPool       dbconnpool.ConnectionPool
+	Templates      ConfigTemplates
+	Ctx            context.Context
+	deps           interfaces.ServerDeps // replaces CredentialStore + 8 callbacks
 }
 
 // NewConfigHandlers creates a new ConfigHandlers with the given dependencies.
 func NewConfigHandlers(
 	configService config.ConfigService,
 	authService auth.AuthService,
-	credentialStore auth.CredentialStore,
 	sessionManager session.SessionManager,
 	dbRoPool dbconnpool.ConnectionPool,
 	dbRwPool dbconnpool.ConnectionPool,
+	deps interfaces.ServerDeps,
 	templates ConfigTemplates,
 	ctx context.Context,
 ) *ConfigHandlers {
 	return &ConfigHandlers{
-		ConfigService:   configService,
-		AuthService:     authService,
-		CredentialStore: credentialStore,
-		SessionManager:  sessionManager,
-		DBRoPool:        dbRoPool,
-		DBRwPool:        dbRwPool,
-		Templates:       templates,
-		Ctx:             ctx,
+		ConfigService:  configService,
+		AuthService:    authService,
+		SessionManager: sessionManager,
+		DBRoPool:       dbRoPool,
+		DBRwPool:       dbRwPool,
+		deps:           deps,
+		Templates:      templates,
+		Ctx:            ctx,
 	}
-}
-
-// Validate ensures all required dependencies and callbacks are set.
-func (h *ConfigHandlers) Validate() error {
-	var missing []string
-
-	// Basic dependencies (set in constructor)
-	if h.ConfigService == nil {
-		missing = append(missing, "ConfigService")
-	}
-	if h.AuthService == nil {
-		missing = append(missing, "AuthService")
-	}
-	if h.CredentialStore == nil {
-		missing = append(missing, "CredentialStore")
-	}
-	if h.SessionManager == nil {
-		missing = append(missing, "SessionManager")
-	}
-	if h.DBRoPool == nil {
-		missing = append(missing, "DBRoPool")
-	}
-	if h.DBRwPool == nil {
-		missing = append(missing, "DBRwPool")
-	}
-	if h.Ctx == nil {
-		missing = append(missing, "Ctx")
-	}
-
-	// Callbacks (set via field assignment)
-	if h.UpdateConfig == nil {
-		missing = append(missing, "UpdateConfig")
-	}
-	if h.ApplyConfig == nil {
-		missing = append(missing, "ApplyConfig")
-	}
-	if h.InvalidateHTTPCache == nil {
-		missing = append(missing, "InvalidateHTTPCache")
-	}
-	if h.SetPreloadEnabled == nil {
-		missing = append(missing, "SetPreloadEnabled")
-	}
-	if h.SetRestartRequired == nil {
-		missing = append(missing, "SetRestartRequired")
-	}
-	if h.GetRestartCh == nil {
-		missing = append(missing, "GetRestartCh")
-	}
-
-	// Helpers
-	if h.AddCommonTemplateData == nil {
-		missing = append(missing, "AddCommonTemplateData")
-	}
-	if h.ServerError == nil {
-		missing = append(missing, "ServerError")
-	}
-
-	if len(missing) > 0 {
-		return fmt.Errorf("ConfigHandlers missing required fields: %s", strings.Join(missing, ", "))
-	}
-	return nil
 }
 
 // disableConfigCaching sets HTTP headers to disable all caching for configuration routes.
@@ -215,7 +142,7 @@ func (h *ConfigHandlers) ConfigGet(w http.ResponseWriter, r *http.Request) {
 		data["Category"] = category
 	}
 
-	data = h.AddCommonTemplateData(w, r, data, true)
+	data = h.deps.AddCommonTemplateData(w, r, data, true)
 
 	// Render modal template
 	if err := ui.RenderTemplate(w, "config-modal.html.tmpl", data); err != nil {
@@ -269,7 +196,7 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 		CurrentPassword: r.FormValue("admin_current_password"),
 		NewPassword:     r.FormValue("admin_new_password"),
 		ConfirmPassword: r.FormValue("admin_confirm_password"),
-	}, h.CredentialStore)
+	}, h.deps)
 
 	if err != nil {
 		slog.Error("failed to update admin credentials", "err", err)
@@ -340,9 +267,7 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 
 		// Inline the former configFieldSetter sideEffect for cache preload.
 		if f.DBKey == "enable_cache_preload" {
-			if h.SetPreloadEnabled != nil {
-				h.SetPreloadEnabled(value == "true")
-			}
+			h.deps.SetPreloadEnabled(value == "true")
 		}
 	}
 
@@ -394,16 +319,12 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if h.UpdateConfig != nil {
-		h.UpdateConfig(applyResult.Config, applyResult.RestartRequiredKeys)
-	}
-	if h.ApplyConfig != nil {
-		h.ApplyConfig()
-	}
+	h.deps.UpdateConfigWithPrecedence(applyResult.Config, applyResult.RestartRequiredKeys)
+	h.deps.ApplyConfig()
 
 	// Set restart required flag if any restart-required fields changed
-	if h.SetRestartRequired != nil && applyResult.RestartRequired {
-		h.SetRestartRequired(true)
+	if applyResult.RestartRequired {
+		h.deps.SetRestartRequired(true)
 	}
 
 	w.Header().Set("HX-Trigger", "config-saved")

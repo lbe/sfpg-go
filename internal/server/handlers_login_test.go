@@ -24,7 +24,7 @@ import (
 // ============================================================================
 
 func TestRootRedirectLeadsToGallery(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	server := httptest.NewServer(app.getRouter())
@@ -50,7 +50,7 @@ func TestRootRedirectLeadsToGallery(t *testing.T) {
 }
 
 func TestLoginHandler(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	server := httptest.NewServer(app.getRouter())
@@ -210,7 +210,7 @@ func TestLoginHandler(t *testing.T) {
 }
 
 func TestLoginHandler_LockoutAfterThreeFailures(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	server := httptest.NewServer(app.getRouter())
@@ -372,7 +372,7 @@ func TestLoginHandler_LockoutAfterThreeFailures(t *testing.T) {
 }
 
 func TestLoginHandler_ClearAttemptsOnSuccess(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	server := httptest.NewServer(app.getRouter())
@@ -504,7 +504,7 @@ func TestLoginHandler_ClearAttemptsOnSuccess(t *testing.T) {
 }
 
 func TestLoginHandler_LockoutExpiration(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	server := httptest.NewServer(app.getRouter())
@@ -614,7 +614,7 @@ func TestLoginHandler_LockoutExpiration(t *testing.T) {
 }
 
 func TestLoginHandler_LockoutBlocksLogin(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	server := httptest.NewServer(app.getRouter())
@@ -747,7 +747,7 @@ func TestLoginHandler_LockoutBlocksLogin(t *testing.T) {
 }
 
 func TestLogoutHandler(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	server := httptest.NewServer(app.getRouter())
@@ -760,10 +760,11 @@ func TestLogoutHandler(t *testing.T) {
 				return http.ErrUseLastResponse
 			},
 		}
-		req, err := http.NewRequest("POST", server.URL+"/logout", nil)
+		req, err := http.NewRequest("POST", server.URL+"/logout", strings.NewReader("csrf_token=test-csrf-token-for-consistent-caching"))
 		if err != nil {
 			t.Fatalf("http.NewRequest: %v", err)
 		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.AddCookie(MakeAuthCookie(t, app)) // Authenticate the request
 		req.Header.Set("Origin", server.URL)
 		req.Header.Set("HX-Request", "true") // Simulate HTMX request (logout form uses HTMX)

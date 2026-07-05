@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -344,8 +345,11 @@ func (m *Manager) IsAuthenticated(r *http.Request) bool {
 }
 
 // SetAuthenticated sets the authenticated status for the session.
+// On a false -> true transition (login) the session ID is rotated to mitigate
+// session fixation: a new session is created and user values are copied over.
 func (m *Manager) SetAuthenticated(w http.ResponseWriter, r *http.Request, authenticated bool) error {
 	sess, err := m.store.Get(r, SessionName)
+	alreadyNew := false
 	if err != nil {
 		slog.Warn("SetAuthenticated: session decode error, creating new session",
 			"path", r.URL.Path,
@@ -355,8 +359,26 @@ func (m *Manager) SetAuthenticated(w http.ResponseWriter, r *http.Request, authe
 		// Invalid cookie - create a new session
 		// gorilla/sessions returns a usable session even on cookie decode error.
 		sess, _ = m.store.New(r, SessionName) //nolint:errcheck
+		alreadyNew = true
 	}
+
+	// Detect privilege escalation (login) and rotate the session ID.
+	// Skip rotation when we already created a new session above due to a decode
+	// error; in that case the old session ID has already been discarded.
+	wasAuthenticated, _ := sess.Values["authenticated"].(bool)
 	sess.Values["authenticated"] = authenticated
+	if authenticated && !wasAuthenticated && !alreadyNew {
+		newSess, err := m.store.New(r, SessionName)
+		if err != nil {
+			return fmt.Errorf("rotate session on login: %w", err)
+		}
+		// Copy user values (including csrf_token) to the new session.
+		for k, v := range sess.Values {
+			newSess.Values[k] = v
+		}
+		sess = newSess
+	}
+
 	// When logging out, clear the session cookie by setting MaxAge to -1
 	if !authenticated {
 		sess.Options.MaxAge = -1

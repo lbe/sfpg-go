@@ -34,19 +34,19 @@ func (m *mockUnifiedBatcher) SubmitFile(file *File) error {
 	}
 	// If rwPool is set, write synchronously (for integration tests)
 	if m.rwPool != nil {
-		cpc, err := m.rwPool.Get()
+		cpcRw, err := m.rwPool.Get()
 		if err != nil {
 			return err
 		}
-		defer m.rwPool.Put(cpc)
+		defer m.rwPool.Put(cpcRw)
 
-		tx, err := cpc.Conn.BeginTx(context.Background(), nil)
+		tx, err := cpcRw.Conn.BeginTx(context.Background(), nil)
 		if err != nil {
 			return err
 		}
 		defer tx.Rollback()
 
-		qtx := cpc.Queries.WithTx(tx)
+		qtx := cpcRw.Queries.WithTx(tx)
 		imp := &gallerylib.Importer{Q: qtx}
 		if err := WriteFileInTx(context.Background(), imp, file); err != nil {
 			return err

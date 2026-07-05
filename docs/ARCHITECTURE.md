@@ -392,7 +392,7 @@ stateDiagram-v2
     StartWorkers --> Running: Serve HTTP
 
     Running --> Restart: Config changed
-    Restart --> Running: Reload config
+    Restart --> Running: Re-exec process
 
     Running --> Shutdown: SIGTERM/SIGINT
     Shutdown --> DrainWorkers: Stop accepting
@@ -1046,17 +1046,21 @@ stateDiagram-v2
     CheckType -->|Session settings| RuntimeUpdate
     CheckType -->|Admin credentials| RuntimeUpdate
 
-    RestartRequired --> Restart: Send restart signal
+    RestartRequired --> Restart: Request process restart
     RuntimeUpdate --> Running: Apply immediately
 
-    Restart --> Restarting[Graceful Restart]
+    Restart --> Restarting[Graceful process re-exec]
     Restarting --> Running
 ```
 
-**Restart Types:**
+**Restart behavior:**
 
-- **HTTP-only restart**: Reload listener (preserves cache)
-- **Full restart**: Reinitialize everything (clears cache)
+A web-triggered restart is a full process re-exec (`syscall.Exec`). The running
+process shuts down its HTTP server, flushes pending writes, closes database pools,
+and replaces itself with a fresh process image. The new process reloads
+configuration from the database and reinitializes all runtime services (HTTP cache,
+worker pool, batch-load manager, etc.). There is no longer a separate "HTTP-only"
+listener reload.
 
 ---
 

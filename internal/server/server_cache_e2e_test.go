@@ -24,7 +24,7 @@ import (
 // compression, caching, cache hits, and encoding separation.
 func TestE2E_CacheAndCompression_GalleryEndpoint(t *testing.T) {
 	// Setup: create app with compression and caching enabled
-	app := CreateApp(t, false) // no worker pools needed
+	app := CreateApp(t) // no worker pools needed
 	app.opt.EnableCompression = getopt.OptBool{Bool: true, IsSet: true}
 	app.opt.EnableHTTPCache = getopt.OptBool{Bool: true, IsSet: true}
 
@@ -216,7 +216,7 @@ func TestE2E_CacheAndCompression_GalleryEndpoint(t *testing.T) {
 
 // TestE2E_304Revalidation tests 304 Not Modified responses after cache hit
 func TestE2E_304Revalidation(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	app.opt.EnableCompression = getopt.OptBool{Bool: true, IsSet: true}
 	app.opt.EnableHTTPCache = getopt.OptBool{Bool: true, IsSet: true}
 
@@ -343,7 +343,7 @@ func TestE2E_304Revalidation(t *testing.T) {
 // TestE2E_CompressionVsEncodingSeparation verifies that gzip and brotli
 // responses are stored in separate cache entries and served correctly.
 func TestE2E_CompressionVsEncodingSeparation(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	app.opt.EnableCompression = getopt.OptBool{Bool: true, IsSet: true}
 	app.opt.EnableHTTPCache = getopt.OptBool{Bool: true, IsSet: true}
 
@@ -455,7 +455,7 @@ func TestE2E_CompressionVsEncodingSeparation(t *testing.T) {
 
 // TestE2E_Gallery_MissThenHitHeaders ensures compressed responses preserve headers across MISS→HIT.
 func TestE2E_Gallery_MissThenHitHeaders(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	app.opt.EnableCompression = getopt.OptBool{Bool: true, IsSet: true}
 	app.opt.EnableHTTPCache = getopt.OptBool{Bool: true, IsSet: true}
 
@@ -577,7 +577,7 @@ func TestE2E_Gallery_MissThenHitHeaders(t *testing.T) {
 
 // TestE2E_Gallery_IfNoneMatch304_NoBody ensures cached ETag yields 304 without body or Content-Encoding.
 func TestE2E_Gallery_IfNoneMatch304_NoBody(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	app.opt.EnableCompression = getopt.OptBool{Bool: true, IsSet: true}
 	app.opt.EnableHTTPCache = getopt.OptBool{Bool: true, IsSet: true}
 

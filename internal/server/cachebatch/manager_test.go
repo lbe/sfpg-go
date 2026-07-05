@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"runtime"
 	"sync/atomic"
 	"testing"
 
@@ -25,14 +26,14 @@ func (m *mockQueries) GetBatchLoadTargets(ctx context.Context) ([]gallerydb.Batc
 	return m.targets, nil
 }
 
-func (m *mockQueries) HttpCacheExistsByKey(ctx context.Context, key string) (int64, error) {
+func (m *mockQueries) HttpCacheExistsByKey(ctx context.Context, key string) (bool, error) {
 	if m.existsByKeyErr != nil {
-		return 0, m.existsByKeyErr
+		return false, m.existsByKeyErr
 	}
 	if m.existsByKey != nil && m.existsByKey[key] {
-		return 1, nil
+		return true, nil
 	}
-	return 0, nil
+	return false, nil
 }
 
 func TestManager_Run_BlocksWhenDiscoveryActive(t *testing.T) {
@@ -60,15 +61,15 @@ func TestManager_Run_BlocksWhenAlreadyRunning(t *testing.T) {
 
 	mgr := NewManager(cfg)
 
-	started := make(chan struct{})
 	go func() {
-		close(started)
 		_ = mgr.Run(ctx)
 		close(blockCh)
 	}()
-	<-started
-	// Give first Run time to enter and start processing
-	// (it will block in handler until we trigger ErrAlreadyRunning)
+
+	// Wait until the first Run() has acquired the running lock.
+	for mgr.Metrics().Snapshot().IsRunning != 1 {
+		runtime.Gosched()
+	}
 
 	// Second run should fail immediately
 	err := mgr.Run(ctx)

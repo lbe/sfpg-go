@@ -28,7 +28,7 @@ import (
 // ============================================================================
 
 func TestRefactoredGalleryHandlerByID(t *testing.T) {
-	app := CreateApp(t, true)
+	app := CreateApp(t, WithPool())
 	time.Sleep(200 * time.Millisecond) // Give some time for the worker pool to start
 	defer app.Shutdown()
 
@@ -40,17 +40,17 @@ func TestRefactoredGalleryHandlerByID(t *testing.T) {
 	defer server.Close()
 
 	// Create a root folder for testing
-	cpc, err := app.dbRwPool.Get()
+	cpcRw, err := app.dbRwPool.Get()
 	if err != nil {
 		t.Fatalf("failed to get db connection: %v", err)
 	}
-	defer app.dbRwPool.Put(cpc)
+	defer app.dbRwPool.Put(cpcRw)
 
-	pathID, err := cpc.Queries.UpsertFolderPathReturningID(app.ctx, "/test-folder")
+	pathID, err := cpcRw.Queries.UpsertFolderPathReturningID(app.ctx, "/test-folder")
 	if err != nil {
 		t.Fatalf("failed to insert folder path: %v", err)
 	}
-	folder, err := cpc.Queries.UpsertFolderReturningFolder(app.ctx, gallerydb.UpsertFolderReturningFolderParams{
+	folder, err := cpcRw.Queries.UpsertFolderReturningFolder(app.ctx, gallerydb.UpsertFolderReturningFolderParams{
 		ParentID:  sql.NullInt64{Valid: false},
 		PathID:    pathID,
 		Name:      "test-folder",
@@ -264,7 +264,7 @@ func TestRefactoredGalleryHandlerByID(t *testing.T) {
 
 // TestRefactoredImageHandlerByID tests the future ID-based image handler.
 func TestRefactoredImageHandlerByID(t *testing.T) {
-	app := CreateApp(t, true)
+	app := CreateApp(t, WithPool())
 	time.Sleep(200 * time.Millisecond) // Give some time for the worker pool to start
 	defer app.Shutdown()
 
@@ -276,13 +276,13 @@ func TestRefactoredImageHandlerByID(t *testing.T) {
 	defer server.Close()
 
 	// Create a folder and file for testing
-	cpc, err := app.dbRwPool.Get()
+	cpcRw, err := app.dbRwPool.Get()
 	if err != nil {
 		t.Fatalf("failed to get db connection: %v", err)
 	}
-	defer app.dbRwPool.Put(cpc)
+	defer app.dbRwPool.Put(cpcRw)
 
-	importer := gallerylib.Importer{Q: cpc.Queries}
+	importer := gallerylib.Importer{Q: cpcRw.Queries}
 	file, err := importer.UpsertPathChain(app.ctx, "/test-folder/test-image.jpg", 0, 0, "", 0, 0, 0, "image/jpeg")
 	if err != nil {
 		t.Fatalf("failed to upsert path chain: %v", err)
@@ -390,7 +390,7 @@ func TestRefactoredImageHandlerByID(t *testing.T) {
 }
 
 func TestRefactoredRawImageByIDHandler(t *testing.T) {
-	app := CreateApp(t, true)
+	app := CreateApp(t, WithPool())
 	time.Sleep(200 * time.Millisecond) // Give some time for the worker pool to start
 	defer app.Shutdown()
 
@@ -398,13 +398,13 @@ func TestRefactoredRawImageByIDHandler(t *testing.T) {
 	server := httptest.NewServer(router)
 	defer server.Close()
 
-	cpc, err := app.dbRwPool.Get()
+	cpcRw, err := app.dbRwPool.Get()
 	if err != nil {
 		t.Fatalf("failed to get db connection: %v", err)
 	}
-	defer app.dbRwPool.Put(cpc)
+	defer app.dbRwPool.Put(cpcRw)
 
-	importer := gallerylib.Importer{Q: cpc.Queries}
+	importer := gallerylib.Importer{Q: cpcRw.Queries}
 	file, err := importer.UpsertPathChain(app.ctx, "/test-folder/raw-image.jpg", 0, 0, "", 0, 0, 0, "image/jpeg")
 	if err != nil {
 		t.Fatalf("failed to upsert path chain: %v", err)
@@ -509,7 +509,7 @@ func TestRefactoredRawImageByIDHandler(t *testing.T) {
 }
 
 func TestRefactoredThumbnailByIDHandler(t *testing.T) {
-	app := CreateApp(t, true)
+	app := CreateApp(t, WithPool())
 	time.Sleep(200 * time.Millisecond) // Give some time for the worker pool to start
 	defer app.Shutdown()
 
@@ -517,20 +517,20 @@ func TestRefactoredThumbnailByIDHandler(t *testing.T) {
 	server := httptest.NewServer(router)
 	defer server.Close()
 
-	cpc, err := app.dbRwPool.Get()
+	cpcRw, err := app.dbRwPool.Get()
 	if err != nil {
 		t.Fatalf("failed to get db connection: %v", err)
 	}
-	defer app.dbRwPool.Put(cpc)
+	defer app.dbRwPool.Put(cpcRw)
 
-	importer := gallerylib.Importer{Q: cpc.Queries}
+	importer := gallerylib.Importer{Q: cpcRw.Queries}
 	file, err := importer.UpsertPathChain(app.ctx, "/test-folder/thumb-image.jpg", 0, 0, "", 0, 0, 0, "image/jpeg")
 	if err != nil {
 		t.Fatalf("failed to upsert path chain: %v", err)
 	}
 
 	thumbContent := []byte("dummy thumb data")
-	_, err = files.UpsertThumbnail(app.ctx, cpc, file.ID, thumbContent)
+	_, err = files.UpsertThumbnail(app.ctx, cpcRw, file.ID, thumbContent)
 	if err != nil {
 		t.Fatalf("failed to upsert thumbnail: %v", err)
 	}
@@ -613,7 +613,7 @@ func TestRefactoredThumbnailByIDHandler(t *testing.T) {
 }
 
 func TestRefactoredFolderThumbnailByIDHandler(t *testing.T) {
-	app := CreateApp(t, true)
+	app := CreateApp(t, WithPool())
 	time.Sleep(200 * time.Millisecond) // Give some time for the worker pool to start
 	defer app.Shutdown()
 
@@ -621,31 +621,31 @@ func TestRefactoredFolderThumbnailByIDHandler(t *testing.T) {
 	server := httptest.NewServer(router)
 	defer server.Close()
 
-	cpc, err := app.dbRwPool.Get()
+	cpcRw, err := app.dbRwPool.Get()
 	if err != nil {
 		t.Fatalf("failed to get db connection: %v", err)
 	}
-	defer app.dbRwPool.Put(cpc)
+	defer app.dbRwPool.Put(cpcRw)
 
-	importer := gallerylib.Importer{Q: cpc.Queries}
+	importer := gallerylib.Importer{Q: cpcRw.Queries}
 	file, err := importer.UpsertPathChain(app.ctx, "/tile-folder/tile-image.jpg", 0, 0, "", 0, 0, 0, "image/jpeg")
 	if err != nil {
 		t.Fatalf("failed to upsert path chain: %v", err)
 	}
 
 	thumbContent := []byte("dummy tile data")
-	_, err = files.UpsertThumbnail(app.ctx, cpc, file.ID, thumbContent)
+	_, err = files.UpsertThumbnail(app.ctx, cpcRw, file.ID, thumbContent)
 	if err != nil {
 		t.Fatalf("failed to upsert thumbnail: %v", err)
 	}
 
 	// Assign thumbnail to folder
-	tx, err := cpc.Conn.BeginTx(app.ctx, nil)
+	tx, err := cpcRw.Conn.BeginTx(app.ctx, nil)
 	if err != nil {
 		t.Fatalf("failed to begin transaction: %v", err)
 	}
 	defer func() { _ = tx.Rollback() }() // Rollback if anything goes wrong
-	qtx := cpc.Queries.WithTx(tx)
+	qtx := cpcRw.Queries.WithTx(tx)
 	err = qtx.UpdateFolderTileId(app.ctx, gallerydb.UpdateFolderTileIdParams{
 		TileID: sql.NullInt64{Int64: file.ID, Valid: true},
 		ID:     file.FolderID.Int64,
@@ -722,8 +722,8 @@ func TestRefactoredFolderThumbnailByIDHandler(t *testing.T) {
 // Content-Encoding, and Vary headers through an integration test.
 func TestGalleryByIDHandler_SetsAllRequiredHeaders(t *testing.T) {
 	// Ensure default session flags for handler tests
-	// Don't set environment variables - rely on CreateAppWithOpt defaults
-	app := CreateAppWithOpt(t, false, getopt.Opt{EnableCompression: getopt.OptBool{Bool: true, IsSet: true}})
+	// Don't set environment variables - rely on CreateApp defaults
+	app := CreateApp(t, WithGetoptOpt(getopt.Opt{EnableCompression: getopt.OptBool{Bool: true, IsSet: true}}))
 	defer app.Shutdown()
 
 	router := app.getRouter()
@@ -780,7 +780,7 @@ func TestGalleryByIDHandler_SetsAllRequiredHeaders(t *testing.T) {
 }
 
 func TestLightboxLooping(t *testing.T) {
-	app := CreateApp(t, true)
+	app := CreateApp(t, WithPool())
 	time.Sleep(200 * time.Millisecond) // Give some time for the worker pool to start
 	defer app.Shutdown()
 
@@ -788,13 +788,13 @@ func TestLightboxLooping(t *testing.T) {
 	server := httptest.NewServer(router)
 	defer server.Close()
 
-	cpc, err := app.dbRwPool.Get()
+	cpcRw, err := app.dbRwPool.Get()
 	if err != nil {
 		t.Fatalf("failed to get db connection: %v", err)
 	}
-	defer app.dbRwPool.Put(cpc)
+	defer app.dbRwPool.Put(cpcRw)
 
-	importer := gallerylib.Importer{Q: cpc.Queries}
+	importer := gallerylib.Importer{Q: cpcRw.Queries}
 	file1, err := importer.UpsertPathChain(app.ctx, "/loop-test/image1.jpg", 0, 0, "", 0, 0, 0, "image/jpeg")
 	if err != nil {
 		t.Fatalf("failed to upsert path chain: %v", err)

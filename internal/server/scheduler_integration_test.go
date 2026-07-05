@@ -36,7 +36,7 @@ func (t *testTask) ExecutionCount() int64 {
 
 // TestAppSchedulerIntegration verifies that the scheduler can be initialized and used with the App
 func TestAppSchedulerIntegration(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// Initialize scheduler manually (mimicking what Run() does)
@@ -124,7 +124,7 @@ func TestAppSchedulerIntegration(t *testing.T) {
 
 // TestAppSchedulerShutdownIntegration verifies that scheduler shutdown works correctly
 func TestAppSchedulerShutdownIntegration(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 
 	// Initialize scheduler manually
 	app.scheduler = scheduler.NewScheduler(0)

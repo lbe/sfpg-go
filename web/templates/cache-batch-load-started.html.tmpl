@@ -1,5 +1,5 @@
 <div
-  class="toast toast-top toast-end z-[70]"
+  class="toast toast-end toast-top z-[70]"
   _="on load
        wait 3s
        set my.style.transition to 'opacity 0.5s'
@@ -7,7 +7,7 @@
        wait 500ms
        remove me"
 >
-  <div class="alert {{ .AlertClass }}">
+  <div class="{{ .AlertClass }} alert">
     <svg
       xmlns="http://www.w3.org/2000/svg"
       class="h-6 w-6 shrink-0 stroke-current"

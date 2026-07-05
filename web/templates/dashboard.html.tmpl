@@ -5,19 +5,19 @@
   >
     <div>
       <h1 class="text-2xl font-semibold">System Dashboard</h1>
-      <p class="text-base-content/60 mt-1 text-xs">
+      <p class="mt-1 text-xs text-base-content/60">
         Real-time performance and health metrics
       </p>
     </div>
     <div class="flex items-center gap-3">
       <div class="indicator">
         <span
-          class="indicator-item badge badge-success badge-xs animate-ping"
+          class="badge indicator-item badge-success badge-xs animate-ping"
         ></span>
         <span class="badge badge-success badge-xs"></span>
       </div>
       <span class="badge badge-success badge-outline">Live</span>
-      <span id="last-updated" class="text-base-content/50 text-xs">
+      <span id="last-updated" class="text-xs text-base-content/50">
         {{ .Metrics.Timestamp.Format "15:04:05" }}
       </span>
     </div>
@@ -28,7 +28,7 @@
     <h2 class="mb-4 text-base font-semibold">Module Status</h2>
     <div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
       {{ range .Metrics.Modules }}
-        <div class="card bg-base-200 border shadow-sm">
+        <div class="card border bg-base-200 shadow-sm">
           <div class="card-body p-4">
             <div class="flex items-center justify-between">
               <span class="text-sm font-medium capitalize">{{ .Name }}</span>
@@ -43,7 +43,7 @@
               {{ end }}
             </div>
             {{ if gt .ActivityCount 0 }}
-              <div class="text-base-content/70 mt-2 text-xs">
+              <div class="mt-2 text-xs text-base-content/70">
                 Activity count:
                 {{ formatCount .ActivityCount }}
               </div>
@@ -51,9 +51,9 @@
           </div>
         </div>
       {{ else }}
-        <div class="card bg-base-200 border shadow-sm">
+        <div class="card border bg-base-200 shadow-sm">
           <div class="card-body p-4 text-center">
-            <p class="text-base-content/60 text-sm">No modules registered</p>
+            <p class="text-sm text-base-content/60">No modules registered</p>
           </div>
         </div>
       {{ end }}
@@ -63,7 +63,7 @@
   <!-- Runtime Metrics -->
   <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
     <!-- Memory Stats -->
-    <div class="card bg-base-200 border shadow-sm">
+    <div class="card border bg-base-200 shadow-sm">
       <div class="card-body">
         <h3 class="flex items-center gap-2 text-sm font-semibold">
           <svg
@@ -83,7 +83,7 @@
           Memory
         </h3>
         <div
-          class="stats stats-vertical bg-base-100 lg:stats-horizontal shadow-sm"
+          class="stats stats-vertical bg-base-100 shadow-sm lg:stats-horizontal"
         >
           <div class="stat">
             <div class="stat-title text-xs">Allocated</div>
@@ -123,7 +123,7 @@
     </div>
 
     <!-- Goroutines & GC -->
-    <div class="card bg-base-200 border shadow-sm">
+    <div class="card border bg-base-200 shadow-sm">
       <div class="card-body">
         <h3 class="flex items-center gap-2 text-sm font-semibold">
           <svg
@@ -143,7 +143,7 @@
           Runtime
         </h3>
         <div
-          class="stats stats-vertical bg-base-100 lg:stats-horizontal shadow-sm"
+          class="stats stats-vertical bg-base-100 shadow-sm lg:stats-horizontal"
         >
           <div class="stat">
             <div class="stat-title text-xs">Goroutines</div>
@@ -186,10 +186,10 @@
   <!-- WriteBatcher Stats -->
   <div>
     <h2 class="mb-4 text-base font-semibold">Write Batcher</h2>
-    <div class="card bg-base-200 border shadow-sm">
+    <div class="card border bg-base-200 shadow-sm">
       <div class="card-body">
         <div
-          class="stats stats-vertical bg-base-100 lg:stats-horizontal shadow-sm"
+          class="stats stats-vertical bg-base-100 shadow-sm lg:stats-horizontal"
         >
           <div class="stat">
             <div class="stat-title text-xs">Pending</div>
@@ -216,9 +216,9 @@
             <div class="stat-title text-xs">Errors</div>
             <div
               id="wb-errors"
-              class="stat-value {{ if gt .Metrics.WriteBatcher.TotalErrors 0 }}
+              class="{{ if gt .Metrics.WriteBatcher.TotalErrors 0 }}
                 text-error
-              {{ end }} text-lg font-semibold"
+              {{ end }} stat-value text-lg font-semibold"
             >
               {{ formatCount .Metrics.WriteBatcher.TotalErrors }}
             </div>
@@ -257,7 +257,7 @@
   <!-- Worker Pool & Queue -->
   <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
     <!-- Worker Pool Stats -->
-    <div class="card bg-base-200 border shadow-sm">
+    <div class="card border bg-base-200 shadow-sm">
       <div class="card-body">
         <h3 class="flex items-center gap-2 text-sm font-semibold">
           <svg
@@ -277,7 +277,7 @@
           Worker Pool
         </h3>
         <div
-          class="stats stats-vertical bg-base-100 lg:stats-horizontal shadow-sm"
+          class="stats stats-vertical bg-base-100 shadow-sm lg:stats-horizontal"
         >
           <div class="stat">
             <div class="stat-title text-xs">Running Workers</div>
@@ -296,7 +296,7 @@
             <div class="stat-title text-xs">Successful</div>
             <div
               id="wp-successful"
-              class="stat-value text-success text-base font-semibold"
+              class="stat-value text-base font-semibold text-success"
             >
               {{ formatCount .Metrics.WorkerPool.SuccessfulTasks }}
             </div>
@@ -305,9 +305,9 @@
             <div class="stat-title text-xs">Failed</div>
             <div
               id="wp-failed"
-              class="stat-value {{ if gt .Metrics.WorkerPool.FailedTasks 0 }}
+              class="{{ if gt .Metrics.WorkerPool.FailedTasks 0 }}
                 text-error
-              {{ end }} text-base font-semibold"
+              {{ end }} stat-value text-base font-semibold"
             >
               {{ formatCount .Metrics.WorkerPool.FailedTasks }}
             </div>
@@ -317,7 +317,7 @@
     </div>
 
     <!-- Queue Stats -->
-    <div class="card bg-base-200 border shadow-sm">
+    <div class="card border bg-base-200 shadow-sm">
       <div class="card-body">
         <h3 class="flex items-center gap-2 text-sm font-semibold">
           <svg
@@ -346,14 +346,14 @@
               of {{ formatCount .Metrics.QueueCapacity }} items
             </div>
             <progress
-              class="progress {{ queueUtilizationColor .Metrics.QueueLength .Metrics.QueueCapacity }} mt-2 w-full"
+              class="{{ queueUtilizationColor .Metrics.QueueLength .Metrics.QueueCapacity }} progress mt-2 w-full"
               value="{{ queueUtilizationPercent .Metrics.QueueLength .Metrics.QueueCapacity }}"
               max="100"
             ></progress>
           </div>
         </div>
         <div
-          class="stats stats-vertical bg-base-100 sm:stats-horizontal shadow-sm"
+          class="stats stats-vertical bg-base-100 shadow-sm sm:stats-horizontal"
         >
           <div class="stat">
             <div class="stat-title text-xs">Utilization</div>
@@ -381,10 +381,10 @@
   <!-- File Processing Stats -->
   <div>
     <h2 class="mb-4 text-base font-semibold">File Processing</h2>
-    <div class="card bg-base-200 border shadow-sm">
+    <div class="card border bg-base-200 shadow-sm">
       <div class="card-body">
         <div
-          class="stats stats-vertical bg-base-100 lg:stats-horizontal shadow-sm"
+          class="stats stats-vertical bg-base-100 shadow-sm lg:stats-horizontal"
         >
           <div class="stat">
             <div class="stat-title text-xs">Total Found</div>
@@ -396,7 +396,7 @@
             <div class="stat-title text-xs">Existing</div>
             <div
               id="fp-existing"
-              class="stat-value text-warning text-base font-semibold"
+              class="stat-value text-base font-semibold text-warning"
             >
               {{ formatCount .Metrics.FileProcessing.AlreadyExisting }}
             </div>
@@ -405,7 +405,7 @@
             <div class="stat-title text-xs">New</div>
             <div
               id="fp-new"
-              class="stat-value text-success text-base font-semibold"
+              class="stat-value text-base font-semibold text-success"
             >
               {{ formatCount .Metrics.FileProcessing.NewlyInserted }}
             </div>
@@ -414,7 +414,7 @@
             <div class="stat-title text-xs">Invalid</div>
             <div
               id="fp-invalid"
-              class="stat-value text-error text-base font-semibold"
+              class="stat-value text-base font-semibold text-error"
             >
               {{ formatCount .Metrics.FileProcessing.SkippedInvalid }}
             </div>
@@ -423,7 +423,7 @@
             <div class="stat-title text-xs">In Flight</div>
             <div
               id="fp-inflight"
-              class="stat-value text-primary text-base font-semibold"
+              class="stat-value text-base font-semibold text-primary"
             >
               {{ formatCount .Metrics.FileProcessing.InFlight }}
             </div>
@@ -436,7 +436,7 @@
   <!-- Cache Preload, Cache Batch Load & HTTP Cache -->
   <div class="grid grid-cols-1 gap-6 lg:grid-cols-3">
     <!-- Cache Preload -->
-    <div class="card bg-base-200 border shadow-sm">
+    <div class="card border bg-base-200 shadow-sm">
       <div class="card-body">
         <div class="flex items-center justify-between">
           <h3
@@ -470,7 +470,7 @@
           {{ end }}
         </div>
         <div
-          class="stats stats-vertical bg-base-100 sm:stats-horizontal shadow-sm"
+          class="stats stats-vertical bg-base-100 shadow-sm sm:stats-horizontal"
         >
           <div class="stat">
             <div class="stat-title text-xs">Scheduled</div>
@@ -485,7 +485,7 @@
             <div class="stat-title text-xs">Completed</div>
             <div
               id="preload-completed"
-              class="stat-value text-success text-base font-semibold"
+              class="stat-value text-base font-semibold text-success"
             >
               {{ formatCount .Metrics.CachePreload.TasksCompleted }}
             </div>
@@ -494,9 +494,9 @@
             <div class="stat-title text-xs">Failed</div>
             <div
               id="preload-failed"
-              class="stat-value {{ if gt .Metrics.CachePreload.TasksFailed 0 }}
+              class="{{ if gt .Metrics.CachePreload.TasksFailed 0 }}
                 text-error
-              {{ end }} text-base font-semibold"
+              {{ end }} stat-value text-base font-semibold"
             >
               {{ formatCount .Metrics.CachePreload.TasksFailed }}
             </div>
@@ -515,7 +515,7 @@
     </div>
 
     <!-- Cache Batch Load -->
-    <div class="card bg-base-200 border shadow-sm">
+    <div class="card border bg-base-200 shadow-sm">
       <div class="card-body">
         <div class="flex items-center justify-between">
           <h3
@@ -568,15 +568,15 @@
           </div>
         </div>
         <div
-          class="stats stats-vertical bg-base-100 sm:stats-horizontal shadow-sm"
+          class="stats stats-vertical bg-base-100 shadow-sm sm:stats-horizontal"
         >
           <div class="stat">
             <div class="stat-title text-xs">Failed</div>
             <div
               id="batch-failed"
-              class="stat-value {{ if gt .Metrics.CacheBatchLoad.TargetsFailed 0 }}
+              class="{{ if gt .Metrics.CacheBatchLoad.TargetsFailed 0 }}
                 text-error
-              {{ end }} text-base font-semibold"
+              {{ end }} stat-value text-base font-semibold"
             >
               {{ formatCount .Metrics.CacheBatchLoad.TargetsFailed }}
             </div>
@@ -592,7 +592,7 @@
     </div>
 
     <!-- HTTP Cache -->
-    <div class="card bg-base-200 border shadow-sm">
+    <div class="card border bg-base-200 shadow-sm">
       <div class="card-body">
         <div class="flex items-center justify-between">
           <h3
@@ -626,7 +626,7 @@
           {{ end }}
         </div>
         <div
-          class="stats stats-vertical bg-base-100 grid w-full grid-cols-2 gap-2 shadow-sm sm:grid-cols-2"
+          class="stats stats-vertical grid w-full grid-cols-2 gap-2 bg-base-100 shadow-sm sm:grid-cols-2"
         >
           <div class="stat place-items-start py-2">
             <div class="stat-title text-xs">Entries</div>

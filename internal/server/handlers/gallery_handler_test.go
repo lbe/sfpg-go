@@ -337,3 +337,31 @@ func TestGalleryByID_ETagIncludesTheme(t *testing.T) {
 		})
 	}
 }
+
+func TestHandleDBError(t *testing.T) {
+	tests := []struct {
+		name       string
+		err        error
+		wantStatus int
+		wantStop   bool
+	}{
+		{"nil", nil, http.StatusOK, false},
+		{"not found", sql.ErrNoRows, http.StatusNotFound, true},
+		{"other", errors.New("boom"), http.StatusInternalServerError, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := &GalleryHandlers{deps: &mockServerDeps{}}
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			got := h.handleDBError(rec, req, tt.err)
+			if got != tt.wantStop {
+				t.Fatalf("handleDBError() = %v, want %v", got, tt.wantStop)
+			}
+			if rec.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d", rec.Code, tt.wantStatus)
+			}
+		})
+	}
+}

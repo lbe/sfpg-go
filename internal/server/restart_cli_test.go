@@ -15,7 +15,7 @@ func TestCase1_CLIOverridesUnchangedField(t *testing.T) {
 	opt := getopt.Opt{
 		Port: getopt.OptInt{Int: 8083, IsSet: true},
 	}
-	app := CreateAppWithOpt(t, false, opt)
+	app := CreateApp(t, WithGetoptOpt(opt))
 	defer app.Shutdown()
 
 	// Simulate DB having port=8081 (different from CLI)
@@ -30,7 +30,7 @@ func TestCase1_CLIOverridesUnchangedField(t *testing.T) {
 	newConfig.ServerCompressionEnable = false // User changed compression
 
 	// Call UpdateConfig with compression in changedFields
-	app.configHandlers.UpdateConfig(newConfig, []string{"server_compression_enable"})
+	app.UpdateConfigWithPrecedence(newConfig, []string{"server_compression_enable"})
 
 	// After UpdateConfig, port should be 8083 (CLI value) because it wasn't changed
 	app.configMu.RLock()
@@ -53,7 +53,7 @@ func TestCase2_UserChangeOverridesCLI(t *testing.T) {
 	opt := getopt.Opt{
 		Port: getopt.OptInt{Int: 8083, IsSet: true},
 	}
-	app := CreateAppWithOpt(t, false, opt)
+	app := CreateApp(t, WithGetoptOpt(opt))
 	defer app.Shutdown()
 
 	// Simulate user changing port to 8084 via web UI
@@ -61,7 +61,7 @@ func TestCase2_UserChangeOverridesCLI(t *testing.T) {
 	newConfig.ListenerPort = 8084 // User changed port
 
 	// Call UpdateConfig with listener_port in changedFields
-	app.configHandlers.UpdateConfig(newConfig, []string{"listener_port"})
+	app.UpdateConfigWithPrecedence(newConfig, []string{"listener_port"})
 
 	// After UpdateConfig, port should be 8084 (user change)
 	app.configMu.RLock()

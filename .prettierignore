@@ -20,3 +20,6 @@ vendor/
 # Logs and generated files
 **/*.log
 **/*.min.*
+
+# Self-modifying scripts (must not be reformatted while running)
+scripts/pre-commit-check.sh

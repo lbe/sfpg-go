@@ -195,14 +195,14 @@ func TestMenu_SimulatesBackNavigation(t *testing.T) {
 
 	// Step 5: Server actions (Cache preload, discovery)
 	// Run discovery
-	discResp := doRequest(t, client, "POST", "/server/discovery", nil, false)
+	discResp := doRequest(t, client, "POST", "/server/discovery", url.Values{"csrf_token": {csrfTokenFromConfig(t, client)}}, false)
 	discResp.Body.Close()
 	if discResp.StatusCode != http.StatusOK {
 		t.Fatalf("POST /server/discovery expected 200, got %d", discResp.StatusCode)
 	}
 
 	// Run cache batch load (may be blocked by discovery - 409 is acceptable)
-	cacheResp := doRequest(t, client, "POST", "/server/cache-batch-load", nil, false)
+	cacheResp := doRequest(t, client, "POST", "/server/cache-batch-load", url.Values{"csrf_token": {csrfTokenFromConfig(t, client)}}, false)
 	cacheResp.Body.Close()
 	if cacheResp.StatusCode != http.StatusOK && cacheResp.StatusCode != http.StatusConflict {
 		t.Fatalf("POST /server/cache-batch-load expected 200 or 409, got %d", cacheResp.StatusCode)
@@ -426,8 +426,8 @@ func doHamburgerMenu(t *testing.T, client *http.Client) *http.Response {
 func logout(t *testing.T, client *http.Client) {
 	t.Helper()
 
-	// POST /logout (no CSRF needed for logout)
-	resp := doRequest(t, client, "POST", "/logout", nil, false)
+	// POST /logout (requires CSRF token)
+	resp := doRequest(t, client, "POST", "/logout", url.Values{"csrf_token": {csrfTokenFromConfig(t, client)}}, false)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
@@ -676,7 +676,7 @@ func TestMenuFunctionalityReport(t *testing.T) {
 		}
 
 		// Logout
-		logoutResp := doRequest(t, client, "POST", "/logout", nil, false)
+		logoutResp := doRequest(t, client, "POST", "/logout", url.Values{"csrf_token": {csrfTokenFromConfig(t, client)}}, false)
 		logoutResp.Body.Close()
 		if logoutResp.StatusCode != http.StatusOK {
 			reportResult(t, 65, "/hamburger-menu", "GET", "No", 200, logoutResp.StatusCode, "FAIL", "logout failed")

@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -44,7 +45,7 @@ func createAppWithBatchLoadForE2E(t *testing.T) *App {
 	opt.SessionSecret.String = "e2e-batch-load-secret"
 	opt.SessionSecret.IsSet = true
 	opt.EnableHTTPCache = getopt.OptBool{Bool: true, IsSet: true}
-	app := CreateAppWithOpt(t, false, opt)
+	app := CreateApp(t, WithGetoptOpt(opt))
 	app.configMu.Lock()
 	if app.config == nil {
 		app.config = config.DefaultConfig()
@@ -53,11 +54,11 @@ func createAppWithBatchLoadForE2E(t *testing.T) *App {
 	app.configMu.Unlock()
 	app.batchLoadManager = cachebatch.NewManager(cachebatch.Config{
 		GetQueries: func() (cachebatch.BatchLoadQueries, func()) {
-			cpc, err := app.dbRoPool.Get()
+			cpcRo, err := app.dbRoPool.Get()
 			if err != nil {
 				return nil, nil
 			}
-			return cpc.Queries, func() { app.dbRoPool.Put(cpc) }
+			return cpcRo.Queries, func() { app.dbRoPool.Put(cpcRo) }
 		},
 		GetHandler:         app.getRouter,
 		GetETagVersion:     app.GetETagVersion,
@@ -110,7 +111,10 @@ func TestE2E_CacheBatchLoad_HTTP_BlockedWhenDiscoveryActive(t *testing.T) {
 	client := &http.Client{Jar: jar}
 	loginAsAdmin(t, client, ts.URL)
 
-	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/server/cache-batch-load", nil)
+	// Extract CSRF token after login
+	csrfToken := extractCSRFTokenFromConfig(t, client, ts.URL)
+
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/server/cache-batch-load", strings.NewReader("csrf_token="+url.QueryEscape(csrfToken)))
 	req.Header.Set("Origin", ts.URL)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := client.Do(req)
@@ -150,7 +154,11 @@ func TestE2E_CacheBatchLoad_HTTP_StartsWhenIdle(t *testing.T) {
 	client := &http.Client{Jar: jar}
 	loginAsAdmin(t, client, ts.URL)
 
-	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/server/cache-batch-load", nil)
+	// Extract CSRF token after login
+	csrfToken := extractCSRFTokenFromConfig(t, client, ts.URL)
+
+	// POST to trigger cache batch load with CSRF token
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/server/cache-batch-load", strings.NewReader("csrf_token="+url.QueryEscape(csrfToken)))
 	req.Header.Set("Origin", ts.URL)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := client.Do(req)
@@ -180,6 +188,12 @@ func TestE2E_CacheBatchLoad_HTTP_StartsWhenIdle(t *testing.T) {
 // TestE2E_CacheBatchLoad_CLI_Success verifies InitForBatchLoad + RunCacheBatchLoad
 // returns exit code 0 when idle (functional equivalent of ./sfpg-go --cache-batch-load).
 func TestE2E_CacheBatchLoad_CLI_Success(t *testing.T) {
+	oldCommandLine := flag.CommandLine
+	oldArgs := os.Args
+	t.Cleanup(func() {
+		flag.CommandLine = oldCommandLine
+		os.Args = oldArgs
+	})
 	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 	os.Args = []string{"cmd"}
 	t.Setenv("SEPG_SESSION_SECRET", "e2e-cli-success")
@@ -202,6 +216,12 @@ func TestE2E_CacheBatchLoad_CLI_Success(t *testing.T) {
 // TestE2E_CacheBatchLoad_CLI_Blocked verifies RunCacheBatchLoad returns exit code 2
 // when discovery is active (blocked).
 func TestE2E_CacheBatchLoad_CLI_Blocked(t *testing.T) {
+	oldCommandLine := flag.CommandLine
+	oldArgs := os.Args
+	t.Cleanup(func() {
+		flag.CommandLine = oldCommandLine
+		os.Args = oldArgs
+	})
 	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 	os.Args = []string{"cmd"}
 	t.Setenv("SEPG_SESSION_SECRET", "e2e-cli-blocked")
@@ -296,6 +316,12 @@ func (h *captureSlogHandler) hasFlushError() bool {
 // trigger "failed to flush unified batch" or similar errors when the WriteBatcher
 // has a backlog from a cache batch load. Regression test for WriteBatcher/Shutdown race.
 func TestE2E_CacheBatchLoad_ShutdownNoFlushErrors(t *testing.T) {
+	oldCommandLine := flag.CommandLine
+	oldArgs := os.Args
+	t.Cleanup(func() {
+		flag.CommandLine = oldCommandLine
+		os.Args = oldArgs
+	})
 	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 	os.Args = []string{"cmd"}
 	t.Setenv("SEPG_SESSION_SECRET", "e2e-shutdown-no-flush")

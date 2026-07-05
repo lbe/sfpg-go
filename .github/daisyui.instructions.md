@@ -289,7 +289,7 @@ Alert informs users about important events
 #### Syntax
 
 ```html
-<div role="alert" class="alert {MODIFIER}">{CONTENT}</div>
+<div role="alert" class="{MODIFIER} alert">{CONTENT}</div>
 ```
 
 #### Rules
@@ -311,7 +311,7 @@ Avatars are used to show a thumbnail
 #### Syntax
 
 ```html
-<div class="avatar {MODIFIER}">
+<div class="{MODIFIER} avatar">
   <div>
     <img src="{image-url}" />
   </div>
@@ -341,7 +341,7 @@ Badges are used to inform the user of the status of specific data
 #### Syntax
 
 ```html
-<span class="badge {MODIFIER}">Badge</span>
+<span class="{MODIFIER} badge">Badge</span>
 ```
 
 #### Rules
@@ -394,7 +394,7 @@ Buttons allow the user to take actions
 #### Syntax
 
 ```html
-<button class="btn {MODIFIER}">Button</button>
+<button class="{MODIFIER} btn">Button</button>
 ```
 
 #### Rules
@@ -428,7 +428,7 @@ For Cally:
 For Pikaday:
 
 ```html
-<input type="text" class="input pika-single" />
+<input type="text" class="pika-single input" />
 ```
 
 For React Day Picker:
@@ -458,7 +458,7 @@ Cards are used to group and display content
 #### Syntax
 
 ```html
-<div class="card {MODIFIER}">
+<div class="{MODIFIER} card">
   <figure><img src="{image-url}" alt="{alt-text}" /></figure>
   <div class="card-body">
     <h2 class="card-title">{title}</h2>
@@ -491,7 +491,7 @@ Carousel show images or content in a scrollable area
 #### Syntax
 
 ```html
-<div class="carousel {MODIFIER}">{CONTENT}</div>
+<div class="{MODIFIER} carousel">{CONTENT}</div>
 ```
 
 #### Rules
@@ -516,10 +516,10 @@ Chat bubbles are used to show one line of conversation and all its data, includi
 #### Syntax
 
 ```html
-<div class="chat {PLACEMENT}">
+<div class="{PLACEMENT} chat">
   <div class="chat-image"></div>
   <div class="chat-header"></div>
-  <div class="chat-bubble {COLOR}">Message text</div>
+  <div class="{COLOR} chat-bubble">Message text</div>
   <div class="chat-footer"></div>
 </div>
 ```
@@ -545,7 +545,7 @@ Checkboxes are used to select or deselect a value
 #### Syntax
 
 ```html
-<input type="checkbox" class="checkbox {MODIFIER}" />
+<input type="checkbox" class="{MODIFIER} checkbox" />
 ```
 
 #### Rules
@@ -644,7 +644,7 @@ Divider will be used to separate content vertically or horizontally
 #### Syntax
 
 ```html
-<div class="divider {MODIFIER}">{text}</div>
+<div class="{MODIFIER} divider">{text}</div>
 ```
 
 #### Rules
@@ -702,7 +702,7 @@ Drawer is a grid layout that can show/hide a sidebar on the left or right side o
 #### Syntax
 
 ```html
-<div class="drawer {MODIFIER}">
+<div class="{MODIFIER} drawer">
   <input id="my-drawer" type="checkbox" class="drawer-toggle" />
   <div class="drawer-content">{CONTENT}</div>
   <div class="drawer-side">{SIDEBAR}</div>
@@ -713,7 +713,7 @@ where {CONTENT} can be navbar, site content, footer, etc
 and {SIDEBAR} can be a menu like:
 
 ```html
-<ul class="menu bg-base-100 text-base-content min-h-full w-80 p-4">
+<ul class="menu min-h-full w-80 bg-base-100 p-4 text-base-content">
   <li><a>Item 1</a></li>
   <li><a>Item 2</a></li>
 </ul>
@@ -804,7 +804,7 @@ A single FAB in the corder of screen
 
 ```html
 <div class="fab">
-  <button class="btn btn-lg btn-circle">{IconOriginal}</button>
+  <button class="btn btn-circle btn-lg">{IconOriginal}</button>
 </div>
 ```
 
@@ -812,12 +812,12 @@ A FAB that opens a 3 other buttons in the corner of page vertically
 
 ```html
 <div class="fab">
-  <div tabindex="0" role="button" class="btn btn-lg btn-circle btn-primary">
+  <div tabindex="0" role="button" class="btn btn-circle btn-primary btn-lg">
     {IconOriginal}
   </div>
-  <button class="btn btn-lg btn-circle">{Icon1}</button>
-  <button class="btn btn-lg btn-circle">{Icon2}</button>
-  <button class="btn btn-lg btn-circle">{Icon3}</button>
+  <button class="btn btn-circle btn-lg">{Icon1}</button>
+  <button class="btn btn-circle btn-lg">{Icon2}</button>
+  <button class="btn btn-circle btn-lg">{Icon3}</button>
 </div>
 ```
 
@@ -825,12 +825,12 @@ A FAB that opens a 3 other buttons in the corner of page vertically and they hav
 
 ```html
 <div class="fab">
-  <div tabindex="0" role="button" class="btn btn-lg btn-circle btn-primary">
+  <div tabindex="0" role="button" class="btn btn-circle btn-primary btn-lg">
     {IconOriginal}
   </div>
-  <div>{Label1}<button class="btn btn-lg btn-circle">{Icon1}</button></div>
-  <div>{Label2}<button class="btn btn-lg btn-circle">{Icon2}</button></div>
-  <div>{Label3}<button class="btn btn-lg btn-circle">{Icon3}</button></div>
+  <div>{Label1}<button class="btn btn-circle btn-lg">{Icon1}</button></div>
+  <div>{Label2}<button class="btn btn-circle btn-lg">{Icon2}</button></div>
+  <div>{Label3}<button class="btn btn-circle btn-lg">{Icon3}</button></div>
 </div>
 ```
 
@@ -838,7 +838,7 @@ FAB with rectangle buttons. These are not circular buttons so they can have more
 
 ```html
 <div class="fab">
-  <div tabindex="0" role="button" class="btn btn-lg btn-circle btn-primary">
+  <div tabindex="0" role="button" class="btn btn-circle btn-primary btn-lg">
     {IconOriginal}
   </div>
   <button class="btn btn-lg">{Label1}</button>
@@ -851,15 +851,15 @@ FAB with close button. When FAB is open, the original button is replaced with a 
 
 ```html
 <div class="fab">
-  <div tabindex="0" role="button" class="btn btn-lg btn-circle btn-primary">
+  <div tabindex="0" role="button" class="btn btn-circle btn-primary btn-lg">
     {IconOriginal}
   </div>
   <div class="fab-close">
-    Close <span class="btn btn-circle btn-lg btn-error">✕</span>
+    Close <span class="btn btn-circle btn-error btn-lg">✕</span>
   </div>
-  <div>{Label1}<button class="btn btn-lg btn-circle">{Icon1}</button></div>
-  <div>{Label2}<button class="btn btn-lg btn-circle">{Icon2}</button></div>
-  <div>{Label3}<button class="btn btn-lg btn-circle">{Icon3}</button></div>
+  <div>{Label1}<button class="btn btn-circle btn-lg">{Icon1}</button></div>
+  <div>{Label2}<button class="btn btn-circle btn-lg">{Icon2}</button></div>
+  <div>{Label3}<button class="btn btn-circle btn-lg">{Icon3}</button></div>
 </div>
 ```
 
@@ -867,7 +867,7 @@ FAB with Main Action button. When FAB is open, the original button is replaced w
 
 ```html
 <div class="fab">
-  <div tabindex="0" role="button" class="btn btn-lg btn-circle btn-primary">
+  <div tabindex="0" role="button" class="btn btn-circle btn-primary btn-lg">
     {IconOriginal}
   </div>
   <div class="fab-main-action">
@@ -875,9 +875,9 @@ FAB with Main Action button. When FAB is open, the original button is replaced w
       {IconMainAction}
     </button>
   </div>
-  <div>{Label1}<button class="btn btn-lg btn-circle">{Icon1}</button></div>
-  <div>{Label2}<button class="btn btn-lg btn-circle">{Icon2}</button></div>
-  <div>{Label3}<button class="btn btn-lg btn-circle">{Icon3}</button></div>
+  <div>{Label1}<button class="btn btn-circle btn-lg">{Icon1}</button></div>
+  <div>{Label2}<button class="btn btn-circle btn-lg">{Icon2}</button></div>
+  <div>{Label3}<button class="btn btn-circle btn-lg">{Icon3}</button></div>
 </div>
 ```
 
@@ -885,15 +885,15 @@ FAB Flower. It opens the buttons in a flower shape (quarter circle) arrangement 
 
 ```html
 <div class="fab fab-flower">
-  <div tabindex="0" role="button" class="btn btn-lg btn-circle btn-primary">
+  <div tabindex="0" role="button" class="btn btn-circle btn-primary btn-lg">
     {IconOriginal}
   </div>
   <button class="fab-main-action btn btn-circle btn-lg">
     {IconMainAction}
   </button>
-  <button class="btn btn-lg btn-circle">{Icon1}</button>
-  <button class="btn btn-lg btn-circle">{Icon2}</button>
-  <button class="btn btn-lg btn-circle">{Icon3}</button>
+  <button class="btn btn-circle btn-lg">{Icon1}</button>
+  <button class="btn btn-circle btn-lg">{Icon2}</button>
+  <button class="btn btn-circle btn-lg">{Icon3}</button>
 </div>
 ```
 
@@ -901,20 +901,20 @@ FAB Flower with tooltips. There's no space for a text label in a quarter circle,
 
 ```html
 <div class="fab fab-flower">
-  <div tabindex="0" role="button" class="btn btn-lg btn-circle btn-primary">
+  <div tabindex="0" role="button" class="btn btn-circle btn-primary btn-lg">
     {IconOriginal}
   </div>
   <button class="fab-main-action btn btn-circle btn-lg">
     {IconMainAction}
   </button>
   <div class="tooltip tooltip-left" data-tip="{Label1}">
-    <button class="btn btn-lg btn-circle">{Icon1}</button>
+    <button class="btn btn-circle btn-lg">{Icon1}</button>
   </div>
   <div class="tooltip tooltip-left" data-tip="{Label2}">
-    <button class="btn btn-lg btn-circle">{Icon2}</button>
+    <button class="btn btn-circle btn-lg">{Icon2}</button>
   </div>
   <div class="tooltip tooltip-left" data-tip="{Label3}">
-    <button class="btn btn-lg btn-circle">{Icon3}</button>
+    <button class="btn btn-circle btn-lg">{Icon3}</button>
   </div>
 </div>
 ```
@@ -968,7 +968,7 @@ File Input is a an input field for uploading files
 #### Syntax
 
 ```html
-<input type="file" class="file-input {MODIFIER}" />
+<input type="file" class="{MODIFIER} file-input" />
 ```
 
 #### Rules
@@ -1002,7 +1002,7 @@ Without HTML form
 
 ```html
 <div class="filter">
-  <input class="btn filter-reset" type="radio" name="{NAME}" aria-label="×" />
+  <input class="filter-reset btn" type="radio" name="{NAME}" aria-label="×" />
   <input class="btn" type="radio" name="{NAME}" aria-label="Tab 1 title" />
   <input class="btn" type="radio" name="{NAME}" aria-label="Tab 2 title" />
 </div>
@@ -1031,7 +1031,7 @@ Footer can contain logo, copyright notice, and links to other pages
 #### Syntax
 
 ```html
-<footer class="footer {MODIFIER}">{CONTENT}</footer>
+<footer class="{MODIFIER} footer">{CONTENT}</footer>
 ```
 
 where content can contain several `<nav>` tags with `footer-title` and links inside
@@ -1056,7 +1056,7 @@ Hero is a component for displaying a large box or image with a title and descrip
 #### Syntax
 
 ```html
-<div class="hero {MODIFIER}">{CONTENT}</div>
+<div class="{MODIFIER} hero">{CONTENT}</div>
 ```
 
 #### Rules
@@ -1136,7 +1136,7 @@ Text Input is a simple input field
 #### Syntax
 
 ```html
-<input type="{type}" placeholder="Type here" class="input {MODIFIER}" />
+<input type="{type}" placeholder="Type here" class="{MODIFIER} input" />
 ```
 
 #### Rules
@@ -1159,7 +1159,7 @@ Join is a container for grouping multiple items, it can be used to group buttons
 #### Syntax
 
 ```html
-<div class="join {MODIFIER}">{CONTENT}</div>
+<div class="{MODIFIER} join">{CONTENT}</div>
 ```
 
 #### Rules
@@ -1183,7 +1183,7 @@ Kbd is used to display keyboard shortcuts
 #### Syntax
 
 ```html
-<kbd class="kbd {MODIFIER}">K</kbd>
+<kbd class="{MODIFIER} kbd">K</kbd>
 ```
 
 #### Rules
@@ -1240,7 +1240,7 @@ Link adds the missing underline style to links
 #### Syntax
 
 ```html
-<a class="link {MODIFIER}">Click me</a>
+<a class="{MODIFIER} link">Click me</a>
 ```
 
 #### Rules
@@ -1287,7 +1287,7 @@ Loading shows an animation to indicate that something is loading
 #### Syntax
 
 ```html
-<span class="loading {MODIFIER}"></span>
+<span class="{MODIFIER} loading"></span>
 ```
 
 #### Rules
@@ -1309,7 +1309,7 @@ Mask crops the content of the element to common shapes
 #### Syntax
 
 ```html
-<img class="mask {MODIFIER}" src="{image-url}" />
+<img class="{MODIFIER} mask" src="{image-url}" />
 ```
 
 #### Rules
@@ -1561,7 +1561,7 @@ Progress bar can be used to show the progress of a task or to show the passing o
 #### Syntax
 
 ```html
-<progress class="progress {MODIFIER}" value="50" max="100"></progress>
+<progress class="{MODIFIER} progress" value="50" max="100"></progress>
 ```
 
 #### Rules
@@ -1614,7 +1614,7 @@ Radio buttons allow the user to select one option
 #### Syntax
 
 ```html
-<input type="radio" name="{name}" class="radio {MODIFIER}" />
+<input type="radio" name="{name}" class="{MODIFIER} radio" />
 ```
 
 #### Rules
@@ -1638,7 +1638,7 @@ Range slider is used to select a value by sliding a handle
 #### Syntax
 
 ```html
-<input type="range" min="0" max="100" value="40" class="range {MODIFIER}" />
+<input type="range" min="0" max="100" value="40" class="{MODIFIER} range" />
 ```
 
 #### Rules
@@ -1661,7 +1661,7 @@ Rating is a set of radio buttons that allow the user to rate something
 #### Syntax
 
 ```html
-<div class="rating {MODIFIER}">
+<div class="{MODIFIER} rating">
   <input type="radio" name="rating-1" class="mask mask-star" />
 </div>
 ```
@@ -1688,7 +1688,7 @@ Select is used to pick a value from a list of options
 #### Syntax
 
 ```html
-<select class="select {MODIFIER}">
+<select class="{MODIFIER} select">
   <option>Option</option>
 </select>
 ```
@@ -1731,7 +1731,7 @@ Stack visually puts elements on top of each other
 #### Syntax
 
 ```html
-<div class="stack {MODIFIER}">{CONTENT}</div>
+<div class="{MODIFIER} stack">{CONTENT}</div>
 ```
 
 #### Rules
@@ -1754,7 +1754,7 @@ Stat is used to show numbers and data in a block
 #### Syntax
 
 ```html
-<div class="stats {MODIFIER}">
+<div class="{MODIFIER} stats">
   <div class="stat">{CONTENT}</div>
 </div>
 ```
@@ -1804,7 +1804,7 @@ Steps can be used to show a list of steps in a process
 #### Syntax
 
 ```html
-<ul class="steps {MODIFIER}">
+<ul class="{MODIFIER} steps">
   <li class="step">{step content}</li>
 </ul>
 ```
@@ -1834,7 +1834,7 @@ Swap allows you to toggle the visibility of two elements using a checkbox or a c
 Using checkbox
 
 ```html
-<label class="swap {MODIFIER}">
+<label class="{MODIFIER} swap">
   <input type="checkbox" />
   <div class="swap-on">{content when active}</div>
   <div class="swap-off">{content when inactive}</div>
@@ -1844,7 +1844,7 @@ Using checkbox
 Using class name
 
 ```html
-<div class="swap {MODIFIER}">
+<div class="{MODIFIER} swap">
   <div class="swap-on">{content when active}</div>
   <div class="swap-off">{content when inactive}</div>
 </div>
@@ -1875,7 +1875,7 @@ Tabs can be used to show a list of links in a tabbed format
 Using buttons:
 
 ```html
-<div role="tablist" class="tabs {MODIFIER}">
+<div role="tablist" class="{MODIFIER} tabs">
   <button role="tab" class="tab">Tab</button>
 </div>
 ```
@@ -1883,7 +1883,7 @@ Using buttons:
 Using radio inputs:
 
 ```html
-<div role="tablist" class="tabs tabs-box">
+<div role="tablist" class="tabs-box tabs">
   <input type="radio" name="my_tabs" class="tab" aria-label="Tab" />
 </div>
 ```
@@ -1946,7 +1946,7 @@ Textarea allows users to enter text in multiple lines
 #### Syntax
 
 ```html
-<textarea class="textarea {MODIFIER}" placeholder="Bio"></textarea>
+<textarea class="{MODIFIER} textarea" placeholder="Bio"></textarea>
 ```
 
 #### Rules
@@ -1989,7 +1989,7 @@ Timeline component shows a list of events in chronological order
 #### Syntax
 
 ```html
-<ul class="timeline {MODIFIER}">
+<ul class="{MODIFIER} timeline">
   <li>
     <div class="timeline-start">{start}</div>
     <div class="timeline-middle">{icon}</div>
@@ -2019,7 +2019,7 @@ Toast is a wrapper to stack elements, positioned on the corner of page
 #### Syntax
 
 ```html
-<div class="toast {MODIFIER}">{CONTENT}</div>
+<div class="{MODIFIER} toast">{CONTENT}</div>
 ```
 
 #### Rules
@@ -2041,7 +2041,7 @@ Toggle is a checkbox that is styled to look like a switch button
 #### Syntax
 
 ```html
-<input type="checkbox" class="toggle {MODIFIER}" />
+<input type="checkbox" class="{MODIFIER} toggle" />
 ```
 
 #### Rules
@@ -2062,7 +2062,7 @@ Validator class changes the color of form elements to error or success based on 
 #### Syntax
 
 ```html
-<input type="{type}" class="input validator" required />
+<input type="{type}" class="validator input" required />
 <p class="validator-hint">Error message</p>
 ```
 

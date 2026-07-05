@@ -16,6 +16,11 @@ import (
 	"github.com/lbe/sfpg-go/internal/server/metrics"
 )
 
+// formatCountValue formats any numeric type with comma separators.
+func formatCountValue[T humanize.Number](v T) string {
+	return humanize.Comma(v).String()
+}
+
 var (
 	cacheVersionMu sync.RWMutex
 	cacheVersion   string
@@ -43,6 +48,7 @@ func GetCacheVersion() string {
 // Pre-parsed HTML templates for various application pages and partials.
 var (
 	loginFormTemplate               *template.Template
+	logoutFormInnerTemplate         *template.Template
 	loginFormInnerTemplate          *template.Template
 	galleryTemplate                 *template.Template
 	configModalTemplate             *template.Template
@@ -118,29 +124,29 @@ func ParseTemplates(templateFS fs.FS) (err error) {
 		"formatCount": func(v any) string {
 			switch n := v.(type) {
 			case int:
-				return humanize.Comma(n).String()
+				return formatCountValue(n)
 			case int8:
-				return humanize.Comma(n).String()
+				return formatCountValue(n)
 			case int16:
-				return humanize.Comma(n).String()
+				return formatCountValue(n)
 			case int32:
-				return humanize.Comma(n).String()
+				return formatCountValue(n)
 			case int64:
-				return humanize.Comma(n).String()
+				return formatCountValue(n)
 			case uint:
-				return humanize.Comma(n).String()
+				return formatCountValue(n)
 			case uint8:
-				return humanize.Comma(n).String()
+				return formatCountValue(n)
 			case uint16:
-				return humanize.Comma(n).String()
+				return formatCountValue(n)
 			case uint32:
-				return humanize.Comma(n).String()
+				return formatCountValue(n)
 			case uint64:
-				return humanize.Comma(n).String()
+				return formatCountValue(n)
 			case float32:
-				return humanize.Comma(n).String()
+				return formatCountValue(n)
 			case float64:
-				return humanize.Comma(n).String()
+				return formatCountValue(n)
 			default:
 				return fmt.Sprintf("%v", v)
 			}
@@ -239,6 +245,9 @@ func ParseTemplates(templateFS fs.FS) (err error) {
 
 	loginFormInnerTemplate = template.Must(template.New("login-form-inner.html.tmpl").Funcs(funcMap).
 		ParseFS(templateFS, "templates/login-form-inner.html.tmpl"))
+
+	logoutFormInnerTemplate = template.Must(template.New("logout-form-inner.html.tmpl").Funcs(funcMap).
+		ParseFS(templateFS, "templates/logout-form-inner.html.tmpl"))
 
 	infoBoxFolderTemplate = template.Must(template.New("infobox-folder.html.tmpl").Funcs(funcMap).
 		ParseFS(templateFS, "templates/infobox-folder.html.tmpl"))

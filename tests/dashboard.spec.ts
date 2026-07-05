@@ -1,51 +1,8 @@
-import { test, expect, Page, BrowserContext } from "@playwright/test";
-
-const BASE_URL = "http://localhost:8083";
+import { test, expect } from "@playwright/test";
+import { loginViaUI, goToDashboard, openMenu, menu } from "./helpers";
 
 // Dashboard polls every 5s; some tests wait for multiple cycles.
 test.describe.configure({ timeout: 90000 });
-
-// ───────────────────────────────────────────────────────────────────
-// Helpers
-// ───────────────────────────────────────────────────────────────────
-
-/** Click the hamburger button to open (or close) the DaisyUI dropdown. */
-async function openMenu(page: Page) {
-  await page.locator("#hamburger-menu-btn").click();
-  await page.waitForTimeout(150);
-}
-
-/** Full login flow via the UI (same as menu-auth.spec.ts). */
-async function loginViaUI(page: Page) {
-  await page.goto(BASE_URL + "/gallery/1");
-  await page.waitForSelector("#gallery-content", { timeout: 10000 });
-
-  await openMenu(page);
-  await page
-    .locator('#hamburger-menu-items label[aria-label="Login"]')
-    .first()
-    .click();
-
-  await page.waitForSelector("#login-form", { timeout: 5000 });
-
-  await page.locator('input[name="username"]').fill("admin");
-  await page.locator('input[name="password"]').fill("admin");
-  await page.locator("#login-form button[type='submit']").click();
-
-  await expect(page.locator("#login_modal")).not.toBeChecked({ timeout: 5000 });
-
-  await page.waitForSelector(
-    "#hamburger-menu-items a[aria-label='Dashboard']",
-    { state: "attached", timeout: 5000 },
-  );
-}
-
-/** Navigate to dashboard and wait for it to render. */
-async function goToDashboard(page: Page) {
-  await page.goto(BASE_URL + "/dashboard");
-  await page.waitForSelector("#dashboard-container", { timeout: 10000 });
-  await page.waitForTimeout(300); // let hyperscript init run
-}
 
 // ───────────────────────────────────────────────────────────────────
 // Test 1: Login → Dashboard — verify all data + layout consistency
@@ -174,7 +131,7 @@ test("Test 1: Dashboard layout is consistent across initial load and polled refr
   // Verify authenticated state survives polling
   await openMenu(page);
   await expect(
-    page.locator("#hamburger-menu-items a[aria-label='Dashboard']"),
+    menu(page).getByText("Dashboard", { exact: true }),
   ).toBeVisible();
 });
 
@@ -203,7 +160,7 @@ test("Test 2: Open dashboard in new tab, refresh, and hard refresh", async ({
   // Auth should survive back-navigation
   await openMenu(page);
   await expect(
-    page.locator("#hamburger-menu-items a[aria-label='Dashboard']"),
+    menu(page).getByText("Dashboard", { exact: true }),
   ).toBeVisible();
   await page.keyboard.press("Escape"); // close menu
 
@@ -214,8 +171,9 @@ test("Test 2: Open dashboard in new tab, refresh, and hard refresh", async ({
     .getAttribute("href");
   expect(dashboardHref).not.toBeNull();
 
-  const fullDashboardUrl =
-    BASE_URL + (dashboardHref!.startsWith("/") ? "" : "/") + dashboardHref;
+  const fullDashboardUrl = dashboardHref!.startsWith("/")
+    ? dashboardHref!
+    : "/" + dashboardHref;
 
   // Open dashboard in a new page within the same browser context
   // (shares cookies/session with the original tab)
@@ -254,9 +212,7 @@ test("Test 2: Open dashboard in new tab, refresh, and hard refresh", async ({
 
   // ── Normal refresh ───────────────────────────────────────────────
   await newTab.reload({ waitUntil: "domcontentloaded" });
-  const refreshResponse = await newTab.waitForURL("**/dashboard**", {
-    timeout: 10000,
-  });
+  await newTab.waitForURL("**/dashboard**", { timeout: 10000 });
   await newTab.waitForSelector("#dashboard-container", { timeout: 10000 });
   await newTab.waitForTimeout(300);
 
@@ -266,16 +222,12 @@ test("Test 2: Open dashboard in new tab, refresh, and hard refresh", async ({
   await expect(newTab.locator("#mem-allocated")).toBeVisible();
 
   // ── Hard refresh (skip cache) ────────────────────────────────────
-  // Playwright doesn't expose Ctrl+Shift+R directly, but we can force
-  // a no-cache reload by adding a cache-busting query parameter.
   await newTab.goto(
     fullDashboardUrl +
       (fullDashboardUrl.includes("?") ? "&" : "?") +
       "_hc=" +
       Date.now(),
-    {
-      waitUntil: "domcontentloaded",
-    },
+    { waitUntil: "domcontentloaded" },
   );
   await newTab.waitForSelector("#dashboard-container", { timeout: 10000 });
   await newTab.waitForTimeout(300);
@@ -292,4 +244,110 @@ test("Test 2: Open dashboard in new tab, refresh, and hard refresh", async ({
   await expect(newTab.getByText("System Dashboard")).toBeVisible();
 
   await newTab.close();
+});
+
+// ───────────────────────────────────────────────────────────────────
+// New Tests (Phase 4.1 additions)
+// ───────────────────────────────────────────────────────────────────
+
+test("Test 3: Metrics update on poll", async ({ page }) => {
+  await loginViaUI(page);
+  await goToDashboard(page);
+
+  // Read initial last-updated timestamp
+  const initialText = await page.locator("#last-updated").textContent();
+  expect(initialText).not.toBeNull();
+
+  // Wait for 2+ polling cycles (5s each, wait 11s)
+  await page.waitForTimeout(11_000);
+
+  // last-updated should have changed
+  const newText = await page.locator("#last-updated").textContent();
+  expect(newText).not.toBe(initialText);
+});
+
+test("Test 4: Partial HTMX response", async ({ page }) => {
+  await loginViaUI(page);
+
+  const r = await page.request.get("/dashboard", {
+    headers: {
+      "HX-Request": "true",
+      "HX-Target": "dashboard-container",
+    },
+  });
+  expect(r.status()).toBe(200);
+  const body = await r.text();
+  // Partial response should NOT contain full <html> or <body> tags
+  expect(body).not.toContain("<html");
+  expect(body).not.toContain("</html>");
+  expect(body).not.toContain("<body");
+  // But should contain dashboard content (header text visible in partial)
+  expect(body).toContain("System Dashboard");
+});
+
+test("Test 5: Metric values are numeric", async ({ page }) => {
+  await loginViaUI(page);
+  await goToDashboard(page);
+
+  // Verify memory allocated is a number
+  const memText = await page.locator("#mem-allocated").textContent();
+  expect(memText).not.toBeNull();
+  const memVal = parseInt(memText!.replace(/[^0-9]/g, ""), 10);
+  expect(Number.isNaN(memVal)).toBe(false);
+  expect(memVal).toBeGreaterThanOrEqual(0);
+
+  // Verify goroutines is a positive integer
+  const goText = await page.locator("#runtime-goroutines").textContent();
+  expect(goText).not.toBeNull();
+  const goVal = parseInt(goText!.replace(/[^0-9]/g, ""), 10);
+  expect(Number.isNaN(goVal)).toBe(false);
+  expect(goVal).toBeGreaterThan(0);
+});
+
+test("Test 6: All cache cards rendered", async ({ page }) => {
+  await loginViaUI(page);
+  await goToDashboard(page);
+
+  await expect(page.locator("#card-cache-preload")).toBeVisible();
+  await expect(page.locator("#card-cache-batch-load")).toBeVisible();
+  await expect(page.locator("#card-http-cache")).toBeVisible();
+});
+
+test("Test 7: Dashboard unauthenticated returns 401", async ({ page }) => {
+  const response = await page.goto("/dashboard");
+  expect(response?.status()).toBe(401);
+});
+
+test("Test 8: Server actions from menu survive (auth intact)", async ({
+  page,
+}) => {
+  await loginViaUI(page);
+  await goToDashboard(page);
+
+  // Open menu and expand the Server collapse
+  await openMenu(page);
+  await page.locator("#hamburger-menu-items details summary").click();
+  await page.waitForTimeout(200);
+
+  // Run Discovery
+  const discoveryBtn = page.locator('button[aria-label="Run Discovery"]');
+  await discoveryBtn.click();
+
+  // Wait for the server action toast to appear (background work started)
+  await expect(page.locator("#server-toast-container")).toBeAttached({
+    timeout: 5000,
+  });
+
+  // Ensure Server collapse is still open, then close menu
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(100);
+
+  // Menu should still show authenticated state
+  await openMenu(page);
+  await expect(
+    menu(page).getByText("Dashboard", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    menu(page).getByText("Login", { exact: true }),
+  ).not.toBeVisible();
 });

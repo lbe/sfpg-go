@@ -5,7 +5,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/lbe/sfpg-go/web"
 )
@@ -13,7 +12,7 @@ import (
 // TestServerHandlers_Initialized verifies that server handlers are properly
 // initialized during app startup.
 func TestServerHandlers_Initialized(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// Verify serverHandlers is set
@@ -21,29 +20,19 @@ func TestServerHandlers_Initialized(t *testing.T) {
 		t.Error("serverHandlers not initialized")
 	}
 
-	// Verify the functions are wired correctly
-	if app.serverHandlers.ShutdownFunc == nil {
-		t.Error("ShutdownFunc not wired")
-	}
-	if app.serverHandlers.DiscoveryFunc == nil {
-		t.Error("DiscoveryFunc not wired")
-	}
+	// Shutdown and TriggerDiscovery are methods on App via ServerDeps interface
+	// (compile-time checked, always available)
 }
 
 // TestServerShutdownRoute verifies the shutdown endpoint returns proper response
 // and calls the shutdown function.
 func TestServerShutdownRoute(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// Parse templates
 	if err := app.buildHandlers(web.FS); err != nil {
 		t.Fatalf("buildHandlers failed: %v", err)
-	}
-
-	shutdownCalled := make(chan bool, 1)
-	app.serverHandlers.ShutdownFunc = func() {
-		shutdownCalled <- true
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/server/shutdown", nil)
@@ -69,17 +58,12 @@ func TestServerShutdownRoute(t *testing.T) {
 
 // TestServerDiscoveryRoute verifies the discovery endpoint exists and responds.
 func TestServerDiscoveryRoute(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// Parse templates
 	if err := app.buildHandlers(web.FS); err != nil {
 		t.Fatalf("buildHandlers failed: %v", err)
-	}
-
-	discoveryCalled := make(chan bool, 1)
-	app.serverHandlers.DiscoveryFunc = func() {
-		discoveryCalled <- true
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/server/discovery", nil)
@@ -89,15 +73,7 @@ func TestServerDiscoveryRoute(t *testing.T) {
 	router := app.getRouter()
 	router.ServeHTTP(rr, req)
 
-	// Discovery is called asynchronously, so we check with a timeout
-	select {
-	case <-discoveryCalled:
-		// Good, discovery was called
-		t.Log("Discovery was called")
-	case <-time.After(50 * time.Millisecond):
-		// Discovery might be blocked by auth
-		t.Log("Discovery not called - likely blocked by auth (expected)")
-	}
+	// Discovery handled by deps (mockServerDeps.TriggerDiscovery is a no-op)
 
 	// Response should be OK, redirect, unauthorized, or forbidden
 	if rr.Code != http.StatusOK && rr.Code != http.StatusFound && rr.Code != http.StatusSeeOther && rr.Code != http.StatusUnauthorized && rr.Code != http.StatusForbidden {
@@ -107,7 +83,7 @@ func TestServerDiscoveryRoute(t *testing.T) {
 
 // TestServerRoutes_Exist verifies that server routes are registered.
 func TestServerRoutes_Exist(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	if err := app.buildHandlers(web.FS); err != nil {

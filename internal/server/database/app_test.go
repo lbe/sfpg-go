@@ -215,17 +215,17 @@ func TestEnsureRootFolderExists(t *testing.T) {
 		_ = dbRwPool.Close()
 	}()
 
-	cpc, err := dbRwPool.Get()
+	cpcRw, err := dbRwPool.Get()
 	if err != nil {
-		t.Fatalf("failed to get cpc: %v", err)
+		t.Fatalf("failed to get cpcRw: %v", err)
 	}
-	defer dbRwPool.Put(cpc)
+	defer dbRwPool.Put(cpcRw)
 
-	if ensureErr := ensureRootFolderExists(ctx, cpc, tempDir); ensureErr != nil {
+	if ensureErr := ensureRootFolderExists(ctx, cpcRw, tempDir); ensureErr != nil {
 		t.Fatalf("ensureRootFolderExists failed: %v", ensureErr)
 	}
 
-	id, err := cpc.Queries.GetFolderIDByPath(ctx, "")
+	id, err := cpcRw.Queries.GetFolderIDByPath(ctx, "")
 	if err != nil {
 		t.Fatalf("GetFolderIDByPath failed: %v", err)
 	}

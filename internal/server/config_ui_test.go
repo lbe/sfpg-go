@@ -59,7 +59,7 @@ func getTextContent(node *html.Node) string {
 
 // TestConfigUI_Navigation_Authenticated verifies that config page loads when authenticated.
 func TestConfigUI_Navigation_Authenticated(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 	t.Parallel()
 	if err := app.loadConfig(); err != nil {
@@ -110,7 +110,7 @@ func TestConfigUI_Navigation_Authenticated(t *testing.T) {
 
 // TestConfigUI_Navigation_Unauthenticated verifies that config page redirects when not authenticated.
 func TestConfigUI_Navigation_Unauthenticated(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	t.Parallel()
@@ -137,7 +137,7 @@ func TestConfigUI_Navigation_Unauthenticated(t *testing.T) {
 
 // TestConfigUI_FormDisplay_AllSettings verifies that all settings are displayed in correct categories.
 func TestConfigUI_FormDisplay_AllSettings(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 	t.Parallel()
 	if err := app.loadConfig(); err != nil {
@@ -186,7 +186,7 @@ func TestConfigUI_FormDisplay_AllSettings(t *testing.T) {
 
 // TestConfigUI_FormSubmission_UpdatesDatabase verifies that saving settings updates database.
 func TestConfigUI_FormSubmission_UpdatesDatabase(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 	t.Parallel()
 	if err := app.loadConfig(); err != nil {
@@ -254,7 +254,7 @@ func TestConfigUI_FormSubmission_UpdatesDatabase(t *testing.T) {
 
 // TestConfigUI_RestartWarning_Appears verifies that restart warning appears when restart-required settings change.
 func TestConfigUI_RestartWarning_Appears(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 	t.Parallel()
 	if err := app.loadConfig(); err != nil {
@@ -353,7 +353,7 @@ func getCSRFTokenFromConfigPage(t *testing.T, client *http.Client, baseURL strin
 
 // TestConfigUI_HTMX_PartialUpdate verifies that form fields update via HTMX partial swap.
 func TestConfigUI_HTMX_PartialUpdate(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 	t.Parallel()
 	if err := app.loadConfig(); err != nil {
@@ -413,7 +413,7 @@ func TestConfigUI_HTMX_PartialUpdate(t *testing.T) {
 
 // TestConfigUI_ExportDownload verifies that export download works.
 func TestConfigUI_ExportDownload(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 	t.Parallel()
 	if err := app.loadConfig(); err != nil {
@@ -470,7 +470,7 @@ func TestConfigUI_ExportDownload(t *testing.T) {
 
 // TestConfigUI_ImportPreview verifies that import preview shows diff.
 func TestConfigUI_ImportPreview(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 	t.Parallel()
 	if err := app.loadConfig(); err != nil {
@@ -580,7 +580,7 @@ site-name: "Preview Test"
 
 // TestConfigUI_LastKnownGood_ButtonVisible verifies that restore last known good button is always visible.
 func TestConfigUI_LastKnownGood_ButtonVisible(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 	t.Parallel()
 	if err := app.loadConfig(); err != nil {
@@ -634,7 +634,7 @@ func TestConfigUI_LastKnownGood_ButtonVisible(t *testing.T) {
 }
 
 func TestConfigModal_DisplaysETagVersion(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 	t.Parallel()
 	ctx := app.ctx
@@ -694,7 +694,7 @@ func TestConfigModal_DisplaysETagVersion(t *testing.T) {
 }
 
 func TestConfigModal_EnableCachePreloadCheckbox(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 	t.Parallel()
 	ctx := app.ctx
@@ -743,7 +743,7 @@ func TestConfigModal_EnableCachePreloadCheckbox(t *testing.T) {
 }
 
 func TestConfigModal_HasIncrementETagButton(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	t.Parallel()

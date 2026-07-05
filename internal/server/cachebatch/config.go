@@ -28,5 +28,5 @@ type Config struct {
 // BatchLoadQueries is the minimal interface needed for batch load.
 type BatchLoadQueries interface {
 	GetBatchLoadTargets(ctx context.Context) ([]gallerydb.BatchLoadTarget, error)
-	HttpCacheExistsByKey(ctx context.Context, key string) (int64, error)
+	HttpCacheExistsByKey(ctx context.Context, key string) (bool, error)
 }

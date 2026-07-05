@@ -14,7 +14,7 @@ import (
 func TestWalkImageDir_EnqueuesOnlySupportedNonZeroImages(t *testing.T) {
 	t.Setenv("SEPG_SESSION_SECRET", "test-secret")
 
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// Create a small set of files in the Images directory
@@ -53,7 +53,7 @@ func TestWalkImageDir_EnqueuesOnlySupportedNonZeroImages(t *testing.T) {
 	_ = mustWrite("image.tiff", 14)
 
 	// Execute the walker which enqueues qualifying files into app.q
-	app.walkImageDir()
+	app.TriggerDiscovery()
 
 	// Collect queued items; order is not guaranteed, so sort for comparison
 	got := app.q.Slice()
@@ -93,7 +93,7 @@ func TestWalkImageDir_EnqueuesOnlySupportedNonZeroImages(t *testing.T) {
 func TestWalkImageDir_UpdatesModuleState(t *testing.T) {
 	t.Setenv("SEPG_SESSION_SECRET", "test-secret")
 
-	app := CreateApp(t, true) // start pool so discovery can process
+	app := CreateApp(t, WithPool()) // start pool so discovery can process
 	defer app.Shutdown()
 
 	// Create a file so discovery has work to do
@@ -112,7 +112,7 @@ func TestWalkImageDir_UpdatesModuleState(t *testing.T) {
 	// Start discovery in goroutine
 	done := make(chan struct{})
 	go func() {
-		app.walkImageDir()
+		app.TriggerDiscovery()
 		close(done)
 	}()
 

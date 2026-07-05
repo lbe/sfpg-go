@@ -367,6 +367,10 @@ retry:
 	// Fast path: try to grab an idle connection without blocking.
 	select {
 	case cpc := <-p.connections:
+		// A nil cpc signals a closed channel (pool shutdown).
+		if cpc == nil {
+			return nil, ErrPoolClosed
+		}
 		if p.needsHealthCheck(cpc) {
 			if err := cpc.Conn.PingContext(p.ctx); err != nil {
 				slog.Warn(
@@ -380,6 +384,8 @@ retry:
 			}
 		}
 		return cpc, nil
+	case <-p.done:
+		return nil, ErrPoolClosed
 	default:
 	}
 
@@ -399,9 +405,13 @@ retry:
 		return cpc, nil
 	}
 
-	// At capacity — block until a connection is returned or context cancelled.
+	// At capacity — block until a connection is returned, pool closes, or context cancelled.
 	select {
 	case cpc := <-p.connections:
+		// A nil cpc signals a closed channel (pool shutdown).
+		if cpc == nil {
+			return nil, ErrPoolClosed
+		}
 		if p.needsHealthCheck(cpc) {
 			if err := cpc.Conn.PingContext(p.ctx); err != nil {
 				slog.Warn(
@@ -415,6 +425,8 @@ retry:
 			}
 		}
 		return cpc, nil
+	case <-p.done:
+		return nil, ErrPoolClosed
 	case <-p.ctx.Done():
 		return nil, &ConnectionError{Op: "acquire", Err: p.ctx.Err()}
 	}
@@ -448,6 +460,12 @@ func (p *DbSQLConnPool) Put(cpc *CpConn) {
 	select {
 	case p.connections <- cpc:
 		// Successfully returned to pool.
+	case <-p.done:
+		// Pool is shutting down — close the connection immediately.
+		p.numConnections.Add(-1)
+		if err := cpc.Close(); err != nil {
+			slog.Error("Error closing connection during pool shutdown", "pool", p.name, "err", err)
+		}
 	default:
 		// Channel full (shouldn't happen with proper sizing).
 		cpc.Close()

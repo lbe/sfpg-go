@@ -184,3 +184,35 @@ func TestProcessFileStats_ExistingFileCountsAsAlreadyExisting(t *testing.T) {
 		t.Errorf("NewlyInserted: got %d, want 0", val)
 	}
 }
+
+// TestCheckIfFileModifiedCore_NilGetFileReturnsError guards against the latent
+// panic described in issue M1: a nil getFile callback must return a descriptive
+// error instead of dereferencing a nil function pointer.
+func TestCheckIfFileModifiedCore_NilGetFileReturnsError(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "testfile.jpg")
+	if err := os.WriteFile(testFile, []byte("test content"), 0644); err != nil {
+		t.Fatalf("failed to create test file: %v", err)
+	}
+
+	getInvalidFile := func(ctx context.Context, path string) (gallerydb.InvalidFile, error) {
+		return gallerydb.InvalidFile{}, sql.ErrNoRows
+	}
+
+	f := &File{
+		ImagesDir: tmpDir,
+		Path:      "testfile.jpg",
+		File: gallerydb.File{
+			Mtime:     sql.NullInt64{Valid: true, Int64: 1000},
+			SizeBytes: sql.NullInt64{Valid: true, Int64: 5000},
+		},
+	}
+
+	_, err := checkIfFileModifiedCore(context.Background(), nil, getInvalidFile, f)
+	if err == nil {
+		t.Fatal("expected error when getFile is nil, got nil")
+	}
+	if got := err.Error(); got != "getFile callback is nil" {
+		t.Errorf("error message: got %q, want %q", got, "getFile callback is nil")
+	}
+}

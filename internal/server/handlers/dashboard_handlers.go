@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 
@@ -20,8 +21,11 @@ type DashboardHandlers struct {
 }
 
 // SessionManager interface for session management.
+// Embedded from session.SessionManager to provide CSRF validation capability.
 type SessionManager interface {
 	IsAuthenticated(r *http.Request) bool
+	ValidateCSRFToken(r *http.Request) bool
+	EnsureCSRFToken(w http.ResponseWriter, r *http.Request) string
 }
 
 // MetricsCollector interface for collecting metrics.
@@ -86,5 +90,24 @@ func (h *DashboardHandlers) DashboardGet(w http.ResponseWriter, r *http.Request)
 		} else {
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		}
+	}
+}
+
+// MetricsJSON handles GET /api/metrics, returning a JSON snapshot of all metrics.
+// Requires authentication. Intended for programmatic consumers such as the test
+// global setup and external monitoring scripts.
+func (h *DashboardHandlers) MetricsJSON(w http.ResponseWriter, r *http.Request) {
+	if !h.sessionManager.IsAuthenticated(r) {
+		http.Error(w, `{"error":"Unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+
+	ctx := r.Context()
+	snapshot := h.collector.Collect(ctx)
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(snapshot); err != nil {
+		slog.Error("failed to encode metrics JSON", "err", err)
 	}
 }

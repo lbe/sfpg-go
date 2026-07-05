@@ -1,0 +1,146 @@
+package server
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"os"
+	"sync"
+	"sync/atomic"
+	"syscall"
+	"time"
+
+	"github.com/lbe/sfpg-go/internal/server/metrics"
+)
+
+// RuntimeManager owns application lifecycle, HTTP server, and restart state.
+type RuntimeManager struct {
+	cancel           context.CancelFunc
+	ctx              context.Context
+	wg               sync.WaitGroup
+	stopProfiler     func()
+	metricsCollector *metrics.Collector
+	version          string
+
+	restartRequired  atomic.Bool
+	restartRequested atomic.Bool
+	httpServerMu     sync.Mutex
+	httpServer       *http.Server
+	execCommand      func(path string, args []string, env []string) error
+	shutdownOnce     sync.Once
+	poolDone         chan struct{}
+
+	galleryStatsMu         sync.RWMutex
+	galleryStatsCache      *GalleryStats
+	galleryStatsAt         int64
+	staleCacheDropInFlight atomic.Bool
+}
+
+func NewRuntimeManager(parent context.Context) *RuntimeManager {
+	ctx, cancel := context.WithCancel(parent)
+	return &RuntimeManager{
+		ctx:         ctx,
+		cancel:      cancel,
+		execCommand: syscall.Exec,
+	}
+}
+
+// ─── Serve ──────────────────────────────────────────────────────────
+
+func (m *RuntimeManager) Serve(handler http.Handler, addr string) error {
+	m.httpServerMu.Lock()
+	m.httpServer = &http.Server{Addr: addr, Handler: handler}
+	httpServer := m.httpServer
+	m.httpServerMu.Unlock()
+
+	slog.Info("starting web server", "addr", addr)
+
+	serverErr := make(chan error, 1)
+	go func() {
+		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			serverErr <- err
+		}
+		close(serverErr)
+	}()
+
+	select {
+	case err := <-serverErr:
+		if err != nil {
+			return fmt.Errorf("server error: %w", err)
+		}
+		return nil
+	case <-m.ctx.Done():
+		slog.Info("context cancelled, shutting down server")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		m.httpServerMu.Lock()
+		shutdownServer := m.httpServer
+		m.httpServerMu.Unlock()
+		if shutdownServer != nil {
+			if err := shutdownServer.Shutdown(shutdownCtx); err != nil {
+				slog.Error("error during server shutdown", "err", err)
+			}
+		}
+		return nil
+	}
+}
+
+// ─── Restart ────────────────────────────────────────────────────────
+
+func (m *RuntimeManager) SetRestartRequired(b bool) { m.restartRequired.Store(b) }
+func (m *RuntimeManager) IsRestartRequested() bool  { return m.restartRequested.Load() }
+
+func (m *RuntimeManager) RestartRequired() bool { return m.restartRequired.Load() }
+
+func (m *RuntimeManager) TriggerRestart() {
+	slog.Info("process restart requested")
+	m.restartRequested.Store(true)
+	m.httpServerMu.Lock()
+	srv := m.httpServer
+	m.httpServerMu.Unlock()
+	if srv == nil {
+		slog.Warn("no HTTP server running, cannot gracefully shut down before restart")
+		return
+	}
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		slog.Error("error during graceful shutdown before restart", "err", err)
+	}
+}
+
+func (m *RuntimeManager) ExecRestart() {
+	exe, err := os.Executable()
+	if err != nil {
+		slog.Error("failed to get executable path", "err", err)
+		os.Exit(1)
+	}
+	slog.Info("re-executing process", "exe", exe, "args", os.Args)
+	if m.execCommand == nil {
+		m.execCommand = syscall.Exec
+	}
+	if err := m.execCommand(exe, os.Args, os.Environ()); err != nil {
+		slog.Error("failed to exec new process image", "err", err)
+		os.Exit(1)
+	}
+}
+
+// ─── Gallery stats ──────────────────────────────────────────────────
+
+func (m *RuntimeManager) GetGalleryStatsCached(discoveryLastStartedAt int64) *GalleryStats {
+	m.galleryStatsMu.RLock()
+	defer m.galleryStatsMu.RUnlock()
+	if m.galleryStatsCache == nil || m.galleryStatsAt != discoveryLastStartedAt {
+		return nil
+	}
+	c := *m.galleryStatsCache
+	return &c
+}
+
+func (m *RuntimeManager) SetGalleryStatsCache(stats *GalleryStats, at int64) {
+	m.galleryStatsMu.Lock()
+	m.galleryStatsCache = stats
+	m.galleryStatsAt = at
+	m.galleryStatsMu.Unlock()
+}

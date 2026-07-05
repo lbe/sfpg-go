@@ -49,16 +49,16 @@ func (s *writeSpy) DeleteInvalidFileByPath(ctx context.Context, p string) error 
 // commits/rolls back). The connection is returned to the pool on test cleanup.
 func newSpyImporter(t *testing.T, ctx context.Context, rwPool *dbconnpool.DbSQLConnPool) (*gallerylib.Importer, *writeSpy, *sql.Tx) {
 	t.Helper()
-	cpc, err := rwPool.Get()
+	cpcRw, err := rwPool.Get()
 	if err != nil {
 		t.Fatalf("rwPool.Get: %v", err)
 	}
-	t.Cleanup(func() { rwPool.Put(cpc) })
-	tx, err := cpc.Conn.BeginTx(ctx, nil)
+	t.Cleanup(func() { rwPool.Put(cpcRw) })
+	tx, err := cpcRw.Conn.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginTx: %v", err)
 	}
-	qtx := cpc.Queries.WithTx(tx)
+	qtx := cpcRw.Queries.WithTx(tx)
 	spy := &writeSpy{CustomQueries: qtx}
 	return &gallerylib.Importer{Q: spy}, spy, tx
 }
@@ -202,20 +202,20 @@ func TestWriteFileInTx_E_ClearsStaleInvalidRow(t *testing.T) {
 
 	// Seed an invalid_files row for the path (simulating a prior failed run).
 	{
-		cpc, err := rwPool.Get()
+		cpcRw, err := rwPool.Get()
 		if err != nil {
 			t.Fatalf("rwPool.Get: %v", err)
 		}
-		if err := cpc.Queries.UpsertInvalidFile(ctx, gallerydb.UpsertInvalidFileParams{
+		if err := cpcRw.Queries.UpsertInvalidFile(ctx, gallerydb.UpsertInvalidFileParams{
 			Path:   p,
 			Mtime:  1600000000,
 			Size:   512,
 			Reason: sql.NullString{String: "prior corruption", Valid: true},
 		}); err != nil {
-			rwPool.Put(cpc)
+			rwPool.Put(cpcRw)
 			t.Fatalf("seed UpsertInvalidFile: %v", err)
 		}
-		rwPool.Put(cpc)
+		rwPool.Put(cpcRw)
 	}
 
 	// Confirm the row exists.
@@ -272,20 +272,20 @@ func TestCheckIfFileModified_ChangedInvalidFileProceedsToReprocessing(t *testing
 
 	// Seed an invalid_files row with the stale mtime.
 	{
-		cpc, err := rwPool.Get()
+		cpcRw, err := rwPool.Get()
 		if err != nil {
 			t.Fatalf("rwPool.Get: %v", err)
 		}
-		if err := cpc.Queries.UpsertInvalidFile(ctx, gallerydb.UpsertInvalidFileParams{
+		if err := cpcRw.Queries.UpsertInvalidFile(ctx, gallerydb.UpsertInvalidFileParams{
 			Path:   name,
 			Mtime:  seededMtime,
 			Size:   999,
 			Reason: sql.NullString{String: "prior corruption", Valid: true},
 		}); err != nil {
-			rwPool.Put(cpc)
+			rwPool.Put(cpcRw)
 			t.Fatalf("seed UpsertInvalidFile: %v", err)
 		}
-		rwPool.Put(cpc)
+		rwPool.Put(cpcRw)
 	}
 
 	cpcRo, err := roPool.Get()

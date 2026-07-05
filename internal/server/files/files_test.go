@@ -143,22 +143,22 @@ func TestNeedsThumbnail(t *testing.T) {
 	t.Run("thumbnail does not exist", func(t *testing.T) {
 		_, roPool, rwPool, _ := createTestProcessor(t, nil)
 		ctx := context.Background()
-		cpc, err := rwPool.Get()
+		cpcRw, err := rwPool.Get()
 		if err != nil {
 			t.Fatalf("get db connection: %v", err)
 		}
-		defer rwPool.Put(cpc)
-		imp := gallerylib.Importer{Q: cpc.Queries}
+		defer rwPool.Put(cpcRw)
+		imp := gallerylib.Importer{Q: cpcRw.Queries}
 		file, err := imp.UpsertPathChain(ctx, "test.jpg", 0, 0, "", 0, 0, 0, "image/jpeg")
 		if err != nil {
 			t.Fatalf("UpsertPathChain: %v", err)
 		}
-		cpcRo, err := roPool.Get()
+		cpcRwRo, err := roPool.Get()
 		if err != nil {
 			t.Fatalf("get ro: %v", err)
 		}
-		defer roPool.Put(cpcRo)
-		needs, err := NeedsThumbnail(ctx, cpcRo, file.ID)
+		defer roPool.Put(cpcRwRo)
+		needs, err := NeedsThumbnail(ctx, cpcRwRo, file.ID)
 		if err != nil {
 			t.Fatalf("NeedsThumbnail: %v", err)
 		}
@@ -169,29 +169,29 @@ func TestNeedsThumbnail(t *testing.T) {
 	t.Run("thumbnail exists", func(t *testing.T) {
 		_, roPool, rwPool, _ := createTestProcessor(t, nil)
 		ctx := context.Background()
-		cpc, err := rwPool.Get()
+		cpcRw, err := rwPool.Get()
 		if err != nil {
 			t.Fatalf("get db connection: %v", err)
 		}
-		defer rwPool.Put(cpc)
-		imp := gallerylib.Importer{Q: cpc.Queries}
+		defer rwPool.Put(cpcRw)
+		imp := gallerylib.Importer{Q: cpcRw.Queries}
 		file, err := imp.UpsertPathChain(ctx, "test2.jpg", 0, 0, "", 0, 0, 0, "image/jpeg")
 		if err != nil {
 			t.Fatalf("UpsertPathChain: %v", err)
 		}
-		_, err = cpc.Queries.UpsertThumbnailReturningID(ctx, gallerydb.UpsertThumbnailReturningIDParams{
+		_, err = cpcRw.Queries.UpsertThumbnailReturningID(ctx, gallerydb.UpsertThumbnailReturningIDParams{
 			FileID: file.ID, SizeLabel: "m", Width: 200, Height: 200, Format: "jpg",
 			CreatedAt: time.Now().Unix(), UpdatedAt: time.Now().Unix(),
 		})
 		if err != nil {
 			t.Fatalf("UpsertThumbnailReturningID: %v", err)
 		}
-		cpcRo, err := roPool.Get()
+		cpcRwRo, err := roPool.Get()
 		if err != nil {
 			t.Fatalf("get ro: %v", err)
 		}
-		defer roPool.Put(cpcRo)
-		needs, err := NeedsThumbnail(ctx, cpcRo, file.ID)
+		defer roPool.Put(cpcRwRo)
+		needs, err := NeedsThumbnail(ctx, cpcRwRo, file.ID)
 		if err != nil {
 			t.Fatalf("NeedsThumbnail: %v", err)
 		}
@@ -205,22 +205,22 @@ func TestNeedsFolderTileUpdate(t *testing.T) {
 	t.Run("folder tile does not exist", func(t *testing.T) {
 		_, roPool, rwPool, _ := createTestProcessor(t, nil)
 		ctx := context.Background()
-		cpc, err := rwPool.Get()
+		cpcRw, err := rwPool.Get()
 		if err != nil {
 			t.Fatalf("get db connection: %v", err)
 		}
-		defer rwPool.Put(cpc)
-		imp := gallerylib.Importer{Q: cpc.Queries}
+		defer rwPool.Put(cpcRw)
+		imp := gallerylib.Importer{Q: cpcRw.Queries}
 		_, err = imp.UpsertPathChain(ctx, "test-folder/test.jpg", 0, 0, "", 0, 0, 0, "image/jpeg")
 		if err != nil {
 			t.Fatalf("UpsertPathChain: %v", err)
 		}
-		cpcRo, err := roPool.Get()
+		cpcRwRo, err := roPool.Get()
 		if err != nil {
 			t.Fatalf("get ro: %v", err)
 		}
-		defer roPool.Put(cpcRo)
-		needs, err := NeedsFolderTileUpdate(ctx, cpcRo, "test-folder")
+		defer roPool.Put(cpcRwRo)
+		needs, err := NeedsFolderTileUpdate(ctx, cpcRwRo, "test-folder")
 		if err != nil {
 			t.Fatalf("NeedsFolderTileUpdate: %v", err)
 		}
@@ -231,35 +231,35 @@ func TestNeedsFolderTileUpdate(t *testing.T) {
 	t.Run("folder tile exists", func(t *testing.T) {
 		_, roPool, rwPool, _ := createTestProcessor(t, nil)
 		ctx := context.Background()
-		cpc, err := rwPool.Get()
+		cpcRw, err := rwPool.Get()
 		if err != nil {
 			t.Fatalf("get db connection: %v", err)
 		}
-		defer rwPool.Put(cpc)
-		imp := gallerylib.Importer{Q: cpc.Queries}
+		defer rwPool.Put(cpcRw)
+		imp := gallerylib.Importer{Q: cpcRw.Queries}
 		file, err := imp.UpsertPathChain(ctx, "test-folder/test.jpg", 0, 0, "", 0, 0, 0, "image/jpeg")
 		if err != nil {
 			t.Fatalf("UpsertPathChain: %v", err)
 		}
-		thumbID, err := cpc.Queries.UpsertThumbnailReturningID(ctx, gallerydb.UpsertThumbnailReturningIDParams{
+		thumbID, err := cpcRw.Queries.UpsertThumbnailReturningID(ctx, gallerydb.UpsertThumbnailReturningIDParams{
 			FileID: file.ID, SizeLabel: "m", Width: 200, Height: 200, Format: "jpg",
 			CreatedAt: time.Now().Unix(), UpdatedAt: time.Now().Unix(),
 		})
 		if err != nil {
 			t.Fatalf("UpsertThumbnailReturningID: %v", err)
 		}
-		err = cpc.Queries.UpdateFolderTileId(ctx, gallerydb.UpdateFolderTileIdParams{
+		err = cpcRw.Queries.UpdateFolderTileId(ctx, gallerydb.UpdateFolderTileIdParams{
 			ID: file.FolderID.Int64, TileID: sql.NullInt64{Int64: thumbID, Valid: true},
 		})
 		if err != nil {
 			t.Fatalf("UpdateFolderTileId: %v", err)
 		}
-		cpcRo, err := roPool.Get()
+		cpcRwRo, err := roPool.Get()
 		if err != nil {
 			t.Fatalf("get ro: %v", err)
 		}
-		defer roPool.Put(cpcRo)
-		needs, err := NeedsFolderTileUpdate(ctx, cpcRo, "test-folder")
+		defer roPool.Put(cpcRwRo)
+		needs, err := NeedsFolderTileUpdate(ctx, cpcRwRo, "test-folder")
 		if err != nil {
 			t.Fatalf("NeedsFolderTileUpdate: %v", err)
 		}
@@ -272,34 +272,34 @@ func TestNeedsFolderTileUpdate(t *testing.T) {
 func TestUpsertThumbnail(t *testing.T) {
 	_, roPool, rwPool, _ := createTestProcessor(t, nil)
 	ctx := context.Background()
-	cpc, err := rwPool.Get()
+	cpcRw, err := rwPool.Get()
 	if err != nil {
 		t.Fatalf("get db connection: %v", err)
 	}
-	defer rwPool.Put(cpc)
-	imp := gallerylib.Importer{Q: cpc.Queries}
+	defer rwPool.Put(cpcRw)
+	imp := gallerylib.Importer{Q: cpcRw.Queries}
 	file, err := imp.UpsertPathChain(ctx, "test-file.jpg", 0, 0, "", 0, 0, 0, "image/jpeg")
 	if err != nil {
 		t.Fatalf("UpsertPathChain: %v", err)
 	}
 	thumbData := []byte{0xDE, 0xAD, 0xBE, 0xEF}
-	thumbnailID, err := UpsertThumbnail(ctx, cpc, file.ID, thumbData)
+	thumbnailID, err := UpsertThumbnail(ctx, cpcRw, file.ID, thumbData)
 	if err != nil {
 		t.Fatalf("UpsertThumbnail: %v", err)
 	}
 	if thumbnailID <= 0 {
 		t.Errorf("expected positive thumbnailID, got %d", thumbnailID)
 	}
-	cpcRo, err := roPool.Get()
+	cpcRwRo, err := roPool.Get()
 	if err != nil {
 		t.Fatalf("get ro: %v", err)
 	}
-	defer roPool.Put(cpcRo)
-	_, err = cpcRo.Queries.GetThumbnailsByFileID(ctx, file.ID)
+	defer roPool.Put(cpcRwRo)
+	_, err = cpcRwRo.Queries.GetThumbnailsByFileID(ctx, file.ID)
 	if err != nil {
 		t.Errorf("GetThumbnailsByFileID: %v", err)
 	}
-	blobData, err := cpcRo.Queries.GetThumbnailBlobDataByID(ctx, thumbnailID)
+	blobData, err := cpcRwRo.Queries.GetThumbnailBlobDataByID(ctx, thumbnailID)
 	if err != nil {
 		t.Errorf("GetThumbnailBlobDataByID: %v", err)
 	}
@@ -962,7 +962,7 @@ func (f *fakeProcessor) ProcessFile(ctx context.Context, path string) (*File, er
 	return &File{Path: path}, nil
 }
 
-func (f *fakeProcessor) ProcessFileWithConn(ctx context.Context, path string, cpcRo *dbconnpool.CpConn) (*File, error) {
+func (f *fakeProcessor) ProcessFileWithConn(ctx context.Context, path string, cpcRwRo *dbconnpool.CpConn) (*File, error) {
 	// Delegate to ProcessFile since fakeProcessor doesn't need DB connection
 	return f.ProcessFile(ctx, path)
 }
@@ -1302,12 +1302,12 @@ func TestRecordInvalidFile(t *testing.T) {
 	}
 
 	// Verify the record was written directly to DB
-	cpc, err := rwPool.Get()
+	cpcRw, err := rwPool.Get()
 	if err != nil {
 		t.Fatalf("get rw conn: %v", err)
 	}
-	defer rwPool.Put(cpc)
-	inv, err := cpc.Queries.GetInvalidFileByPath(ctx, path)
+	defer rwPool.Put(cpcRw)
+	inv, err := cpcRw.Queries.GetInvalidFileByPath(ctx, path)
 	if err != nil {
 		t.Fatalf("GetInvalidFileByPath: %v", err)
 	}

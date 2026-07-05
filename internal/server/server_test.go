@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"net/http"
@@ -29,7 +30,7 @@ import (
 // TestAuthMiddleware tests the authMiddleware to ensure it correctly protects
 // routes, redirecting unauthenticated requests and allowing authenticated ones.
 func TestTemplateRendering(t *testing.T) {
-	app := CreateApp(t, false) // Create a dummy app, no need for DB for template parsing
+	app := CreateApp(t) // Create a dummy app, no need for DB for template parsing
 	defer app.Shutdown()
 
 	// Templates are parsed in ui.go's init() function.
@@ -51,7 +52,7 @@ func TestTemplateRendering(t *testing.T) {
 			"Thumbs":      gd.Thumbs,
 		}
 		req := httptest.NewRequest("GET", "/", nil)
-		data = template.AddAuthToData(data, app.isAuthenticated(rr, req))
+		data = template.AddAuthToData(data, app.IsAuthenticated(rr, req))
 		err := ui.RenderPage(rr, "gallery", data, false) // Use renderPage for full layout
 		if err != nil {
 			t.Errorf("Failed to render layout.html.tmpl: %v", err)
@@ -101,7 +102,7 @@ func TestTemplateRendering(t *testing.T) {
 			"Thumbs":      gd.Thumbs,
 		}
 		req := httptest.NewRequest("GET", "/", nil)
-		data = template.AddAuthToData(data, app.isAuthenticated(rr, req))
+		data = template.AddAuthToData(data, app.IsAuthenticated(rr, req))
 		err := ui.RenderPage(rr, "gallery", data, false) // Use renderPage for full layout
 		if err != nil {
 			t.Errorf("Failed to render gallery.html.tmpl: %v", err)
@@ -237,11 +238,11 @@ func TestTemplateRendering(t *testing.T) {
 
 // TestNegotiateEncoding tests the negotiateEncoding function with various Accept-Encoding headers
 func TestGetUser_Additional(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// Test with non-existent user
-	_, err := app.getUser("nonexistent")
+	_, err := app.GetUser(context.Background(), "nonexistent")
 	if err == nil {
 		t.Error("Expected error for non-existent user")
 	}
@@ -312,14 +313,14 @@ func TestRemoveImagesDirPrefix(t *testing.T) {
 
 // TestServerError tests error response
 func TestServerError(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/", nil)
 
 	testErr := fmt.Errorf("test error")
-	app.serverError(rr, req, testErr)
+	app.ServerError(rr, req, testErr)
 
 	if rr.Code != 500 {
 		t.Errorf("Expected status 500, got %d", rr.Code)
@@ -350,7 +351,7 @@ func TestServerError(t *testing.T) {
 
 // TestGetSessionOptions tests session options retrieval
 func TestBuildHandlers(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// Load config first
@@ -366,7 +367,7 @@ func TestBuildHandlers(t *testing.T) {
 
 // TestWalkImageDir tests image directory walking
 func TestWalkImageDir(t *testing.T) {
-	app := CreateApp(t, true) // Start with pool enabled
+	app := CreateApp(t, WithPool()) // Start with pool enabled
 	defer app.Shutdown()
 
 	// Create a test image file
@@ -376,7 +377,7 @@ func TestWalkImageDir(t *testing.T) {
 	}
 
 	// Walk the directory (no return value)
-	app.walkImageDir()
+	app.TriggerDiscovery()
 
 	// Wait a bit for worker pool to process
 	time.Sleep(50 * time.Millisecond)
@@ -384,7 +385,7 @@ func TestWalkImageDir(t *testing.T) {
 
 // TestLoadFromDatabase_EdgeCases tests config loading edge cases
 func TestSetConfigDefaultsLegacy_Coverage(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// Function should not panic - it's called during app creation
@@ -396,7 +397,7 @@ func TestSetConfigDefaultsLegacy_Coverage(t *testing.T) {
 
 // TestParseConfigUITemplates_Coverage verifies all config templates are parsed
 func TestSetRootDir_WithExplicitPath(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	testDir := t.TempDir()
@@ -409,7 +410,7 @@ func TestSetRootDir_WithExplicitPath(t *testing.T) {
 
 // TestSetRootDir_WithNilPath verifies setRootDir uses executable directory when nil
 func TestSetRootDir_WithNilPath(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	app.setRootDir(nil)
@@ -421,7 +422,7 @@ func TestSetRootDir_WithNilPath(t *testing.T) {
 
 // TestSetupBootstrapLogging_Coverage verifies bootstrap logging initialization
 func TestBuildHandlers_Coverage(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// Rebuild handlers to verify no error
@@ -446,7 +447,7 @@ func TestBuildHandlers_Coverage(t *testing.T) {
 
 // TestLogProfileLocation_Coverage tests profile location logging
 func TestBuildHandlers_Integration(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// Build handlers and ensure they're functional
@@ -465,7 +466,7 @@ func TestBuildHandlers_Integration(t *testing.T) {
 
 // TestLoadConfig_WithError tests config loading with failure cases
 func TestSetRootDir_Multiple(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	testDir1 := t.TempDir()
@@ -484,7 +485,7 @@ func TestSetRootDir_Multiple(t *testing.T) {
 
 // TestInitForUnlock_Multiple tests unlock initialization multiple times
 func TestCacheWriteWorker_Shutdown(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 
 	// Shutdown should trigger context cancellation, causing cacheWriteWorker to exit
 	app.Shutdown()

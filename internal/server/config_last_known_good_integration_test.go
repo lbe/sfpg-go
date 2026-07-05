@@ -12,7 +12,7 @@ import (
 
 // TestLastKnownGood_SavedOnConfigUpdate verifies that last known good config is saved after successful update.
 func TestLastKnownGood_SavedOnConfigUpdate(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	t.Parallel()
 	app.config = config.DefaultConfig()
 	app.config.ListenerPort = 8081
@@ -61,7 +61,7 @@ func TestLastKnownGood_SavedOnConfigUpdate(t *testing.T) {
 
 // TestLastKnownGood_RestoreFromUI verifies that restore from UI shows diff and applies after confirmation.
 func TestLastKnownGood_RestoreFromUI(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	t.Parallel()
 	app.config = config.DefaultConfig()
 
@@ -102,7 +102,7 @@ log-level: "warn"
 
 // TestLastKnownGood_RestoreFromCLI verifies that restore from CLI applies immediately on startup.
 func TestLastKnownGood_RestoreFromCLI(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 
 	// Set up last known good config in database
 	t.Parallel()
@@ -150,7 +150,7 @@ site-name: "CLI Restored"
 
 // TestLastKnownGood_DiffDisplay verifies that diff is shown before restore.
 func TestLastKnownGood_DiffDisplay(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	t.Parallel()
 	app.config = config.DefaultConfig()
 	app.config.ListenerPort = 8081
@@ -216,7 +216,7 @@ site-name: "Last Known Good"
 
 // TestLastKnownGood_NotFound verifies that restore handles missing last known good gracefully.
 func TestLastKnownGood_NotFound(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	t.Parallel()
 	app.config = config.DefaultConfig()
 
@@ -241,7 +241,7 @@ func TestLastKnownGood_NotFound(t *testing.T) {
 
 // TestLastKnownGood_ExcludesSessionSecret verifies that last known good never contains session secret.
 func TestLastKnownGood_ExcludesSessionSecret(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	t.Parallel()
 	app.config = config.DefaultConfig()
 
@@ -281,7 +281,7 @@ func TestLastKnownGood_ExcludesSessionSecret(t *testing.T) {
 
 // TestLastKnownGood_PreservesUserPassword verifies that last known good doesn't overwrite user/password.
 func TestLastKnownGood_PreservesUserPassword(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	t.Parallel()
 	app.config = config.DefaultConfig()
 

@@ -17,7 +17,7 @@ import (
 
 func TestIntegration_ETagIncrementWorkflow(t *testing.T) {
 	// Create app with fresh database
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	ctx := context.Background()
 
 	// Step 1: Verify default ETag is set
@@ -116,7 +116,7 @@ func TestIntegration_ETagIncrementWorkflow(t *testing.T) {
 }
 
 func TestIntegration_ETagIncrementSameDay(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	ctx := context.Background()
 
 	// Set ETag to today-01
@@ -138,7 +138,7 @@ func TestIntegration_ETagIncrementSameDay(t *testing.T) {
 }
 
 func TestIntegration_ETagIncrementOldDate(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	ctx := context.Background()
 
 	// Set ETag to old date
@@ -160,7 +160,7 @@ func TestIntegration_ETagIncrementOldDate(t *testing.T) {
 }
 
 func TestIntegration_ConfigModal_FullWorkflow(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	ctx := context.Background()
 	if err := app.buildHandlers(web.FS); err != nil {
 		t.Fatalf("buildHandlers: %v", err)
@@ -233,7 +233,7 @@ func TestIntegration_ConfigModal_FullWorkflow(t *testing.T) {
 }
 
 func TestIntegration_MultipleIncrements(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	ctx := context.Background()
 
 	today := time.Now().Format("20060102")
@@ -264,14 +264,14 @@ func TestIntegration_MultipleIncrements(t *testing.T) {
 }
 
 func TestConfigIncrementETag_RuntimePropagation(t *testing.T) {
-	// 1. Initialize the App using CreateApp(t, false)
-	app := CreateApp(t, false)
+	// 1. Initialize the App using CreateApp(t)
+	app := CreateApp(t)
 
 	// Ensure config is loaded and applied so UI/Handlers are initialized
 	if err := app.loadConfig(); err != nil {
 		t.Fatalf("loadConfig failed: %v", err)
 	}
-	app.applyConfig()
+	app.ApplyConfig()
 
 	// 2. Verify initial ETag version in both UI (ui.GetCacheVersion()) and ETag middleware (app.GetETagVersion())
 	uiVersion := ui.GetCacheVersion()

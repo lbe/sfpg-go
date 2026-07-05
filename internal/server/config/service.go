@@ -4,14 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
-	"path/filepath"
-	"time"
-
-	"golang.org/x/crypto/bcrypt"
 
 	"github.com/lbe/sfpg-go/internal/dbconnpool"
-	"github.com/lbe/sfpg-go/internal/gallerydb"
 )
 
 // ErrNilConfig is returned when a nil config is passed to Save or Validate.
@@ -32,7 +26,7 @@ type ConfigStore interface {
 // ConfigAdmin provides admin-level configuration operations.
 type ConfigAdmin interface {
 	// Export exports the configuration as a YAML string.
-	Export() (string, error)
+	Export(ctx context.Context) (string, error)
 
 	// Import imports configuration from a YAML string and saves it to the database.
 	Import(yamlContent string, ctx context.Context) error
@@ -115,10 +109,7 @@ func (s *configService) Validate(cfg *Config) error {
 }
 
 // Export exports the configuration as a YAML string.
-func (s *configService) Export() (string, error) {
-	// Export requires a config instance, but we don't have one in the service.
-	// We need to load the current config first, then export it.
-	ctx := context.Background()
+func (s *configService) Export(ctx context.Context) (string, error) {
 	cfg, err := s.Load(ctx)
 	if err != nil {
 		return "", err
@@ -157,8 +148,6 @@ func (s *configService) RestoreLastKnownGood(ctx context.Context) (*Config, erro
 	return cfg.RestoreLastKnownGood(ctx, cpcRo.Queries)
 }
 
-const bootstrapLogDir = "logs"
-
 // EnsureDefaults ensures default config (admin creds, default keys) exists in the database.
 func (s *configService) EnsureDefaults(ctx context.Context, rootDir string) error {
 	cpcRw, err := s.dbRwPool.Get()
@@ -167,69 +156,7 @@ func (s *configService) EnsureDefaults(ctx context.Context, rootDir string) erro
 	}
 	defer s.dbRwPool.Put(cpcRw)
 
-	var userExists bool
-	if err := cpcRw.Conn.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM config WHERE key = 'user')").Scan(&userExists); err != nil {
-		return fmt.Errorf("ensure defaults: check user: %w", err)
-	}
-	if !userExists {
-		hashed, err := bcrypt.GenerateFromPassword([]byte("admin"), bcrypt.DefaultCost)
-		if err != nil {
-			return fmt.Errorf("ensure defaults: bcrypt: %w", err)
-		}
-		defaults := map[string]string{
-			"user":                "admin",
-			"password":            string(hashed),
-			"log_directory":       filepath.Join(rootDir, bootstrapLogDir),
-			"log_level":           "debug",
-			"log_rollover":        "weekly",
-			"log_retention_count": "7",
-		}
-		for k, v := range defaults {
-			if _, err := cpcRw.Conn.ExecContext(ctx, "INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)", k, v); err != nil {
-				return fmt.Errorf("ensure defaults: insert %q: %w", k, err)
-			}
-		}
-	}
-
-	cfg := DefaultConfig()
-	if cfg.ImageDirectory == "" && rootDir != "" {
-		cfg.ImageDirectory = filepath.Join(rootDir, "Images")
-	}
-	configMap := cfg.ToMap()
-	now := time.Now().Unix()
-	for key, value := range configMap {
-		if key == "user" || key == "password" {
-			continue
-		}
-		var exists bool
-		if err := cpcRw.Conn.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM config WHERE key = ?)", key).Scan(&exists); err != nil {
-			slog.Warn("ensure defaults: check exists", "key", key, "err", err)
-			continue
-		}
-		if !exists {
-			if err := cpcRw.Queries.UpsertConfigValueOnly(ctx, gallerydb.UpsertConfigValueOnlyParams{
-				Key: key, Value: value, CreatedAt: now, UpdatedAt: now,
-			}); err != nil {
-				slog.Warn("ensure defaults: upsert", "key", key, "err", err)
-			}
-		} else {
-			// If key exists, check if it's empty and update critical defaults
-			var currentValue string
-			if err := cpcRw.Conn.QueryRowContext(ctx, "SELECT value FROM config WHERE key = ?", key).Scan(&currentValue); err != nil {
-				slog.Warn("ensure defaults: get current value", "key", key, "err", err)
-				continue
-			}
-			// Update empty critical values (image_directory, log_directory)
-			if currentValue == "" && (key == "image_directory" || key == "log_directory") {
-				if err := cpcRw.Queries.UpsertConfigValueOnly(ctx, gallerydb.UpsertConfigValueOnlyParams{
-					Key: key, Value: value, CreatedAt: now, UpdatedAt: now,
-				}); err != nil {
-					slog.Warn("ensure defaults: update empty critical value", "key", key, "err", err)
-				}
-			}
-		}
-	}
-	return nil
+	return EnsureBootstrapDefaults(ctx, rootDir, cpcRw.Queries)
 }
 
 // GetConfigValue returns the value for key from the config table.
@@ -255,6 +182,10 @@ func (s *configService) IncrementETag(ctx context.Context) (string, error) {
 
 	newETag := IncrementETagVersion(cfg.ETagVersion)
 	cfg.ETagVersion = newETag
+
+	if err := s.Validate(cfg); err != nil {
+		return "", fmt.Errorf("invalid config after ETag increment: %w", err)
+	}
 
 	if err := s.Save(ctx, cfg); err != nil {
 		return "", err

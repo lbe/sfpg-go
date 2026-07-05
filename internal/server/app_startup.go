@@ -8,14 +8,10 @@ import (
 
 	"github.com/lbe/sfpg-go/internal/cachelite"
 	"github.com/lbe/sfpg-go/internal/profiler"
-	"github.com/lbe/sfpg-go/internal/queue"
 	"github.com/lbe/sfpg-go/internal/scheduler"
 	"github.com/lbe/sfpg-go/internal/server/cachebatch"
-	"github.com/lbe/sfpg-go/internal/server/cachepreload"
 	"github.com/lbe/sfpg-go/internal/server/config"
-	"github.com/lbe/sfpg-go/internal/server/files"
 	"github.com/lbe/sfpg-go/internal/server/metrics"
-	"github.com/lbe/sfpg-go/internal/workerpool"
 	"github.com/lbe/sfpg-go/web"
 )
 
@@ -116,53 +112,22 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 	}
 
 	// Apply config to app fields
-	app.applyConfig()
+	app.ApplyConfig()
 	app.scheduleStaleCacheDrop("run-startup")
 
 	// Initialize HTTP cache middleware after config is loaded
 	app.initializeHTTPCache()
 
-	// Initialize cache preload manager (dynamic enable/disable, no restart)
-	enablePreload := true
-	if app.config != nil {
-		enablePreload = app.config.EnableCachePreload
-	}
-	routes := []string{"/gallery/", "/lightbox/", "/info/folder/", "/info/image/"}
-	if app.cacheMW != nil {
-		routes = app.cacheMW.Config().CacheableRoutes
-	}
-	app.preloadManager = cachepreload.NewPreloadManager(routes, enablePreload)
-	app.preloadManager.Configure(cachepreload.PreloadConfig{
-		TaskTracker:    &cachepreload.TaskTracker{},
-		SessionTracker: &cachepreload.SessionTracker{},
-		DBRoPool:       app.dbRoPool,
-		GetQueries:     app.getHandlerQueries,
-		GetHandler:     app.getRouter,
-		GetETagVersion: func() string {
-			app.configMu.RLock()
-			v := ""
-			if app.config != nil {
-				v = app.config.ETagVersion
-			}
-			app.configMu.RUnlock()
-			if v == "" {
-				return config.DefaultConfig().ETagVersion
-			}
-			return v
-		},
-		Metrics: &cachepreload.PreloadMetrics{},
-	})
-
-	// Initialize FileProcessor after imagesDir is set
-	app.fileProcessor = files.NewFileProcessor(app.dbRoPool, app.dbRwPool, app.ImporterFactory, app.imagesDir,
-		newBatcherAdapter(app.writeBatcher))
-
-	// Use config value for queue size, with default if config not loaded yet
-	queueSize := 10000
-	if app.config != nil {
-		queueSize = app.config.QueueSize
-	}
-	app.q = queue.NewQueue[string](queueSize)
+	// --- SubsystemManager: creates queue, fileProcessor, preloadManager,
+	//     moduleStateService, pool, and processingStats ---
+	app.Start(
+		app.ctx, app.config,
+		app.imagesDir, app.normalizedImagesDir,
+		removeImagesDirPrefix,
+		app.getRouter,
+		app.GetHandlerQueries,
+		app.GetETagVersion,
+	)
 
 	// Run file discovery based on config value (defaults to true)
 	runDiscovery := true // default
@@ -170,7 +135,7 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 		runDiscovery = app.config.RunFileDiscovery
 	}
 	if runDiscovery {
-		go app.walkImageDir()
+		go app.TriggerDiscovery()
 	} else if app.moduleStateService != nil {
 		go func() {
 			ctx := app.getCtx()
@@ -190,27 +155,9 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 		}()
 	}
 
-	// Use config values for worker pool, with defaults if config not loaded yet
-	maxIdleTime := 10 * time.Second
-	if app.config != nil {
-		maxIdleTime = app.config.WorkerPoolMaxIdleTime
-		// If config specifies worker pool sizes, use them (0 means auto-calculate)
-		if app.config.WorkerPoolMax > 0 {
-			maxPoolWorkers = app.config.WorkerPoolMax
-		}
-		if app.config.WorkerPoolMinIdle > 0 {
-			minPoolWorkers = app.config.WorkerPoolMinIdle
-		}
-	}
-	app.pool = workerpool.NewPool(app.ctx, maxPoolWorkers, minPoolWorkers, maxIdleTime)
-
+	// Worker pool startup
 	app.poolDone = make(chan struct{})
-	app.processingStats = &files.ProcessingStats{}
-	pf := files.NewPoolFuncWithProcessor(app.fileProcessor, app.q, app.normalizedImagesDir, removeImagesDirPrefix, app.processingStats)
-	go func() {
-		defer close(app.poolDone)
-		app.pool.StartWorkerPool(pf, app.dbRoPool, app.dbRwPool, app.q.Len)
-	}()
+	app.StartPool(app.ctx, app.poolDone, app.normalizedImagesDir, removeImagesDirPrefix)
 
 	// Completion monitor for initial batch processing
 	if runDiscovery {
@@ -297,50 +244,42 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 		})
 	}
 
-	// Initialize and wire up metrics collector for dashboard
+	// --- Metrics ---
 	app.metricsCollector = metrics.NewCollector()
-
-	// Wire up metrics sources (use adapter pattern to avoid circular dependencies)
-	if app.writeBatcher != nil {
-		app.metricsCollector.SetWriteBatcher(&writeBatcherAdapter{wb: app.writeBatcher})
-	}
-	if app.pool != nil {
-		app.metricsCollector.SetWorkerPool(&workerPoolAdapter{pool: app.pool})
-	}
-	if app.preloadManager != nil {
-		app.metricsCollector.SetCachePreload(&cachePreloadAdapter{pm: app.preloadManager})
-	}
-	// Wire up HTTP cache if it was initialized earlier
-	if app.cacheMW != nil {
-		app.metricsCollector.SetHTTPCache(&httpCacheAdapter{cache: app.cacheMW})
-	}
-	// Wire up file processing stats for dashboard
-	if app.processingStats != nil {
-		app.metricsCollector.SetFileProcessor(&fileProcessorAdapter{stats: app.processingStats})
-	}
-
-	// Record initial module activities
-	app.metricsCollector.RecordModuleActivity("discovery", runDiscovery)
-	app.metricsCollector.RecordModuleActivity("cache_preload", app.config != nil && app.config.EnableCachePreload)
+	app.WireMetrics(app.metricsCollector)
+	// Wire up batch load manager (created below if cacheEnabled)
+	// app.metricsCollector.SetCacheBatchLoad handled below
 
 	// Queue info
+	queueSize := 10000
+	if app.config != nil {
+		queueSize = app.config.QueueSize
+	}
 	app.metricsCollector.SetQueueInfo(func() int { return app.q.Len() }, queueSize)
+	app.metricsCollector.RecordModuleActivity("discovery", runDiscovery)
+	app.metricsCollector.RecordModuleActivity("cache_preload",
+		app.config != nil && app.config.EnableCachePreload)
 	app.logStartupConfigSummary(queueSize, runDiscovery)
 
-	app.ensureSessionAndRestart()
+	// Ensure the session store and manager exist before building handlers.
+	app.ensureSession()
 	if err := app.buildHandlers(web.FS); err != nil {
 		return fmt.Errorf("build handlers: %w", err)
 	}
+
+	// Wire preload service into gallery handlers (must be after both
+	// SubsystemManager.Start and HandlerManager.Build)
+	app.SetPreloadService(app.preloadManager)
 
 	// Create batch load manager and wire to metrics (requires buildHandlers for getRouter)
 	if cacheEnabled && app.moduleStateService != nil {
 		app.batchLoadManager = cachebatch.NewManager(cachebatch.Config{
 			GetQueries: func() (cachebatch.BatchLoadQueries, func()) {
-				cpc, err := app.dbRoPool.Get()
+				cpcRo, err := app.dbRoPool.Get()
 				if err != nil {
 					return nil, nil
 				}
-				return cpc.Queries, func() { app.dbRoPool.Put(cpc) }
+				return cpcRo.Queries, func() { app.dbRoPool.Put(cpcRo) }
 			},
 			GetHandler:         app.getRouter,
 			GetETagVersion:     app.GetETagVersion,
@@ -354,6 +293,13 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 		slog.Error("server error", "err", err)
 		time.Sleep(1 * time.Second) // Give logger time to write
 		panic("main")
+	}
+
+	// If a restart was requested, replace the current process image. On success
+	// this does not return; on failure it exits the process.
+	if app.IsRestartRequested() {
+		app.Shutdown()
+		app.ExecRestart()
 	}
 
 	return nil

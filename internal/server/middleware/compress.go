@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -188,6 +189,8 @@ func CompressMiddleware(next http.Handler) http.Handler {
 		next.ServeHTTP(cw, r)
 
 		// Flush compressed content
-		_ = cw.Flush()
+		if err := cw.Flush(); err != nil {
+			slog.Warn("failed to flush compressed response", "error", err, "path", r.URL.Path, "encoding", cw.compression)
+		}
 	})
 }

@@ -11,7 +11,7 @@ import (
 // TestAuthMiddleware tests the authMiddleware to ensure it correctly protects
 // routes, redirecting unauthenticated requests and allowing authenticated ones.
 func TestGetSessionOptions(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	opts := app.getSessionOptions()
@@ -25,7 +25,7 @@ func TestGetSessionOptions(t *testing.T) {
 
 // TestGetSessionOptionsConfig tests session options config
 func TestGetSessionOptionsConfig(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// Load config from database
@@ -53,7 +53,7 @@ func TestGetSessionOptionsConfig(t *testing.T) {
 
 // TestResponseWriterMethods tests responseWriter helper methods
 func TestGetSessionOptions_EdgeCases(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	t.Run("with loaded config", func(t *testing.T) {
@@ -68,7 +68,7 @@ func TestGetSessionOptions_EdgeCases(t *testing.T) {
 	})
 
 	t.Run("without session manager", func(t *testing.T) {
-		app2 := CreateApp(t, false)
+		app2 := CreateApp(t)
 		defer app2.Shutdown()
 
 		// Even without config, should return some options
@@ -79,10 +79,10 @@ func TestGetSessionOptions_EdgeCases(t *testing.T) {
 	})
 }
 
-// TestEnsureSessionAndRestart tests session and restart initialization
-func TestEnsureSessionAndRestart(t *testing.T) {
-	// CreateApp already calls ensureSessionAndRestart, so test it's properly initialized
-	app := CreateApp(t, false)
+// TestEnsureSession tests session initialization.
+func TestEnsureSession(t *testing.T) {
+	// CreateApp already calls ensureSession, so test it's properly initialized.
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	if app.store == nil {
@@ -90,44 +90,5 @@ func TestEnsureSessionAndRestart(t *testing.T) {
 	}
 	if app.sessionManager == nil {
 		t.Error("Expected sessionManager to be initialized")
-	}
-	if app.restartCh == nil {
-		t.Error("Expected restartCh to be initialized")
-	}
-}
-
-// TestRestartRequired tests restart flag checking
-func TestRestartRequired(t *testing.T) {
-	app := CreateApp(t, false)
-	defer app.Shutdown()
-
-	// Initially should not require restart
-	if app.RestartRequired() {
-		t.Error("Expected restart not required initially")
-	}
-
-	// Set restart required
-	app.restartMu.Lock()
-	app.restartRequired = true
-	app.restartMu.Unlock()
-
-	if !app.RestartRequired() {
-		t.Error("Expected restart required after setting flag")
-	}
-}
-
-// TestResponseWriter_AdditionalMethods tests more responseWriter methods
-func TestRestartRequired_Coverage(t *testing.T) {
-	app := CreateApp(t, false)
-	defer app.Shutdown()
-
-	app.restartRequired = false
-	if app.RestartRequired() {
-		t.Error("Expected RestartRequired to return false")
-	}
-
-	app.restartRequired = true
-	if !app.RestartRequired() {
-		t.Error("Expected RestartRequired to return true")
 	}
 }

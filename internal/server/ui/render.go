@@ -87,6 +87,8 @@ func RenderTemplate(w io.Writer, name string, data any) error {
 		t = configModalTemplate
 	case "login-form.html.tmpl":
 		t = loginFormTemplate
+	case "logout-form-inner.html.tmpl":
+		t = logoutFormInnerTemplate
 	case "login-form-inner.html.tmpl":
 		t = loginFormInnerTemplate
 	case "infobox-folder.html.tmpl":

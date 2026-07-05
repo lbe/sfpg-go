@@ -24,7 +24,7 @@ import (
 // TestAuthMiddleware tests the authMiddleware to ensure it correctly protects
 // routes, redirecting unauthenticated requests and allowing authenticated ones.
 func TestAuthMiddleware(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	handlerCalled := false
@@ -81,7 +81,7 @@ func TestAuthMiddleware(t *testing.T) {
 // TestAuthMiddleware_HTMXCachePolicy verifies that authMiddleware sets no-cache for HTMX
 // requests and Vary: HX-Request, HX-Target for all auth-protected responses (e32e621 behavior).
 func TestAuthMiddleware_HTMXCachePolicy(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	dummyHandler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -136,7 +136,7 @@ func TestAuthMiddleware_HTMXCachePolicy(t *testing.T) {
 // Test that when the session secret changes, an existing cookie becomes invalid
 // and the middleware clears the cookie and returns 401 Unauthorized.
 func TestAuthMiddleware_InvalidCookieClearsAndReturnsUnauthorized(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	handlerCalled := false
@@ -194,7 +194,7 @@ func TestAuthMiddleware_InvalidCookieClearsAndReturnsUnauthorized(t *testing.T) 
 // Test that loginHandler succeeds when cookie is invalid (rotated secret) and valid credentials provided.
 // The handler creates a fresh session when the old cookie is invalid.
 func TestLoginHandler_InvalidCookieOnValidCredentials(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// First, create a valid authenticated cookie with the current secret
@@ -277,13 +277,13 @@ func TestLoginHandler_InvalidCookieOnValidCredentials(t *testing.T) {
 }
 
 func TestAddAuthToTemplateData(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	t.Run("Nil data map", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/", nil)
 		rr := httptest.NewRecorder()
-		data := template.AddAuthToData(nil, app.isAuthenticated(rr, req))
+		data := template.AddAuthToData(nil, app.IsAuthenticated(rr, req))
 		if data == nil {
 			t.Fatal("Expected non-nil data map")
 		}
@@ -296,7 +296,7 @@ func TestAddAuthToTemplateData(t *testing.T) {
 		req := httptest.NewRequest("GET", "/", nil)
 		rr := httptest.NewRecorder()
 		existing := map[string]any{"Key": "value"}
-		data := template.AddAuthToData(existing, app.isAuthenticated(rr, req))
+		data := template.AddAuthToData(existing, app.IsAuthenticated(rr, req))
 		if data["Key"] != "value" {
 			t.Error("Expected existing keys to be preserved")
 		}
@@ -316,7 +316,7 @@ func TestAddAuthToTemplateData(t *testing.T) {
 		newReq := httptest.NewRequest("GET", "/", nil)
 		newReq.Header.Set("Cookie", rr.Header().Get("Set-Cookie"))
 		rr2 := httptest.NewRecorder()
-		data := template.AddAuthToData(nil, app.isAuthenticated(rr2, newReq))
+		data := template.AddAuthToData(nil, app.IsAuthenticated(rr2, newReq))
 		if data["IsAuthenticated"] != true {
 			t.Error("Expected IsAuthenticated to be true")
 		}
@@ -324,7 +324,7 @@ func TestAddAuthToTemplateData(t *testing.T) {
 }
 
 func TestAuthMiddleware_ReturnsUnauthorized(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	dummyHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -342,7 +342,7 @@ func TestAuthMiddleware_ReturnsUnauthorized(t *testing.T) {
 }
 
 func TestValidateCsrfToken(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	t.Run("valid CSRF token", func(t *testing.T) {
@@ -398,17 +398,17 @@ func TestValidateCsrfToken(t *testing.T) {
 
 // TestConfigValidate tests config validation
 func TestGetAdminUsername(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// Set up admin username in database
-	cpc, err := app.dbRwPool.Get()
+	cpcRw, err := app.dbRwPool.Get()
 	if err != nil {
 		t.Fatalf("Failed to get DB connection: %v", err)
 	}
-	defer app.dbRwPool.Put(cpc)
+	defer app.dbRwPool.Put(cpcRw)
 
-	err = cpc.Queries.UpsertConfigValueOnly(app.ctx, gallerydb.UpsertConfigValueOnlyParams{
+	err = cpcRw.Queries.UpsertConfigValueOnly(app.ctx, gallerydb.UpsertConfigValueOnlyParams{
 		Key:       "user",
 		Value:     "testadmin",
 		CreatedAt: time.Now().Unix(),
@@ -429,13 +429,13 @@ func TestGetAdminUsername(t *testing.T) {
 
 // TestEnsureCsrfToken tests CSRF token generation and storage
 func TestEnsureCsrfToken_Additional(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	req := httptest.NewRequest("GET", "/", nil)
 	rr := httptest.NewRecorder()
 
-	token := app.ensureCsrfToken(rr, req)
+	token := app.EnsureCSRFToken(rr, req)
 	if token == "" {
 		t.Error("Expected non-empty CSRF token")
 	}
@@ -443,14 +443,14 @@ func TestEnsureCsrfToken_Additional(t *testing.T) {
 
 // TestAddAuthToTemplateData_Additional tests adding auth info to template data
 func TestAddAuthToTemplateData_Additional(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	data := make(map[string]any)
 	req := httptest.NewRequest("GET", "/", nil)
 	rr := httptest.NewRecorder()
 
-	result := template.AddAuthToData(data, app.isAuthenticated(rr, req))
+	result := template.AddAuthToData(data, app.IsAuthenticated(rr, req))
 
 	if _, ok := result["IsAuthenticated"]; !ok {
 		t.Error("Expected IsAuthenticated in template data")
@@ -459,13 +459,13 @@ func TestAddAuthToTemplateData_Additional(t *testing.T) {
 
 // TestAddCommonTemplateData_Additional tests adding common template data
 func TestIsAuthenticated_EdgeCases(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	t.Run("missing session", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/", nil)
 		rr := httptest.NewRecorder()
-		if app.isAuthenticated(rr, req) {
+		if app.IsAuthenticated(rr, req) {
 			t.Error("Expected not authenticated when session is missing")
 		}
 	})
@@ -484,7 +484,7 @@ func TestIsAuthenticated_EdgeCases(t *testing.T) {
 		req2.Header.Set("Cookie", rr.Header().Get("Set-Cookie"))
 
 		rr2 := httptest.NewRecorder()
-		if app.isAuthenticated(rr2, req2) {
+		if app.IsAuthenticated(rr2, req2) {
 			t.Error("Expected not authenticated when value is not bool")
 		}
 	})
@@ -492,14 +492,14 @@ func TestIsAuthenticated_EdgeCases(t *testing.T) {
 
 // TestAddCommonTemplateData_EdgeCases tests additional template data scenarios
 func TestEnsureCsrfToken_Comprehensive(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	t.Run("generates new token", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/", nil)
 		rr := httptest.NewRecorder()
 
-		token1 := app.ensureCsrfToken(rr, req)
+		token1 := app.EnsureCSRFToken(rr, req)
 		if token1 == "" {
 			t.Error("Expected non-empty CSRF token")
 		}
@@ -509,7 +509,7 @@ func TestEnsureCsrfToken_Comprehensive(t *testing.T) {
 		req2.Header.Set("Cookie", rr.Header().Get("Set-Cookie"))
 		rr2 := httptest.NewRecorder()
 
-		token2 := app.ensureCsrfToken(rr2, req2)
+		token2 := app.EnsureCSRFToken(rr2, req2)
 		if token2 == "" {
 			t.Error("Expected non-empty CSRF token on second call")
 		}
@@ -529,7 +529,7 @@ func TestEnsureCsrfToken_Comprehensive(t *testing.T) {
 		req2.Header.Set("Cookie", rr.Header().Get("Set-Cookie"))
 		rr2 := httptest.NewRecorder()
 
-		token := app.ensureCsrfToken(rr2, req2)
+		token := app.EnsureCSRFToken(rr2, req2)
 		if token != "existing-token" {
 			t.Errorf("Expected existing token, got %s", token)
 		}
@@ -538,7 +538,7 @@ func TestEnsureCsrfToken_Comprehensive(t *testing.T) {
 
 // TestValidateCsrfToken_Comprehensive tests CSRF validation
 func TestValidateCsrfToken_Comprehensive(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	t.Run("valid token", func(t *testing.T) {
@@ -603,7 +603,7 @@ func TestValidateCsrfToken_Comprehensive(t *testing.T) {
 
 // TestClearLoginAttempts_EdgeCases tests clearing login attempts
 func TestGetAdminUsername_Coverage(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	username, err := app.getAdminUsername()
@@ -618,19 +618,19 @@ func TestGetAdminUsername_Coverage(t *testing.T) {
 
 // TestEnsureCsrfToken_Coverage verifies CSRF token creation
 func TestEnsureCsrfToken_Coverage(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	req := httptest.NewRequest("GET", "/", nil)
 	w := httptest.NewRecorder()
 
 	// Should not panic
-	app.ensureCsrfToken(w, req)
+	app.EnsureCSRFToken(w, req)
 }
 
 // TestCompressWriter_Write_Coverage tests compress writer write operation
 func TestGetAdminUsername_WithConfigService(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	username, err := app.getAdminUsername()
@@ -641,7 +641,7 @@ func TestGetAdminUsername_WithConfigService(t *testing.T) {
 
 // TestGetAdminUsername_Multiple calls tests multiple admin username retrievals
 func TestGetAdminUsername_Multiple(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// Call multiple times to ensure consistency
@@ -655,7 +655,7 @@ func TestGetAdminUsername_Multiple(t *testing.T) {
 
 // TestGetAdminUsername_DirectDatabasePath tests admin username via database (not configService)
 func TestGetAdminUsername_DirectDatabasePath(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// Force using database path by setting configService to nil
@@ -673,22 +673,22 @@ func TestGetAdminUsername_DirectDatabasePath(t *testing.T) {
 
 // TestEnsureCsrfToken_SessionCreation tests CSRF token creation in session
 func TestEnsureCsrfToken_SessionCreation(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	req := httptest.NewRequest("GET", "/", nil)
 	w := httptest.NewRecorder()
 
 	// Call multiple times to test idempotence
-	app.ensureCsrfToken(w, req)
-	app.ensureCsrfToken(w, req)
+	app.EnsureCSRFToken(w, req)
+	app.EnsureCSRFToken(w, req)
 
 	// Should complete without error
 }
 
 // TestEnsureCsrfToken_WithExistingToken tests CSRF token with existing session
 func TestEnsureCsrfToken_WithExistingToken(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	req := httptest.NewRequest("GET", "/", nil)
@@ -704,12 +704,12 @@ func TestEnsureCsrfToken_WithExistingToken(t *testing.T) {
 	newReq.Header.Set("Cookie", w.Header().Get("Set-Cookie"))
 	w2 := httptest.NewRecorder()
 
-	app.ensureCsrfToken(w2, newReq)
+	app.EnsureCSRFToken(w2, newReq)
 }
 
 // TestValidateCsrfToken_WithValidToken tests CSRF validation with valid token
 func TestValidateCsrfToken_WithValidToken(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	req := httptest.NewRequest("GET", "/", nil)
@@ -731,7 +731,7 @@ func TestValidateCsrfToken_WithValidToken(t *testing.T) {
 
 // TestValidateCsrfToken_InvalidSession tests CSRF validation with invalid session
 func TestValidateCsrfToken_InvalidSession(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	req := httptest.NewRequest("POST", "/", nil)

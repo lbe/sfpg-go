@@ -14,7 +14,7 @@ import (
 // TestConfigModal_JavaScript_RendersCorrectly verifies that the JavaScript in the admin tab
 // renders correctly without HTML entity encoding issues (e.g., < should not become &lt;)
 func TestConfigModal_JavaScript_RendersCorrectly(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 	t.Parallel()
 	if err := app.loadConfig(); err != nil {

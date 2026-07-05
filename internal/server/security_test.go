@@ -57,7 +57,7 @@ func (f *pathTraversalFake) GetGalleryStatistics(ctx context.Context) (gallerydb
 // TestPathTraversal_ImageByID verifies that path traversal attempts
 // via the image ID endpoint do not allow access outside the images directory.
 func TestPathTraversal_ImageByID(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	server := httptest.NewServer(app.getRouter())
@@ -103,7 +103,7 @@ func TestPathTraversal_ImageByID(t *testing.T) {
 // TestRawImageByIDHandler_PathTraversal_Forbidden ensures that if the DB returns
 // a file path that would escape the images directory, the handler responds 403.
 func TestRawImageByIDHandler_PathTraversal_Forbidden(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// Inject a file record with a path attempting to traverse outside images dir
@@ -180,7 +180,7 @@ func TestRawImageByIDHandler_PathTraversal_Forbidden(t *testing.T) {
 // TestCrossOriginProtection_UnsafeMethods verifies that POST, PUT, DELETE, PATCH
 // require a valid Origin header matching the request host.
 func TestCrossOriginProtection_UnsafeMethods(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	server := httptest.NewServer(app.getRouter())
@@ -330,7 +330,7 @@ func TestCrossOriginProtection_UnsafeMethods(t *testing.T) {
 // TestCrossOriginProtection_SafeMethods verifies that GET, HEAD, OPTIONS, TRACE
 // do not require Origin header (safe methods).
 func TestCrossOriginProtection_SafeMethods(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	server := httptest.NewServer(app.getRouter())
@@ -369,7 +369,7 @@ func TestSessionSecurity_HttpOnly(t *testing.T) {
 	// Set environment to enable HttpOnly
 	t.Setenv("SEPG_SESSION_HTTPONLY", "true")
 
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	server := httptest.NewServer(app.getRouter())
@@ -451,7 +451,7 @@ func TestSessionSecurity_Secure(t *testing.T) {
 	// Set environment to enable Secure flag
 	t.Setenv("SEPG_SESSION_SECURE", "true")
 
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	server := httptest.NewServer(app.getRouter())
@@ -614,7 +614,7 @@ func TestSessionSecurity_DevMode(t *testing.T) {
 	t.Setenv("SEPG_SESSION_HTTPONLY", "false")
 	t.Setenv("SEPG_SESSION_SECURE", "false")
 
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	server := httptest.NewServer(app.getRouter())
@@ -690,7 +690,7 @@ func TestSessionSecurity_DevMode(t *testing.T) {
 // TestAuthenticationRequired verifies that protected endpoints
 // require authentication.
 func TestAuthenticationRequired(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	server := httptest.NewServer(app.getRouter())
@@ -819,7 +819,7 @@ func TestRemoveImagesDirPrefix_Security(t *testing.T) {
 // TestFileAccessWithinImagesDir verifies that the application only serves
 // files from within the configured images directory.
 func TestFileAccessWithinImagesDir(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// Create a file outside the images directory

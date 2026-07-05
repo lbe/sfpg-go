@@ -13,7 +13,7 @@ import (
 func TestCacheEnabledByDefault(t *testing.T) {
 	// Create app WITHOUT setting app.opt.EnableHTTPCache CLI flag
 	// This simulates normal startup where cache should be enabled by default config
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 
 	// Load config (which has EnableHTTPCache=true by default)
 	if err := app.loadConfig(); err != nil {
@@ -25,8 +25,8 @@ func TestCacheEnabledByDefault(t *testing.T) {
 		t.Fatal("Expected EnableHTTPCache=true in default config")
 	}
 
-	// Apply config (this mimics app.applyConfig() from Run())
-	app.applyConfig()
+	// Apply config (this mimics app.ApplyConfig() from Run())
+	app.ApplyConfig()
 
 	// Initialize cache middleware after config is loaded (this mimics app.initializeHTTPCache() from Run())
 	app.initializeHTTPCache()

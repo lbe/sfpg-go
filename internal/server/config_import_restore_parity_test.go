@@ -28,7 +28,7 @@ import (
 // This test SHOULD FAIL until import validation matches modal validation.
 func TestConfigImport_ValidationParityWithModal(t *testing.T) {
 	t.Setenv("SEPG_SESSION_SECURE", "false")
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	ts := httptest.NewServer(app.getRouter())
@@ -132,7 +132,7 @@ db_min_idle_connections: 10`
 // This test SHOULD FAIL until restore properly respects restart requirements.
 func TestConfigRestore_PoolSettingsRequireRestart(t *testing.T) {
 	t.Setenv("SEPG_SESSION_SECURE", "false")
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// Save initial pool config to establish baseline
@@ -171,9 +171,7 @@ func TestConfigRestore_PoolSettingsRequireRestart(t *testing.T) {
 	}
 
 	// ASSERTION 1: Restart flag should be set if pool settings changed
-	app.restartMu.RLock()
-	restartRequired := app.restartRequired
-	app.restartMu.RUnlock()
+	restartRequired := app.restartRequired.Load()
 
 	// Note: loadConfig might not set restart flag automatically - this is part of the defect
 	// The test documents expected behavior

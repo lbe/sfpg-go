@@ -9,7 +9,9 @@ import (
 
 	"github.com/lbe/sfpg-go/internal/dbconnpool"
 	"github.com/lbe/sfpg-go/internal/gallerydb"
+	"github.com/lbe/sfpg-go/internal/server/config"
 	"github.com/lbe/sfpg-go/internal/server/interfaces"
+	"github.com/lbe/sfpg-go/internal/server/session"
 	"github.com/lbe/sfpg-go/internal/server/ui"
 	"github.com/lbe/sfpg-go/web"
 )
@@ -152,6 +154,81 @@ func (l lightboxList) GetFileViewsByFolderIDOrderByFileName(ctx context.Context,
 
 // --- Metadata Queries Mocks ---
 
+// mockServerDeps implements interfaces.ServerDeps for handler unit tests.
+// All methods return safe zero values; override fields for specific test behavior.
+type mockServerDeps struct {
+	HQ         interfaces.HandlerQueries
+	MQ         interfaces.MetadataQueries
+	Cfg        *config.Config
+	ImgDir     string
+	ETag       string
+	BatchLoad  interfaces.StartCacheBatchLoadResult
+	BatchErr   error
+	CSRFToken  string
+	Authed     bool
+	User       *session.User
+	LockedOut  bool
+	LockoutErr error
+}
+
+func (m *mockServerDeps) CheckAccountLockout(ctx context.Context, username string) (bool, error) {
+	return m.LockedOut, m.LockoutErr
+}
+func (m *mockServerDeps) GetUser(ctx context.Context, username string) (*session.User, error) {
+	return m.User, nil
+}
+func (m *mockServerDeps) RecordFailedLoginAttempt(ctx context.Context, username string) error {
+	return nil
+}
+func (m *mockServerDeps) ClearLoginAttempts(ctx context.Context, username string) error { return nil }
+func (m *mockServerDeps) UpdateUsername(ctx context.Context, username string) error     { return nil }
+func (m *mockServerDeps) UpdatePassword(ctx context.Context, passwordHash string) error { return nil }
+
+func (m *mockServerDeps) UpdateConfigWithPrecedence(cfg *config.Config, changedFields []string) {
+	m.Cfg = cfg
+}
+func (m *mockServerDeps) ApplyConfig()                   {}
+func (m *mockServerDeps) InvalidateHTTPCache()           {}
+func (m *mockServerDeps) SetPreloadEnabled(enabled bool) {}
+func (m *mockServerDeps) SetRestartRequired(b bool)      {}
+func (m *mockServerDeps) TriggerRestart()                {}
+
+func (m *mockServerDeps) GetHandlerQueries(cpc *dbconnpool.CpConn) interfaces.HandlerQueries {
+	return m.HQ
+}
+func (m *mockServerDeps) GetMetadataQueries(cpc *dbconnpool.CpConn) interfaces.MetadataQueries {
+	if m.MQ != nil {
+		return m.MQ
+	}
+	return mockMetadataQueries{}
+}
+func (m *mockServerDeps) GetETagVersion() string { return m.ETag }
+func (m *mockServerDeps) ImagesDir() string      { return m.ImgDir }
+
+func (m *mockServerDeps) Shutdown()         {}
+func (m *mockServerDeps) TriggerDiscovery() {}
+func (m *mockServerDeps) ResetStats()       {}
+func (m *mockServerDeps) StartCacheBatchLoad() (interfaces.StartCacheBatchLoadResult, error) {
+	return m.BatchLoad, m.BatchErr
+}
+
+func (m *mockServerDeps) GetConfig() *config.Config { return m.Cfg }
+
+func (m *mockServerDeps) AddCommonTemplateData(w http.ResponseWriter, r *http.Request, data map[string]any, fullPage bool) map[string]any {
+	if data == nil {
+		data = make(map[string]any)
+	}
+	data["CSRFToken"] = m.CSRFToken
+	data["IsAuthenticated"] = m.Authed
+	return data
+}
+func (m *mockServerDeps) ServerError(w http.ResponseWriter, r *http.Request, err error) {
+	http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+}
+func (m *mockServerDeps) RenderTemplate(w http.ResponseWriter, name string, data any) error {
+	return ui.RenderTemplate(w, name, data)
+}
+
 // mockMetadataQueries returns sql.ErrNoRows for all metadata queries.
 type mockMetadataQueries struct{}
 
@@ -214,24 +291,17 @@ func setupTestGalleryHandlers(t *testing.T, hq interfaces.HandlerQueries) *Galle
 	}
 
 	imagesDir := t.TempDir()
+	deps := &mockServerDeps{
+		HQ:        hq,
+		ImgDir:    imagesDir,
+		ETag:      "test-etag",
+		CSRFToken: "test-csrf-token",
+		Authed:    true,
+	}
 	gh := NewGalleryHandlers(
 		errConnPool{getErr: errors.New("no db")},
 		context.Background(),
-		imagesDir,
-		func() string { return imagesDir },
-		func(*dbconnpool.CpConn) interfaces.HandlerQueries { return hq },
-		func(*dbconnpool.CpConn) MetadataQueries { return mockMetadataQueries{} },
-		func() string { return "test-etag" },
-		func(w http.ResponseWriter, r *http.Request, data map[string]any, _ bool) map[string]any {
-			if data == nil {
-				data = make(map[string]any)
-			}
-			data["CSRFToken"] = "test-csrf-token"
-			return data
-		},
-		func(w http.ResponseWriter, r *http.Request, err error) {
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		},
+		deps,
 	)
 
 	gh.DBRoPool = &testConnPool{}

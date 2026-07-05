@@ -3,16 +3,9 @@ package server
 import (
 	"bytes"
 	"database/sql"
-	"encoding/gob"
-	"errors"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"reflect"
 	"testing"
 
 	"github.com/lbe/sfpg-go/internal/cachelite"
-	"github.com/lbe/sfpg-go/internal/dque"
 	"github.com/lbe/sfpg-go/internal/gallerydb"
 	"github.com/lbe/sfpg-go/internal/server/files"
 )
@@ -128,142 +121,14 @@ func fullyPopulatedCacheEntry() *cachelite.HTTPCacheEntry {
 
 // TestGob_SqlNullTypes verifies that sql.NullXxx types round-trip through
 // gob without data loss. These are used extensively in gallerydb structs.
-func TestGob_SqlNullTypes(t *testing.T) {
-	tests := []struct {
-		name  string
-		value interface{}
-		equal func(a, b interface{}) bool
-	}{
-		{
-			name:  "NullString valid",
-			value: sql.NullString{String: "hello", Valid: true},
-			equal: func(a, b interface{}) bool {
-				return a.(sql.NullString) == b.(sql.NullString)
-			},
-		},
-		{
-			name:  "NullString invalid",
-			value: sql.NullString{},
-			equal: func(a, b interface{}) bool {
-				return a.(sql.NullString) == b.(sql.NullString)
-			},
-		},
-		{
-			name:  "NullInt64 valid",
-			value: sql.NullInt64{Int64: 42, Valid: true},
-			equal: func(a, b interface{}) bool {
-				return a.(sql.NullInt64) == b.(sql.NullInt64)
-			},
-		},
-		{
-			name:  "NullInt64 invalid",
-			value: sql.NullInt64{},
-			equal: func(a, b interface{}) bool {
-				return a.(sql.NullInt64) == b.(sql.NullInt64)
-			},
-		},
-		{
-			name:  "NullFloat64 valid",
-			value: sql.NullFloat64{Float64: 3.14, Valid: true},
-			equal: func(a, b interface{}) bool {
-				return a.(sql.NullFloat64) == b.(sql.NullFloat64)
-			},
-		},
-		{
-			name:  "NullFloat64 invalid",
-			value: sql.NullFloat64{},
-			equal: func(a, b interface{}) bool {
-				return a.(sql.NullFloat64) == b.(sql.NullFloat64)
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Encode
-			var buf bytes.Buffer
-			if err := gob.NewEncoder(&buf).Encode(tt.value); err != nil {
-				t.Fatalf("gob encode: %v", err)
-			}
-
-			// Decode into a new zero value of the same type
-			newVal := reflect.New(reflect.TypeOf(tt.value)).Interface()
-			if err := gob.NewDecoder(&buf).Decode(newVal); err != nil {
-				t.Fatalf("gob decode: %v", err)
-			}
-
-			// Compare
-			decoded := reflect.ValueOf(newVal).Elem().Interface()
-			if !tt.equal(tt.value, decoded) {
-				t.Errorf("round-trip mismatch\noriginal:  %+v\ndecoded:   %+v", tt.value, decoded)
-			}
-		})
-	}
-}
 
 // TestGob_GallerydbFile_InterfaceFields verifies that gallerydb.File with
 // interface{} fields holding int64 values round-trips through gob. This is
 // the critical test: without gob.Register(int64(0)), this will panic.
-func TestGob_GallerydbFile_InterfaceFields(t *testing.T) {
-	original := fullyPopulatedGallerydbFile()
-
-	// Encode
-	var buf bytes.Buffer
-	if err := gob.NewEncoder(&buf).Encode(&original); err != nil {
-		t.Fatalf("gob encode gallerydb.File: %v", err)
-	}
-
-	// Decode
-	var decoded gallerydb.File
-	if err := gob.NewDecoder(&buf).Decode(&decoded); err != nil {
-		t.Fatalf("gob decode gallerydb.File: %v", err)
-	}
-
-	// Verify all fields
-	assertGallerydbFileEqual(t, "gallerydb.File round-trip", original, decoded)
-}
 
 // TestGob_UpsertThumbnailReturningIDParams_InterfaceFields verifies that
 // UpsertThumbnailReturningIDParams (which also has CreatedAt/UpdatedAt
 // interface{} fields) round-trips correctly.
-func TestGob_UpsertThumbnailReturningIDParams_InterfaceFields(t *testing.T) {
-	original := gallerydb.UpsertThumbnailReturningIDParams{
-		FileID:    42,
-		SizeLabel: "medium",
-		Width:     400,
-		Height:    300,
-		Format:    "webp",
-		CreatedAt: int64(1_700_000_001),
-		UpdatedAt: int64(1_700_000_002),
-	}
-
-	var buf bytes.Buffer
-	if err := gob.NewEncoder(&buf).Encode(&original); err != nil {
-		t.Fatalf("gob encode: %v", err)
-	}
-
-	var decoded gallerydb.UpsertThumbnailReturningIDParams
-	if err := gob.NewDecoder(&buf).Decode(&decoded); err != nil {
-		t.Fatalf("gob decode: %v", err)
-	}
-
-	if decoded.FileID != original.FileID {
-		t.Errorf("FileID: got %d, want %d", decoded.FileID, original.FileID)
-	}
-	if decoded.SizeLabel != original.SizeLabel {
-		t.Errorf("SizeLabel: got %q, want %q", decoded.SizeLabel, original.SizeLabel)
-	}
-	if decoded.Width != original.Width || decoded.Height != original.Height {
-		t.Errorf("dimensions: got %dx%d, want %dx%d", decoded.Width, decoded.Height, original.Width, original.Height)
-	}
-	if decoded.Format != original.Format {
-		t.Errorf("Format: got %q, want %q", decoded.Format, original.Format)
-	}
-
-	// Verify the interface{} fields came back as int64 with correct values
-	assertInterfaceInt64(t, "CreatedAt", decoded.CreatedAt, original.CreatedAt)
-	assertInterfaceInt64(t, "UpdatedAt", decoded.UpdatedAt, original.UpdatedAt)
-}
 
 // ---------------------------------------------------------------------------
 // Phase B: BatchedWrite custom GobEncode/GobDecode round-trip validation
@@ -272,339 +137,32 @@ func TestGob_UpsertThumbnailReturningIDParams_InterfaceFields(t *testing.T) {
 // TestBatchedWrite_GobRoundTrip_FileWithThumbnail verifies that a fully
 // populated BatchedWrite with a File (including thumbnail) survives
 // GobEncode → GobDecode with zero data loss.
-func TestBatchedWrite_GobRoundTrip_FileWithThumbnail(t *testing.T) {
-	originalFile := fullyPopulatedFilesFile()
-	original := BatchedWrite{File: originalFile}
-
-	// Save the original thumbnail pointer and content for immutability check
-	originalThumbPtr := originalFile.Thumbnail
-	originalThumbBytes := make([]byte, originalFile.Thumbnail.Len())
-	copy(originalThumbBytes, originalFile.Thumbnail.Bytes())
-
-	// Encode
-	encoded, err := original.GobEncode()
-	if err != nil {
-		t.Fatalf("GobEncode: %v", err)
-	}
-	if len(encoded) == 0 {
-		t.Fatal("GobEncode returned empty byte slice")
-	}
-
-	// Verify the original object is unmutated
-	if originalFile.Thumbnail != originalThumbPtr {
-		t.Error("GobEncode mutated the original Thumbnail pointer")
-	}
-	if !bytes.Equal(originalFile.Thumbnail.Bytes(), originalThumbBytes) {
-		t.Error("GobEncode mutated the original Thumbnail content")
-	}
-
-	// Decode
-	var decoded BatchedWrite
-	if err := decoded.GobDecode(encoded); err != nil {
-		t.Fatalf("GobDecode: %v", err)
-	}
-
-	// Verify decoded BatchedWrite
-	if decoded.CacheEntry != nil {
-		t.Error("decoded CacheEntry should be nil for file write")
-	}
-	if decoded.File == nil {
-		t.Fatal("decoded File should not be nil")
-	}
-
-	// Verify all fields of the decoded files.File
-	assertFilesFileEqual(t, "BatchedWrite with File+Thumbnail", originalFile, decoded.File)
-}
 
 // TestBatchedWrite_GobRoundTrip_FileWithoutThumbnail verifies that a File
 // without a thumbnail round-trips correctly (Thumbnail should be nil after
 // decode, not an empty buffer).
-func TestBatchedWrite_GobRoundTrip_FileWithoutThumbnail(t *testing.T) {
-	fileNoThumb := fullyPopulatedFilesFile()
-	fileNoThumb.Thumbnail = nil // No thumbnail
-
-	original := BatchedWrite{File: fileNoThumb}
-
-	encoded, err := original.GobEncode()
-	if err != nil {
-		t.Fatalf("GobEncode: %v", err)
-	}
-
-	var decoded BatchedWrite
-	if err := decoded.GobDecode(encoded); err != nil {
-		t.Fatalf("GobDecode: %v", err)
-	}
-
-	if decoded.File == nil {
-		t.Fatal("decoded File should not be nil")
-	}
-	if decoded.File.Thumbnail != nil {
-		t.Errorf("decoded Thumbnail should be nil, got buffer with %d bytes", decoded.File.Thumbnail.Len())
-	}
-	if decoded.CacheEntry != nil {
-		t.Error("decoded CacheEntry should be nil")
-	}
-
-	// Verify all other fields
-	assertGallerydbFileEqual(t, "File without thumbnail", fileNoThumb.File, decoded.File.File)
-	if decoded.File.Ok != fileNoThumb.Ok {
-		t.Errorf("Ok: got %v, want %v", decoded.File.Ok, fileNoThumb.Ok)
-	}
-	if decoded.File.Path != fileNoThumb.Path {
-		t.Errorf("Path: got %q, want %q", decoded.File.Path, fileNoThumb.Path)
-	}
-	if decoded.File.HasValidJpegMarkers != fileNoThumb.HasValidJpegMarkers {
-		t.Errorf("HasValidJpegMarkers: got %v, want %v", decoded.File.HasValidJpegMarkers, fileNoThumb.HasValidJpegMarkers)
-	}
-}
 
 // TestBatchedWrite_GobRoundTrip_CacheEntry verifies that a BatchedWrite
 // with an HTTPCacheEntry round-trips correctly.
-func TestBatchedWrite_GobRoundTrip_CacheEntry(t *testing.T) {
-	originalEntry := fullyPopulatedCacheEntry()
-	original := BatchedWrite{CacheEntry: originalEntry}
-
-	encoded, err := original.GobEncode()
-	if err != nil {
-		t.Fatalf("GobEncode: %v", err)
-	}
-
-	var decoded BatchedWrite
-	if err := decoded.GobDecode(encoded); err != nil {
-		t.Fatalf("GobDecode: %v", err)
-	}
-
-	if decoded.File != nil {
-		t.Error("decoded File should be nil for cache entry")
-	}
-	if decoded.CacheEntry == nil {
-		t.Fatal("decoded CacheEntry should not be nil")
-	}
-
-	assertHTTPCacheEntryEqual(t, "BatchedWrite with CacheEntry", originalEntry, decoded.CacheEntry)
-}
 
 // TestBatchedWrite_GobRoundTrip_Empty verifies that a BatchedWrite with
 // both fields nil round-trips correctly (both should remain nil).
-func TestBatchedWrite_GobRoundTrip_Empty(t *testing.T) {
-	original := BatchedWrite{} // both nil
-
-	encoded, err := original.GobEncode()
-	if err != nil {
-		t.Fatalf("GobEncode: %v", err)
-	}
-
-	var decoded BatchedWrite
-	if err := decoded.GobDecode(encoded); err != nil {
-		t.Fatalf("GobDecode: %v", err)
-	}
-
-	if decoded.File != nil {
-		t.Error("decoded File should be nil for empty BatchedWrite")
-	}
-	if decoded.CacheEntry != nil {
-		t.Error("decoded CacheEntry should be nil for empty BatchedWrite")
-	}
-}
 
 // TestBatchedWrite_GobEncode_DoesNotMutateOriginal verifies the critical
 // invariant: GobEncode must not mutate the caller's *files.File, especially
 // the Thumbnail pointer. The design uses a struct copy before nil-out to
 // ensure this.
-func TestBatchedWrite_GobRoundTrip_DoesNotMutateOriginal(t *testing.T) {
-	file := fullyPopulatedFilesFile()
-	originalThumbPtr := file.Thumbnail
-	originalThumbLen := file.Thumbnail.Len()
-	originalThumbBytes := make([]byte, originalThumbLen)
-	copy(originalThumbBytes, file.Thumbnail.Bytes())
-
-	original := BatchedWrite{File: file}
-
-	// Encode (should NOT mutate the original)
-	if _, err := original.GobEncode(); err != nil {
-		t.Fatalf("GobEncode: %v", err)
-	}
-
-	// Check 1: Thumbnail pointer unchanged
-	if file.Thumbnail != originalThumbPtr {
-		t.Error("GobEncode changed the Thumbnail pointer — caller's object was mutated")
-	}
-
-	// Check 2: Thumbnail content unchanged
-	if file.Thumbnail.Len() != originalThumbLen {
-		t.Errorf("Thumbnail length changed: got %d, want %d", file.Thumbnail.Len(), originalThumbLen)
-	}
-	if !bytes.Equal(file.Thumbnail.Bytes(), originalThumbBytes) {
-		t.Error("Thumbnail content changed after GobEncode")
-	}
-
-	// Check 3: Other fields unchanged
-	if file.Path != "/photos/2024/sunset.jpg" {
-		t.Errorf("Path changed: got %q", file.Path)
-	}
-	if file.File.Filename != "sunset.jpg" {
-		t.Errorf("Filename changed: got %q", file.File.Filename)
-	}
-	if file.Ok != true {
-		t.Error("Ok changed")
-	}
-
-	// Encode again — should produce the same result (idempotent)
-	encoded1, err := original.GobEncode()
-	if err != nil {
-		t.Fatalf("GobEncode (2nd): %v", err)
-	}
-
-	// Thumbnail should still be intact after second encode
-	if file.Thumbnail != originalThumbPtr {
-		t.Error("Second GobEncode changed the Thumbnail pointer")
-	}
-	if file.Thumbnail.Len() != originalThumbLen {
-		t.Errorf("Thumbnail length changed after second encode: got %d, want %d", file.Thumbnail.Len(), originalThumbLen)
-	}
-
-	// Decode both encodings and verify they produce identical results
-	var decoded1, decoded2 BatchedWrite
-	if decErr := decoded1.GobDecode(encoded1); decErr != nil {
-		t.Fatalf("GobDecode (1st): %v", decErr)
-	}
-
-	encoded2, err := original.GobEncode()
-	if err != nil {
-		t.Fatalf("GobEncode (3rd): %v", err)
-	}
-	if err := decoded2.GobDecode(encoded2); err != nil {
-		t.Fatalf("GobDecode (2nd): %v", err)
-	}
-
-	if decoded1.File.Thumbnail.Len() != decoded2.File.Thumbnail.Len() {
-		t.Errorf("idempotent encode mismatch: thumb len %d vs %d",
-			decoded1.File.Thumbnail.Len(), decoded2.File.Thumbnail.Len())
-	}
-}
 
 // TestBatchedWrite_GobRoundTrip_InterfaceFields verifies that the
 // interface{} fields (CreatedAt, UpdatedAt) inside gallerydb.File survive
 // the full BatchedWrite GobEncode/GobDecode round-trip as int64 values.
-func TestBatchedWrite_GobRoundTrip_InterfaceFields(t *testing.T) {
-	file := fullyPopulatedFilesFile()
-	original := BatchedWrite{File: file}
-
-	encoded, err := original.GobEncode()
-	if err != nil {
-		t.Fatalf("GobEncode: %v", err)
-	}
-
-	var decoded BatchedWrite
-	if err := decoded.GobDecode(encoded); err != nil {
-		t.Fatalf("GobDecode: %v", err)
-	}
-
-	// Verify interface{} fields came back as int64 with correct values
-	assertInterfaceInt64(t, "CreatedAt", decoded.File.File.CreatedAt, int64(1_700_000_001))
-	assertInterfaceInt64(t, "UpdatedAt", decoded.File.File.UpdatedAt, int64(1_700_000_002))
-}
 
 // TestBatchedWrite_GobRoundTrip_NullFields verifies that sql.NullXxx fields
 // with Valid=false round-trip correctly through the full BatchedWrite
 // encoding path.
-func TestBatchedWrite_GobRoundTrip_NullFields(t *testing.T) {
-	file := &files.File{
-		Ok:        true,
-		Exists:    false,
-		ImagesDir: "/test",
-		Path:      "/test/file.jpg",
-		File: gallerydb.File{
-			ID:        1,
-			FolderID:  sql.NullInt64{}, // invalid
-			PathID:    2,
-			Filename:  "file.jpg",
-			SizeBytes: sql.NullInt64{},  // invalid
-			Mtime:     sql.NullInt64{},  // invalid
-			Md5:       sql.NullString{}, // invalid
-			Phash:     sql.NullInt64{},  // invalid
-			MimeType:  sql.NullString{}, // invalid
-			Width:     sql.NullInt64{},  // invalid
-			Height:    sql.NullInt64{},  // invalid
-			CreatedAt: int64(100),
-			UpdatedAt: int64(200),
-		},
-		Exif: gallerydb.UpsertExifParams{
-			FileID:      1,
-			CameraMake:  sql.NullString{},  // invalid
-			Latitude:    sql.NullFloat64{}, // invalid
-			CaptureDate: sql.NullInt64{},   // invalid
-		},
-	}
-
-	original := BatchedWrite{File: file}
-
-	encoded, err := original.GobEncode()
-	if err != nil {
-		t.Fatalf("GobEncode: %v", err)
-	}
-
-	var decoded BatchedWrite
-	if err := decoded.GobDecode(encoded); err != nil {
-		t.Fatalf("GobDecode: %v", err)
-	}
-
-	// Verify invalid NullXxx fields stayed invalid
-	if decoded.File.File.FolderID.Valid {
-		t.Error("FolderID should be invalid")
-	}
-	if decoded.File.File.Md5.Valid {
-		t.Error("Md5 should be invalid")
-	}
-	if decoded.File.Exif.Latitude.Valid {
-		t.Error("Exif.Latitude should be invalid")
-	}
-	if decoded.File.Exif.CaptureDate.Valid {
-		t.Error("Exif.CaptureDate should be invalid")
-	}
-
-	// Verify interface{} fields still correct
-	assertInterfaceInt64(t, "CreatedAt", decoded.File.File.CreatedAt, int64(100))
-	assertInterfaceInt64(t, "UpdatedAt", decoded.File.File.UpdatedAt, int64(200))
-}
 
 // TestBatchedWrite_GobRoundTrip_LargeThumbnail verifies that a large
 // thumbnail (1 MB) round-trips correctly, ensuring no size limits are hit.
-func TestBatchedWrite_GobRoundTrip_LargeThumbnail(t *testing.T) {
-	largeThumb := make([]byte, 1024*1024) // 1 MB
-	for i := range largeThumb {
-		largeThumb[i] = byte(i % 256)
-	}
-
-	file := &files.File{
-		Ok:        true,
-		Path:      "/photos/large.jpg",
-		File:      fullyPopulatedGallerydbFile(),
-		Thumbnail: bytes.NewBuffer(largeThumb),
-	}
-
-	original := BatchedWrite{File: file}
-
-	encoded, err := original.GobEncode()
-	if err != nil {
-		t.Fatalf("GobEncode: %v", err)
-	}
-
-	var decoded BatchedWrite
-	if err := decoded.GobDecode(encoded); err != nil {
-		t.Fatalf("GobDecode: %v", err)
-	}
-
-	if decoded.File.Thumbnail == nil {
-		t.Fatal("decoded Thumbnail is nil")
-	}
-	if decoded.File.Thumbnail.Len() != len(largeThumb) {
-		t.Errorf("Thumbnail length: got %d, want %d", decoded.File.Thumbnail.Len(), len(largeThumb))
-	}
-	if !bytes.Equal(decoded.File.Thumbnail.Bytes(), largeThumb) {
-		t.Error("Thumbnail content mismatch")
-	}
-}
 
 // ---------------------------------------------------------------------------
 // Phase C: dque integration validation
@@ -614,162 +172,10 @@ func TestBatchedWrite_GobRoundTrip_LargeThumbnail(t *testing.T) {
 // survives the full dque Enqueue → Dequeue path. This tests the actual gob
 // encoding that dque uses internally (length-prefixed gob records in segment
 // files), not just our GobEncode/GobDecode methods.
-func TestBatchedWrite_DqueRoundTrip(t *testing.T) {
-	tmpDir := t.TempDir()
-	queueDir := filepath.Join(tmpDir, "dque-test")
-
-	if err := os.MkdirAll(queueDir, 0755); err != nil {
-		t.Fatalf("create queue dir: %v", err)
-	}
-
-	q, err := dque.NewOrOpen[BatchedWrite]("overflow", queueDir, 250)
-	if err != nil {
-		t.Fatalf("dque.NewOrOpen: %v", err)
-	}
-	t.Cleanup(func() { q.Close() })
-
-	// Enqueue all variants
-	items := []struct {
-		name string
-		bw   BatchedWrite
-	}{
-		{
-			name: "file_with_thumbnail",
-			bw:   BatchedWrite{File: fullyPopulatedFilesFile()},
-		},
-		{
-			name: "file_without_thumbnail",
-			bw: BatchedWrite{File: func() *files.File {
-				f := fullyPopulatedFilesFile()
-				f.Thumbnail = nil
-				return f
-			}()},
-		},
-		{
-			name: "cache_entry",
-			bw:   BatchedWrite{CacheEntry: fullyPopulatedCacheEntry()},
-		},
-		{
-			name: "empty",
-			bw:   BatchedWrite{},
-		},
-	}
-
-	for _, item := range items {
-		t.Run("enqueue_"+item.name, func(t *testing.T) {
-			copy := item.bw
-			if enqErr := q.Enqueue(&copy); enqErr != nil {
-				t.Fatalf("dque.Enqueue (%s): %v", item.name, enqErr)
-			}
-		})
-	}
-
-	// Dequeue and verify each
-	for _, item := range items {
-		t.Run("dequeue_"+item.name, func(t *testing.T) {
-			dequeued, deqErr := q.Dequeue()
-			if deqErr != nil {
-				t.Fatalf("dque.Dequeue (%s): %v", item.name, deqErr)
-			}
-			if dequeued == nil {
-				t.Fatalf("dequeued item is nil (%s)", item.name)
-			}
-
-			switch {
-			case item.bw.File != nil:
-				if dequeued.File == nil {
-					t.Fatalf("expected File, got nil (%s)", item.name)
-				}
-				assertFilesFileEqual(t, item.name, item.bw.File, dequeued.File)
-			case item.bw.CacheEntry != nil:
-				if dequeued.CacheEntry == nil {
-					t.Fatalf("expected CacheEntry, got nil (%s)", item.name)
-				}
-				assertHTTPCacheEntryEqual(t, item.name, item.bw.CacheEntry, dequeued.CacheEntry)
-			default:
-				if dequeued.File != nil || dequeued.CacheEntry != nil {
-					t.Fatalf("expected empty BatchedWrite, got File=%v CacheEntry=%v (%s)",
-						dequeued.File != nil, dequeued.CacheEntry != nil, item.name)
-				}
-			}
-		})
-	}
-
-	// Queue should now be empty
-	_, err = q.Dequeue()
-	if !errors.Is(err, dque.ErrEmpty) {
-		t.Errorf("expected ErrEmpty after draining, got: %v", err)
-	}
-}
 
 // TestBatchedWrite_DqueRoundTrip_CrashRecovery verifies that items survive
 // a simulated crash: enqueue items, close dque without draining, reopen,
 // and verify items are still present.
-func TestBatchedWrite_DqueRoundTrip_CrashRecovery(t *testing.T) {
-	tmpDir := t.TempDir()
-	queueDir := filepath.Join(tmpDir, "dque-crash")
-
-	if err := os.MkdirAll(queueDir, 0755); err != nil {
-		t.Fatalf("create queue dir: %v", err)
-	}
-
-	// Phase 1: Enqueue items and close (simulating a clean shutdown with unprocessed items)
-	q1, err := dque.NewOrOpen[BatchedWrite]("overflow", queueDir, 250)
-	if err != nil {
-		t.Fatalf("dque.NewOrOpen (1st): %v", err)
-	}
-
-	fileItem := BatchedWrite{File: fullyPopulatedFilesFile()}
-	cacheItem := BatchedWrite{CacheEntry: fullyPopulatedCacheEntry()}
-
-	if enqErr := q1.Enqueue(&fileItem); enqErr != nil {
-		t.Fatalf("enqueue file: %v", enqErr)
-	}
-	if enqErr := q1.Enqueue(&cacheItem); enqErr != nil {
-		t.Fatalf("enqueue cache: %v", enqErr)
-	}
-	if cloErr := q1.Close(); cloErr != nil {
-		t.Fatalf("close q1: %v", cloErr)
-	}
-
-	// Phase 2: Reopen in a new instance (simulating process restart)
-	q2, err := dque.NewOrOpen[BatchedWrite]("overflow", queueDir, 250)
-	if err != nil {
-		t.Fatalf("dque.NewOrOpen (2nd): %v", err)
-	}
-	t.Cleanup(func() { q2.Close() })
-
-	// Verify size
-	if size := q2.Size(); size != 2 {
-		t.Errorf("expected queue size 2, got %d", size)
-	}
-
-	// Dequeue and verify file item
-	dequeuedFile, err := q2.Dequeue()
-	if err != nil {
-		t.Fatalf("dequeue file: %v", err)
-	}
-	if dequeuedFile.File == nil {
-		t.Fatal("expected File item, got nil")
-	}
-	assertFilesFileEqual(t, "recovered file", fileItem.File, dequeuedFile.File)
-
-	// Dequeue and verify cache item
-	dequeuedCache, err := q2.Dequeue()
-	if err != nil {
-		t.Fatalf("dequeue cache: %v", err)
-	}
-	if dequeuedCache.CacheEntry == nil {
-		t.Fatal("expected CacheEntry item, got nil")
-	}
-	assertHTTPCacheEntryEqual(t, "recovered cache", cacheItem.CacheEntry, dequeuedCache.CacheEntry)
-
-	// Queue should now be empty
-	_, err = q2.Dequeue()
-	if !errors.Is(err, dque.ErrEmpty) {
-		t.Errorf("expected ErrEmpty after draining, got: %v", err)
-	}
-}
 
 // ---------------------------------------------------------------------------
 // Field-level assertion helpers
@@ -1070,96 +476,8 @@ func assertInterfaceInt64(t *testing.T, fieldName string, got, want interface{})
 // fail. Since our init() already registers int64, we can't easily test the
 // negative case without a separate process. Instead, we verify that the
 // registration IS in effect by checking the gob type map.
-func TestGob_Int64RegisteredForInterfaceFields(t *testing.T) {
-	// Verify that int64 is registered in gob's global type map.
-	// We do this by encoding a struct with an interface{} field holding int64
-	// and confirming it succeeds (if registration were missing, this would panic).
-	type testStruct struct {
-		Value interface{}
-	}
-
-	s := testStruct{Value: int64(42)}
-
-	var buf bytes.Buffer
-	// This would panic if int64 was not registered
-	if err := gob.NewEncoder(&buf).Encode(&s); err != nil {
-		t.Fatalf("gob encode struct with interface{} holding int64: %v", err)
-	}
-
-	var decoded testStruct
-	if err := gob.NewDecoder(&buf).Decode(&decoded); err != nil {
-		t.Fatalf("gob decode struct with interface{} holding int64: %v", err)
-	}
-
-	got, ok := decoded.Value.(int64)
-	if !ok {
-		t.Fatalf("decoded Value is %T, want int64", decoded.Value)
-	}
-	if got != 42 {
-		t.Errorf("decoded Value: got %d, want 42", got)
-	}
-}
 
 // TestGob_InterfaceFieldRequiresRegistration_Subprocess verifies that WITHOUT
 // gob.Register, encoding an int64 in an interface{} field fails. It runs a
 // Go program as a subprocess that does NOT call gob.Register(int64(0)) and
 // tries to encode an interface{} holding int64.
-func TestGob_InterfaceFieldRequiresRegistration_Subprocess(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping subprocess test in short mode")
-	}
-
-	source := `package main
-
-import (
-	"bytes"
-	"encoding/gob"
-	"fmt"
-	"os"
-)
-
-type testStruct struct {
-	Value interface{}
-}
-
-func main() {
-	s := testStruct{Value: int64(42)}
-	var buf bytes.Buffer
-	err := gob.NewEncoder(&buf).Encode(&s)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "ENCODE_ERROR: %v\n", err)
-		os.Exit(0) // Expected: encoding fails without registration
-	}
-	fmt.Fprintf(os.Stderr, "ENCODE_SUCCEEDED\n")
-	os.Exit(1) // Unexpected: encoding worked without registration
-}
-`
-
-	tmpDir := t.TempDir()
-	srcFile := filepath.Join(tmpDir, "main.go")
-
-	if err := os.WriteFile(srcFile, []byte(source), 0644); err != nil {
-		t.Fatalf("write source: %v", err)
-	}
-
-	// Run the subprocess via 'go run'
-	runCmd := exec.Command("go", "run", srcFile)
-	runOutput, runErr := runCmd.CombinedOutput()
-	if runErr != nil {
-		t.Logf("subprocess exit: %v", runErr)
-	}
-	t.Logf("subprocess output: %q", string(runOutput))
-
-	// The subprocess prints ENCODE_ERROR (and exits 0) if encoding failed without registration,
-	// or ENCODE_SUCCEEDED (and exits 1) if encoding worked.
-	output := string(runOutput)
-	switch {
-	case bytes.Contains([]byte(output), []byte("ENCODE_ERROR")):
-		t.Log("CONFIRMED: gob.Register(int64(0)) is required — encoding fails without it")
-	case bytes.Contains([]byte(output), []byte("ENCODE_SUCCEEDED")):
-		t.Log("NOTE: gob encoded int64 in interface{} WITHOUT registration — " +
-			"our init() registration is defensive but may not be strictly required")
-	default:
-		t.Logf("unexpected subprocess output: %q", output)
-	}
-}

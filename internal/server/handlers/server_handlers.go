@@ -4,56 +4,43 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/lbe/sfpg-go/internal/server/interfaces"
 	"github.com/lbe/sfpg-go/internal/server/ui"
 )
-
-// StartCacheBatchLoadResult describes the result of attempting to start cache batch load.
-type StartCacheBatchLoadResult struct {
-	Blocked bool   // true if discovery is active
-	Message string // toast message
-}
 
 // ServerHandlers holds dependencies for server management handlers.
 type ServerHandlers struct {
 	sessionManager SessionManager
-
-	// Server control functions
-	ShutdownFunc        func()
-	DiscoveryFunc       func()
-	StatsResetFunc      func()
-	StartCacheBatchLoad func() (StartCacheBatchLoadResult, error)
-
-	// Template helpers
-	AddCommonTemplateData func(http.ResponseWriter, *http.Request, map[string]any, bool) map[string]any
-	ServerError           func(http.ResponseWriter, *http.Request, error)
+	deps           interfaces.ServerDeps
 }
 
 // NewServerHandlers creates a new ServerHandlers with the given dependencies.
 func NewServerHandlers(
 	sessionManager SessionManager,
-	shutdownFunc func(),
-	discoveryFunc func(),
-	statsResetFunc func(),
-	startCacheBatchLoad func() (StartCacheBatchLoadResult, error),
-	addCommonTemplateData func(http.ResponseWriter, *http.Request, map[string]any, bool) map[string]any,
-	serverError func(http.ResponseWriter, *http.Request, error),
+	deps interfaces.ServerDeps,
 ) *ServerHandlers {
 	return &ServerHandlers{
-		sessionManager:        sessionManager,
-		ShutdownFunc:          shutdownFunc,
-		DiscoveryFunc:         discoveryFunc,
-		StatsResetFunc:        statsResetFunc,
-		StartCacheBatchLoad:   startCacheBatchLoad,
-		AddCommonTemplateData: addCommonTemplateData,
-		ServerError:           serverError,
+		sessionManager: sessionManager,
+		deps:           deps,
 	}
 }
 
+// validateCsrf returns true if CSRF validation passes, false otherwise.
+func (h *ServerHandlers) validateCsrf(r *http.Request) bool {
+	return h.sessionManager.ValidateCSRFToken(r)
+}
+
 // ServerShutdownPost handles POST /server/shutdown requests.
-// Requires authentication. Triggers graceful server shutdown.
+// Requires authentication and valid CSRF token. Triggers graceful server shutdown.
 func (h *ServerHandlers) ServerShutdownPost(w http.ResponseWriter, r *http.Request) {
 	if !h.sessionManager.IsAuthenticated(r) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if !h.validateCsrf(r) {
+		slog.Warn("CSRF validation failed for shutdown", "remote_addr", r.RemoteAddr)
+		http.Error(w, "Forbidden - CSRF token invalid", http.StatusForbidden)
 		return
 	}
 
@@ -63,48 +50,44 @@ func (h *ServerHandlers) ServerShutdownPost(w http.ResponseWriter, r *http.Reque
 		"PageName": "shutdown",
 	}
 
-	if h.AddCommonTemplateData != nil {
-		data = h.AddCommonTemplateData(w, r, data, false)
-	}
+	data = h.deps.AddCommonTemplateData(w, r, data, false)
 
 	// Render the shutdown page
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	if err := ui.RenderPage(w, "shutdown", data, false); err != nil {
 		slog.Error("failed to render shutdown page", "err", err)
-		if h.ServerError != nil {
-			h.ServerError(w, r, err)
-		}
+		h.deps.ServerError(w, r, err)
 		return
 	}
 
 	// Trigger shutdown after response is sent
-	if h.ShutdownFunc != nil {
-		go func() {
-			h.ShutdownFunc()
-		}()
-	}
+	go func() {
+		h.deps.Shutdown()
+	}()
 }
 
 // ServerDiscoveryPost handles POST /server/discovery requests.
-// Requires authentication. Triggers file discovery.
+// Requires authentication and valid CSRF token. Triggers file discovery.
 func (h *ServerHandlers) ServerDiscoveryPost(w http.ResponseWriter, r *http.Request) {
 	if !h.sessionManager.IsAuthenticated(r) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
+	if !h.validateCsrf(r) {
+		slog.Warn("CSRF validation failed for discovery", "remote_addr", r.RemoteAddr)
+		http.Error(w, "Forbidden - CSRF token invalid", http.StatusForbidden)
+		return
+	}
+
 	slog.Info("Discovery requested via web interface")
 
 	// Reset stats before starting new discovery
-	if h.StatsResetFunc != nil {
-		h.StatsResetFunc()
-	}
+	h.deps.ResetStats()
 
 	// Trigger discovery in a goroutine so it doesn't block the HTTP response
-	if h.DiscoveryFunc != nil {
-		go h.DiscoveryFunc()
-	}
+	go h.deps.TriggerDiscovery()
 
 	// Return success notification
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -114,9 +97,7 @@ func (h *ServerHandlers) ServerDiscoveryPost(w http.ResponseWriter, r *http.Requ
 		"Message": "File discovery started",
 	}
 
-	if h.AddCommonTemplateData != nil {
-		data = h.AddCommonTemplateData(w, r, data, true)
-	}
+	data = h.deps.AddCommonTemplateData(w, r, data, true)
 
 	if err := ui.RenderPage(w, "discovery-started", data, false); err != nil {
 		slog.Error("failed to render discovery started notification", "err", err)
@@ -125,7 +106,7 @@ func (h *ServerHandlers) ServerDiscoveryPost(w http.ResponseWriter, r *http.Requ
 }
 
 // ServerCacheBatchLoadPost handles POST /server/cache-batch-load requests.
-// Requires authentication. Blocks if discovery is active (returns 409). Otherwise
+// Requires authentication and valid CSRF token. Blocks if discovery is active (returns 409). Otherwise
 // starts batch load in a goroutine and returns success toast.
 func (h *ServerHandlers) ServerCacheBatchLoadPost(w http.ResponseWriter, r *http.Request) {
 	if !h.sessionManager.IsAuthenticated(r) {
@@ -133,17 +114,16 @@ func (h *ServerHandlers) ServerCacheBatchLoadPost(w http.ResponseWriter, r *http
 		return
 	}
 
-	if h.StartCacheBatchLoad == nil {
-		http.Error(w, "Cache batch load not available", http.StatusServiceUnavailable)
+	if !h.validateCsrf(r) {
+		slog.Warn("CSRF validation failed for cache batch load", "remote_addr", r.RemoteAddr)
+		http.Error(w, "Forbidden - CSRF token invalid", http.StatusForbidden)
 		return
 	}
 
-	result, err := h.StartCacheBatchLoad()
+	result, err := h.deps.StartCacheBatchLoad()
 	if err != nil {
 		slog.Error("cache batch load start failed", "err", err)
-		if h.ServerError != nil {
-			h.ServerError(w, r, err)
-		}
+		h.deps.ServerError(w, r, err)
 		return
 	}
 
@@ -158,9 +138,7 @@ func (h *ServerHandlers) ServerCacheBatchLoadPost(w http.ResponseWriter, r *http
 		"Message":    result.Message,
 		"AlertClass": alertClass,
 	}
-	if h.AddCommonTemplateData != nil {
-		data = h.AddCommonTemplateData(w, r, data, true)
-	}
+	data = h.deps.AddCommonTemplateData(w, r, data, true)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)

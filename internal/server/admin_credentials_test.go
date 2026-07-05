@@ -14,7 +14,7 @@ import (
 )
 
 func TestUpdateAdminCredentials_Success(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// Get current password hash to verify against
@@ -45,7 +45,7 @@ func TestUpdateAdminCredentials_Success(t *testing.T) {
 		t.Fatalf("failed to get session: %v", err)
 	}
 	session.Values["authenticated"] = true
-	csrfToken := app.ensureCsrfToken(w, req)
+	csrfToken := app.EnsureCSRFToken(w, req)
 	session.Values["csrf_token"] = csrfToken
 	if saveErr := session.Save(req, w); saveErr != nil {
 		t.Fatalf("failed to save session: %v", saveErr)
@@ -105,7 +105,7 @@ func TestUpdateAdminCredentials_Success(t *testing.T) {
 }
 
 func TestUpdateAdminCredentials_WrongCurrentPassword(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// Set up authenticated session with CSRF token
@@ -119,7 +119,7 @@ func TestUpdateAdminCredentials_WrongCurrentPassword(t *testing.T) {
 		t.Fatalf("failed to get session: %v", err)
 	}
 	session.Values["authenticated"] = true
-	csrfToken := app.ensureCsrfToken(w, req)
+	csrfToken := app.EnsureCSRFToken(w, req)
 	session.Values["csrf_token"] = csrfToken
 	if saveErr := session.Save(req, w); saveErr != nil {
 		t.Fatalf("failed to save session: %v", saveErr)
@@ -174,7 +174,7 @@ func TestUpdateAdminCredentials_WrongCurrentPassword(t *testing.T) {
 }
 
 func TestUpdateAdminCredentials_UsernameOnly(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// Get current password hash
@@ -199,7 +199,7 @@ func TestUpdateAdminCredentials_UsernameOnly(t *testing.T) {
 		t.Fatalf("failed to get session: %v", err)
 	}
 	session.Values["authenticated"] = true
-	csrfToken := app.ensureCsrfToken(w, req)
+	csrfToken := app.EnsureCSRFToken(w, req)
 	session.Values["csrf_token"] = csrfToken
 	if saveErr := session.Save(req, w); saveErr != nil {
 		t.Fatalf("failed to save session: %v", saveErr)
@@ -250,7 +250,7 @@ func TestUpdateAdminCredentials_UsernameOnly(t *testing.T) {
 }
 
 func TestUpdateAdminCredentials_PasswordOnly(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// Get current username
@@ -270,7 +270,7 @@ func TestUpdateAdminCredentials_PasswordOnly(t *testing.T) {
 		t.Fatalf("failed to get session: %v", err)
 	}
 	session.Values["authenticated"] = true
-	csrfToken := app.ensureCsrfToken(w, req)
+	csrfToken := app.EnsureCSRFToken(w, req)
 	session.Values["csrf_token"] = csrfToken
 	if saveErr := session.Save(req, w); saveErr != nil {
 		t.Fatalf("failed to save session: %v", saveErr)
@@ -326,7 +326,7 @@ func TestUpdateAdminCredentials_PasswordOnly(t *testing.T) {
 // Tests removed: TestUpdateAdminCredentials_ValidationFailures, TestUpdateAdminCredentials_EmptyCurrentPassword, TestUpdateAdminCredentials_PasswordComplexity
 
 func TestUpdateAdminCredentials_CSRFRejection(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// Set up authenticated session but use invalid CSRF token
@@ -362,7 +362,7 @@ func TestUpdateAdminCredentials_CSRFRejection(t *testing.T) {
 // TestUpdateAdminCredentials_OtherConfigFields_NoPasswordRequired verifies that changing
 // other config fields (like server compression) does NOT require the admin password.
 func TestUpdateAdminCredentials_OtherConfigFields_NoPasswordRequired(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 	t.Parallel()
 	if loadErr := app.loadConfig(); loadErr != nil {
@@ -390,7 +390,7 @@ func TestUpdateAdminCredentials_OtherConfigFields_NoPasswordRequired(t *testing.
 		t.Fatalf("failed to get session: %v", err)
 	}
 	session.Values["authenticated"] = true
-	csrfToken := app.ensureCsrfToken(w, req)
+	csrfToken := app.EnsureCSRFToken(w, req)
 	session.Values["csrf_token"] = csrfToken
 	if saveErr := session.Save(req, w); saveErr != nil {
 		t.Fatalf("failed to save session: %v", saveErr)

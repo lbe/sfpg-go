@@ -92,6 +92,11 @@ func (hcm *HTTPCacheMiddleware) IsEnabled() bool {
 }
 
 // UpdatePool updates the internal pool reference. Called when database pools are reconfigured.
+// SetOnGalleryCacheHit replaces the OnGalleryCacheHit callback after creation.
+func (hcm *HTTPCacheMiddleware) SetOnGalleryCacheHit(fn func(ctx context.Context, folderID int64, sessionID, acceptEncoding string)) {
+	hcm.config.OnGalleryCacheHit = fn
+}
+
 func (hcm *HTTPCacheMiddleware) UpdatePool(newPool *dbconnpool.DbSQLConnPool) {
 	if newPool != nil {
 		hcm.db = newPool

@@ -208,6 +208,74 @@ func (m *mockSessionManagerExistingSessionNoToken) SetAuthenticated(w http.Respo
 	return nil
 }
 
+// mockSessionManagerWithCSRFValid implements SessionManager where CSRF validation passes.
+type mockSessionManagerWithCSRFValid struct{}
+
+func (m *mockSessionManagerWithCSRFValid) GetOptions() *sessions.Options {
+	return &sessions.Options{}
+}
+
+func (m *mockSessionManagerWithCSRFValid) EnsureCSRFToken(w http.ResponseWriter, r *http.Request) string {
+	return "test-csrf-token"
+}
+
+func (m *mockSessionManagerWithCSRFValid) ValidateCSRFToken(r *http.Request) bool {
+	return true // CSRF validation passes
+}
+
+func (m *mockSessionManagerWithCSRFValid) ClearSession(w http.ResponseWriter, r *http.Request) {}
+
+func (m *mockSessionManagerWithCSRFValid) GetSession(w http.ResponseWriter, r *http.Request) (*sessions.Session, error) {
+	return sessions.NewSession(nil, session.SessionName), nil
+}
+
+func (m *mockSessionManagerWithCSRFValid) SaveSession(w http.ResponseWriter, r *http.Request, sess *sessions.Session) error {
+	return nil
+}
+
+func (m *mockSessionManagerWithCSRFValid) IsAuthenticated(r *http.Request) bool {
+	return true
+}
+
+func (m *mockSessionManagerWithCSRFValid) SetAuthenticated(w http.ResponseWriter, r *http.Request, authenticated bool) error {
+	return nil
+}
+
+// mockSessionManagerAuthenticatedCSRFFailed implements SessionManager for testing
+// an authenticated session where CSRF validation fails (for logout CSRF tests).
+type mockSessionManagerAuthenticatedCSRFFailed struct{}
+
+func (m *mockSessionManagerAuthenticatedCSRFFailed) GetOptions() *sessions.Options {
+	return &sessions.Options{}
+}
+
+func (m *mockSessionManagerAuthenticatedCSRFFailed) EnsureCSRFToken(w http.ResponseWriter, r *http.Request) string {
+	return "test-csrf-token"
+}
+
+func (m *mockSessionManagerAuthenticatedCSRFFailed) ValidateCSRFToken(r *http.Request) bool {
+	return false // CSRF validation fails
+}
+
+func (m *mockSessionManagerAuthenticatedCSRFFailed) ClearSession(w http.ResponseWriter, r *http.Request) {
+}
+
+func (m *mockSessionManagerAuthenticatedCSRFFailed) GetSession(w http.ResponseWriter, r *http.Request) (*sessions.Session, error) {
+	return sessions.NewSession(nil, session.SessionName), nil
+}
+
+func (m *mockSessionManagerAuthenticatedCSRFFailed) SaveSession(w http.ResponseWriter, r *http.Request, sess *sessions.Session) error {
+	return nil
+}
+
+func (m *mockSessionManagerAuthenticatedCSRFFailed) IsAuthenticated(r *http.Request) bool {
+	return true // Authenticated
+}
+
+func (m *mockSessionManagerAuthenticatedCSRFFailed) SetAuthenticated(w http.ResponseWriter, r *http.Request, authenticated bool) error {
+	return nil
+}
+
 // errorResponseWriter simulates a writer that fails on Write.
 // Used by tests across the handlers package for render-error paths.
 type errorResponseWriter struct {
@@ -420,7 +488,7 @@ func TestAuthHandlers_Login_InvalidCSRF(t *testing.T) {
 
 func TestAuthHandlers_Logout(t *testing.T) {
 	authSvc := &mockAuthService{}
-	authHandlers := NewAuthHandlers(authSvc, &mockSessionManagerAuth{})
+	authHandlers := NewAuthHandlers(authSvc, &mockSessionManagerWithCSRFValid{})
 
 	req := httptest.NewRequest(http.MethodPost, "/logout", nil)
 	w := httptest.NewRecorder()
@@ -434,6 +502,22 @@ func TestAuthHandlers_Logout(t *testing.T) {
 	// Should have HX-Trigger header for auth-changed event
 	if w.Header().Get("HX-Trigger") != "auth-changed" {
 		t.Errorf("expected HX-Trigger 'auth-changed', got '%s'", w.Header().Get("HX-Trigger"))
+	}
+}
+
+func TestAuthHandlers_Logout_CSRFFailed(t *testing.T) {
+	authSvc := &mockAuthService{}
+	// Use a mock that returns false for ValidateCSRFToken (authenticated session with invalid CSRF)
+	authHandlers := NewAuthHandlers(authSvc, &mockSessionManagerAuthenticatedCSRFFailed{})
+
+	req := httptest.NewRequest(http.MethodPost, "/logout", nil)
+	w := httptest.NewRecorder()
+
+	authHandlers.Logout(w, req)
+
+	// Should return 403 Forbidden on CSRF failure
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected status %d, got %d: %s", http.StatusForbidden, w.Code, w.Body.String())
 	}
 }
 

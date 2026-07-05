@@ -18,7 +18,7 @@ import (
 // TestMiddlewareApplication_SelectiveConditional verifies that ConditionalMiddleware
 // is correctly applied to some routes (Gallery, Thumbnail) but NOT to others (RawImage).
 func TestMiddlewareApplication_SelectiveConditional(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	// Enable cache/compression to mimic production stack, though not strictly needed for this test
 	app.opt.EnableCompression = getopt.OptBool{Bool: true, IsSet: true}
 	app.opt.EnableHTTPCache = getopt.OptBool{Bool: true, IsSet: true}

@@ -14,7 +14,7 @@ import (
 func TestCacheBatchLoad_BlocksWhenDiscoveryActive(t *testing.T) {
 	t.Setenv("SEPG_SESSION_SECRET", "test-secret")
 
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	if app.moduleStateService == nil {
@@ -29,11 +29,11 @@ func TestCacheBatchLoad_BlocksWhenDiscoveryActive(t *testing.T) {
 
 	cfg := cachebatch.Config{
 		GetQueries: func() (cachebatch.BatchLoadQueries, func()) {
-			cpc, err := app.dbRoPool.Get()
+			cpcRo, err := app.dbRoPool.Get()
 			if err != nil {
 				return nil, nil
 			}
-			return cpc.Queries, func() { app.dbRoPool.Put(cpc) }
+			return cpcRo.Queries, func() { app.dbRoPool.Put(cpcRo) }
 		},
 		GetHandler:         app.getRouter,
 		GetETagVersion:     func() string { return "v1" },

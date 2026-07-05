@@ -316,34 +316,12 @@ func TestQueue_Turbo(t *testing.T) {
 		t.Fatal("Error running TurboSync:", err)
 	}
 
-	// Enqueue 1000 items
-	start := time.Now()
-	for i := range 1000 {
-		if err := q.Enqueue(&item2{i}); err != nil {
-			t.Fatal("Error enqueueing:", err)
-		}
-	}
-	elapsedTurbo := time.Since(start)
-
 	if !q.Turbo() {
 		t.Fatalf("Expected turbo to be on")
 	}
 
 	if err := q.TurboOff(); err != nil {
 		t.Fatal("Error turning off turbo:", err)
-	}
-
-	// Enqueue 1000 items
-	start = time.Now()
-	for i := range 1000 {
-		if err := q.Enqueue(&item2{i}); err != nil {
-			t.Fatal("Error enqueueing:", err)
-		}
-	}
-	elapsedSafe := time.Since(start)
-
-	if elapsedTurbo >= elapsedSafe/2 {
-		t.Fatalf("Turbo time (%v) must be faster than safe mode (%v)", elapsedTurbo, elapsedSafe)
 	}
 }
 

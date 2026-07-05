@@ -15,7 +15,7 @@ import (
 )
 
 func TestAppRouterOnRealListener(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	router := app.getRouter()
@@ -32,17 +32,17 @@ func TestAppRouterOnRealListener(t *testing.T) {
 	defer srv.Close()
 
 	// Create a folder in the test database that we can request
-	cpc, err := app.dbRwPool.Get()
+	cpcRw, err := app.dbRwPool.Get()
 	if err != nil {
 		t.Fatalf("failed to get db connection: %v", err)
 	}
-	defer app.dbRwPool.Put(cpc)
+	defer app.dbRwPool.Put(cpcRw)
 
-	pathID, err := cpc.Queries.UpsertFolderPathReturningID(app.ctx, "/test-listener-folder")
+	pathID, err := cpcRw.Queries.UpsertFolderPathReturningID(app.ctx, "/test-listener-folder")
 	if err != nil {
 		t.Fatalf("failed to insert folder path: %v", err)
 	}
-	folder, err := cpc.Queries.UpsertFolderReturningFolder(app.ctx, gallerydb.UpsertFolderReturningFolderParams{
+	folder, err := cpcRw.Queries.UpsertFolderReturningFolder(app.ctx, gallerydb.UpsertFolderReturningFolderParams{
 		ParentID:  sql.NullInt64{Valid: false},
 		PathID:    pathID,
 		Name:      "listener-folder",

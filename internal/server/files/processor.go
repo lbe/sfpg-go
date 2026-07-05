@@ -111,6 +111,10 @@ func checkIfFileModifiedCore(ctx context.Context, getFile getFileByPathFunc, get
 		}
 	}
 
+	if getFile == nil {
+		return false, errors.New("getFile callback is nil")
+	}
+
 	dbFile, err := getFile(ctx, f.Path)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		slog.Error("checkIfFileModified GetFileByPath", "err", err)

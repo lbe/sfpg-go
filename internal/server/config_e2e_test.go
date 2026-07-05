@@ -16,11 +16,12 @@ import (
 )
 
 // TestE2E_ConfigRestart_UsesUpdatedPort verifies that after a configuration change
-// and server restart, the server actually listens on the updated port.
-// This is a true E2E test that verifies actual server behavior, not just database state.
+// the new port value is persisted and that POST /config/restart requests a real
+// process restart. The actual re-exec is stubbed because this test does not run
+// a live Serve() loop.
 func TestE2E_ConfigRestart_UsesUpdatedPort(t *testing.T) {
 	setenvForTest(t, "SEPG_SESSION_SECURE", "false")
-	app := CreateApp(t, true)
+	app := CreateApp(t, WithPool())
 	defer app.Shutdown()
 
 	// Set initial config
@@ -78,14 +79,6 @@ func TestE2E_ConfigRestart_UsesUpdatedPort(t *testing.T) {
 		t.Errorf("expected port 8888 in config, got %d", updatedPort)
 	}
 
-	// Initialize restart channel
-	app.restartMu.Lock()
-	if app.restartCh == nil {
-		app.restartCh = make(chan struct{}, 1)
-	}
-	restartCh := app.restartCh
-	app.restartMu.Unlock()
-
 	// Trigger restart
 	restartCsrfToken := extractCSRFTokenFromConfig(t, client, ts.URL)
 	restartFormData := url.Values{}
@@ -107,16 +100,22 @@ func TestE2E_ConfigRestart_UsesUpdatedPort(t *testing.T) {
 		t.Fatalf("expected 200 for restart, got %d", restartResp.StatusCode)
 	}
 
-	// Wait for restart signal
-	select {
-	case <-restartCh:
-		// Good, restart signal received
-	case <-time.After(2 * time.Second):
-		t.Fatal("restart signal not received within 2 seconds")
+	// The handler should have requested a real process restart.
+	// It flushes the response first and then triggers the restart in a
+	// background goroutine, so we poll briefly.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if app.restartRequested.Load() {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !app.restartRequested.Load() {
+		t.Fatal("restart was not requested after POST /config/restart")
 	}
 
-	// Simulate what Serve() does: read port from app.config
-	// In a real scenario, Serve() would use this port to bind the server
+	// In a real process, Serve() would return and Run() would exec a new image.
+	// Here we just verify the persisted config port is the new value.
 	app.configMu.RLock()
 	restartPort := app.config.ListenerPort
 	app.configMu.RUnlock()
@@ -135,7 +134,7 @@ func TestE2E_ConfigRestart_UsesUpdatedPort(t *testing.T) {
 // This tests that getRouter() reads from app.config dynamically.
 func TestE2E_ConfigCompression_ServerUsesConfig(t *testing.T) {
 	setenvForTest(t, "SEPG_SESSION_SECURE", "false")
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// Set initial config with compression enabled
@@ -237,7 +236,7 @@ func TestE2E_ConfigCompression_ServerUsesConfig(t *testing.T) {
 // uses cache settings from app.config, not app.opt, after configuration changes.
 func TestE2E_ConfigCache_ServerUsesConfig(t *testing.T) {
 	setenvForTest(t, "SEPG_SESSION_SECURE", "false")
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// Set initial config with cache enabled

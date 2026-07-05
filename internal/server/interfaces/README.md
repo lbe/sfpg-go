@@ -5,6 +5,9 @@ Purpose: host shared contracts consumed by both the server orchestrator (`intern
 Current contents:
 
 - `HandlerQueries`: read-only gallery queries used by handlers and wired from `App` via `gallerydb` generated queries.
+- `MetadataQueries`: EXIF and IPTC metadata reads consumed by handlers and satisfied by `*gallerydb.Queries` directly (no adapter).
+- `ServerDeps`: the primary dependency-injection interface — 24 methods covering credentials, config operations, gallery queries, server control, and template rendering. Implemented by `*server.App`. Replaces the previous 15+ callback fields and 3 adapter types.
+- `StartCacheBatchLoadResult`: struct shared by server and handlers for cache batch load outcomes.
 
 Guidelines:
 
@@ -14,5 +17,4 @@ Guidelines:
 
 Future candidates:
 
-- If `HandlerQueries` expands with EXIF/IPTC reads, consider either extending the interface here or adding a sibling `MetadataQueries` when multiple packages need it.
-- Login-related persistence (if shared across packages) could be added here; otherwise keep it local to handlers.
+- Login-related persistence (if shared across packages beyond `ServerDeps`) could be factored into a separate interface here; currently handled via `ServerDeps` credential methods.

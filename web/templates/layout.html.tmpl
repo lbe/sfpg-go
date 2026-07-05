@@ -21,14 +21,9 @@
         href="/static/favicon/favicon.svg"
         type="image/svg+xml"
       />
-      <script src="https://cdn.tailwindcss.com"></script>
-      <link
-        href="https://cdn.jsdelivr.net/npm/daisyui@4.12.10/dist/full.min.css"
-        rel="stylesheet"
-        type="text/css"
-      />
-      <script src="https://unpkg.com/htmx.org@1.9.12"></script>
-      <script src="https://unpkg.com/hyperscript.org@0.9.12"></script>
+      <link href="/static/css/styles.css" rel="stylesheet" type="text/css" />
+      <script src="/static/js/htmx.min.js"></script>
+      <script src="/static/js/hyperscript.min.js"></script>
       <script type="text/hyperscript">
         def disableFooterButtons()
           add @disabled to #lightbox-first-btn
@@ -53,16 +48,10 @@
         end
 
         -- NEW: DRY Refactor for Lightbox Navigation
+        -- Route the image immediately. The info box is loaded by the new
+        -- #lightbox-ui after HTMX swaps it (initLightboxRouter sends manual-load).
         def lightboxNav(imgUrl, infoId)
            send route(url: imgUrl) to #lightbox-images
-           remove .hidden from #info_box_spinner
-           add .htmx-request to #info_box_spinner
-
-           fetch `/info/image/${infoId}?v={{ cacheVersion }}` with headers: {"HX-Request": "true", "HX-Target": "box_info"} then put result into #box_info
-           call updateScaled()
-
-           remove .htmx-request from #info_box_spinner
-           add .hidden to #info_box_spinner
         end
 
         -- OPTIMIZED SCALING LOGIC (Fixed for 3-slot carousel)
@@ -152,6 +141,12 @@
         -- EVENT LISTENERS
         on htmx:afterSwap from #lightbox_content call updateScaled() end
         on htmx:afterSwap from #box_info call updateScaled() end
+
+        on 'auth-changed' from body
+          if #login_modal.checked
+            set #login_modal.checked to false
+          end
+        end
 
         on resize from window
           wait 150ms
@@ -247,7 +242,7 @@
       </style>
     </head>
     <body
-      class="bg-base-100 flex h-screen flex-col overflow-hidden"
+      class="flex h-screen flex-col overflow-hidden bg-base-100"
       style="padding-bottom: max(0px, env(safe-area-inset-bottom));"
       _="init
            -- Hide info-box on dashboard (no sidebar needed there)
@@ -355,14 +350,14 @@
         <div id="mobile_info_modal_box" class="modal-box relative p-2">
           <div
             id="box_info_mobile"
-            class="bg-base-200 border-base-300 min-h-[16rem] w-full overflow-y-auto rounded-[6px] border shadow-md"
+            class="min-h-[16rem] w-full overflow-y-auto rounded-[6px] border border-base-300 bg-base-200 shadow-md"
           >
             <!-- Content mirrored from #box_info -->
           </div>
 
           <div
             id="info_box_spinner_mobile"
-            class="htmx-indicator absolute inset-0 z-10 flex hidden items-center justify-center rounded-md"
+            class="htmx-indicator invisible absolute inset-0 z-10 flex items-center justify-center rounded-md [&.htmx-request]:visible"
           >
             <span class="loading loading-spinner loading-md"></span>
           </div>
@@ -375,7 +370,7 @@
         <!-- Info Box Wrapper: Hidden by default, visible only in gallery context -->
         <div
           id="box_info_wrapper"
-          class="relative mt-[7px] mb-[7px] ml-[7px] hidden h-[calc(100vh-72px-14px)] w-[236px] flex-shrink-0"
+          class="relative mb-[7px] ml-[7px] mt-[7px] hidden h-[calc(100vh-72px-14px)] w-[236px] flex-shrink-0"
           _="init
               if body matches .info-pinned
                 remove .hidden from me
@@ -384,7 +379,7 @@
           <!-- The target for the swap -->
           <div
             id="box_info"
-            class="bg-base-200 border-base-300 h-full w-full overflow-y-auto rounded-[6px] border shadow-md"
+            class="h-full w-full overflow-y-auto rounded-[6px] border border-base-300 bg-base-200 shadow-md"
             _="on htmx:afterSwap
                  if #mobile_info_modal.checked
                    set #box_info_mobile.innerHTML to my.innerHTML
@@ -398,7 +393,7 @@
           <!-- The indicator, sibling to the target -->
           <div
             id="info_box_spinner"
-            class="htmx-indicator absolute inset-0 z-10 flex hidden items-center justify-center rounded-md"
+            class="htmx-indicator invisible absolute inset-0 z-10 flex items-center justify-center rounded-md [&.htmx-request]:visible"
           >
             <span class="loading loading-spinner loading-md"></span>
           </div>
@@ -435,7 +430,7 @@
           <!-- Lightbox Modal -->
           <div
             id="lightbox_modal"
-            class="fixed top-0 right-0 left-0 z-50 hidden items-center justify-center"
+            class="fixed left-0 right-0 top-0 z-50 hidden items-center justify-center"
             style="height: calc(100dvh - 4rem - max(0px, env(safe-area-inset-bottom))); bottom: auto;"
             _='init
                 set window.lightboxSpinner to the innerHTML of #lightbox_content
@@ -522,7 +517,7 @@
             <!-- Semi-transparent overlay -->
             <div
               id="lightbox_overlay"
-              class="bg-base-200 absolute inset-0 opacity-80"
+              class="absolute inset-0 bg-base-200 opacity-80"
               _="on click trigger closeModal on #lightbox_modal"
             ></div>
 
@@ -538,7 +533,7 @@
           <!-- Actual Size Modal -->
           <div
             id="actual-size_modal"
-            class="bg-base-200 fixed inset-x-0 top-0 z-51 hidden overflow-auto"
+            class="z-51 fixed inset-x-0 top-0 hidden overflow-auto bg-base-200"
             style="height: calc(100dvh - 4rem - max(0px, env(safe-area-inset-bottom))); bottom: auto;"
             _="on keydown if event.key is 'Escape'
                  remove .actual-size-mode from body
@@ -568,13 +563,13 @@
         id="footer-container"
         class="sticky bottom-0 z-20 border-t border-[oklch(var(--bc)/0.08)] bg-[oklch(var(--b2)/0.85)] backdrop-blur-[20px]"
       >
-        <footer class="relative flex h-[72px] items-center px-6 pt-7 pb-1">
+        <footer class="relative flex h-[72px] items-center px-6 pb-1 pt-7">
           {{/* Gallery toolbar: only visible on gallery/lightbox pages, hidden on dashboard */}}
           {{ if ne .PageName "dashboard" }}
             {{/* Breadcrumbs: intercept link clicks and set location.href so we always do full navigation (not HTMX). Links without hx-get are treated as full-page. */}}
             <div
               id="breadcrumbs-container"
-              class="absolute top-0 right-0 left-0 flex h-7 items-center justify-center text-xs text-[oklch(var(--bc)/0.6)]"
+              class="absolute left-0 right-0 top-0 flex h-7 items-center justify-center text-xs text-[oklch(var(--bc)/0.6)]"
               _="on click from <a/> in me
                  if target.tagName is 'A' and target@href exists and not target@hx-get exists
                    halt the event
@@ -604,7 +599,7 @@
               <!-- Mobile Info Button (only visible on mobile) -->
               <button
                 id="info-btn-mobile"
-                class="border-base-content/5 bg-base-300/60 text-base-content/70 hover:bg-base-300 hover:text-primary hover:border-primary/20 relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none sm:hidden"
+                class="relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border border-base-content/5 bg-base-300/60 text-base-content/70 transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:border-primary/20 hover:bg-base-300 hover:text-primary hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none sm:hidden"
                 title="Info"
                 _="on click
                 if #box_info.children.length is 0
@@ -636,7 +631,7 @@
               <!-- Info Button (desktop only) -->
               <button
                 id="info-btn"
-                class="border-base-content/5 bg-base-300/60 text-base-content/70 hover:bg-base-300 hover:text-primary hover:border-primary/20 relative hidden h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none sm:flex"
+                class="relative hidden h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border border-base-content/5 bg-base-300/60 text-base-content/70 transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:border-primary/20 hover:bg-base-300 hover:text-primary hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none sm:flex"
                 {{ if eq .PageName "dashboard" }}disabled{{ end }}
                 title="Info"
                 _="on click
@@ -676,7 +671,7 @@
               <!-- Count Display -->
               <span
                 id="image-count-display"
-                class="text-base-content/80 text-xs font-medium tracking-[-0.01em]"
+                class="text-xs font-medium tracking-[-0.01em] text-base-content/80"
               >
                 {{ template "image-count" . }}
               </span>
@@ -688,7 +683,7 @@
               <button
                 id="lightbox-first-btn"
                 type="button"
-                class="border-base-content/5 bg-base-300/60 text-base-content/70 hover:bg-base-300 hover:text-primary hover:border-primary/20 relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none"
+                class="relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border border-base-content/5 bg-base-300/60 text-base-content/70 transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:border-primary/20 hover:bg-base-300 hover:text-primary hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none"
                 disabled
                 title="First"
               >
@@ -711,7 +706,7 @@
               <button
                 id="lightbox-prev-btn"
                 type="button"
-                class="border-base-content/5 bg-base-300/60 text-base-content/70 hover:bg-base-300 hover:text-primary hover:border-primary/20 relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none"
+                class="relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border border-base-content/5 bg-base-300/60 text-base-content/70 transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:border-primary/20 hover:bg-base-300 hover:text-primary hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none"
                 disabled
                 title="Previous"
               >
@@ -732,7 +727,7 @@
               <!-- Close -->
               <button
                 id="lightbox_close-btn"
-                class="border-base-content/5 bg-base-300/60 text-base-content/70 hover:bg-base-300 hover:text-primary hover:border-primary/20 relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none"
+                class="relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border border-base-content/5 bg-base-300/60 text-base-content/70 transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:border-primary/20 hover:bg-base-300 hover:text-primary hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none"
                 disabled
                 title="Close"
                 _="on click 
@@ -754,12 +749,12 @@
               </button>
 
               <!-- Divider -->
-              <div class="bg-base-content/10 mx-1 h-[18px] w-px"></div>
+              <div class="mx-1 h-[18px] w-px bg-base-content/10"></div>
 
               <!-- Slideshow / Play -->
               <button
                 id="slideshow-btn"
-                class="border-base-content/5 bg-base-300/60 text-base-content/70 hover:bg-base-300 hover:text-primary hover:border-primary/20 relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none"
+                class="relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border border-base-content/5 bg-base-300/60 text-base-content/70 transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:border-primary/20 hover:bg-base-300 hover:text-primary hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none"
                 disabled
                 title="Slideshow"
                 _="init
@@ -814,7 +809,7 @@
               <!-- Actual Size -->
               <button
                 id="lightbox-actual-size-btn"
-                class="border-base-content/5 bg-base-300/60 text-base-content/70 hover:bg-base-300 hover:text-primary hover:border-primary/20 relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none"
+                class="relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border border-base-content/5 bg-base-300/60 text-base-content/70 transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:border-primary/20 hover:bg-base-300 hover:text-primary hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none"
                 disabled
                 title="Actual Size"
                 _="on click
@@ -857,13 +852,13 @@
               </button>
 
               <!-- Divider -->
-              <div class="bg-base-content/10 mx-1 h-[18px] w-px"></div>
+              <div class="mx-1 h-[18px] w-px bg-base-content/10"></div>
 
               <!-- Next -->
               <button
                 id="lightbox-next-btn"
                 type="button"
-                class="border-base-content/5 bg-base-300/60 text-base-content/70 hover:bg-base-300 hover:text-primary hover:border-primary/20 relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none"
+                class="relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border border-base-content/5 bg-base-300/60 text-base-content/70 transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:border-primary/20 hover:bg-base-300 hover:text-primary hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none"
                 disabled
                 title="Next"
               >
@@ -885,7 +880,7 @@
               <button
                 id="lightbox-last-btn"
                 type="button"
-                class="border-base-content/5 bg-base-300/60 text-base-content/70 hover:bg-base-300 hover:text-primary hover:border-primary/20 relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none"
+                class="relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border border-base-content/5 bg-base-300/60 text-base-content/70 transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:border-primary/20 hover:bg-base-300 hover:text-primary hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none"
                 disabled
                 title="Last"
               >
@@ -909,11 +904,11 @@
 
           <!-- Group 3: Right Aligned - Menu -->
           <div class="flex flex-1 items-center justify-end gap-3 pr-2">
-            <div class="dropdown dropdown-top dropdown-end">
+            <div class="dropdown dropdown-end dropdown-top">
               <button
                 id="hamburger-menu-btn"
                 type="button"
-                class="border-base-content/5 bg-base-300/60 text-base-content/70 hover:bg-base-300 hover:text-primary hover:border-primary/20 relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none"
+                class="relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border border-base-content/5 bg-base-300/60 text-base-content/70 transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:border-primary/20 hover:bg-base-300 hover:text-primary hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none"
                 tabindex="0"
                 aria-label="Menu"
               >
@@ -938,7 +933,7 @@
                 hx-get="/hamburger-menu"
                 hx-trigger="load, pageshow from:window, auth-changed from:body"
                 hx-swap="innerHTML"
-                class="menu dropdown-content bg-base-100 border-base-300 rounded-box z-[60] w-56 border p-2 shadow-lg"
+                class="menu dropdown-content z-[60] w-56 rounded-box border border-base-300 bg-base-100 p-2 shadow-lg"
                 tabindex="0"
               >
                 <!-- Minimal placeholder while HTMX loads;
@@ -971,12 +966,12 @@
 
 
       <!-- Server Toast Container (for notifications) -->
-      <div id="server-toast-container" class="fixed top-4 right-4 z-[70]"></div>
+      <div id="server-toast-container" class="fixed right-4 top-4 z-[70]"></div>
 
       <!-- Server Restart Overlay -->
       <div
         id="restart-overlay"
-        class="bg-base-300/95 fixed inset-0 z-[9999] flex hidden flex-col items-center justify-center"
+        class="fixed inset-0 z-[9999] flex hidden flex-col items-center justify-center bg-base-300/95"
         _="on showRestartOverlay
              set #restart-counter.textContent to '0'
              set window.restartStartTime to Date.now()
@@ -990,10 +985,10 @@
            end"
       >
         <div
-          class="loading loading-spinner loading-lg text-primary mb-8 h-24 w-24"
+          class="loading loading-spinner loading-lg mb-8 h-24 w-24 text-primary"
         ></div>
         <h2 class="mb-4 text-3xl font-bold">Restarting Server</h2>
-        <p class="text-base-content/70 mb-2 text-lg">
+        <p class="mb-2 text-lg text-base-content/70">
           Please wait while the server restarts...
         </p>
         <p class="text-xl"><span id="restart-counter">0</span> seconds</p>

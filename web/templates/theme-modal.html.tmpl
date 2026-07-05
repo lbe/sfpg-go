@@ -1,5 +1,5 @@
 <!-- Theme Selector Modal -->
-<div id="theme-modal-container">
+<div id="theme-modal-container" _="init set #theme_modal.checked to true">
   <input type="checkbox" id="theme_modal" class="modal-toggle" />
   <div class="modal" role="dialog">
     <div
@@ -7,12 +7,12 @@
     >
       <!-- Fixed Header -->
       <div
-        class="border-base-300 flex flex-shrink-0 items-center justify-between border-b p-6 pb-4"
+        class="flex flex-shrink-0 items-center justify-between border-b border-base-300 p-6 pb-4"
       >
         <h3 class="text-2xl font-bold">Select Theme</h3>
         <label
           for="theme_modal"
-          class="btn btn-sm btn-circle btn-ghost"
+          class="btn btn-circle btn-ghost btn-sm"
           _="on click
                wait 300ms
                remove #theme-modal-container from body"
@@ -32,11 +32,11 @@
         <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
           {{ range .Themes }}
             <div
-              class="theme-card rounded-box {{ if eq . $.CurrentTheme }}
+              class="theme-card {{ if eq . $.CurrentTheme }}
                 border-primary ring-2 ring-primary
               {{ else }}
                 border-base-300
-              {{ end }} cursor-pointer border-2 p-4 transition-all hover:scale-105"
+              {{ end }} cursor-pointer rounded-box border-2 p-4 transition-all hover:scale-105"
               data-theme="{{ . }}"
               _="on mouseenter
                    set @data-theme of #theme-preview-pane to my @data-theme
@@ -56,34 +56,34 @@
 
               <!-- Color Preview using DaisyUI CSS variables -->
               <div
-                class="bg-base-100 rounded-box border-base-300 flex flex-col gap-1 border p-2"
+                class="flex flex-col gap-1 rounded-box border border-base-300 bg-base-100 p-2"
                 data-theme="{{ . }}"
               >
                 <!-- Primary color -->
                 <div class="flex items-center gap-2">
-                  <div class="bg-primary h-4 w-4 rounded"></div>
+                  <div class="h-4 w-4 rounded bg-primary"></div>
                   <span class="text-xs">Primary</span>
                 </div>
                 <!-- Secondary color -->
                 <div class="flex items-center gap-2">
-                  <div class="bg-secondary h-4 w-4 rounded"></div>
+                  <div class="h-4 w-4 rounded bg-secondary"></div>
                   <span class="text-xs">Secondary</span>
                 </div>
                 <!-- Accent color -->
                 <div class="flex items-center gap-2">
-                  <div class="bg-accent h-4 w-4 rounded"></div>
+                  <div class="h-4 w-4 rounded bg-accent"></div>
                   <span class="text-xs">Accent</span>
                 </div>
                 <!-- Neutral color -->
                 <div class="flex items-center gap-2">
-                  <div class="bg-neutral h-4 w-4 rounded"></div>
+                  <div class="h-4 w-4 rounded bg-neutral"></div>
                   <span class="text-xs">Neutral</span>
                 </div>
                 <!-- Base colors -->
                 <div class="mt-1 flex gap-1">
-                  <div class="bg-base-100 h-4 flex-1 rounded border"></div>
-                  <div class="bg-base-200 h-4 flex-1 rounded"></div>
-                  <div class="bg-base-300 h-4 flex-1 rounded"></div>
+                  <div class="h-4 flex-1 rounded border bg-base-100"></div>
+                  <div class="h-4 flex-1 rounded bg-base-200"></div>
+                  <div class="h-4 flex-1 rounded bg-base-300"></div>
                 </div>
               </div>
             </div>
@@ -95,7 +95,7 @@
           <h4 class="mb-3 text-lg font-semibold">Preview</h4>
           <div
             id="theme-preview-pane"
-            class="bg-base-100 rounded-box border-base-300 border p-4"
+            class="rounded-box border border-base-300 bg-base-100 p-4"
             data-theme="{{ .CurrentTheme }}"
           >
             <div class="flex flex-col gap-3">
@@ -112,9 +112,9 @@
                 <button class="btn btn-accent btn-sm">Accent</button>
                 <button class="btn btn-neutral btn-sm">Neutral</button>
               </div>
-              <div class="bg-base-200 rounded-box p-3">
+              <div class="rounded-box bg-base-200 p-3">
                 <div class="flex items-center gap-3">
-                  <div class="bg-primary h-10 w-10 rounded-lg"></div>
+                  <div class="h-10 w-10 rounded-lg bg-primary"></div>
                   <div>
                     <div class="font-semibold">Card Title</div>
                     <div class="text-sm opacity-70">Card description text</div>
@@ -130,7 +130,7 @@
       </div>
 
       <!-- Fixed Footer -->
-      <div class="border-base-300 flex-shrink-0 border-t p-6 pt-4">
+      <div class="flex-shrink-0 border-t border-base-300 p-6 pt-4">
         <div class="modal-action justify-end">
           <label
             for="theme_modal"

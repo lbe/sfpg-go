@@ -3,6 +3,7 @@ package middleware
 import (
 	"bytes"
 	"compress/gzip"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -615,6 +616,46 @@ func TestCompressMiddleware_SkipsCompression_PreexistingContentEncoding(t *testi
 	if baseRecorder.Header().Get("Content-Encoding") != "deflate" {
 		t.Fatalf("Content-Encoding = %q, want deflate (unchanged)", baseRecorder.Header().Get("Content-Encoding"))
 	}
+}
+
+// TestCompressMiddleware_LogsFlushError verifies that a failure during the final
+// flush of a compressed response is logged via slog.Warn (issue M2).
+func TestCompressMiddleware_LogsFlushError(t *testing.T) {
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	slog.SetDefault(logger)
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(strings.Repeat("x", 600))) // large enough to trigger compression
+	})
+
+	mw := CompressMiddleware(handler)
+
+	req := httptest.NewRequest("GET", "/test.html", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+
+	base := httptest.NewRecorder()
+	frw := &failingResponseWriter{ResponseWriter: base}
+
+	mw.ServeHTTP(frw, req)
+
+	logStr := logBuf.String()
+	if !strings.Contains(logStr, "failed to flush compressed response") {
+		t.Errorf("expected flush error warning in logs, got: %s", logStr)
+	}
+	if !strings.Contains(logStr, "write failed") {
+		t.Errorf("expected underlying error in logs, got: %s", logStr)
+	}
+}
+
+// failingResponseWriter wraps an http.ResponseWriter and fails all Writes.
+type failingResponseWriter struct {
+	http.ResponseWriter
+}
+
+func (f *failingResponseWriter) Write(p []byte) (int, error) {
+	return 0, errors.New("write failed")
 }
 
 // TestCompressMiddleware_HeadersSetBeforeBody ensures Content-Encoding header is sent before body

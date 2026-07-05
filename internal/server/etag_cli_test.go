@@ -9,7 +9,7 @@ import (
 )
 
 func TestApp_IncrementETag(t *testing.T) {
-	app := CreateApp(t, false)
+	app := CreateApp(t)
 	ctx := context.Background()
 
 	// Get current ETag version
@@ -54,8 +54,11 @@ func TestApp_IncrementETag(t *testing.T) {
 
 func TestApp_InitForIncrementETag(t *testing.T) {
 	// Create app with minimal initialization
-	app := &App{}
-	app.ctx = context.Background()
+	app := &App{
+		InfrastructureService: NewInfrastructureService(),
+		ConfigManager:         NewConfigManager(),
+		RuntimeManager:        NewRuntimeManager(context.Background()),
+	}
 
 	opt := getopt.Opt{}
 	err := app.InitForIncrementETag(opt)

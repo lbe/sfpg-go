@@ -51,7 +51,7 @@ func TestAppUsesConfigForLogDirectory(t *testing.T) {
 	}
 
 	// Apply config
-	app.applyConfig()
+	app.ApplyConfig()
 
 	// Reload logging from config to apply the log directory
 	if err := app.reloadLoggingFromConfig(); err != nil {
@@ -100,7 +100,7 @@ func TestAppUsesConfigForImageDirectory(t *testing.T) {
 	}
 
 	// Apply config
-	app.applyConfig()
+	app.ApplyConfig()
 
 	// Set image directory from config (as done in Run())
 
@@ -147,7 +147,7 @@ func TestAppUsesConfigForLogLevel(t *testing.T) {
 	}
 
 	// Apply config
-	app.applyConfig()
+	app.ApplyConfig()
 
 	// Reload logging from config to apply the log level
 	if err := app.reloadLoggingFromConfig(); err != nil {

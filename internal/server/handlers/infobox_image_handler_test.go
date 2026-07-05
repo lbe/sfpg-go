@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/lbe/sfpg-go/internal/dbconnpool"
 	"github.com/lbe/sfpg-go/internal/gallerydb"
 	"github.com/lbe/sfpg-go/internal/testutil"
 
@@ -64,9 +63,7 @@ func TestInfoBoxImage_DBError(t *testing.T) {
 func TestInfoBoxImage_MetadataError(t *testing.T) {
 	qh := &fakeHandlerQueries{}
 	gh := setupTestGalleryHandlers(t, qh)
-	gh.GetMetadataQueries = func(*dbconnpool.CpConn) MetadataQueries {
-		return mockMetadataQueriesWithError{exifErr: errors.New("exif error")}
-	}
+	gh.deps.(*mockServerDeps).MQ = mockMetadataQueriesWithError{exifErr: errors.New("exif error")}
 
 	req := httptest.NewRequest(http.MethodGet, "/info/image/1", nil)
 	req.SetPathValue("id", "1")
@@ -97,9 +94,7 @@ func TestInfoBoxImage_Success(t *testing.T) {
 func TestInfoBoxImage_ZeroLatLongDoesNotRenderMap(t *testing.T) {
 	qh := &fakeHandlerQueries{}
 	gh := setupTestGalleryHandlers(t, qh)
-	gh.GetMetadataQueries = func(*dbconnpool.CpConn) MetadataQueries {
-		return metadataQueriesZeroLatLong{}
-	}
+	gh.deps.(*mockServerDeps).MQ = metadataQueriesZeroLatLong{}
 
 	req := httptest.NewRequest(http.MethodGet, "/info/image/1", nil)
 	req.SetPathValue("id", "1")
@@ -151,9 +146,7 @@ func TestInfoBoxImage_FileListError(t *testing.T) {
 func TestInfoBoxImage_IptcError(t *testing.T) {
 	qh := &fakeHandlerQueries{}
 	gh := setupTestGalleryHandlers(t, qh)
-	gh.GetMetadataQueries = func(*dbconnpool.CpConn) MetadataQueries {
-		return mockMetadataQueriesWithError{iptcErr: errors.New("iptc error")}
-	}
+	gh.deps.(*mockServerDeps).MQ = mockMetadataQueriesWithError{iptcErr: errors.New("iptc error")}
 
 	req := httptest.NewRequest(http.MethodGet, "/info/image/1", nil)
 	req.SetPathValue("id", "1")

@@ -21,18 +21,18 @@ import (
 // ============================================================================
 
 func TestInfoBoxFolderHandler(t *testing.T) {
-	app := CreateApp(t, true)
+	app := CreateApp(t, WithPool())
 	time.Sleep(200 * time.Millisecond) // Give some time for the worker pool to start
 	defer app.Shutdown()
 
 	// 1. Setup data
-	cpc, err := app.dbRwPool.Get()
+	cpcRw, err := app.dbRwPool.Get()
 	if err != nil {
 		t.Fatalf("failed to get db connection: %v", err)
 	}
-	defer app.dbRwPool.Put(cpc)
+	defer app.dbRwPool.Put(cpcRw)
 
-	importer := gallerylib.Importer{Q: cpc.Queries}
+	importer := gallerylib.Importer{Q: cpcRw.Queries}
 	// Create a folder with 2 subfolders, 3 images, 1 non-image file
 	_, err = importer.UpsertPathChain(app.ctx, "/info-test/sub1/file.txt", 0, 0, "", 0, 0, 0, "text/plain")
 	if err != nil {
@@ -60,7 +60,7 @@ func TestInfoBoxFolderHandler(t *testing.T) {
 	}
 
 	// Get the ID of the parent folder
-	testFolder, err := cpc.Queries.GetFolderByPath(app.ctx, "/info-test")
+	testFolder, err := cpcRw.Queries.GetFolderByPath(app.ctx, "/info-test")
 	if err != nil {
 		t.Fatalf("Failed to get test folder: %v", err)
 	}
@@ -116,18 +116,18 @@ func TestInfoBoxFolderHandler(t *testing.T) {
 }
 
 func TestInfoBoxImageHandler(t *testing.T) {
-	app := CreateApp(t, true)
+	app := CreateApp(t, WithPool())
 	time.Sleep(200 * time.Millisecond) // Give some time for the worker pool to start
 	defer app.Shutdown()
 
 	// 1. Setup data
-	cpc, err := app.dbRwPool.Get()
+	cpcRw, err := app.dbRwPool.Get()
 	if err != nil {
 		t.Fatalf("failed to get db connection: %v", err)
 	}
-	defer app.dbRwPool.Put(cpc)
+	defer app.dbRwPool.Put(cpcRw)
 
-	importer := gallerylib.Importer{Q: cpc.Queries}
+	importer := gallerylib.Importer{Q: cpcRw.Queries}
 	file, err := importer.UpsertPathChain(app.ctx, "/info-test/image1.jpg", 0, 0, "", 0, 0, 0, "image/jpeg")
 	if err != nil {
 		t.Fatal(err)
@@ -149,7 +149,7 @@ func TestInfoBoxImageHandler(t *testing.T) {
 		FocalLength:  sql.NullString{String: "50.0", Valid: true},
 		Orientation:  sql.NullInt64{Valid: false},
 	}
-	err = cpc.Queries.UpsertExif(app.ctx, mockExif)
+	err = cpcRw.Queries.UpsertExif(app.ctx, mockExif)
 	if err != nil {
 		t.Fatalf("Failed to insert mock EXIF data: %v", err)
 	}
@@ -162,7 +162,7 @@ func TestInfoBoxImageHandler(t *testing.T) {
 		Copyright: sql.NullString{String: "Test Copyright", Valid: true},
 	}
 
-	err = cpc.Queries.UpsertIPTC(app.ctx, mockIptc)
+	err = cpcRw.Queries.UpsertIPTC(app.ctx, mockIptc)
 	if err != nil {
 		t.Fatalf("Failed to insert mock IPTC data: %v", err)
 	}
@@ -227,7 +227,7 @@ func TestInfoBoxImageHandler(t *testing.T) {
 }
 
 func TestInfoFolderCacheBusting(t *testing.T) {
-	app := CreateApp(t, true)
+	app := CreateApp(t, WithPool())
 	time.Sleep(200 * time.Millisecond)
 	defer app.Shutdown()
 
@@ -235,13 +235,13 @@ func TestInfoFolderCacheBusting(t *testing.T) {
 	server := httptest.NewServer(router)
 	defer server.Close()
 
-	cpc, err := app.dbRwPool.Get()
+	cpcRw, err := app.dbRwPool.Get()
 	if err != nil {
 		t.Fatalf("failed to get db connection: %v", err)
 	}
-	defer app.dbRwPool.Put(cpc)
+	defer app.dbRwPool.Put(cpcRw)
 
-	importer := gallerylib.Importer{Q: cpc.Queries}
+	importer := gallerylib.Importer{Q: cpcRw.Queries}
 	folder, err := importer.UpsertPathChain(app.ctx, "/cachebust-folder/file.txt", 0, 0, "", 0, 0, 0, "text/plain")
 	if err != nil {
 		t.Fatalf("failed to upsert path chain: %v", err)

@@ -28,8 +28,8 @@ func TestGetRouter_CompressionMiddlewareWired(t *testing.T) {
 		EnableHTTPCache:   getopt.OptBool{Bool: false, IsSet: true},
 	}
 	// Ensure default session flags for middleware tests
-	// Don't set environment variables - rely on CreateAppWithOpt defaults
-	app := CreateAppWithOpt(t, false, opt)
+	// Don't set environment variables - rely on CreateApp defaults
+	app := CreateApp(t, WithGetoptOpt(opt))
 	defer app.Shutdown()
 
 	router := app.getRouter()
@@ -68,7 +68,7 @@ func TestGetRouter_CompressionMiddlewareNotWired(t *testing.T) {
 		EnableCompression: getopt.OptBool{Bool: false, IsSet: true},
 		EnableHTTPCache:   getopt.OptBool{Bool: false, IsSet: true},
 	}
-	app := CreateAppWithOpt(t, false, opt)
+	app := CreateApp(t, WithGetoptOpt(opt))
 	defer app.Shutdown()
 
 	router := app.getRouter()
@@ -103,7 +103,7 @@ func TestGetRouter_ConditionalMiddlewareWired(t *testing.T) {
 		EnableCompression: getopt.OptBool{Bool: false, IsSet: true},
 		EnableHTTPCache:   getopt.OptBool{Bool: false, IsSet: true},
 	}
-	app := CreateAppWithOpt(t, false, opt)
+	app := CreateApp(t, WithGetoptOpt(opt))
 	defer app.Shutdown()
 
 	router := app.getRouter()
@@ -136,7 +136,7 @@ func TestGetRouter_HTTPCacheMiddlewareWired(t *testing.T) {
 		EnableCompression: getopt.OptBool{Bool: false, IsSet: true},
 		EnableHTTPCache:   getopt.OptBool{Bool: true, IsSet: true},
 	}
-	app := CreateAppWithOpt(t, false, opt)
+	app := CreateApp(t, WithGetoptOpt(opt))
 	defer app.Shutdown()
 
 	router := app.getRouter()
@@ -168,7 +168,7 @@ func TestGetRouter_HTTPCacheMiddlewareNotWired(t *testing.T) {
 		EnableCompression: getopt.OptBool{Bool: false, IsSet: true},
 		EnableHTTPCache:   getopt.OptBool{Bool: false, IsSet: true},
 	}
-	app := CreateAppWithOpt(t, false, opt)
+	app := CreateApp(t, WithGetoptOpt(opt))
 	defer app.Shutdown()
 
 	router := app.getRouter()
@@ -194,7 +194,7 @@ func TestGetRouter_MiddlewareOrdering(t *testing.T) {
 		EnableCompression: getopt.OptBool{Bool: true, IsSet: true},
 		EnableHTTPCache:   getopt.OptBool{Bool: true, IsSet: true},
 	}
-	app := CreateAppWithOpt(t, false, opt)
+	app := CreateApp(t, WithGetoptOpt(opt))
 	defer app.Shutdown()
 
 	router := app.getRouter()
