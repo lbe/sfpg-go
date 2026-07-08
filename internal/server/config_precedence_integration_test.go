@@ -4,6 +4,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -735,4 +736,270 @@ func TestDBConfig_EnvAndCLIOverrideDBValues(t *testing.T) {
 			t.Errorf("expected EnableHTTPCache to be true from CLI, got false")
 		}
 	})
+}
+
+// TestIntegration_ConfigPersistence_BooleanValues verifies that mixed checkbox
+// values are persisted correctly and survive a restart.
+func TestIntegration_ConfigPersistence_BooleanValues(t *testing.T) {
+	setenvForTest(t, "SEPG_SESSION_SECURE", "false")
+
+	app1 := CreateApp(t)
+	defer func() {
+		if app1 != nil {
+			app1.Shutdown()
+		}
+	}()
+
+	ts := httptest.NewServer(app1.getRouter())
+	defer ts.Close()
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("failed to create cookie jar: %v", err)
+	}
+	client := &http.Client{Jar: jar}
+
+	loginAsAdmin(t, client, ts.URL)
+
+	csrfToken := extractCSRFTokenFromConfig(t, client, ts.URL)
+	formData := url.Values{}
+	formData.Set("csrf_token", csrfToken)
+	// Omitted checkboxes should be saved as false.
+	formData.Set("enable_http_cache", "on")
+	formData.Set("run_file_discovery", "on")
+	// server_compression_enable and session_http_only are intentionally omitted.
+
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/config", strings.NewReader(formData.Encode()))
+	if err != nil {
+		t.Fatalf("failed to create POST request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", ts.URL)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("POST /config failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	cpcRo, err := app1.dbRoPool.Get()
+	if err != nil {
+		t.Fatalf("failed to get DB connection: %v", err)
+	}
+
+	checks := map[string]string{
+		"server_compression_enable": "false",
+		"enable_http_cache":         "true",
+		"session_http_only":         "false",
+		"run_file_discovery":        "true",
+	}
+	for key, expected := range checks {
+		value, err := cpcRo.Queries.GetConfigValueByKey(app1.ctx, key)
+		if err != nil {
+			app1.dbRoPool.Put(cpcRo)
+			t.Fatalf("failed to get %s from DB: %v", key, err)
+		}
+		if value != expected {
+			app1.dbRoPool.Put(cpcRo)
+			t.Errorf("expected %s='%s' in DB, got '%s'", key, expected, value)
+		}
+	}
+	app1.dbRoPool.Put(cpcRo)
+
+	dbPaths := app1.dbPaths
+	rootDir := app1.rootDir
+	app1.Shutdown()
+	app1 = nil
+
+	app2 := New(getopt.Opt{
+		SessionSecret: getopt.OptString{String: "this-is-a-test-secret", IsSet: true},
+	}, "x.y.z")
+	app2.dbPaths = dbPaths
+	app2.setRootDir(&rootDir)
+	defer app2.Shutdown()
+
+	app2.setDB()
+	app2.setConfigDefaults()
+	if err := app2.loadConfig(); err != nil {
+		t.Fatalf("failed to load config in second app: %v", err)
+	}
+	app2.ApplyConfig()
+
+	if app2.config.ServerCompressionEnable {
+		t.Error("expected ServerCompressionEnable=false after restart")
+	}
+	if !app2.config.EnableHTTPCache {
+		t.Error("expected EnableHTTPCache=true after restart")
+	}
+	if app2.config.SessionHttpOnly {
+		t.Error("expected SessionHttpOnly=false after restart")
+	}
+	if !app2.config.RunFileDiscovery {
+		t.Error("expected RunFileDiscovery=true after restart")
+	}
+}
+
+// TestIntegration_ConfigPersistence_CLIEnvOverridesDB verifies that CLI/env
+// values with IsSet=true override values persisted in the database.
+func TestIntegration_ConfigPersistence_CLIEnvOverridesDB(t *testing.T) {
+	setenvForTest(t, "SEPG_SESSION_SECURE", "false")
+
+	app1 := CreateApp(t)
+	defer func() {
+		if app1 != nil {
+			app1.Shutdown()
+		}
+	}()
+
+	ts := httptest.NewServer(app1.getRouter())
+	defer ts.Close()
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("failed to create cookie jar: %v", err)
+	}
+	client := &http.Client{Jar: jar}
+
+	loginAsAdmin(t, client, ts.URL)
+
+	csrfToken := extractCSRFTokenFromConfig(t, client, ts.URL)
+	formData := url.Values{}
+	formData.Set("csrf_token", csrfToken)
+	formData.Set("enable_http_cache", "")
+
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/config", strings.NewReader(formData.Encode()))
+	if err != nil {
+		t.Fatalf("failed to create POST request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", ts.URL)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("POST /config failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	cpcRo, err := app1.dbRoPool.Get()
+	if err != nil {
+		t.Fatalf("failed to get DB connection: %v", err)
+	}
+
+	dbValue, err := cpcRo.Queries.GetConfigValueByKey(app1.ctx, "enable_http_cache")
+	if err != nil {
+		app1.dbRoPool.Put(cpcRo)
+		t.Fatalf("failed to get enable_http_cache from DB: %v", err)
+	}
+	if dbValue != "false" {
+		app1.dbRoPool.Put(cpcRo)
+		t.Errorf("expected enable_http_cache='false' in DB, got %q", dbValue)
+	}
+	app1.dbRoPool.Put(cpcRo)
+
+	dbPaths := app1.dbPaths
+	rootDir := app1.rootDir
+	app1.Shutdown()
+	app1 = nil
+
+	app2 := New(getopt.Opt{
+		SessionSecret:   getopt.OptString{String: "this-is-a-test-secret", IsSet: true},
+		EnableHTTPCache: getopt.OptBool{Bool: true, IsSet: true},
+	}, "x.y.z")
+	app2.dbPaths = dbPaths
+	app2.setRootDir(&rootDir)
+	defer app2.Shutdown()
+
+	app2.setDB()
+	app2.setConfigDefaults()
+	if err := app2.loadConfig(); err != nil {
+		t.Fatalf("failed to load config in second app: %v", err)
+	}
+	app2.ApplyConfig()
+
+	if !app2.config.EnableHTTPCache {
+		t.Error("expected EnableHTTPCache=true (CLI/env override), got false")
+	}
+}
+
+// TestIntegration_ConcurrentConfigUpdates verifies that concurrent authenticated
+// config updates leave the database in a consistent final state.
+func TestIntegration_ConcurrentConfigUpdates(t *testing.T) {
+	setenvForTest(t, "SEPG_SESSION_SECURE", "false")
+
+	app := CreateApp(t)
+	defer app.Shutdown()
+
+	ts := httptest.NewServer(app.getRouter())
+	defer ts.Close()
+
+	errCh := make(chan error, 3)
+	for i := 0; i < 3; i++ {
+		go func() {
+			jar, err := cookiejar.New(nil)
+			if err != nil {
+				errCh <- err
+				return
+			}
+			client := &http.Client{Jar: jar}
+
+			loginAsAdmin(t, client, ts.URL)
+
+			csrfToken := extractCSRFTokenFromConfig(t, client, ts.URL)
+			formData := url.Values{}
+			formData.Set("csrf_token", csrfToken)
+			formData.Set("site_name", "Concurrent Test")
+			formData.Set("log_level", "INFO")
+			formData.Set("cache_max_size", "52428800")
+
+			req, err := http.NewRequest(http.MethodPost, ts.URL+"/config", strings.NewReader(formData.Encode()))
+			if err != nil {
+				errCh <- err
+				return
+			}
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			req.Header.Set("Origin", ts.URL)
+			resp, err := client.Do(req)
+			if err != nil {
+				errCh <- err
+				return
+			}
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				errCh <- fmt.Errorf("expected 200, got %d", resp.StatusCode)
+				return
+			}
+			errCh <- nil
+		}()
+	}
+
+	for i := 0; i < 3; i++ {
+		if err := <-errCh; err != nil {
+			t.Errorf("concurrent update error: %v", err)
+		}
+	}
+
+	cpcRo, err := app.dbRoPool.Get()
+	if err != nil {
+		t.Fatalf("failed to get DB connection: %v", err)
+	}
+	defer app.dbRoPool.Put(cpcRo)
+
+	checks := map[string]string{
+		"site_name":      "Concurrent Test",
+		"log_level":      "INFO",
+		"cache_max_size": "52428800",
+	}
+	for key, expected := range checks {
+		value, err := cpcRo.Queries.GetConfigValueByKey(app.ctx, key)
+		if err != nil {
+			t.Fatalf("failed to get %s from DB: %v", key, err)
+		}
+		if value != expected {
+			t.Errorf("expected %s='%s' in DB, got '%s'", key, expected, value)
+		}
+	}
 }

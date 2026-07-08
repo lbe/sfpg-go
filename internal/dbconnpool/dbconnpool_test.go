@@ -2,10 +2,12 @@ package dbconnpool
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -1156,5 +1158,627 @@ func TestThumbsDBAttachPragmas(t *testing.T) {
 	// cache_size is reported in pages; positive value means pages, negative means kibibytes
 	if cacheSize != 10240 {
 		t.Errorf("thumbs cache_size = %d, want %d", cacheSize, 10240)
+	}
+}
+
+func TestNeedsHealthCheck(t *testing.T) {
+	tests := []struct {
+		name      string
+		threshold time.Duration
+		idleSince time.Time
+		want      bool
+	}{
+		{
+			name:      "threshold zero always checks",
+			threshold: 0,
+			idleSince: time.Now(),
+			want:      true,
+		},
+		{
+			name:      "zero idle time never needs check",
+			threshold: time.Minute,
+			idleSince: time.Time{},
+			want:      false,
+		},
+		{
+			name:      "recent idle below threshold",
+			threshold: time.Minute,
+			idleSince: time.Now().Add(-30 * time.Second),
+			want:      false,
+		},
+		{
+			name:      "idle beyond threshold",
+			threshold: time.Minute,
+			idleSince: time.Now().Add(-2 * time.Minute),
+			want:      true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &DbSQLConnPool{healthCheckThreshold: tt.threshold}
+			cpc := &CpConn{idleSince: tt.idleSince}
+			if got := p.needsHealthCheck(cpc); got != tt.want {
+				t.Errorf("needsHealthCheck() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestPragmaOptimize_Error(t *testing.T) {
+	dbPath, thumbsDBPath, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	config := Config{
+		DriverName:         "sqlite3",
+		MaxConnections:     2,
+		MinIdleConnections: 1,
+		QueriesFunc:        gallerydb.NewCustomQueries,
+		ThumbsDBPath:       thumbsDBPath,
+	}
+
+	pool, err := NewDbSQLConnPool(ctx, dbPath, config)
+	if err != nil {
+		t.Fatalf("failed to create pool: %v", err)
+	}
+	defer pool.Close()
+
+	cpc, err := pool.Get()
+	if err != nil {
+		t.Fatalf("failed to get connection: %v", err)
+	}
+
+	// Close the underlying connection so PRAGMA optimize logs an error.
+	if err := cpc.Conn.Close(); err != nil {
+		t.Fatalf("failed to close connection: %v", err)
+	}
+
+	// Should not panic despite the closed connection.
+	cpc.PragmaOptimize(ctx)
+
+	pool.Put(cpc)
+}
+
+func TestNewDbSQLConnPool_EmptyDriverName(t *testing.T) {
+	dbPath, _, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	config := Config{
+		DriverName:     "",
+		MaxConnections: 1,
+	}
+
+	_, err := NewDbSQLConnPool(ctx, dbPath, config)
+	if err == nil {
+		t.Fatal("expected error for empty DriverName, got nil")
+	}
+	want := "DriverName must be specified in config"
+	if err.Error() != want {
+		t.Errorf("expected error %q, got %q", want, err.Error())
+	}
+}
+
+func TestNewCpConn_ConnectError(t *testing.T) {
+	dbPath, _, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	config := Config{
+		DriverName:     "sqlite3",
+		MaxConnections: 1,
+	}
+
+	pool, err := NewDbSQLConnPool(ctx, dbPath, config)
+	if err != nil {
+		t.Fatalf("failed to create pool: %v", err)
+	}
+
+	// Force subsequent connection attempts to fail.
+	if closeErr := pool.DB().Close(); closeErr != nil {
+		t.Fatalf("failed to close underlying DB: %v", closeErr)
+	}
+
+	_, err = pool.Get()
+	if err == nil {
+		t.Fatal("expected error after closing underlying DB, got nil")
+	}
+	var connErr *ConnectionError
+	if !errors.As(err, &connErr) || connErr.Op != "connect" {
+		t.Fatalf("expected connect ConnectionError, got %v", err)
+	}
+	// Pool.Close() is intentionally not called; the underlying DB is already closed.
+}
+
+func TestNewCpConn_AttachError(t *testing.T) {
+	dbPath, _, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	// Create a file that is not a valid SQLite database.
+	badThumbs := filepath.Join(t.TempDir(), "notadb.txt")
+	if err := os.WriteFile(badThumbs, []byte("not a database"), 0644); err != nil {
+		t.Fatalf("failed to write bad thumbs file: %v", err)
+	}
+
+	ctx := context.Background()
+	config := Config{
+		DriverName:     "sqlite3",
+		MaxConnections: 1,
+		ThumbsDBPath:   badThumbs,
+	}
+
+	pool, err := NewDbSQLConnPool(ctx, dbPath, config)
+	if err != nil {
+		t.Fatalf("failed to create pool: %v", err)
+	}
+	defer pool.Close()
+
+	_, err = pool.Get()
+	if err == nil {
+		t.Fatal("expected attach error, got nil")
+	}
+	if !strings.Contains(err.Error(), "attach thumbs database") {
+		t.Fatalf("expected attach thumbs database error, got %v", err)
+	}
+}
+
+func TestNewCpConn_ThumbsPragmasError(t *testing.T) {
+	dbPath, thumbsDBPath, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	// Make the existing thumbs database read-only so post-attach pragmas fail.
+	if err := os.Chmod(thumbsDBPath, 0444); err != nil {
+		t.Fatalf("failed to chmod thumbs db: %v", err)
+	}
+	defer os.Chmod(thumbsDBPath, 0644)
+
+	ctx := context.Background()
+	config := Config{
+		DriverName:     "sqlite3",
+		MaxConnections: 1,
+		ReadOnly:       false,
+		ThumbsDBPath:   thumbsDBPath,
+	}
+
+	pool, err := NewDbSQLConnPool(ctx, dbPath, config)
+	if err != nil {
+		t.Fatalf("failed to create pool: %v", err)
+	}
+	defer pool.Close()
+
+	_, err = pool.Get()
+	if err == nil {
+		t.Fatal("expected thumbs pragmas error, got nil")
+	}
+	if !strings.Contains(err.Error(), "set thumbs pragmas") && !strings.Contains(err.Error(), "attach thumbs database") {
+		t.Fatalf("expected thumbs database error, got %v", err)
+	}
+}
+
+func TestNewCpConn_PrepareQueriesError(t *testing.T) {
+	// Use an empty main database so PrepareCustomQueries fails.
+	emptyDBPath := filepath.Join(t.TempDir(), "empty.db")
+	emptyDB, err := sql.Open("sqlite3", emptyDBPath)
+	if err != nil {
+		t.Fatalf("failed to open empty DB: %v", err)
+	}
+	if closeErr := emptyDB.Close(); closeErr != nil {
+		t.Fatalf("failed to close empty DB: %v", closeErr)
+	}
+
+	_, thumbsDBPath, thumbsCleanup := setupTestDB(t)
+	defer thumbsCleanup()
+
+	ctx := context.Background()
+	config := Config{
+		DriverName:     "sqlite3",
+		MaxConnections: 1,
+		ThumbsDBPath:   thumbsDBPath,
+	}
+
+	pool, err := NewDbSQLConnPool(ctx, emptyDBPath, config)
+	if err != nil {
+		t.Fatalf("failed to create pool: %v", err)
+	}
+	defer pool.Close()
+
+	_, err = pool.Get()
+	if err == nil {
+		t.Fatal("expected prepare queries error, got nil")
+	}
+	if !strings.Contains(err.Error(), "error preparing custom queries") {
+		t.Fatalf("expected error preparing custom queries, got %v", err)
+	}
+}
+
+func TestGet_HealthCheckFailureOnFastPath(t *testing.T) {
+	dbPath, thumbsDBPath, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	config := Config{
+		DriverName:           "sqlite3",
+		MaxConnections:       2,
+		MinIdleConnections:   1,
+		QueriesFunc:          gallerydb.NewCustomQueries,
+		ThumbsDBPath:         thumbsDBPath,
+		HealthCheckThreshold: -1, // force ping on every Get (negative avoids default 30s)
+	}
+
+	pool, err := NewDbSQLConnPool(ctx, dbPath, config)
+	if err != nil {
+		t.Fatalf("failed to create pool: %v", err)
+	}
+	defer pool.Close()
+
+	cpc, err := pool.Get()
+	if err != nil {
+		t.Fatalf("failed to get connection: %v", err)
+	}
+
+	// Force sql.DB to discard the closed underlying driver connection so the
+	// replacement connection gets a fresh one and can re-attach thumbs.
+	pool.DB().SetMaxIdleConns(0)
+
+	// Break the connection and return it to the pool.
+	if closeErr := cpc.Close(); closeErr != nil {
+		// Expected: connection close error because the connection is already broken.
+		t.Logf("close returned expected error: %v", closeErr)
+	}
+	pool.Put(cpc)
+
+	// The next Get should detect the broken idle connection and replace it.
+	got, err := pool.Get()
+	if err != nil {
+		t.Fatalf("Get after bad idle connection: %v", err)
+	}
+	if got == cpc {
+		t.Fatal("expected a new connection, got the same broken connection")
+	}
+	if err := got.Conn.PingContext(ctx); err != nil {
+		t.Fatalf("replacement connection is not healthy: %v", err)
+	}
+	pool.Put(got)
+}
+
+func TestGet_BlockedWaitHealthCheckFailure(t *testing.T) {
+	dbPath, thumbsDBPath, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	config := Config{
+		DriverName:           "sqlite3",
+		MaxConnections:       1,
+		MinIdleConnections:   0,
+		QueriesFunc:          gallerydb.NewCustomQueries,
+		ThumbsDBPath:         thumbsDBPath,
+		HealthCheckThreshold: -1, // force ping on every Get (negative avoids default 30s)
+		MonitorInterval:      0,
+	}
+
+	pool, err := NewDbSQLConnPool(ctx, dbPath, config)
+	if err != nil {
+		t.Fatalf("failed to create pool: %v", err)
+	}
+	defer pool.Close()
+
+	cpc, err := pool.Get()
+	if err != nil {
+		t.Fatalf("failed to get connection: %v", err)
+	}
+
+	// Force sql.DB to discard the closed underlying driver connection so the
+	// replacement connection gets a fresh one and can re-attach thumbs.
+	pool.DB().SetMaxIdleConns(0)
+
+	// Break the only connection.
+	if closeErr := cpc.Close(); closeErr != nil {
+		// Expected: connection close error because the connection is already broken.
+		t.Logf("close returned expected error: %v", closeErr)
+	}
+
+	// Start a Get that will block until the broken connection is returned.
+	gotConn := make(chan *CpConn, 1)
+	gotErr := make(chan error, 1)
+	go func() {
+		c, err := pool.Get()
+		if err != nil {
+			gotErr <- err
+			return
+		}
+		gotConn <- c
+	}()
+
+	// Give the goroutine time to block.
+	time.Sleep(100 * time.Millisecond)
+
+	// Return the broken connection; Get should discard it and create a replacement.
+	pool.Put(cpc)
+
+	select {
+	case c := <-gotConn:
+		if c == cpc {
+			t.Fatal("expected a new connection, got the same broken connection")
+		}
+		if err := c.Conn.PingContext(ctx); err != nil {
+			t.Fatalf("replacement connection is not healthy: %v", err)
+		}
+		pool.Put(c)
+	case err := <-gotErr:
+		t.Fatalf("blocked Get returned error: %v", err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("blocked Get timed out")
+	}
+}
+
+func TestGet_BlockedWaitNewConnectionFailure(t *testing.T) {
+	dbPath, thumbsDBPath, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	config := Config{
+		DriverName:           "sqlite3",
+		MaxConnections:       1,
+		MinIdleConnections:   0,
+		QueriesFunc:          gallerydb.NewCustomQueries,
+		ThumbsDBPath:         thumbsDBPath,
+		HealthCheckThreshold: -1, // force ping on every Get (negative avoids default 30s)
+		MonitorInterval:      0,
+	}
+
+	pool, err := NewDbSQLConnPool(ctx, dbPath, config)
+	if err != nil {
+		t.Fatalf("failed to create pool: %v", err)
+	}
+	// Intentionally no defer Close; we close the underlying DB ourselves.
+
+	cpc, err := pool.Get()
+	if err != nil {
+		t.Fatalf("failed to get connection: %v", err)
+	}
+
+	// Break the checked-out connection so the blocked Get's health check fails.
+	if err := cpc.Close(); err != nil {
+		// Expected: connection close error because the connection is already broken.
+		t.Logf("close returned expected error: %v", err)
+	}
+
+	// Break the whole pool so no replacement connection can be created.
+	if err := pool.DB().Close(); err != nil {
+		t.Fatalf("failed to close underlying DB: %v", err)
+	}
+
+	gotErr := make(chan error, 1)
+	go func() {
+		_, err := pool.Get()
+		gotErr <- err
+	}()
+
+	// Give the goroutine time to block.
+	time.Sleep(100 * time.Millisecond)
+
+	// Return the broken connection; Get should ping it, fail, then fail to create a new one.
+	pool.Put(cpc)
+
+	select {
+	case err := <-gotErr:
+		if err == nil {
+			t.Fatal("expected error from blocked Get, got nil")
+		}
+		var connErr *ConnectionError
+		if !errors.As(err, &connErr) {
+			t.Fatalf("expected ConnectionError, got %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("blocked Get timed out")
+	}
+}
+
+func TestPut_DoneChannelDuringShutdown(t *testing.T) {
+	dbPath, thumbsDBPath, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	configA := Config{
+		DriverName:         "sqlite3",
+		MaxConnections:     2,
+		MinIdleConnections: 0,
+		QueriesFunc:        gallerydb.NewCustomQueries,
+		ThumbsDBPath:       thumbsDBPath,
+		MonitorInterval:    0,
+	}
+
+	poolA, err := NewDbSQLConnPool(ctx, dbPath, configA)
+	if err != nil {
+		t.Fatalf("failed to create pool A: %v", err)
+	}
+	// Intentionally no defer Close; we close the done channel directly.
+
+	// Fill poolA's channel with both of its connections.
+	cpcA1, err := poolA.Get()
+	if err != nil {
+		t.Fatalf("failed to get first connection: %v", err)
+	}
+	cpcA2, err := poolA.Get()
+	if err != nil {
+		t.Fatalf("failed to get second connection: %v", err)
+	}
+	poolA.Put(cpcA1)
+	poolA.Put(cpcA2)
+
+	if poolA.NumIdleConnections() != 2 {
+		t.Fatalf("pre-condition failed: expected 2 idle connections, got %d", poolA.NumIdleConnections())
+	}
+
+	// Close the done channel without setting closed so the ticker branch can run.
+	close(poolA.done)
+
+	// Create a second pool and get a connection to Put into poolA. poolA's
+	// channel is full, so the send blocks and the select takes the done branch.
+	dbPathB, thumbsDBPathB, cleanupB := setupTestDB(t)
+	defer cleanupB()
+
+	poolB, err := NewDbSQLConnPool(ctx, dbPathB, Config{
+		DriverName:         "sqlite3",
+		MaxConnections:     1,
+		MinIdleConnections: 0,
+		QueriesFunc:        gallerydb.NewCustomQueries,
+		ThumbsDBPath:       thumbsDBPathB,
+		MonitorInterval:    0,
+	})
+	if err != nil {
+		t.Fatalf("failed to create pool B: %v", err)
+	}
+	defer poolB.Close()
+
+	cpcB, err := poolB.Get()
+	if err != nil {
+		t.Fatalf("failed to get connection from pool B: %v", err)
+	}
+
+	poolA.Put(cpcB)
+
+	if poolA.NumConnections() != 1 {
+		t.Errorf("expected poolA total connections to drop to 1 after done-branch close, got %d", poolA.NumConnections())
+	}
+}
+
+func TestPut_ChannelFullFallback(t *testing.T) {
+	dbPath, thumbsDBPath, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	configA := Config{
+		DriverName:         "sqlite3",
+		MaxConnections:     1,
+		MinIdleConnections: 0,
+		QueriesFunc:        gallerydb.NewCustomQueries,
+		ThumbsDBPath:       thumbsDBPath,
+		MonitorInterval:    0,
+	}
+
+	poolA, err := NewDbSQLConnPool(ctx, dbPath, configA)
+	if err != nil {
+		t.Fatalf("failed to create pool A: %v", err)
+	}
+	defer poolA.Close()
+
+	// Fill poolA's channel with its own connection.
+	cpcA, err := poolA.Get()
+	if err != nil {
+		t.Fatalf("failed to get connection from pool A: %v", err)
+	}
+	poolA.Put(cpcA)
+
+	if poolA.NumIdleConnections() != 1 {
+		t.Fatalf("pre-condition failed: expected 1 idle connection in pool A, got %d", poolA.NumIdleConnections())
+	}
+
+	// Create a second pool with a separate database.
+	dbPathB, thumbsDBPathB, cleanupB := setupTestDB(t)
+	defer cleanupB()
+
+	poolB, err := NewDbSQLConnPool(ctx, dbPathB, Config{
+		DriverName:         "sqlite3",
+		MaxConnections:     1,
+		MinIdleConnections: 0,
+		QueriesFunc:        gallerydb.NewCustomQueries,
+		ThumbsDBPath:       thumbsDBPathB,
+		MonitorInterval:    0,
+	})
+	if err != nil {
+		t.Fatalf("failed to create pool B: %v", err)
+	}
+	defer poolB.Close()
+
+	cpcB, err := poolB.Get()
+	if err != nil {
+		t.Fatalf("failed to get connection from pool B: %v", err)
+	}
+
+	// Returning B's connection to A should hit the channel-full fallback.
+	poolA.Put(cpcB)
+
+	if poolA.NumIdleConnections() != 1 {
+		t.Errorf("expected pool A idle count to remain 1, got %d", poolA.NumIdleConnections())
+	}
+	if poolA.NumConnections() != 0 {
+		t.Errorf("expected pool A total connections to drop to 0 after fallback close, got %d", poolA.NumConnections())
+	}
+}
+
+func TestMonitor_NewCpConnFailure(t *testing.T) {
+	dbPath, thumbsDBPath, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	config := Config{
+		DriverName:         "sqlite3",
+		MaxConnections:     2,
+		MinIdleConnections: 2,
+		QueriesFunc:        gallerydb.NewCustomQueries,
+		ThumbsDBPath:       thumbsDBPath,
+		MonitorInterval:    0, // auto-start disabled
+	}
+
+	pool, err := NewDbSQLConnPool(ctx, dbPath, config)
+	if err != nil {
+		t.Fatalf("failed to create pool: %v", err)
+	}
+	// Intentionally no defer Close; we close the underlying DB ourselves.
+
+	// Close the underlying DB so the monitor's growth attempt fails.
+	if closeErr := pool.DB().Close(); closeErr != nil {
+		t.Fatalf("failed to close underlying DB: %v", closeErr)
+	}
+
+	// Start the monitor with a short interval after the DB is already closed.
+	pool.monitorInterval = 50 * time.Millisecond
+	go pool.monitor()
+
+	// Give the monitor time to attempt growth and hit the newCpConn error path.
+	time.Sleep(200 * time.Millisecond)
+
+	// The pool should not have grown to minIdleConnections.
+	if pool.NumConnections() >= int64(config.MinIdleConnections) {
+		t.Errorf("expected pool to remain below minIdle after monitor failure, got %d", pool.NumConnections())
+	}
+}
+
+func TestMonitor_ClosedEarlyReturn(t *testing.T) {
+	dbPath, thumbsDBPath, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	config := Config{
+		DriverName:         "sqlite3",
+		MaxConnections:     1,
+		MinIdleConnections: 0,
+		QueriesFunc:        gallerydb.NewCustomQueries,
+		ThumbsDBPath:       thumbsDBPath,
+		MonitorInterval:    10 * time.Millisecond,
+	}
+
+	pool, err := NewDbSQLConnPool(ctx, dbPath, config)
+	if err != nil {
+		t.Fatalf("failed to create pool: %v", err)
+	}
+	defer pool.Close()
+
+	// Signal closed without closing the done channel so the ticker branch can run.
+	pool.closed.Store(true)
+
+	done := make(chan struct{})
+	go func() {
+		pool.monitor()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Expected: monitor saw closed==true on the first tick and returned.
+	case <-time.After(3 * time.Second):
+		t.Fatal("monitor did not return promptly after closed was set")
 	}
 }

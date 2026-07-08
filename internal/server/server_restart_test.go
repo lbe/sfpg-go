@@ -25,7 +25,7 @@ func TestProcessRestart_RequestsRestartAndExecs(t *testing.T) {
 
 	app.TriggerRestart()
 
-	if !app.restartRequested.Load() {
+	if !app.IsRestartRequested() {
 		t.Fatal("expected restartRequested to be true after requestRestart")
 	}
 

@@ -4,6 +4,7 @@ package parallelwalkdir
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -677,3 +678,379 @@ drainLoop:
 
 	t.Log("Walk exited without deadlock despite full channel buffers")
 }
+
+// overrideHook replaces the value at target with replacement and returns a
+// function that restores the original value. Use with defer or t.Cleanup.
+func overrideHook[T any](target *T, replacement T) func() {
+	old := *target
+	*target = replacement
+	return func() { *target = old }
+}
+
+// drainChannels collects all results and errors from the channels, waiting for
+// both to close. It returns early if the context cancels or the timeout fires.
+func drainChannels(t *testing.T, resultsChan <-chan string, errChan <-chan error, timeout time.Duration) ([]string, []error) {
+	t.Helper()
+	deadline := time.After(timeout)
+	var files []string
+	var errs []error
+
+	for {
+		select {
+		case path, ok := <-resultsChan:
+			if !ok {
+				resultsChan = nil
+			} else {
+				files = append(files, path)
+			}
+		case err, ok := <-errChan:
+			if !ok {
+				errChan = nil
+			} else {
+				errs = append(errs, err)
+			}
+		case <-deadline:
+			t.Fatal("timed out draining channels")
+		}
+		if resultsChan == nil && errChan == nil {
+			break
+		}
+	}
+	return files, errs
+}
+
+func TestWalk_EvalSymlinksError(t *testing.T) {
+	cases := []struct {
+		name       string
+		cancelled  bool
+		wantErrs   int
+		wantOp     string
+		wantErrMsg string
+	}{
+		{
+			name:       "context alive",
+			cancelled:  false,
+			wantErrs:   1,
+			wantOp:     "EvalSymlinks",
+			wantErrMsg: "eval denied",
+		},
+		{
+			name:      "context cancelled",
+			cancelled: true,
+			wantErrs:  0,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			defer overrideHook(&filepathEvalSymlinks, func(path string) (string, error) {
+				return "", errors.New("eval denied")
+			})()
+
+			d := t.TempDir()
+			mustMkdir(t, d, "rootDir")
+			mustWriteFile(t, d, "file1.txt", "rootDir")
+
+			ctx := context.Background()
+			if tc.cancelled {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithCancel(ctx)
+				cancel()
+			}
+
+			walker := NewWalker(WithContext(ctx), WithMaxNumGoroutines(1))
+			resultsChan, errChan := walker.ParallelWalk(filepath.Join(d, "rootDir"))
+			_, errs := drainChannels(t, resultsChan, errChan, 2*time.Second)
+
+			if len(errs) != tc.wantErrs {
+				t.Fatalf("expected %d errors, got %d: %v", tc.wantErrs, len(errs), errs)
+			}
+			if tc.wantErrs > 0 {
+				var pathErr *fs.PathError
+				if !errors.As(errs[0], &pathErr) {
+					t.Fatalf("expected *fs.PathError, got %T", errs[0])
+				}
+				if pathErr.Op != tc.wantOp {
+					t.Errorf("expected PathError.Op %q, got %q", tc.wantOp, pathErr.Op)
+				}
+				if !strings.Contains(pathErr.Err.Error(), tc.wantErrMsg) {
+					t.Errorf("expected error containing %q, got %q", tc.wantErrMsg, pathErr.Err.Error())
+				}
+			}
+		})
+	}
+}
+
+func TestWalk_ReadDirError(t *testing.T) {
+	cases := []struct {
+		name            string
+		cancelled       bool
+		lstatErr        error
+		lstatIsDir      bool
+		wantErrs        int
+		wantErrOp       string
+		wantResultCount int
+	}{
+		{
+			name:       "lstat also fails",
+			cancelled:  false,
+			lstatErr:   errors.New("lstat denied"),
+			lstatIsDir: true,
+			wantErrs:   1,
+			wantErrOp:  "ReadDir",
+		},
+		{
+			name:            "path is a file",
+			cancelled:       false,
+			lstatErr:        nil,
+			lstatIsDir:      false,
+			wantErrs:        0,
+			wantResultCount: 1,
+		},
+		{
+			name:       "context cancelled",
+			cancelled:  true,
+			lstatErr:   errors.New("lstat denied"),
+			lstatIsDir: true,
+			wantErrs:   0,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			defer overrideHook(&osReadDir, func(name string) ([]os.DirEntry, error) {
+				return nil, errors.New("read dir denied")
+			})()
+
+			defer overrideHook(&osLstat, func(name string) (os.FileInfo, error) {
+				if tc.lstatErr != nil {
+					return nil, tc.lstatErr
+				}
+				return &fakeFileInfo{dir: tc.lstatIsDir}, nil
+			})()
+
+			d := t.TempDir()
+			mustMkdir(t, d, "rootDir")
+			mustWriteFile(t, d, "file1.txt", "rootDir")
+
+			ctx := context.Background()
+			if tc.cancelled {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithCancel(ctx)
+				cancel()
+			}
+
+			walker := NewWalker(WithContext(ctx), WithMaxNumGoroutines(1))
+			resultsChan, errChan := walker.ParallelWalk(filepath.Join(d, "rootDir"))
+			results, errs := drainChannels(t, resultsChan, errChan, 2*time.Second)
+
+			if len(errs) != tc.wantErrs {
+				t.Fatalf("expected %d errors, got %d: %v", tc.wantErrs, len(errs), errs)
+			}
+			if tc.wantErrs > 0 {
+				var pathErr *fs.PathError
+				if !errors.As(errs[0], &pathErr) {
+					t.Fatalf("expected *fs.PathError, got %T", errs[0])
+				}
+				if pathErr.Op != tc.wantErrOp {
+					t.Errorf("expected PathError.Op %q, got %q", tc.wantErrOp, pathErr.Op)
+				}
+			}
+			if len(results) != tc.wantResultCount {
+				t.Errorf("expected %d results, got %d", tc.wantResultCount, len(results))
+			}
+		})
+	}
+}
+
+func TestWalk_SymlinkStatError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink tests skipped on Windows")
+	}
+
+	d := t.TempDir()
+	root := filepath.Join(d, "rootDir")
+	mustMkdir(t, d, "rootDir")
+	mustWriteFile(t, d, "regular.txt", "rootDir")
+	mustSymlink(t, d, "/nonexistent/target", "rootDir/badlink")
+
+	defer overrideHook(&osStat, func(name string) (os.FileInfo, error) {
+		if name == filepath.Join(root, "badlink") {
+			return nil, errors.New("stat denied")
+		}
+		return os.Stat(name)
+	})()
+
+	walker := NewWalker(WithMaxNumGoroutines(1))
+	resultsChan, errChan := walker.ParallelWalk(root)
+	results, errs := drainChannels(t, resultsChan, errChan, 2*time.Second)
+
+	if len(errs) != 0 {
+		t.Fatalf("expected 0 errors, got %d: %v", len(errs), errs)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d: %v", len(results), results)
+	}
+	if filepath.Base(results[0]) != "regular.txt" {
+		t.Errorf("expected regular.txt, got %s", results[0])
+	}
+}
+
+func TestWalk_DirEntryInfoError(t *testing.T) {
+	cases := []struct {
+		name            string
+		info            os.FileInfo
+		infoErr         error
+		wantErrs        int
+		wantResultCount int
+	}{
+		{
+			name:            "info error",
+			info:            nil,
+			infoErr:         errors.New("info denied"),
+			wantErrs:        1,
+			wantResultCount: 0,
+		},
+		{
+			name:            "nil info",
+			info:            nil,
+			infoErr:         nil,
+			wantErrs:        0,
+			wantResultCount: 0,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			defer overrideHook(&dirEntryInfo, func(de fs.DirEntry) (fs.FileInfo, error) {
+				return tc.info, tc.infoErr
+			})()
+
+			d := t.TempDir()
+			mustMkdir(t, d, "rootDir")
+			mustWriteFile(t, d, "file1.txt", "rootDir")
+
+			walker := NewWalker(WithMaxNumGoroutines(1))
+			resultsChan, errChan := walker.ParallelWalk(filepath.Join(d, "rootDir"))
+			results, errs := drainChannels(t, resultsChan, errChan, 2*time.Second)
+
+			if len(errs) != tc.wantErrs {
+				t.Fatalf("expected %d errors, got %d: %v", tc.wantErrs, len(errs), errs)
+			}
+			if tc.wantErrs > 0 {
+				var pathErr *fs.PathError
+				if !errors.As(errs[0], &pathErr) {
+					t.Fatalf("expected *fs.PathError, got %T", errs[0])
+				}
+				if pathErr.Op != "Stat" {
+					t.Errorf("expected PathError.Op 'Stat', got %q", pathErr.Op)
+				}
+			}
+			if len(results) != tc.wantResultCount {
+				t.Errorf("expected %d results, got %d", tc.wantResultCount, len(results))
+			}
+		})
+	}
+}
+
+func TestWalk_ContextCancelled_SkipsErrorSends(t *testing.T) {
+	cases := []struct {
+		name       string
+		setupHooks func()
+	}{
+		{
+			name: "EvalSymlinks error",
+			setupHooks: func() {
+				overrideHook(&filepathEvalSymlinks, func(path string) (string, error) {
+					return "", errors.New("eval denied")
+				})()
+			},
+		},
+		{
+			name: "ReadDir+Lstat error",
+			setupHooks: func() {
+				overrideHook(&osReadDir, func(name string) ([]os.DirEntry, error) {
+					return nil, errors.New("read dir denied")
+				})()
+				overrideHook(&osLstat, func(name string) (os.FileInfo, error) {
+					return nil, errors.New("lstat denied")
+				})()
+			},
+		},
+		{
+			name: "DirEntry.Info error",
+			setupHooks: func() {
+				overrideHook(&dirEntryInfo, func(de fs.DirEntry) (fs.FileInfo, error) {
+					return nil, errors.New("info denied")
+				})()
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.setupHooks()
+
+			d := t.TempDir()
+			mustMkdir(t, d, "rootDir")
+			mustWriteFile(t, d, "file1.txt", "rootDir")
+
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+
+			walker := NewWalker(WithContext(ctx), WithMaxNumGoroutines(1))
+			resultsChan, errChan := walker.ParallelWalk(filepath.Join(d, "rootDir"))
+			results, errs := drainChannels(t, resultsChan, errChan, 2*time.Second)
+
+			if len(errs) != 0 {
+				t.Fatalf("expected 0 errors with cancelled context, got %d: %v", len(errs), errs)
+			}
+			if len(results) != 0 {
+				t.Errorf("expected 0 results with cancelled context, got %d", len(results))
+			}
+		})
+	}
+}
+
+func TestWalk_ContextCancelled_AfterReadDir(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	defer overrideHook(&osReadDir, func(name string) ([]os.DirEntry, error) {
+		cancel()
+		return os.ReadDir(name)
+	})()
+
+	d := t.TempDir()
+	root := filepath.Join(d, "rootDir")
+	mustMkdir(t, d, "rootDir")
+	for i := range 5 {
+		mustWriteFile(t, d, fmt.Sprintf("file%d.txt", i), "rootDir")
+	}
+
+	walker := NewWalker(WithContext(ctx), WithMaxNumGoroutines(1))
+	resultsChan, errChan := walker.ParallelWalk(root)
+	results, errs := drainChannels(t, resultsChan, errChan, 2*time.Second)
+
+	if len(errs) != 0 {
+		t.Fatalf("expected 0 errors, got %d: %v", len(errs), errs)
+	}
+	if len(results) != 0 {
+		t.Errorf("expected 0 results after cancellation, got %d: %v", len(results), results)
+	}
+}
+
+// fakeFileInfo is a minimal fs.FileInfo implementation for test hooks.
+type fakeFileInfo struct {
+	name string
+	size int64
+	mode os.FileMode
+	dir  bool
+}
+
+func (f *fakeFileInfo) Name() string       { return f.name }
+func (f *fakeFileInfo) Size() int64        { return f.size }
+func (f *fakeFileInfo) Mode() os.FileMode  { return f.mode }
+func (f *fakeFileInfo) ModTime() time.Time { return time.Time{} }
+func (f *fakeFileInfo) IsDir() bool        { return f.dir }
+func (f *fakeFileInfo) Sys() any           { return nil }

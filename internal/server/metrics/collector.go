@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/lbe/sfpg-go/internal/humanize"
+	"github.com/lbe/sfpg-go/internal/server/cachebatch"
 	"github.com/lbe/sfpg-go/internal/server/cachepreload"
 	"github.com/lbe/sfpg-go/internal/workerpool"
 	"github.com/lbe/sfpg-go/internal/writebatcher"
@@ -146,7 +147,7 @@ type CacheBatchLoadMetrics struct {
 
 // CacheBatchLoadSource provides metrics from the cache batch load manager.
 type CacheBatchLoadSource interface {
-	GetMetrics() CacheBatchLoadMetrics
+	GetBatchLoadSnapshot() cachebatch.Metrics
 }
 
 // HTTPCacheConfig holds HTTP cache configuration for metrics.
@@ -341,8 +342,18 @@ func (c *Collector) Collect(ctx context.Context) Snapshot {
 	}
 
 	if c.cacheBatchLoad != nil {
-		cbSnapshot := c.cacheBatchLoad.GetMetrics()
-		snapshot.CacheBatchLoad = cbSnapshot
+		cbSnapshot := c.cacheBatchLoad.GetBatchLoadSnapshot()
+		snapshot.CacheBatchLoad = CacheBatchLoadMetrics{
+			TargetsTotal:     cbSnapshot.TargetsTotal,
+			TargetsScheduled: cbSnapshot.TargetsScheduled,
+			TargetsCompleted: cbSnapshot.TargetsCompleted,
+			TargetsFailed:    cbSnapshot.TargetsFailed,
+			TargetsSkipped:   cbSnapshot.TargetsSkipped,
+			InFlight:         cbSnapshot.InFlight,
+			IsRunning:        cbSnapshot.IsRunning != 0,
+			LastStartedAt:    time.Unix(cbSnapshot.LastStartedAt, 0),
+			LastFinishedAt:   time.Unix(cbSnapshot.LastFinishedAt, 0),
+		}
 	}
 
 	if c.fileProcessor != nil {

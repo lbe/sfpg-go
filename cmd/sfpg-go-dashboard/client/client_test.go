@@ -201,6 +201,15 @@ func TestFetchDashboardNetworkError(t *testing.T) {
 	}
 }
 
+// TestCookieJar_CookiesNilURL returns nil when URL is nil.
+func TestCookieJar_CookiesNilURL(t *testing.T) {
+	jar := newCookieJar()
+	cookies := jar.Cookies(nil)
+	if cookies != nil {
+		t.Errorf("Cookies(nil) = %v, want nil", cookies)
+	}
+}
+
 // TestCookieJarMerge verifies that SetCookies merges by name rather than
 // overwriting the entire cookie list for the host.
 func TestCookieJarMerge(t *testing.T) {

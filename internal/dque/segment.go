@@ -221,12 +221,12 @@ func (seg *qSegment[T]) add(object *T) error {
 	// Write the 4-byte length prefix using a stack-allocated array
 	var lenBytes [4]byte
 	binary.LittleEndian.PutUint32(lenBytes[:], uint32(buf.Len()))
-	if _, err := seg.file.Write(lenBytes[:]); err != nil {
+	if _, err := segmentFileWrite(seg.file, lenBytes[:]); err != nil {
 		return errors.Wrapf(err, "failed to write object length to segment %d", seg.number)
 	}
 
 	// Then write the buffer bytes
-	if _, err := seg.file.Write(buf.Bytes()); err != nil {
+	if _, err := segmentFileWrite(seg.file, buf.Bytes()); err != nil {
 		return errors.Wrapf(err, "failed to write object to segment %d", seg.number)
 	}
 
@@ -260,12 +260,12 @@ func (seg *qSegment[T]) sizeOnDisk() int {
 // delete wipes out the queue and its persistent state
 func (seg *qSegment[T]) delete() error {
 
-	if err := seg.file.Close(); err != nil {
+	if err := segmentFileClose(seg.file); err != nil {
 		return errors.Wrap(err, "unable to close the segment file before deleting")
 	}
 
 	// Delete the storage for this queue
-	err := os.Remove(seg.filePath())
+	err := osRemove(seg.filePath())
 	if err != nil {
 		return errors.Wrap(err, "error deleting file: "+seg.filePath())
 	}
@@ -335,7 +335,7 @@ func (seg *qSegment[T]) _sync() error {
 		return nil
 	}
 
-	if err := seg.file.Sync(); err != nil {
+	if err := segmentFileSync(seg.file); err != nil {
 		return errors.Wrap(err, "unable to sync file changes in _sync method.")
 	}
 	seg.syncCount++

@@ -171,13 +171,16 @@ func IsAuthenticated(store *sessions.CookieStore, w http.ResponseWriter, r *http
 	return authenticated
 }
 
+// randRead is a testable hook for crypto/rand.Read.
+var randRead = rand.Read
+
 // GenerateCSRFToken generates a cryptographically random CSRF token.
 // It does NOT save the token to any session; callers must persist it
 // themselves if needed. Use this for ephemeral tokens on public pages
 // where emitting a Set-Cookie is undesirable.
 func GenerateCSRFToken() string {
 	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
+	if _, err := randRead(b); err != nil {
 		slog.Error("failed to generate CSRF token", "err", err)
 		return ""
 	}
@@ -244,7 +247,13 @@ func (m *Manager) EnsureCSRFToken(w http.ResponseWriter, r *http.Request) string
 			"err", err)
 		ClearSessionCookie(m.store, w, r)
 		// gorilla/sessions returns a usable session even on cookie decode error.
-		sess, _ = m.store.Get(r, SessionName) //nolint:errcheck
+		sess, err = m.store.Get(r, SessionName)
+		if err != nil {
+			slog.Warn("EnsureCSRFToken: failed to get session after clearing cookie",
+				"path", r.URL.Path,
+				"remote_addr", r.RemoteAddr,
+				"err", err)
+		}
 	}
 	if token, ok := sess.Values["csrf_token"].(string); ok && token != "" {
 		return token
@@ -266,7 +275,13 @@ func (m *Manager) EnsureCSRFToken(w http.ResponseWriter, r *http.Request) string
 // Returns false if the session has no token or the form token is missing or doesn't match.
 func (m *Manager) ValidateCSRFToken(r *http.Request) bool {
 	// gorilla/sessions returns a usable session even on cookie decode error.
-	sess, _ := m.store.Get(r, SessionName) //nolint:errcheck
+	sess, err := m.store.Get(r, SessionName)
+	if err != nil {
+		slog.Warn("ValidateCSRFToken: session decode error",
+			"path", r.URL.Path,
+			"remote_addr", r.RemoteAddr,
+			"err", err)
+	}
 	sessionToken, ok := sess.Values["csrf_token"].(string)
 	if !ok || sessionToken == "" {
 		slog.Warn("validateCsrfToken: no token in session")
@@ -314,7 +329,13 @@ func (m *Manager) GetSession(w http.ResponseWriter, r *http.Request) (*sessions.
 		// Invalid cookie - clear it from the browser and create a fresh session
 		ClearSessionCookie(m.store, w, r)
 		// gorilla/sessions returns a usable session even on cookie decode error.
-		sess, _ = m.store.New(r, SessionName) //nolint:errcheck
+		sess, err = m.store.New(r, SessionName)
+		if err != nil {
+			slog.Warn("GetSession: failed to create new session after clearing invalid cookie",
+				"path", r.URL.Path,
+				"remote_addr", r.RemoteAddr,
+				"err", err)
+		}
 	}
 	return sess, nil
 }
@@ -358,7 +379,14 @@ func (m *Manager) SetAuthenticated(w http.ResponseWriter, r *http.Request, authe
 			"err", err)
 		// Invalid cookie - create a new session
 		// gorilla/sessions returns a usable session even on cookie decode error.
-		sess, _ = m.store.New(r, SessionName) //nolint:errcheck
+		sess, err = m.store.New(r, SessionName)
+		if err != nil {
+			slog.Warn("SetAuthenticated: failed to create new session after clearing invalid cookie",
+				"path", r.URL.Path,
+				"remote_addr", r.RemoteAddr,
+				"authenticated", authenticated,
+				"err", err)
+		}
 		alreadyNew = true
 	}
 

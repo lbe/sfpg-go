@@ -5,6 +5,7 @@ import (
 	"slices"
 
 	"github.com/lbe/sfpg-go/internal/server/interfaces"
+	"github.com/lbe/sfpg-go/internal/server/ui"
 )
 
 // ThemeCookieName is the name of the theme cookie.
@@ -42,7 +43,7 @@ func (h *ThemeHandlers) ThemeModalHandler(w http.ResponseWriter, r *http.Request
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
-	if err := h.deps.RenderTemplate(w, "theme-modal.html.tmpl", data); err != nil {
+	if err := ui.RenderTemplate(w, "theme-modal.html.tmpl", data); err != nil {
 		h.deps.ServerError(w, r, err)
 		return
 	}

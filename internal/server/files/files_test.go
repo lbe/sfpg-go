@@ -106,6 +106,15 @@ func (f *fakeThumbnailTxFailBlob) UpsertThumbnailBlob(ctx context.Context, p gal
 	return sql.ErrConnDone
 }
 
+type fakeThumbnailTxFailReturnID struct{}
+
+func (f *fakeThumbnailTxFailReturnID) UpsertThumbnailReturningID(ctx context.Context, p gallerydb.UpsertThumbnailReturningIDParams) (int64, error) {
+	return 0, sql.ErrConnDone
+}
+func (f *fakeThumbnailTxFailReturnID) UpsertThumbnailBlob(ctx context.Context, p gallerydb.UpsertThumbnailBlobParams) error {
+	return nil
+}
+
 // TestIsImageFile tests the files.IsImageFile helper with various extensions.
 func TestIsImageFile(t *testing.T) {
 	tests := []struct {
@@ -199,6 +208,24 @@ func TestNeedsThumbnail(t *testing.T) {
 			t.Errorf("NeedsThumbnail() = %v, want false", needs)
 		}
 	})
+
+	t.Run("query error", func(t *testing.T) {
+		_, roPool, _, _ := createTestProcessor(t, nil)
+		ctx := context.Background()
+		cpcRo, err := roPool.Get()
+		if err != nil {
+			t.Fatalf("get ro: %v", err)
+		}
+		defer roPool.Put(cpcRo)
+		// Close the prepared statements so the view query fails with a real error.
+		if closeErr := cpcRo.Queries.Close(); closeErr != nil {
+			t.Fatalf("close queries: %v", closeErr)
+		}
+		_, err = NeedsThumbnail(ctx, cpcRo, 1)
+		if err == nil {
+			t.Fatal("expected error when query fails")
+		}
+	})
 }
 
 func TestNeedsFolderTileUpdate(t *testing.T) {
@@ -267,45 +294,86 @@ func TestNeedsFolderTileUpdate(t *testing.T) {
 			t.Errorf("NeedsFolderTileUpdate() = %v, want false", needs)
 		}
 	})
+
+	t.Run("query error", func(t *testing.T) {
+		_, roPool, _, _ := createTestProcessor(t, nil)
+		ctx := context.Background()
+		cpcRo, err := roPool.Get()
+		if err != nil {
+			t.Fatalf("get ro: %v", err)
+		}
+		defer roPool.Put(cpcRo)
+		// Close the prepared statements so the view query fails with a real error.
+		if closeErr := cpcRo.Queries.Close(); closeErr != nil {
+			t.Fatalf("close queries: %v", closeErr)
+		}
+		_, err = NeedsFolderTileUpdate(ctx, cpcRo, "test-folder")
+		if err == nil {
+			t.Fatal("expected error when query fails")
+		}
+	})
 }
 
 func TestUpsertThumbnail(t *testing.T) {
-	_, roPool, rwPool, _ := createTestProcessor(t, nil)
-	ctx := context.Background()
-	cpcRw, err := rwPool.Get()
-	if err != nil {
-		t.Fatalf("get db connection: %v", err)
-	}
-	defer rwPool.Put(cpcRw)
-	imp := gallerylib.Importer{Q: cpcRw.Queries}
-	file, err := imp.UpsertPathChain(ctx, "test-file.jpg", 0, 0, "", 0, 0, 0, "image/jpeg")
-	if err != nil {
-		t.Fatalf("UpsertPathChain: %v", err)
-	}
-	thumbData := []byte{0xDE, 0xAD, 0xBE, 0xEF}
-	thumbnailID, err := UpsertThumbnail(ctx, cpcRw, file.ID, thumbData)
-	if err != nil {
-		t.Fatalf("UpsertThumbnail: %v", err)
-	}
-	if thumbnailID <= 0 {
-		t.Errorf("expected positive thumbnailID, got %d", thumbnailID)
-	}
-	cpcRwRo, err := roPool.Get()
-	if err != nil {
-		t.Fatalf("get ro: %v", err)
-	}
-	defer roPool.Put(cpcRwRo)
-	_, err = cpcRwRo.Queries.GetThumbnailsByFileID(ctx, file.ID)
-	if err != nil {
-		t.Errorf("GetThumbnailsByFileID: %v", err)
-	}
-	blobData, err := cpcRwRo.Queries.GetThumbnailBlobDataByID(ctx, thumbnailID)
-	if err != nil {
-		t.Errorf("GetThumbnailBlobDataByID: %v", err)
-	}
-	if !reflect.DeepEqual(blobData, thumbData) {
-		t.Errorf("blob mismatch: got %v, want %v", blobData, thumbData)
-	}
+	t.Run("success", func(t *testing.T) {
+		_, roPool, rwPool, _ := createTestProcessor(t, nil)
+		ctx := context.Background()
+		cpcRw, err := rwPool.Get()
+		if err != nil {
+			t.Fatalf("get db connection: %v", err)
+		}
+		defer rwPool.Put(cpcRw)
+		imp := gallerylib.Importer{Q: cpcRw.Queries}
+		file, err := imp.UpsertPathChain(ctx, "test-file.jpg", 0, 0, "", 0, 0, 0, "image/jpeg")
+		if err != nil {
+			t.Fatalf("UpsertPathChain: %v", err)
+		}
+		thumbData := []byte{0xDE, 0xAD, 0xBE, 0xEF}
+		thumbnailID, err := UpsertThumbnail(ctx, cpcRw, file.ID, thumbData)
+		if err != nil {
+			t.Fatalf("UpsertThumbnail: %v", err)
+		}
+		if thumbnailID <= 0 {
+			t.Errorf("expected positive thumbnailID, got %d", thumbnailID)
+		}
+		cpcRwRo, err := roPool.Get()
+		if err != nil {
+			t.Fatalf("get ro: %v", err)
+		}
+		defer roPool.Put(cpcRwRo)
+		_, err = cpcRwRo.Queries.GetThumbnailsByFileID(ctx, file.ID)
+		if err != nil {
+			t.Errorf("GetThumbnailsByFileID: %v", err)
+		}
+		blobData, err := cpcRwRo.Queries.GetThumbnailBlobDataByID(ctx, thumbnailID)
+		if err != nil {
+			t.Errorf("GetThumbnailBlobDataByID: %v", err)
+		}
+		if !reflect.DeepEqual(blobData, thumbData) {
+			t.Errorf("blob mismatch: got %v, want %v", blobData, thumbData)
+		}
+	})
+
+	t.Run("tx-only error", func(t *testing.T) {
+		_, _, rwPool, _ := createTestProcessor(t, nil)
+		ctx := context.Background()
+		cpcRw, err := rwPool.Get()
+		if err != nil {
+			t.Fatalf("get db connection: %v", err)
+		}
+		defer rwPool.Put(cpcRw)
+
+		orig := UpsertThumbnailTxOnly
+		UpsertThumbnailTxOnly = func(qtx ThumbnailTx, ctx context.Context, fileID int64, thumb []byte) (int64, error) {
+			return 0, sql.ErrConnDone
+		}
+		defer func() { UpsertThumbnailTxOnly = orig }()
+
+		_, err = UpsertThumbnail(ctx, cpcRw, 1, []byte("thumb"))
+		if !errors.Is(err, sql.ErrConnDone) {
+			t.Fatalf("expected sql.ErrConnDone, got %v", err)
+		}
+	})
 }
 
 // --- CheckIfFileModified ---
@@ -482,6 +550,14 @@ func TestUpsertThumbnailTxOnly_Success(t *testing.T) {
 
 func TestUpsertThumbnailTxOnly_BlobFail(t *testing.T) {
 	tx := &fakeThumbnailTxFailBlob{}
+	_, err := UpsertThumbnailTxOnly(tx, context.Background(), 7, []byte("thumb"))
+	if err == nil || !errors.Is(err, sql.ErrConnDone) {
+		t.Fatalf("expected sql.ErrConnDone, got %v", err)
+	}
+}
+
+func TestUpsertThumbnailTxOnly_ReturnIDFail(t *testing.T) {
+	tx := &fakeThumbnailTxFailReturnID{}
 	_, err := UpsertThumbnailTxOnly(tx, context.Background(), 7, []byte("thumb"))
 	if err == nil || !errors.Is(err, sql.ErrConnDone) {
 		t.Fatalf("expected sql.ErrConnDone, got %v", err)
@@ -942,6 +1018,7 @@ type fakeProcessor struct {
 	processErrByPath    map[string]error
 	thumbErrByPath      map[string]error
 	skipAsInvalidByPath map[string]bool // if true, ProcessFile returns Ok=true, Exists=false
+	processExistsByPath map[string]bool // if true, ProcessFile returns Exists=true
 	processed           []string
 	recordInvalidCalls  []recordInvalidCall
 	mu                  sync.Mutex
@@ -955,9 +1032,13 @@ func (f *fakeProcessor) ProcessFile(ctx context.Context, path string) (*File, er
 	f.mu.Lock()
 	f.processed = append(f.processed, path)
 	skip := f.skipAsInvalidByPath[path]
+	exists := f.processExistsByPath[path]
 	f.mu.Unlock()
 	if skip {
 		return &File{Path: path, Ok: true, Exists: false}, nil
+	}
+	if exists {
+		return &File{Path: path, Exists: true}, nil
 	}
 	return &File{Path: path}, nil
 }

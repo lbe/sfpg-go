@@ -229,7 +229,7 @@ func (h *ConfigHandlers) RestoreLastKnownGoodHandler(w http.ResponseWriter, r *h
 		}
 
 		// GetLastKnownGoodDiff needs queries - cpcRw.Queries implements ConfigQueries interface
-		diff, err := cfg.GetLastKnownGoodDiff(h.Ctx, cpcRw.Queries)
+		diff, err := cfg.GetLastKnownGoodDiff(h.Ctx, h.deps.GetConfigQueries(cpcRw))
 		if err != nil {
 			slog.Warn("failed to get last known good diff", "err", err)
 			http.Error(w, fmt.Sprintf("Failed to get last known good config: %v", err), http.StatusBadRequest)

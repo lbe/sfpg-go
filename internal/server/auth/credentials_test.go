@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/lbe/sfpg-go/internal/server/session"
@@ -261,5 +262,252 @@ func TestService_UpdateCredentials_UpdatePasswordError(t *testing.T) {
 
 	if err == nil {
 		t.Error("expected error when UpdatePassword fails")
+	}
+}
+
+func TestService_UpdateCredentials_ErrorPaths(t *testing.T) {
+	ctx := context.Background()
+
+	// Save and restore package-level hooks
+	origVerifyPassword := verifyPassword
+	origGenerateFromPassword := generateFromPassword
+	defer func() {
+		verifyPassword = origVerifyPassword
+		generateFromPassword = origGenerateFromPassword
+	}()
+
+	// Default verifyPassword to succeed for these tests
+	verifyPassword = func(hashedPassword, plaintextPassword string) error { return nil }
+
+	tests := []struct {
+		name                     string
+		opts                     CredentialUpdateOptions
+		store                    *mockCredentialStore
+		generateFromPassword     func(password []byte, cost int) ([]byte, error)
+		wantErr                  bool
+		wantErrContains          string
+		wantValidationKey        string
+		wantValidationContains   string
+		wantChangingUsername     bool
+		wantChangingPassword     bool
+		wantUpdateUsernameCalled bool
+		wantUpdatePasswordCalled bool
+	}{
+		{
+			name: "empty CurrentUsername with GetUser admin returning error",
+			opts: CredentialUpdateOptions{
+				CurrentUsername: "",
+				NewUsername:     "newadmin88",
+				CurrentPassword: "currentpass",
+			},
+			store: &mockCredentialStore{
+				getUserFunc: func(ctx context.Context, username string) (*session.User, error) {
+					return nil, errors.New("user lookup failed")
+				},
+			},
+			wantValidationKey:      "admin_current_password",
+			wantValidationContains: "incorrect",
+			wantChangingUsername:   true,
+		},
+		{
+			name: "empty CurrentUsername with GetUser admin returning user",
+			opts: CredentialUpdateOptions{
+				CurrentUsername: "",
+				NewUsername:     "newadmin88",
+				CurrentPassword: "currentpass",
+			},
+			store: &mockCredentialStore{
+				getUserFunc: func(ctx context.Context, username string) (*session.User, error) {
+					return &session.User{Username: "admin", Password: "hashed"}, nil
+				},
+				updateUsernameFunc: func(ctx context.Context, username string) error {
+					return nil
+				},
+			},
+			wantChangingUsername:     true,
+			wantUpdateUsernameCalled: true,
+		},
+		{
+			name: "GetUser currentUsername error during current-password verification",
+			opts: CredentialUpdateOptions{
+				CurrentUsername: "admin",
+				NewUsername:     "newadmin88",
+				CurrentPassword: "currentpass",
+			},
+			store: &mockCredentialStore{
+				getUserFunc: func(ctx context.Context, username string) (*session.User, error) {
+					return nil, errors.New("db read failed")
+				},
+			},
+			wantValidationKey:      "admin_current_password",
+			wantValidationContains: "incorrect",
+			wantChangingUsername:   true,
+		},
+		{
+			name: "invalid new username validation",
+			opts: CredentialUpdateOptions{
+				CurrentUsername: "admin",
+				NewUsername:     "bad",
+				CurrentPassword: "currentpass",
+			},
+			store: &mockCredentialStore{
+				getUserFunc: func(ctx context.Context, username string) (*session.User, error) {
+					return &session.User{Username: "admin", Password: "hashed"}, nil
+				},
+			},
+			wantValidationKey:    "admin_username",
+			wantChangingUsername: true,
+		},
+		{
+			name: "new password empty with confirm provided",
+			opts: CredentialUpdateOptions{
+				CurrentUsername: "admin",
+				NewUsername:     "admin",
+				CurrentPassword: "currentpass",
+				NewPassword:     "",
+				ConfirmPassword: "something",
+			},
+			store: &mockCredentialStore{
+				getUserFunc: func(ctx context.Context, username string) (*session.User, error) {
+					return &session.User{Username: "admin", Password: "hashed"}, nil
+				},
+			},
+			wantValidationKey:      "admin_new_password",
+			wantValidationContains: "required",
+			wantChangingPassword:   true,
+		},
+		{
+			name: "confirm password empty with new password provided",
+			opts: CredentialUpdateOptions{
+				CurrentUsername: "admin",
+				NewUsername:     "admin",
+				CurrentPassword: "currentpass",
+				NewPassword:     "NewPassword123!",
+				ConfirmPassword: "",
+			},
+			store: &mockCredentialStore{
+				getUserFunc: func(ctx context.Context, username string) (*session.User, error) {
+					return &session.User{Username: "admin", Password: "hashed"}, nil
+				},
+			},
+			wantValidationKey:      "admin_confirm_password",
+			wantValidationContains: "required",
+			wantChangingPassword:   true,
+		},
+		{
+			name: "new password fails validation",
+			opts: CredentialUpdateOptions{
+				CurrentUsername: "admin",
+				NewUsername:     "admin",
+				CurrentPassword: "currentpass",
+				NewPassword:     "short1!",
+				ConfirmPassword: "short1!",
+			},
+			store: &mockCredentialStore{
+				getUserFunc: func(ctx context.Context, username string) (*session.User, error) {
+					return &session.User{Username: "admin", Password: "hashed"}, nil
+				},
+			},
+			wantValidationKey:    "admin_new_password",
+			wantChangingPassword: true,
+		},
+		{
+			name: "generateFromPassword failure",
+			opts: CredentialUpdateOptions{
+				CurrentUsername: "admin",
+				NewUsername:     "admin",
+				CurrentPassword: "currentpass",
+				NewPassword:     "SecurePassword123!",
+				ConfirmPassword: "SecurePassword123!",
+			},
+			store: &mockCredentialStore{
+				getUserFunc: func(ctx context.Context, username string) (*session.User, error) {
+					return &session.User{Username: "admin", Password: "hashed"}, nil
+				},
+			},
+			generateFromPassword: func(password []byte, cost int) ([]byte, error) {
+				return nil, errors.New("hash failed")
+			},
+			wantErr:              true,
+			wantErrContains:      "hash failed",
+			wantValidationKey:    "_global",
+			wantChangingPassword: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			updateUsernameCalled := false
+			updatePasswordCalled := false
+
+			if tt.generateFromPassword != nil {
+				generateFromPassword = tt.generateFromPassword
+			} else {
+				generateFromPassword = origGenerateFromPassword
+			}
+
+			store := tt.store
+			if store.updateUsernameFunc != nil {
+				originalUpdateUsername := store.updateUsernameFunc
+				store.updateUsernameFunc = func(ctx context.Context, username string) error {
+					updateUsernameCalled = true
+					return originalUpdateUsername(ctx, username)
+				}
+			} else {
+				store.updateUsernameFunc = func(ctx context.Context, username string) error {
+					updateUsernameCalled = true
+					return nil
+				}
+			}
+
+			if store.updatePasswordFunc != nil {
+				originalUpdatePassword := store.updatePasswordFunc
+				store.updatePasswordFunc = func(ctx context.Context, passwordHash string) error {
+					updatePasswordCalled = true
+					return originalUpdatePassword(ctx, passwordHash)
+				}
+			} else {
+				store.updatePasswordFunc = func(ctx context.Context, passwordHash string) error {
+					updatePasswordCalled = true
+					return nil
+				}
+			}
+
+			svc := NewService(store)
+			result, err := svc.UpdateCredentials(ctx, tt.opts, store)
+
+			if tt.wantErr && err == nil {
+				t.Errorf("UpdateCredentials() error = nil, want error")
+			}
+			if tt.wantErr && err != nil && tt.wantErrContains != "" && !strings.Contains(err.Error(), tt.wantErrContains) {
+				t.Errorf("UpdateCredentials() error = %v, want error containing %q", err, tt.wantErrContains)
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("UpdateCredentials() unexpected error = %v", err)
+			}
+
+			if tt.wantValidationKey != "" {
+				got := result.ValidationErrors[tt.wantValidationKey]
+				if got == "" {
+					t.Errorf("expected validation error for key %q, got none", tt.wantValidationKey)
+				}
+				if tt.wantValidationContains != "" && !strings.Contains(got, tt.wantValidationContains) {
+					t.Errorf("validation error for key %q = %q, want containing %q", tt.wantValidationKey, got, tt.wantValidationContains)
+				}
+			}
+
+			if result.ChangingUsername != tt.wantChangingUsername {
+				t.Errorf("ChangingUsername = %v, want %v", result.ChangingUsername, tt.wantChangingUsername)
+			}
+			if result.ChangingPassword != tt.wantChangingPassword {
+				t.Errorf("ChangingPassword = %v, want %v", result.ChangingPassword, tt.wantChangingPassword)
+			}
+			if updateUsernameCalled != tt.wantUpdateUsernameCalled {
+				t.Errorf("UpdateUsername called = %v, want %v", updateUsernameCalled, tt.wantUpdateUsernameCalled)
+			}
+			if updatePasswordCalled != tt.wantUpdatePasswordCalled {
+				t.Errorf("UpdatePassword called = %v, want %v", updatePasswordCalled, tt.wantUpdatePasswordCalled)
+			}
+		})
 	}
 }

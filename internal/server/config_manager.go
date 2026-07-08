@@ -19,7 +19,6 @@ func NewConfigManager() *ConfigManager {
 	return &ConfigManager{}
 }
 
-func (m *ConfigManager) ConfigService() config.ConfigService       { return m.configService }
 func (m *ConfigManager) SetConfigService(svc config.ConfigService) { m.configService = svc }
 
 func (m *ConfigManager) GetConfig() *config.Config {

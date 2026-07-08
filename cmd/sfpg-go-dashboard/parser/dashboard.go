@@ -284,6 +284,9 @@ func parseModuleCard(card *html.Node) ModuleStatus {
 	}
 
 	activityEl := testutil.FindElement(card, func(n *html.Node) bool {
+		if n == card {
+			return false
+		}
 		text := testutil.GetTextContent(n)
 		return strings.Contains(text, "Activity count:")
 	})

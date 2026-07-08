@@ -221,3 +221,32 @@ func TestConfig_LoadFromOptExcluding_EmptyExcludeList(t *testing.T) {
 		t.Errorf("ListenerPort: got %d, want 9090", cfg.ListenerPort)
 	}
 }
+
+// TestYAMLValueToSetString covers conversion of YAML-decoded values to strings.
+func TestYAMLValueToSetString(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   interface{}
+		want    string
+		wantErr bool
+	}{
+		{"nil", nil, "", true},
+		{"unsupported map type", map[string]interface{}{"a": "b"}, "", true},
+		{"string", "dark", "dark", false},
+		{"int", 42, "42", false},
+		{"bool", true, "true", false},
+		{"sequence", []interface{}{"dark", "light"}, `["dark","light"]`, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := yamlValueToSetString(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("yamlValueToSetString(%#v) error = %v, wantErr %v", tt.input, err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Errorf("yamlValueToSetString(%#v) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}

@@ -15,6 +15,22 @@ import (
 	"github.com/lbe/sfpg-go/internal/gallerydb"
 )
 
+var (
+	// getHttpCacheSizeBytes is a testable hook for the SUM query used by GetCacheSizeBytes.
+	getHttpCacheSizeBytes = func(ctx context.Context, cpc *dbconnpool.CpConn) (interface{}, error) {
+		return cpc.Queries.GetHttpCacheSizeBytes(ctx)
+	}
+
+	// txExecContext is a testable hook for (*sql.Tx).ExecContext.
+	txExecContext = (*sql.Tx).ExecContext
+
+	// txCommit is a testable hook for (*sql.Tx).Commit.
+	txCommit = (*sql.Tx).Commit
+
+	// txRollback is a testable hook for (*sql.Tx).Rollback so the defer warning path can be exercised.
+	txRollback = (*sql.Tx).Rollback
+)
+
 var httpCacheIndexDropStatements = []string{
 	"DROP INDEX IF EXISTS idx_http_cache_key",
 	"DROP INDEX IF EXISTS idx_http_cache_path",
@@ -326,32 +342,32 @@ func RotateCacheTable(ctx context.Context, db *dbconnpool.DbSQLConnPool) error {
 		return fmt.Errorf("failed to begin rotation transaction: %w", err)
 	}
 	defer func() {
-		if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+		if err := txRollback(tx); err != nil && !errors.Is(err, sql.ErrTxDone) {
 			slog.Warn("cache rotation tx rollback failed", "err", err)
 		}
 	}()
 
-	if _, err := tx.ExecContext(ctx, rotateDropStaleTableSQL); err != nil {
+	if _, err := txExecContext(tx, ctx, rotateDropStaleTableSQL); err != nil {
 		return fmt.Errorf("drop previous stale cache table: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, rotateRenameActiveTableSQL); err != nil {
+	if _, err := txExecContext(tx, ctx, rotateRenameActiveTableSQL); err != nil {
 		return fmt.Errorf("rename http_cache to stale table: %w", err)
 	}
 	for _, stmt := range httpCacheIndexDropStatements {
-		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+		if _, err := txExecContext(tx, ctx, stmt); err != nil {
 			return fmt.Errorf("drop stale cache index failed (%s): %w", stmt, err)
 		}
 	}
-	if _, err := tx.ExecContext(ctx, rotateCreateActiveTableSQL); err != nil {
+	if _, err := txExecContext(tx, ctx, rotateCreateActiveTableSQL); err != nil {
 		return fmt.Errorf("create fresh http_cache table: %w", err)
 	}
 	for _, stmt := range httpCacheIndexCreateStatements {
-		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+		if _, err := txExecContext(tx, ctx, stmt); err != nil {
 			return fmt.Errorf("create cache index failed (%s): %w", stmt, err)
 		}
 	}
 
-	if err := tx.Commit(); err != nil {
+	if err := txCommit(tx); err != nil {
 		return fmt.Errorf("commit cache table rotation: %w", err)
 	}
 	return nil
@@ -434,7 +450,7 @@ func GetCacheSizeBytes(ctx context.Context, db *dbconnpool.DbSQLConnPool) (int64
 	}
 	defer db.Put(cpc)
 
-	result, err := cpc.Queries.GetHttpCacheSizeBytes(ctx)
+	result, err := getHttpCacheSizeBytes(ctx, cpc)
 	if err != nil {
 		return 0, err
 	}

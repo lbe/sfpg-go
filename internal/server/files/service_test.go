@@ -1,6 +1,7 @@
 package files
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
@@ -176,6 +177,301 @@ func createTestProcessor(t *testing.T, ub UnifiedBatcher) (processor FileProcess
 	processor = NewFileProcessor(roPool, rwPool, importerFactory, imagesDir, ub)
 	t.Cleanup(func() { _ = processor.Close() })
 	return processor, roPool, rwPool, imagesDir
+}
+
+func TestFileProcessor_ProcessFile(t *testing.T) {
+	t.Run("cancelled context", func(t *testing.T) {
+		processor, _, _, _ := createTestProcessor(t, nil)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		_, err := processor.ProcessFile(ctx, "test.jpg")
+		if err == nil {
+			t.Fatal("expected error for cancelled context")
+		}
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("expected context.Canceled, got %v", err)
+		}
+	})
+
+	t.Run("empty file path", func(t *testing.T) {
+		processor, _, _, _ := createTestProcessor(t, nil)
+		_, err := processor.ProcessFile(context.Background(), "")
+		if err == nil {
+			t.Fatal("expected error for empty path")
+		}
+	})
+
+	t.Run("success with real file", func(t *testing.T) {
+		processor, _, _, imagesDir := createTestProcessor(t, nil)
+		path := createTestImage(t, imagesDir, "process-success.jpg")
+
+		file, err := processor.ProcessFile(context.Background(), path)
+		if err != nil {
+			t.Fatalf("ProcessFile: %v", err)
+		}
+		if file == nil {
+			t.Fatal("expected non-nil file")
+		}
+		if file.Path != path {
+			t.Errorf("Path = %q, want %q", file.Path, path)
+		}
+	})
+
+	t.Run("pool closed", func(t *testing.T) {
+		processor, roPool, _, _ := createTestProcessor(t, nil)
+		if err := roPool.Close(); err != nil {
+			t.Fatalf("close pool: %v", err)
+		}
+
+		_, err := processor.ProcessFile(context.Background(), "test.jpg")
+		if err == nil {
+			t.Fatal("expected error for closed pool")
+		}
+	})
+
+	t.Run("process error", func(t *testing.T) {
+		processor, _, _, imagesDir := createTestProcessor(t, nil)
+		if err := os.WriteFile(filepath.Join(imagesDir, "not-image.txt"), []byte("not an image"), 0o644); err != nil {
+			t.Fatalf("write file: %v", err)
+		}
+
+		_, err := processor.ProcessFile(context.Background(), "not-image.txt")
+		if err == nil {
+			t.Fatal("expected error for non-image file")
+		}
+	})
+}
+
+func TestFileProcessor_ProcessFileWithConn(t *testing.T) {
+	t.Run("cancelled context", func(t *testing.T) {
+		processor, roPool, _, _ := createTestProcessor(t, nil)
+		cpcRo, err := roPool.Get()
+		if err != nil {
+			t.Fatalf("roPool.Get: %v", err)
+		}
+		defer roPool.Put(cpcRo)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		_, err = processor.ProcessFileWithConn(ctx, "test.jpg", cpcRo)
+		if err == nil {
+			t.Fatal("expected error for cancelled context")
+		}
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("expected context.Canceled, got %v", err)
+		}
+	})
+
+	t.Run("empty file path", func(t *testing.T) {
+		processor, roPool, _, _ := createTestProcessor(t, nil)
+		cpcRo, err := roPool.Get()
+		if err != nil {
+			t.Fatalf("roPool.Get: %v", err)
+		}
+		defer roPool.Put(cpcRo)
+
+		_, err = processor.ProcessFileWithConn(context.Background(), "", cpcRo)
+		if err == nil {
+			t.Fatal("expected error for empty path")
+		}
+	})
+
+	t.Run("nil connection", func(t *testing.T) {
+		processor, _, _, _ := createTestProcessor(t, nil)
+		_, err := processor.ProcessFileWithConn(context.Background(), "test.jpg", nil)
+		if err == nil {
+			t.Fatal("expected error for nil connection")
+		}
+	})
+
+	t.Run("success with real file", func(t *testing.T) {
+		processor, roPool, _, imagesDir := createTestProcessor(t, nil)
+		cpcRo, err := roPool.Get()
+		if err != nil {
+			t.Fatalf("roPool.Get: %v", err)
+		}
+		defer roPool.Put(cpcRo)
+
+		path := createTestImage(t, imagesDir, "process-conn-success.jpg")
+		file, err := processor.ProcessFileWithConn(context.Background(), path, cpcRo)
+		if err != nil {
+			t.Fatalf("ProcessFileWithConn: %v", err)
+		}
+		if file == nil {
+			t.Fatal("expected non-nil file")
+		}
+		if file.Path != path {
+			t.Errorf("Path = %q, want %q", file.Path, path)
+		}
+	})
+}
+
+func TestFileProcessor_CheckIfModified(t *testing.T) {
+	t.Run("cancelled context", func(t *testing.T) {
+		processor, _, _, _ := createTestProcessor(t, nil)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		_, err := processor.CheckIfModified(ctx, "test.jpg")
+		if err == nil {
+			t.Fatal("expected error for cancelled context")
+		}
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("expected context.Canceled, got %v", err)
+		}
+	})
+
+	t.Run("empty file path", func(t *testing.T) {
+		processor, _, _, _ := createTestProcessor(t, nil)
+		_, err := processor.CheckIfModified(context.Background(), "")
+		if err == nil {
+			t.Fatal("expected error for empty path")
+		}
+	})
+
+	t.Run("success with real file", func(t *testing.T) {
+		processor, _, _, imagesDir := createTestProcessor(t, nil)
+		path := createTestImage(t, imagesDir, "check-success.jpg")
+
+		unchanged, err := processor.CheckIfModified(context.Background(), path)
+		if err != nil {
+			t.Fatalf("CheckIfModified: %v", err)
+		}
+		if unchanged {
+			t.Errorf("expected unchanged false for new file")
+		}
+	})
+
+	t.Run("pool closed", func(t *testing.T) {
+		processor, roPool, _, _ := createTestProcessor(t, nil)
+		if err := roPool.Close(); err != nil {
+			t.Fatalf("close pool: %v", err)
+		}
+
+		_, err := processor.CheckIfModified(context.Background(), "test.jpg")
+		if err == nil {
+			t.Fatal("expected error for closed pool")
+		}
+	})
+}
+
+func TestFileProcessor_GenerateThumbnail(t *testing.T) {
+	t.Run("cancelled context", func(t *testing.T) {
+		processor, _, _, _ := createTestProcessor(t, nil)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		err := processor.GenerateThumbnail(ctx, &File{})
+		if err == nil {
+			t.Fatal("expected error for cancelled context")
+		}
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("expected context.Canceled, got %v", err)
+		}
+	})
+
+	t.Run("nil file", func(t *testing.T) {
+		processor, _, _, _ := createTestProcessor(t, nil)
+		err := processor.GenerateThumbnail(context.Background(), nil)
+		if err == nil {
+			t.Fatal("expected error for nil file")
+		}
+	})
+
+	t.Run("success with real file", func(t *testing.T) {
+		processor, _, _, imagesDir := createTestProcessor(t, nil)
+		path := createTestImage(t, imagesDir, "thumb-success.jpg")
+
+		file, err := processor.ProcessFile(context.Background(), path)
+		if err != nil {
+			t.Fatalf("ProcessFile: %v", err)
+		}
+		if err := processor.GenerateThumbnail(context.Background(), file); err != nil {
+			t.Fatalf("GenerateThumbnail: %v", err)
+		}
+	})
+
+	t.Run("rw pool closed", func(t *testing.T) {
+		processor, _, rwPool, _ := createTestProcessor(t, nil)
+		if err := rwPool.Close(); err != nil {
+			t.Fatalf("close pool: %v", err)
+		}
+
+		err := processor.GenerateThumbnail(context.Background(), &File{Path: "test.jpg"})
+		if err == nil {
+			t.Fatal("expected error for closed pool")
+		}
+	})
+
+	t.Run("ro pool closed", func(t *testing.T) {
+		processor, roPool, rwPool, _ := createTestProcessor(t, nil)
+		// Close RO pool; RW pool is still available.
+		if err := roPool.Close(); err != nil {
+			t.Fatalf("close ro pool: %v", err)
+		}
+
+		err := processor.GenerateThumbnail(context.Background(), &File{Path: "test.jpg"})
+		if err == nil {
+			t.Fatal("expected error for closed pool")
+		}
+		_ = rwPool
+	})
+
+	t.Run("thumbnail error", func(t *testing.T) {
+		processor, _, _, _ := createTestProcessor(t, nil)
+
+		// Empty thumbnail buffer triggers an error in GenerateThumbnailAndUpdateDbIfNeeded.
+		err := processor.GenerateThumbnail(context.Background(), &File{
+			Path:      "empty.jpg",
+			Thumbnail: bytes.NewBuffer(nil),
+			File: gallerydb.File{
+				Mtime:     sql.NullInt64{Int64: time.Now().Unix(), Valid: true},
+				SizeBytes: sql.NullInt64{Int64: 1, Valid: true},
+				MimeType:  sql.NullString{String: "image/jpeg", Valid: true},
+			},
+		})
+		if err == nil {
+			t.Fatal("expected error for empty thumbnail")
+		}
+	})
+
+	t.Run("ro pool get error", func(t *testing.T) {
+		_, rwPool, imagesDir, ctx := createTestPoolsAndDir(t)
+
+		// Create an RO pool pointing at a non-existent read-only DB; Get will fail.
+		badROPool, err := dbconnpool.NewDbSQLConnPool(ctx, "file:/nonexistent/bad-ro.db?mode=ro", dbconnpool.Config{
+			DriverName:         "sqlite3",
+			MaxConnections:     2,
+			MinIdleConnections: 1,
+			ReadOnly:           true,
+			QueriesFunc:        gallerydb.NewCustomQueries,
+		})
+		if err != nil {
+			t.Fatalf("create bad RO pool: %v", err)
+		}
+		defer badROPool.Close()
+
+		importerFactory := func(conn *sql.Conn, q *gallerydb.CustomQueries) Importer {
+			return &gallerylib.Importer{Conn: conn, Q: q}
+		}
+		processor := NewFileProcessor(badROPool, rwPool, importerFactory, imagesDir, nil)
+		defer processor.Close()
+
+		err = processor.GenerateThumbnail(ctx, &File{
+			Path:      "test.jpg",
+			Thumbnail: bytes.NewBuffer([]byte("thumb")),
+			File: gallerydb.File{
+				Mtime:     sql.NullInt64{Int64: time.Now().Unix(), Valid: true},
+				SizeBytes: sql.NullInt64{Int64: 1, Valid: true},
+				MimeType:  sql.NullString{String: "image/jpeg", Valid: true},
+			},
+		})
+		if err == nil {
+			t.Fatal("expected error from RO pool Get")
+		}
+	})
 }
 
 // createTestImage writes a minimal 1x1 JPEG at dir/name and returns the relative path.

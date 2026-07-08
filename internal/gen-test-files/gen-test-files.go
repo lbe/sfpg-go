@@ -23,11 +23,14 @@ const (
 	imageHeight = 190
 )
 
+// osMkdirAll is a testable hook for os.MkdirAll.
+var osMkdirAll = os.MkdirAll
+
 // CreateTestFiles creates test files with valid content based on their
 // extensions in the specified directory.
 func CreateTestFiles(dirName string, filePaths []string) error {
 	// Ensure base directory exists
-	if err := os.MkdirAll(dirName, 0755); err != nil {
+	if err := osMkdirAll(dirName, 0755); err != nil {
 		return fmt.Errorf("failed to create base directory: %w", err)
 	}
 
@@ -36,7 +39,7 @@ func CreateTestFiles(dirName string, filePaths []string) error {
 
 		// Ensure parent directory exists
 		parentDir := filepath.Dir(fullPath)
-		if err := os.MkdirAll(parentDir, 0755); err != nil {
+		if err := osMkdirAll(parentDir, 0755); err != nil {
 			slog.Error("failed to create directory",
 				"path", parentDir,
 				"error", err)

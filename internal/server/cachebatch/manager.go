@@ -23,6 +23,17 @@ const (
 	throttleDelay     = 50 * time.Millisecond
 )
 
+var (
+	// makeInternalRequest is a testable hook for cachepreload.MakeInternalRequestWithVariant.
+	makeInternalRequest = cachepreload.MakeInternalRequestWithVariant
+
+	// numCPU is a testable hook for runtime.NumCPU.
+	numCPU = runtime.NumCPU
+
+	// throttleSleep is a testable hook for time.Sleep during throttling.
+	throttleSleep = time.Sleep
+)
+
 // Manager runs batch cache load with bounded concurrency.
 type Manager struct {
 	running     atomic.Bool
@@ -42,6 +53,11 @@ func NewManager(cfg Config) *Manager {
 // Metrics returns the metrics instance for snapshot/recording.
 func (m *Manager) Metrics() *Metrics {
 	return m.metrics
+}
+
+// GetBatchLoadSnapshot returns a snapshot of the current metrics for the metrics collector.
+func (m *Manager) GetBatchLoadSnapshot() Metrics {
+	return m.metrics.Snapshot()
 }
 
 // Run executes a batch load run. Returns ErrDiscoveryActive if discovery is running,
@@ -100,7 +116,7 @@ func (m *Manager) Run(ctx context.Context) error {
 	}
 
 	maxWorkers := defaultMaxWorkers
-	if n := runtime.NumCPU(); n < maxWorkers {
+	if n := numCPU(); n < maxWorkers {
 		maxWorkers = n
 	}
 	queueSize := defaultQueueSize
@@ -142,7 +158,7 @@ func (m *Manager) Run(ctx context.Context) error {
 				slog.Debug("batch load: throttling scheduling due to queue utilization",
 					"utilization", utilization, "threshold", "0.8")
 			}
-			time.Sleep(throttleDelay)
+			throttleSleep(throttleDelay)
 			// Reset throttled flag after delay
 			m.isThrottled = false
 		}
@@ -192,7 +208,7 @@ type job struct {
 }
 
 func (m *Manager) runJob(ctx context.Context, j job, queries BatchLoadQueries, cfg cachepreload.InternalRequestConfig, metrics *Metrics) {
-	err := cachepreload.MakeInternalRequestWithVariant(ctx, cfg, j.target.Path, j.target.HxTarget, j.target.Encoding)
+	err := makeInternalRequest(ctx, cfg, j.target.Path, j.target.HxTarget, j.target.Encoding)
 	if err != nil {
 		metrics.RecordFailed()
 		if slog.Default().Enabled(ctx, slog.LevelDebug) {

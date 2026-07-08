@@ -1,6 +1,7 @@
 package server
 
 import (
+	"regexp"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -382,15 +383,67 @@ func TestGetLastKnownGoodDiff_EdgeCases(t *testing.T) {
 	_ = err
 }
 
-// TestSetupLogging_Variations tests setupLogging with different configurations
-func TestSetConfigDefaults_Coverage(t *testing.T) {
-	app := CreateApp(t)
+// TestSetConfigDefaults_AllDefaultsPresent verifies that setConfigDefaults
+// writes every expected default configuration key to the database.
+func TestSetConfigDefaults_AllDefaultsPresent(t *testing.T) {
+	tempDir := t.TempDir()
+	app := New(getopt.Opt{
+		SessionSecret: getopt.OptString{String: "this-is-a-test-secret", IsSet: true},
+	}, "x.y.z")
 	defer app.Shutdown()
 
-	// setConfigDefaults should not panic - it's part of CreateApp
-	// Just verify the app was created successfully
-	if app == nil {
-		t.Fatal("Expected app to be created")
+	app.setRootDir(&tempDir)
+	app.setDB()
+	app.setConfigDefaults()
+
+	cpcRo, err := app.dbRoPool.Get()
+	if err != nil {
+		t.Fatalf("Failed to get RO DB connection: %v", err)
+	}
+	defer app.dbRoPool.Put(cpcRo)
+
+	excluded := map[string]bool{
+		"user":                true,
+		"password":            true,
+		"LastKnownGoodConfig": true,
+		"log_directory":       true,
+		"etag_version":        true,
+		"image_directory":     true,
+	}
+
+	defaults := config.DefaultConfig().ToMap()
+	for key, expected := range defaults {
+		if excluded[key] {
+			continue
+		}
+		got, dbErr := cpcRo.Queries.GetConfigValueByKey(app.ctx, key)
+		if dbErr != nil {
+			t.Errorf("expected config key %q to be present, got error: %v", key, dbErr)
+			continue
+		}
+		if got != expected {
+			t.Errorf("config key %q: expected %q, got %q", key, expected, got)
+		}
+	}
+
+	etag, err := cpcRo.Queries.GetConfigValueByKey(app.ctx, "etag_version")
+	if err != nil {
+		t.Fatalf("expected etag_version to be present, got error: %v", err)
+	}
+	matched, err := regexp.MatchString(`^[vV]?\d{8}-\d{2}$`, etag)
+	if err != nil {
+		t.Fatalf("invalid etag regex: %v", err)
+	}
+	if !matched {
+		t.Errorf("etag_version %q does not match expected pattern", etag)
+	}
+
+	runDiscovery, err := cpcRo.Queries.GetConfigValueByKey(app.ctx, "run_file_discovery")
+	if err != nil {
+		t.Fatalf("expected run_file_discovery to be present, got error: %v", err)
+	}
+	if runDiscovery != "true" {
+		t.Errorf("expected run_file_discovery=true, got %q", runDiscovery)
 	}
 }
 

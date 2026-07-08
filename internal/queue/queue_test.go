@@ -184,6 +184,139 @@ func TestQueueClear(t *testing.T) {
 	}
 }
 
+func TestNewQueue_CapsBelowMinimum(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    int
+		expected int
+	}{
+		{"zero", 0, 16},
+		{"one", 1, 16},
+		{"fifteen", 15, 16},
+		{"sixteen", 16, 16},
+		{"seventeen", 17, 32},
+		{"thirty-three", 33, 64},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q := NewQueue[int](tt.input)
+			if q.Len() != 0 {
+				t.Errorf("Len() = %d, want 0", q.Len())
+			}
+			if q.Cap() != tt.expected {
+				t.Errorf("Cap() = %d, want %d", q.Cap(), tt.expected)
+			}
+		})
+	}
+}
+
+func TestQueueStats(t *testing.T) {
+	q := NewQueue[int](16)
+
+	assertStats := func(t *testing.T, got, want QueueStats) {
+		t.Helper()
+		if got != want {
+			t.Errorf("Stats() = %+v, want %+v", got, want)
+		}
+	}
+
+	// Initial state.
+	assertStats(t, q.Stats(), QueueStats{
+		CtAddBack:     0,
+		CtAddFront:    0,
+		CtRemoveBack:  0,
+		CtRemoveFront: 0,
+		Size:          0,
+		Capacity:      16,
+		HeadIndex:     0,
+		TailIndex:     0,
+		IsClosed:      false,
+	})
+
+	// Add three items to the back.
+	for _, v := range []int{1, 2, 3} {
+		if err := q.AddBack(v); err != nil {
+			t.Fatalf("AddBack(%d): %v", v, err)
+		}
+	}
+	assertStats(t, q.Stats(), QueueStats{
+		CtAddBack:     3,
+		CtAddFront:    0,
+		CtRemoveBack:  0,
+		CtRemoveFront: 0,
+		Size:          3,
+		Capacity:      16,
+		HeadIndex:     0,
+		TailIndex:     3,
+		IsClosed:      false,
+	})
+
+	// Add two items to the front, wrapping around the circular buffer.
+	for _, v := range []int{4, 5} {
+		if err := q.AddFront(v); err != nil {
+			t.Fatalf("AddFront(%d): %v", v, err)
+		}
+	}
+	assertStats(t, q.Stats(), QueueStats{
+		CtAddBack:     3,
+		CtAddFront:    2,
+		CtRemoveBack:  0,
+		CtRemoveFront: 0,
+		Size:          5,
+		Capacity:      16,
+		HeadIndex:     14,
+		TailIndex:     3,
+		IsClosed:      false,
+	})
+
+	// Remove one item from the front.
+	if _, err := q.RemoveFront(); err != nil {
+		t.Fatalf("RemoveFront(): %v", err)
+	}
+	assertStats(t, q.Stats(), QueueStats{
+		CtAddBack:     3,
+		CtAddFront:    2,
+		CtRemoveBack:  0,
+		CtRemoveFront: 1,
+		Size:          4,
+		Capacity:      16,
+		HeadIndex:     15,
+		TailIndex:     3,
+		IsClosed:      false,
+	})
+
+	// Remove one item from the back.
+	if _, err := q.RemoveBack(); err != nil {
+		t.Fatalf("RemoveBack(): %v", err)
+	}
+	assertStats(t, q.Stats(), QueueStats{
+		CtAddBack:     3,
+		CtAddFront:    2,
+		CtRemoveBack:  1,
+		CtRemoveFront: 1,
+		Size:          3,
+		Capacity:      16,
+		HeadIndex:     15,
+		TailIndex:     2,
+		IsClosed:      false,
+	})
+
+	// Close the queue; counters and indices should remain unchanged.
+	q.Close()
+	assertStats(t, q.Stats(), QueueStats{
+		CtAddBack:     3,
+		CtAddFront:    2,
+		CtRemoveBack:  1,
+		CtRemoveFront: 1,
+		Size:          3,
+		Capacity:      16,
+		HeadIndex:     15,
+		TailIndex:     2,
+		IsClosed:      true,
+	})
+}
+
 func TestQueueConcurrent(t *testing.T) {
 	q := NewQueue[int](16)
 	var (

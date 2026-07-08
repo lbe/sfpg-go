@@ -141,6 +141,199 @@ func createTestThumbnail(t *testing.T, q *gallerydb.CustomQueries, ctx context.C
 	return thumbID
 }
 
+// createRootFolderMockQueries wraps a real *gallerydb.CustomQueries and lets
+// tests override individual methods used by CreateRootFolderEntry.
+type createRootFolderMockQueries struct {
+	*gallerydb.CustomQueries
+	firstGetErr            error
+	upsertPathErr          error
+	upsertFolderErr        error
+	upsertFolderZeroID     bool
+	fallbackGetErr         error
+	fallbackGetID          int64
+	getFolderIDByPathCalls int
+}
+
+func (m *createRootFolderMockQueries) GetFolderIDByPath(ctx context.Context, path string) (int64, error) {
+	m.getFolderIDByPathCalls++
+	if m.getFolderIDByPathCalls == 1 && m.firstGetErr != nil {
+		return 0, m.firstGetErr
+	}
+	if m.getFolderIDByPathCalls > 1 {
+		if m.fallbackGetErr != nil {
+			return 0, m.fallbackGetErr
+		}
+		if m.fallbackGetID != 0 {
+			return m.fallbackGetID, nil
+		}
+	}
+	return m.CustomQueries.GetFolderIDByPath(ctx, path)
+}
+
+func (m *createRootFolderMockQueries) UpsertFolderPathReturningID(ctx context.Context, path string) (int64, error) {
+	if m.upsertPathErr != nil {
+		return 0, m.upsertPathErr
+	}
+	return m.CustomQueries.UpsertFolderPathReturningID(ctx, path)
+}
+
+func (m *createRootFolderMockQueries) UpsertFolderReturningFolder(ctx context.Context, arg gallerydb.UpsertFolderReturningFolderParams) (gallerydb.Folder, error) {
+	if m.upsertFolderErr != nil {
+		return gallerydb.Folder{}, m.upsertFolderErr
+	}
+	if m.upsertFolderZeroID {
+		return gallerydb.Folder{ID: 0}, nil
+	}
+	return m.CustomQueries.UpsertFolderReturningFolder(ctx, arg)
+}
+
+func TestCreateRootFolderEntry_GetFolderIDByPathNonNoRowsError(t *testing.T) {
+	db, q, ctx := setupTestDB(t)
+	defer db.Close()
+
+	mock := &createRootFolderMockQueries{
+		CustomQueries: q,
+		firstGetErr:   errors.New("lookup failed"),
+	}
+	imp := &gallerylib.Importer{Q: mock}
+
+	_, err := imp.CreateRootFolderEntry(ctx, time.Now().Unix())
+	if err == nil {
+		t.Fatal("expected error when GetFolderIDByPath fails with non-ErrNoRows error")
+	}
+	if !strings.Contains(err.Error(), "error checking for existing root folder") {
+		t.Fatalf("expected error to wrap 'error checking for existing root folder', got: %v", err)
+	}
+}
+
+func TestCreateRootFolderEntry_UpsertFolderPathReturningIDFails(t *testing.T) {
+	db, q, ctx := setupTestDB(t)
+	defer db.Close()
+
+	mock := &createRootFolderMockQueries{
+		CustomQueries: q,
+		firstGetErr:   sql.ErrNoRows,
+		upsertPathErr: errors.New("upsert path failed"),
+	}
+	imp := &gallerylib.Importer{Q: mock}
+
+	_, err := imp.CreateRootFolderEntry(ctx, time.Now().Unix())
+	if err == nil {
+		t.Fatal("expected error when UpsertFolderPathReturningID fails")
+	}
+	if !strings.Contains(err.Error(), "error upserting root folder path") {
+		t.Fatalf("expected error to wrap 'error upserting root folder path', got: %v", err)
+	}
+}
+
+func TestCreateRootFolderEntry_UpsertFolderReturningFolderFails(t *testing.T) {
+	db, q, ctx := setupTestDB(t)
+	defer db.Close()
+
+	mock := &createRootFolderMockQueries{
+		CustomQueries:   q,
+		firstGetErr:     sql.ErrNoRows,
+		upsertFolderErr: errors.New("upsert folder failed"),
+	}
+	imp := &gallerylib.Importer{Q: mock}
+
+	_, err := imp.CreateRootFolderEntry(ctx, time.Now().Unix())
+	if err == nil {
+		t.Fatal("expected error when UpsertFolderReturningFolder fails")
+	}
+	if !strings.Contains(err.Error(), "error upserting root folder") {
+		t.Fatalf("expected error to wrap 'error upserting root folder', got: %v", err)
+	}
+}
+
+func TestCreateRootFolderEntry_DefensiveFallbackSucceeds(t *testing.T) {
+	db, q, ctx := setupTestDB(t)
+	defer db.Close()
+
+	mock := &createRootFolderMockQueries{
+		CustomQueries:      q,
+		firstGetErr:        sql.ErrNoRows,
+		upsertFolderZeroID: true,
+		fallbackGetID:      42,
+	}
+	imp := &gallerylib.Importer{Q: mock}
+
+	id, err := imp.CreateRootFolderEntry(ctx, time.Now().Unix())
+	if err != nil {
+		t.Fatalf("expected no error when defensive fallback succeeds, got: %v", err)
+	}
+	if id != 42 {
+		t.Fatalf("expected fallback ID 42, got %d", id)
+	}
+	if mock.getFolderIDByPathCalls != 2 {
+		t.Fatalf("expected 2 GetFolderIDByPath calls, got %d", mock.getFolderIDByPathCalls)
+	}
+}
+
+func TestCreateRootFolderEntry_DefensiveFallbackFails(t *testing.T) {
+	db, q, ctx := setupTestDB(t)
+	defer db.Close()
+
+	mock := &createRootFolderMockQueries{
+		CustomQueries:      q,
+		firstGetErr:        sql.ErrNoRows,
+		upsertFolderZeroID: true,
+		fallbackGetErr:     errors.New("fallback failed"),
+	}
+	imp := &gallerylib.Importer{Q: mock}
+
+	_, err := imp.CreateRootFolderEntry(ctx, time.Now().Unix())
+	if err == nil {
+		t.Fatal("expected error when defensive fallback fails")
+	}
+	if !strings.Contains(err.Error(), "failed to obtain root folder id after upsert") {
+		t.Fatalf("expected error to wrap 'failed to obtain root folder id after upsert', got: %v", err)
+	}
+}
+
+func TestIsDirTiled_UnmarkedDir(t *testing.T) {
+	imp := &gallerylib.Importer{}
+	if imp.IsDirTiled("/any/dir") {
+		t.Fatal("expected unmarked directory to report not tiled")
+	}
+}
+
+func TestIsDirTiled_MarkedDir(t *testing.T) {
+	imp := &gallerylib.Importer{}
+	imp.MarkDirTiled("/photos")
+	if !imp.IsDirTiled("/photos") {
+		t.Fatal("expected marked directory to report tiled")
+	}
+}
+
+func TestIsDirTiled_MarkedDir_OtherDir(t *testing.T) {
+	imp := &gallerylib.Importer{}
+	imp.MarkDirTiled("/photos")
+	if imp.IsDirTiled("/other") {
+		t.Fatal("expected unrelated directory to report not tiled")
+	}
+}
+
+func TestMarkDirTiled_LazilyInitializes(t *testing.T) {
+	imp := &gallerylib.Importer{}
+	imp.MarkDirTiled("/photos")
+	if !imp.IsDirTiled("/photos") {
+		t.Fatal("expected MarkDirTiled to lazily initialize tiledDirs and mark the directory")
+	}
+}
+
+func TestMarkDirTiled_Idempotent(t *testing.T) {
+	imp := &gallerylib.Importer{}
+	imp.MarkDirTiled("/photos")
+	if !imp.IsDirTiled("/photos") {
+		t.Fatal("expected directory to be tiled after first mark")
+	}
+	imp.MarkDirTiled("/photos")
+	if !imp.IsDirTiled("/photos") {
+		t.Fatal("expected directory to remain tiled after second mark")
+	}
+}
+
 func TestUpsertPathChain(t *testing.T) {
 	db, q, ctx := setupTestDB(t)
 	defer db.Close()

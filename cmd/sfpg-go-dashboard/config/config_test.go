@@ -67,3 +67,78 @@ func TestParseFlags(t *testing.T) {
 		t.Error("NoRefresh should be true")
 	}
 }
+
+// TestParse_DelegatesToParseArgs verifies Parse uses os.Args.
+func TestParse_DelegatesToParseArgs(t *testing.T) {
+	origArgs := os.Args
+	defer func() { os.Args = origArgs }()
+
+	os.Args = []string{"sfpg-go-dashboard", "-server", "http://test:9999"}
+	cfg := Parse()
+
+	if cfg.ServerURL != "http://test:9999" {
+		t.Errorf("ServerURL = %q, want %q", cfg.ServerURL, "http://test:9999")
+	}
+}
+
+// TestParseArgs_Help returns ShowHelp when -help is requested.
+func TestParseArgs_Help(t *testing.T) {
+	cfg := ParseArgs([]string{"-help"})
+	if !cfg.ShowHelp {
+		t.Error("ShowHelp should be true")
+	}
+}
+
+// TestParseArgs_InvalidFlag does not panic on unknown flags.
+func TestParseArgs_InvalidFlag(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("ParseArgs panicked on invalid flag: %v", r)
+		}
+	}()
+
+	cfg := ParseArgs([]string{"-not-a-real-flag", "value"})
+	if cfg == nil {
+		t.Error("cfg should not be nil")
+	}
+}
+
+// TestParseArgs_FlagOverridesEnv verifies CLI flags win over environment.
+func TestParseArgs_FlagOverridesEnv(t *testing.T) {
+	os.Setenv("SFPG_SERVER", "http://env:8080")
+	defer os.Unsetenv("SFPG_SERVER")
+
+	cfg := ParseArgs([]string{"-server", "http://flag:9090"})
+	if cfg.ServerURL != "http://flag:9090" {
+		t.Errorf("ServerURL = %q, want %q", cfg.ServerURL, "http://flag:9090")
+	}
+}
+
+// TestParseArgs_EnvOverridesDefault verifies environment wins over defaults.
+func TestParseArgs_EnvOverridesDefault(t *testing.T) {
+	os.Setenv("SFPG_SERVER", "http://env:8080")
+	defer os.Unsetenv("SFPG_SERVER")
+
+	cfg := ParseArgs([]string{})
+	if cfg.ServerURL != "http://env:8080" {
+		t.Errorf("ServerURL = %q, want %q", cfg.ServerURL, "http://env:8080")
+	}
+}
+
+// TestParseArgs_CredentialsFromEnv reads credentials from environment.
+func TestParseArgs_CredentialsFromEnv(t *testing.T) {
+	os.Setenv("SFPG_USERNAME", "testuser")
+	os.Setenv("SFPG_PASSWORD", "testpass")
+	defer func() {
+		os.Unsetenv("SFPG_USERNAME")
+		os.Unsetenv("SFPG_PASSWORD")
+	}()
+
+	cfg := ParseArgs([]string{})
+	if cfg.Username != "testuser" {
+		t.Errorf("Username = %q, want %q", cfg.Username, "testuser")
+	}
+	if cfg.Password != "testpass" {
+		t.Errorf("Password = %q, want %q", cfg.Password, "testpass")
+	}
+}

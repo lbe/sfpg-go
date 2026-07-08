@@ -233,6 +233,10 @@ func GenerateThumbnailAndUpdateDbIfNeeded(
 	f *File,
 	importerFactory func(conn *sql.Conn, q *gallerydb.CustomQueries) Importer,
 ) error {
+	if f == nil {
+		return fmt.Errorf("nil file")
+	}
+
 	var (
 		err   error
 		thumb []byte
@@ -278,7 +282,7 @@ func GenerateThumbnailAndUpdateDbIfNeeded(
 
 	if len(thumb) == 0 {
 		slog.Error("generateThumbnail returned empty thumbnail", "file", fn)
-		return err
+		return fmt.Errorf("empty thumbnail")
 	}
 
 	thumbnailID, err := UpsertThumbnail(ctx, cpcRw, f.File.ID, thumb)

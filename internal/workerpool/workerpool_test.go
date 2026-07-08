@@ -335,3 +335,126 @@ func TestStartWorkerPool_ErrorHandling(t *testing.T) {
 		t.Errorf("Expected logged worker error '%v' not observed", testErr)
 	}
 }
+
+// TestPoolResultCounters tests AddSuccessful and AddFailed on a real Pool.
+func TestPoolResultCounters(t *testing.T) {
+	tests := []struct {
+		name    string
+		call    func(*Pool)
+		counter func(*Pool) uint64
+	}{
+		{
+			name: "AddSuccessful",
+			call: func(p *Pool) { p.AddSuccessful() },
+			counter: func(p *Pool) uint64 {
+				return p.Stats.SuccessfulTasks.Load()
+			},
+		},
+		{
+			name: "AddFailed",
+			call: func(p *Pool) { p.AddFailed() },
+			counter: func(p *Pool) uint64 {
+				return p.Stats.FailedTasks.Load()
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pool := NewPool(context.Background(), 1, 1, 1*time.Second)
+			tt.call(pool)
+			if got := tt.counter(pool); got != 1 {
+				t.Errorf("Expected counter to be 1 after %s, got %d", tt.name, got)
+			}
+		})
+	}
+}
+
+// TestGetStats verifies that GetStats returns a consistent snapshot of pool statistics.
+func TestGetStats(t *testing.T) {
+	pool := NewPool(context.Background(), 5, 2, 1*time.Second)
+
+	pool.Stats.RunningWorkers.Store(3)
+	pool.Stats.SubmittedTasks.Store(10)
+	pool.Stats.WaitingTasks.Store(4)
+	pool.Stats.SuccessfulTasks.Store(7)
+	pool.Stats.FailedTasks.Store(2)
+	pool.Stats.CompletedTasks.Store(9)
+	pool.Stats.DroppedTasks.Store(1)
+
+	stats := pool.GetStats()
+
+	if stats.RunningWorkers != 3 {
+		t.Errorf("Expected RunningWorkers 3, got %d", stats.RunningWorkers)
+	}
+	if stats.SubmittedTasks != 10 {
+		t.Errorf("Expected SubmittedTasks 10, got %d", stats.SubmittedTasks)
+	}
+	if stats.WaitingTasks != 4 {
+		t.Errorf("Expected WaitingTasks 4, got %d", stats.WaitingTasks)
+	}
+	if stats.SuccessfulTasks != 7 {
+		t.Errorf("Expected SuccessfulTasks 7, got %d", stats.SuccessfulTasks)
+	}
+	if stats.FailedTasks != 2 {
+		t.Errorf("Expected FailedTasks 2, got %d", stats.FailedTasks)
+	}
+	if stats.CompletedTasks != 9 {
+		t.Errorf("Expected CompletedTasks 9, got %d", stats.CompletedTasks)
+	}
+	if stats.DroppedTasks != 1 {
+		t.Errorf("Expected DroppedTasks 1, got %d", stats.DroppedTasks)
+	}
+	if stats.MaxWorkers != 5 {
+		t.Errorf("Expected MaxWorkers 5, got %d", stats.MaxWorkers)
+	}
+	if stats.MinWorkers != 2 {
+		t.Errorf("Expected MinWorkers 2, got %d", stats.MinWorkers)
+	}
+}
+
+// TestTimeSinceLastCompletion_Zero verifies behavior when no completion has occurred.
+func TestTimeSinceLastCompletion_Zero(t *testing.T) {
+	pool := NewPool(context.Background(), 1, 1, 1*time.Second)
+	pool.Stats.timeLastComplete.Store(0)
+
+	if got := pool.TimeSinceLastCompletion(); got != time.Duration(0) {
+		t.Errorf("Expected TimeSinceLastCompletion to be 0 when timestamp is zero, got %v", got)
+	}
+}
+
+// TestGetMinMaxPoolWorkers exercises every branch of getMinMaxPoolWorkers deterministically.
+func TestGetMinMaxPoolWorkers(t *testing.T) {
+	tests := []struct {
+		name           string
+		numCPU         int
+		minPoolWorkers int
+		maxPoolWorkers int
+		wantMin        int
+		wantMax        int
+	}{
+		{"single core defaults", 1, 0, 0, 1, 1},
+		{"dual core defaults", 2, 0, 0, 1, 1},
+		{"quad core defaults", 4, 0, 0, 2, 2},
+		{"eight core defaults", 8, 0, 0, 4, 6},
+		{"sixteen core defaults", 16, 0, 0, 4, 14},
+		{"explicit overrides", 8, 3, 5, 3, 5},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			origRuntimeNumCPU := runtimeNumCPU
+			runtimeNumCPU = func() int { return tt.numCPU }
+			t.Cleanup(func() { runtimeNumCPU = origRuntimeNumCPU })
+
+			pool := &Pool{}
+			gotMin, gotMax := pool.getMinMaxPoolWorkers(tt.minPoolWorkers, tt.maxPoolWorkers)
+			if gotMin != tt.wantMin {
+				t.Errorf("Expected min %d, got %d", tt.wantMin, gotMin)
+			}
+			if gotMax != tt.wantMax {
+				t.Errorf("Expected max %d, got %d", tt.wantMax, gotMax)
+			}
+		})
+	}
+}

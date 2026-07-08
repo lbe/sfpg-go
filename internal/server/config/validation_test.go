@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -811,4 +812,109 @@ func TestValidateImageDirectory_Empty(t *testing.T) {
 	if err := ValidateImageDirectory(""); err == nil {
 		t.Fatal("expected ValidateImageDirectory to fail for empty path")
 	}
+}
+
+func TestValidateGuardrails(t *testing.T) {
+	t.Run("nil config", func(t *testing.T) {
+		var cfg *Config
+		if got := cfg.ValidateGuardrails(); got != nil {
+			t.Errorf("nil.ValidateGuardrails() = %v, want nil", got)
+		}
+	})
+
+	t.Run("no warnings", func(t *testing.T) {
+		cfg := DefaultConfig()
+		got := cfg.ValidateGuardrails()
+		if len(got) != 0 {
+			t.Errorf("DefaultConfig().ValidateGuardrails() = %v, want empty", got)
+		}
+	})
+
+	t.Run("db_min_idle_gt_db_max_pool", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.DBMinIdleConnections = 20
+		cfg.DBMaxPoolSize = 10
+		got := cfg.ValidateGuardrails()
+		if len(got) != 1 {
+			t.Fatalf("got %d warnings, want 1", len(got))
+		}
+		if got[0].Check != "db_min_idle_gt_db_max_pool" {
+			t.Errorf("Check = %q, want %q", got[0].Check, "db_min_idle_gt_db_max_pool")
+		}
+	})
+
+	t.Run("worker_pool_min_idle_gt_worker_pool_max", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.WorkerPoolMax = 4
+		cfg.WorkerPoolMinIdle = 8
+		got := cfg.ValidateGuardrails()
+		if len(got) != 1 {
+			t.Fatalf("got %d warnings, want 1", len(got))
+		}
+		if got[0].Check != "worker_pool_min_idle_gt_worker_pool_max" {
+			t.Errorf("Check = %q, want %q", got[0].Check, "worker_pool_min_idle_gt_worker_pool_max")
+		}
+	})
+
+	t.Run("session_samesite_none_without_secure", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.SessionSameSite = "None"
+		cfg.SessionSecure = false
+		got := cfg.ValidateGuardrails()
+		if len(got) != 1 {
+			t.Fatalf("got %d warnings, want 1", len(got))
+		}
+		if got[0].Check != "session_samesite_none_without_secure" {
+			t.Errorf("Check = %q, want %q", got[0].Check, "session_samesite_none_without_secure")
+		}
+	})
+
+	t.Run("http_cache_enabled_with_zero_max_size", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.EnableHTTPCache = true
+		cfg.CacheMaxSize = 0
+		got := cfg.ValidateGuardrails()
+		if len(got) != 1 {
+			t.Fatalf("got %d warnings, want 1", len(got))
+		}
+		if got[0].Check != "http_cache_enabled_with_zero_max_size" {
+			t.Errorf("Check = %q, want %q", got[0].Check, "http_cache_enabled_with_zero_max_size")
+		}
+	})
+
+	t.Run("cache_entry_size_exceeds_cache_size", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.EnableHTTPCache = true
+		cfg.CacheMaxSize = 100
+		cfg.CacheMaxEntrySize = 200
+		got := cfg.ValidateGuardrails()
+		if len(got) != 1 {
+			t.Fatalf("got %d warnings, want 1", len(got))
+		}
+		if got[0].Check != "cache_entry_size_exceeds_cache_size" {
+			t.Errorf("Check = %q, want %q", got[0].Check, "cache_entry_size_exceeds_cache_size")
+		}
+	})
+
+	t.Run("multiple warnings", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.DBMinIdleConnections = 20
+		cfg.DBMaxPoolSize = 10
+		cfg.WorkerPoolMax = 4
+		cfg.WorkerPoolMinIdle = 8
+		got := cfg.ValidateGuardrails()
+		checks := make([]string, len(got))
+		for i, w := range got {
+			checks[i] = w.Check
+		}
+		wantChecks := []string{
+			"db_min_idle_gt_db_max_pool",
+			"worker_pool_min_idle_gt_worker_pool_max",
+		}
+		for _, want := range wantChecks {
+			if !slices.Contains(checks, want) {
+				t.Errorf("missing expected check %q, got %v", want, checks)
+			}
+		}
+	})
 }

@@ -521,7 +521,7 @@ func (q *DQue[T]) TurboSync() error {
 func (q *DQue[T]) load() error {
 
 	// Find all queue files
-	files, err := os.ReadDir(q.fullPath)
+	files, err := osReadDir(q.fullPath)
 	if err != nil {
 		return errors.Wrap(err, "unable to read files in "+q.fullPath)
 	}
@@ -635,7 +635,7 @@ func (q *DQue[T]) initQueue(fullPath string, itemsPerSegment int) error {
 		if q.lastSegment != nil && q.lastSegment != q.firstSegment {
 			_ = q.lastSegment.close()
 		}
-		if releaseErr := q.fileLock.Close(); releaseErr != nil {
+		if releaseErr := flockClose(q.fileLock); releaseErr != nil {
 			return errors.Join(err, releaseErr)
 		}
 		return err

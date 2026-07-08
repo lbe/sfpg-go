@@ -14,6 +14,11 @@ import (
 	"github.com/lbe/sfpg-go/internal/server/metrics"
 )
 
+var (
+	// osExit is a testable hook for os.Exit used by RuntimeManager.exit.
+	osExit = os.Exit
+)
+
 // RuntimeManager owns application lifecycle, HTTP server, and restart state.
 type RuntimeManager struct {
 	cancel           context.CancelFunc
@@ -35,6 +40,13 @@ type RuntimeManager struct {
 	galleryStatsCache      *GalleryStats
 	galleryStatsAt         int64
 	staleCacheDropInFlight atomic.Bool
+
+	// Test seams (nil in production).
+	testHookExecutable   func() (string, error)
+	testHookExecCommand  func(path string, args []string, env []string) error
+	testHookExit         func(code int)
+	testHookBeforeListen func()
+	testHookShutdown     func(ctx context.Context) error
 }
 
 func NewRuntimeManager(parent context.Context) *RuntimeManager {
@@ -49,6 +61,10 @@ func NewRuntimeManager(parent context.Context) *RuntimeManager {
 // ─── Serve ──────────────────────────────────────────────────────────
 
 func (m *RuntimeManager) Serve(handler http.Handler, addr string) error {
+	if m.testHookBeforeListen != nil {
+		m.testHookBeforeListen()
+	}
+
 	m.httpServerMu.Lock()
 	m.httpServer = &http.Server{Addr: addr, Handler: handler}
 	httpServer := m.httpServer
@@ -78,12 +94,19 @@ func (m *RuntimeManager) Serve(handler http.Handler, addr string) error {
 		shutdownServer := m.httpServer
 		m.httpServerMu.Unlock()
 		if shutdownServer != nil {
-			if err := shutdownServer.Shutdown(shutdownCtx); err != nil {
+			if err := m.shutdownServer(shutdownCtx, shutdownServer); err != nil {
 				slog.Error("error during server shutdown", "err", err)
 			}
 		}
 		return nil
 	}
+}
+
+func (m *RuntimeManager) shutdownServer(ctx context.Context, srv *http.Server) error {
+	if m.testHookShutdown != nil {
+		return m.testHookShutdown(ctx)
+	}
+	return srv.Shutdown(ctx)
 }
 
 // ─── Restart ────────────────────────────────────────────────────────
@@ -105,25 +128,42 @@ func (m *RuntimeManager) TriggerRestart() {
 	}
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := srv.Shutdown(shutdownCtx); err != nil {
+	if err := m.shutdownServer(shutdownCtx, srv); err != nil {
 		slog.Error("error during graceful shutdown before restart", "err", err)
 	}
 }
 
 func (m *RuntimeManager) ExecRestart() {
 	exe, err := os.Executable()
+	if m.testHookExecutable != nil {
+		exe, err = m.testHookExecutable()
+	}
 	if err != nil {
 		slog.Error("failed to get executable path", "err", err)
-		os.Exit(1)
+		m.exit(1)
+		return
 	}
 	slog.Info("re-executing process", "exe", exe, "args", os.Args)
-	if m.execCommand == nil {
-		m.execCommand = syscall.Exec
+	execCmd := m.execCommand
+	if m.testHookExecCommand != nil {
+		execCmd = m.testHookExecCommand
 	}
-	if err := m.execCommand(exe, os.Args, os.Environ()); err != nil {
+	if execCmd == nil {
+		execCmd = syscall.Exec
+	}
+	if err := execCmd(exe, os.Args, os.Environ()); err != nil {
 		slog.Error("failed to exec new process image", "err", err)
-		os.Exit(1)
+		m.exit(1)
+		return
 	}
+}
+
+func (m *RuntimeManager) exit(code int) {
+	if m.testHookExit != nil {
+		m.testHookExit(code)
+		return
+	}
+	osExit(code)
 }
 
 // ─── Gallery stats ──────────────────────────────────────────────────

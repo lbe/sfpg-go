@@ -3,9 +3,11 @@ package cachepreload
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -278,5 +280,344 @@ func TestFolderPreloadTask_SkipsAlreadyCachedRoutes(t *testing.T) {
 	hasLightbox := slices.Contains(paths, "/lightbox/42")
 	if !hasLightbox {
 		t.Errorf("expected /lightbox/42 to be preloaded (not cached), got paths: %v", paths)
+	}
+}
+
+func TestIsCacheablePath(t *testing.T) {
+	cases := []struct {
+		path     string
+		routes   []string
+		expected bool
+	}{
+		{path: "/gallery/1", routes: []string{"/gallery/"}, expected: true},
+		{path: "/info/image/1", routes: []string{"/gallery/", "/info/"}, expected: true},
+		{path: "/admin/1", routes: []string{"/gallery/", "/info/"}, expected: false},
+		{path: "/gallery/1", routes: []string{}, expected: false},
+		{path: "", routes: []string{"/gallery/"}, expected: false},
+		{path: "/gallery", routes: []string{"/gallery/"}, expected: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(fmt.Sprintf("path=%q_routes=%v", tc.path, tc.routes), func(t *testing.T) {
+			got := isCacheablePath(tc.path, tc.routes)
+			if got != tc.expected {
+				t.Errorf("isCacheablePath(%q, %v) = %v, want %v", tc.path, tc.routes, got, tc.expected)
+			}
+		})
+	}
+}
+
+func TestFolderPreloadTask_Run_DbPoolGetError(t *testing.T) {
+	origGet := dbPoolGetFn
+	origPut := dbPoolPutFn
+	defer func() {
+		dbPoolGetFn = origGet
+		dbPoolPutFn = origPut
+	}()
+
+	dbPoolGetFn = func(_ *dbconnpool.DbSQLConnPool) (*dbconnpool.CpConn, error) {
+		return nil, errors.New("pool closed")
+	}
+	dbPoolPutFn = func(_ *dbconnpool.DbSQLConnPool, _ *dbconnpool.CpConn) {}
+
+	task := &FolderPreloadTask{DBRoPool: &dbconnpool.DbSQLConnPool{}}
+	err := task.Run(context.Background())
+	if err == nil {
+		t.Fatal("expected error from Run")
+	}
+	if !strings.Contains(err.Error(), "get db connection") {
+		t.Errorf("expected error to contain 'get db connection', got: %v", err)
+	}
+}
+
+func TestFolderPreloadTask_Run_GetRoutesError(t *testing.T) {
+	origGet := dbPoolGetFn
+	origPut := dbPoolPutFn
+	origRoutes := getPreloadRoutesByFolderIDFn
+	defer func() {
+		dbPoolGetFn = origGet
+		dbPoolPutFn = origPut
+		getPreloadRoutesByFolderIDFn = origRoutes
+	}()
+
+	dbPoolGetFn = func(_ *dbconnpool.DbSQLConnPool) (*dbconnpool.CpConn, error) {
+		return &dbconnpool.CpConn{}, nil
+	}
+	dbPoolPutFn = func(_ *dbconnpool.DbSQLConnPool, _ *dbconnpool.CpConn) {}
+	getPreloadRoutesByFolderIDFn = func(_ interfaces.HandlerQueries, _ context.Context, _ int64) ([]string, error) {
+		return nil, errors.New("query denied")
+	}
+
+	task := &FolderPreloadTask{
+		DBRoPool: &dbconnpool.DbSQLConnPool{},
+		GetQueries: func(*dbconnpool.CpConn) interfaces.HandlerQueries {
+			return &mockFolderQueries{}
+		},
+	}
+	err := task.Run(context.Background())
+	if err == nil {
+		t.Fatal("expected error from Run")
+	}
+	if !strings.Contains(err.Error(), "get preload routes") {
+		t.Errorf("expected error to contain 'get preload routes', got: %v", err)
+	}
+}
+
+func TestFolderPreloadTask_Run_RowsErrError(t *testing.T) {
+	origGet := dbPoolGetFn
+	origPut := dbPoolPutFn
+	origRoutes := getPreloadRoutesByFolderIDFn
+	defer func() {
+		dbPoolGetFn = origGet
+		dbPoolPutFn = origPut
+		getPreloadRoutesByFolderIDFn = origRoutes
+	}()
+
+	dbPoolGetFn = func(_ *dbconnpool.DbSQLConnPool) (*dbconnpool.CpConn, error) {
+		return &dbconnpool.CpConn{}, nil
+	}
+	dbPoolPutFn = func(_ *dbconnpool.DbSQLConnPool, _ *dbconnpool.CpConn) {}
+	getPreloadRoutesByFolderIDFn = func(_ interfaces.HandlerQueries, _ context.Context, _ int64) ([]string, error) {
+		return nil, errors.New("rows iteration failed")
+	}
+
+	task := &FolderPreloadTask{
+		DBRoPool: &dbconnpool.DbSQLConnPool{},
+		GetQueries: func(*dbconnpool.CpConn) interfaces.HandlerQueries {
+			return &mockFolderQueries{}
+		},
+	}
+	err := task.Run(context.Background())
+	if err == nil {
+		t.Fatal("expected error from Run")
+	}
+	if !strings.Contains(err.Error(), "get preload routes") {
+		t.Errorf("expected error to contain 'get preload routes', got: %v", err)
+	}
+}
+
+func TestFolderPreloadTask_Run_EmptyPathSkipped(t *testing.T) {
+	origGet := dbPoolGetFn
+	origPut := dbPoolPutFn
+	origRoutes := getPreloadRoutesByFolderIDFn
+	origCache := httpCacheExistsByKeyFn
+	origAdd := folderSchedulerAddTaskFn
+	defer func() {
+		dbPoolGetFn = origGet
+		dbPoolPutFn = origPut
+		getPreloadRoutesByFolderIDFn = origRoutes
+		httpCacheExistsByKeyFn = origCache
+		folderSchedulerAddTaskFn = origAdd
+	}()
+
+	dbPoolGetFn = func(_ *dbconnpool.DbSQLConnPool) (*dbconnpool.CpConn, error) {
+		return &dbconnpool.CpConn{}, nil
+	}
+	dbPoolPutFn = func(_ *dbconnpool.DbSQLConnPool, _ *dbconnpool.CpConn) {}
+	getPreloadRoutesByFolderIDFn = func(_ interfaces.HandlerQueries, _ context.Context, _ int64) ([]string, error) {
+		return []string{"", "/gallery/1"}, nil
+	}
+	httpCacheExistsByKeyFn = func(_ *gallerydb.CustomQueries, _ context.Context, _ string) (bool, error) {
+		return false, nil
+	}
+
+	var scheduledPaths []string
+	folderSchedulerAddTaskFn = func(_ *scheduler.Scheduler, task scheduler.Task, _ scheduler.ExecutionMode, _ time.Time) (string, error) {
+		pt, ok := task.(*PreloadTask)
+		if !ok {
+			t.Fatalf("expected *PreloadTask, got %T", task)
+		}
+		scheduledPaths = append(scheduledPaths, pt.Path)
+		return "task-id", nil
+	}
+
+	task := &FolderPreloadTask{
+		DBRoPool:        &dbconnpool.DbSQLConnPool{},
+		CacheableRoutes: []string{"/gallery/"},
+		TaskTracker:     &TaskTracker{},
+		Scheduler:       scheduler.NewScheduler(1),
+		ETagVersion:     "v1",
+		GetQueries: func(*dbconnpool.CpConn) interfaces.HandlerQueries {
+			return &mockFolderQueries{}
+		},
+	}
+
+	err := task.Run(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(scheduledPaths) != 1 || scheduledPaths[0] != "/gallery/1" {
+		t.Errorf("expected only /gallery/1 scheduled, got %v", scheduledPaths)
+	}
+}
+
+func TestFolderPreloadTask_Run_NonCacheablePathSkipped(t *testing.T) {
+	origGet := dbPoolGetFn
+	origPut := dbPoolPutFn
+	origRoutes := getPreloadRoutesByFolderIDFn
+	origCache := httpCacheExistsByKeyFn
+	origAdd := folderSchedulerAddTaskFn
+	defer func() {
+		dbPoolGetFn = origGet
+		dbPoolPutFn = origPut
+		getPreloadRoutesByFolderIDFn = origRoutes
+		httpCacheExistsByKeyFn = origCache
+		folderSchedulerAddTaskFn = origAdd
+	}()
+
+	dbPoolGetFn = func(_ *dbconnpool.DbSQLConnPool) (*dbconnpool.CpConn, error) {
+		return &dbconnpool.CpConn{}, nil
+	}
+	dbPoolPutFn = func(_ *dbconnpool.DbSQLConnPool, _ *dbconnpool.CpConn) {}
+	getPreloadRoutesByFolderIDFn = func(_ interfaces.HandlerQueries, _ context.Context, _ int64) ([]string, error) {
+		return []string{"/admin/1", "/gallery/1"}, nil
+	}
+	httpCacheExistsByKeyFn = func(_ *gallerydb.CustomQueries, _ context.Context, _ string) (bool, error) {
+		return false, nil
+	}
+
+	var scheduledPaths []string
+	folderSchedulerAddTaskFn = func(_ *scheduler.Scheduler, task scheduler.Task, _ scheduler.ExecutionMode, _ time.Time) (string, error) {
+		pt, ok := task.(*PreloadTask)
+		if !ok {
+			t.Fatalf("expected *PreloadTask, got %T", task)
+		}
+		scheduledPaths = append(scheduledPaths, pt.Path)
+		return "task-id", nil
+	}
+
+	task := &FolderPreloadTask{
+		DBRoPool:        &dbconnpool.DbSQLConnPool{},
+		CacheableRoutes: []string{"/gallery/"},
+		TaskTracker:     &TaskTracker{},
+		Scheduler:       scheduler.NewScheduler(1),
+		ETagVersion:     "v1",
+		GetQueries: func(*dbconnpool.CpConn) interfaces.HandlerQueries {
+			return &mockFolderQueries{}
+		},
+	}
+
+	err := task.Run(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(scheduledPaths) != 1 || scheduledPaths[0] != "/gallery/1" {
+		t.Errorf("expected only /gallery/1 scheduled, got %v", scheduledPaths)
+	}
+}
+
+func TestFolderPreloadTask_Run_ScheduleAddTaskError(t *testing.T) {
+	origGet := dbPoolGetFn
+	origPut := dbPoolPutFn
+	origRoutes := getPreloadRoutesByFolderIDFn
+	origCache := httpCacheExistsByKeyFn
+	origAdd := folderSchedulerAddTaskFn
+	defer func() {
+		dbPoolGetFn = origGet
+		dbPoolPutFn = origPut
+		getPreloadRoutesByFolderIDFn = origRoutes
+		httpCacheExistsByKeyFn = origCache
+		folderSchedulerAddTaskFn = origAdd
+	}()
+
+	dbPoolGetFn = func(_ *dbconnpool.DbSQLConnPool) (*dbconnpool.CpConn, error) {
+		return &dbconnpool.CpConn{}, nil
+	}
+	dbPoolPutFn = func(_ *dbconnpool.DbSQLConnPool, _ *dbconnpool.CpConn) {}
+	getPreloadRoutesByFolderIDFn = func(_ interfaces.HandlerQueries, _ context.Context, _ int64) ([]string, error) {
+		return []string{"/gallery/1"}, nil
+	}
+	httpCacheExistsByKeyFn = func(_ *gallerydb.CustomQueries, _ context.Context, _ string) (bool, error) {
+		return false, nil
+	}
+	folderSchedulerAddTaskFn = func(_ *scheduler.Scheduler, _ scheduler.Task, _ scheduler.ExecutionMode, _ time.Time) (string, error) {
+		return "", errors.New("scheduler full")
+	}
+
+	tt := &TaskTracker{}
+	task := &FolderPreloadTask{
+		DBRoPool:        &dbconnpool.DbSQLConnPool{},
+		CacheableRoutes: []string{"/gallery/"},
+		TaskTracker:     tt,
+		Scheduler:       scheduler.NewScheduler(1),
+		ETagVersion:     "v1",
+		GetQueries: func(*dbconnpool.CpConn) interfaces.HandlerQueries {
+			return &mockFolderQueries{}
+		},
+	}
+
+	err := task.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run should not return error when schedule fails per path: %v", err)
+	}
+
+	// The cache key should be unregistered after the failed schedule.
+	// Re-claiming the exact key is hard because it includes encoding/query,
+	// so verify via TryClaimTask on a fresh equivalent path.
+	if !tt.TryClaimTask(cachelite.NewCacheKey(cachelite.NewCacheKeyForPreload("/gallery/1", "v=v1", "identity", "", false))) {
+		t.Error("expected cache key to be unregistered after failed schedule")
+	}
+}
+
+func TestFolderPreloadTask_Run_AlreadyCachedSkip(t *testing.T) {
+	origGet := dbPoolGetFn
+	origPut := dbPoolPutFn
+	origRoutes := getPreloadRoutesByFolderIDFn
+	origCache := httpCacheExistsByKeyFn
+	origAdd := folderSchedulerAddTaskFn
+	defer func() {
+		dbPoolGetFn = origGet
+		dbPoolPutFn = origPut
+		getPreloadRoutesByFolderIDFn = origRoutes
+		httpCacheExistsByKeyFn = origCache
+		folderSchedulerAddTaskFn = origAdd
+	}()
+
+	dbPoolGetFn = func(_ *dbconnpool.DbSQLConnPool) (*dbconnpool.CpConn, error) {
+		return &dbconnpool.CpConn{}, nil
+	}
+	dbPoolPutFn = func(_ *dbconnpool.DbSQLConnPool, _ *dbconnpool.CpConn) {}
+	getPreloadRoutesByFolderIDFn = func(_ interfaces.HandlerQueries, _ context.Context, _ int64) ([]string, error) {
+		return []string{"/info/image/1"}, nil
+	}
+	httpCacheExistsByKeyFn = func(_ *gallerydb.CustomQueries, _ context.Context, _ string) (bool, error) {
+		return true, nil
+	}
+
+	var scheduledPaths []string
+	folderSchedulerAddTaskFn = func(_ *scheduler.Scheduler, task scheduler.Task, _ scheduler.ExecutionMode, _ time.Time) (string, error) {
+		pt, ok := task.(*PreloadTask)
+		if !ok {
+			t.Fatalf("expected *PreloadTask, got %T", task)
+		}
+		scheduledPaths = append(scheduledPaths, pt.Path)
+		return "task-id", nil
+	}
+
+	metrics := &PreloadMetrics{}
+	task := &FolderPreloadTask{
+		DBRoPool:        &dbconnpool.DbSQLConnPool{},
+		CacheableRoutes: []string{"/info/"},
+		TaskTracker:     &TaskTracker{},
+		Scheduler:       scheduler.NewScheduler(1),
+		ETagVersion:     "v1",
+		Metrics:         metrics,
+		GetQueries: func(*dbconnpool.CpConn) interfaces.HandlerQueries {
+			return &mockFolderQueries{}
+		},
+	}
+
+	err := task.Run(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if metrics.TasksSkipped.Load() != 1 {
+		t.Errorf("expected TasksSkipped = 1, got %d", metrics.TasksSkipped.Load())
+	}
+	if len(scheduledPaths) != 0 {
+		t.Errorf("expected no tasks scheduled, got %v", scheduledPaths)
 	}
 }

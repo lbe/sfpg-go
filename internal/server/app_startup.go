@@ -16,7 +16,9 @@ import (
 )
 
 func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
-	app.setRootDir(nil)
+	if app.rootDir == "" {
+		app.setRootDir(nil)
+	}
 
 	app.setupBootstrapLogging()
 	// Log file closing is handled by Shutdown() via logger.Shutdown()
@@ -31,7 +33,13 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 
 	// Start profiler after logging is configured so messages go to both console and file
 	if app.opt.Profile.IsSet && app.opt.Profile.String != "" {
-		stopProfile, err := profiler.Start(profiler.Config{Mode: app.opt.Profile.String})
+		var stopProfile func()
+		var err error
+		if app.testHookProfilerStart != nil {
+			stopProfile, err = app.testHookProfilerStart(profiler.Config{Mode: app.opt.Profile.String})
+		} else {
+			stopProfile, err = profiler.Start(profiler.Config{Mode: app.opt.Profile.String})
+		}
 		if err != nil {
 			slog.Error("failed to start profiler", "err", err)
 			return err
@@ -93,6 +101,9 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 			slog.Warn("failed to load configuration", "err", err)
 			// Continue with defaults
 			defaultConfig := config.DefaultConfig()
+			if app.testHookFallbackConfig != nil {
+				defaultConfig = app.testHookFallbackConfig()
+			}
 			defaultConfig.LoadFromOpt(app.opt)
 			app.configMu.Lock()
 			app.config = defaultConfig
@@ -121,7 +132,7 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 	// --- SubsystemManager: creates queue, fileProcessor, preloadManager,
 	//     moduleStateService, pool, and processingStats ---
 	app.Start(
-		app.ctx, app.config,
+		app.ctx, app.config, minPoolWorkers, maxPoolWorkers,
 		app.imagesDir, app.normalizedImagesDir,
 		removeImagesDirPrefix,
 		app.getRouter,
@@ -136,10 +147,17 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 	}
 	if runDiscovery {
 		go app.TriggerDiscovery()
-	} else if app.moduleStateService != nil {
+	} else if app.moduleStateService != nil || app.testHookGetLastStartedAt != nil {
 		go func() {
 			ctx := app.getCtx()
-			lastStarted, ok, err := app.moduleStateService.GetLastStartedAt(ctx, "discovery")
+			var lastStarted int64
+			var ok bool
+			var err error
+			if app.testHookGetLastStartedAt != nil {
+				lastStarted, ok, err = app.testHookGetLastStartedAt(ctx, "discovery")
+			} else {
+				lastStarted, ok, err = app.moduleStateService.GetLastStartedAt(ctx, "discovery")
+			}
 			if err != nil {
 				slog.Error("failed to get last started at", "err", err)
 			}
@@ -157,7 +175,7 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 
 	// Worker pool startup
 	app.poolDone = make(chan struct{})
-	app.StartPool(app.ctx, app.poolDone, app.normalizedImagesDir, removeImagesDirPrefix)
+	app.StartPool(app.ctx, app.poolDone, app.normalizedImagesDir, removeImagesDirPrefix, app.fileProcessor)
 
 	// Completion monitor for initial batch processing
 	if runDiscovery {
@@ -214,7 +232,11 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 		IdleThreshold: 10 * time.Second,
 		FreeMemFunc:   debug.FreeOSMemory,
 	}
-	go app.memoryReclaimer(prodReclaimerCfg)
+	if app.testHookMemoryReclaimer != nil {
+		go app.testHookMemoryReclaimer(prodReclaimerCfg)
+	} else {
+		go app.memoryReclaimer(prodReclaimerCfg)
+	}
 
 	// Start HTTP cache cleanup goroutine if caching is enabled in config
 	app.configMu.RLock()
@@ -285,7 +307,7 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 			GetETagVersion:     app.GetETagVersion,
 			ModuleStateService: app.moduleStateService,
 		})
-		app.metricsCollector.SetCacheBatchLoad(&cacheBatchLoadAdapter{m: app.batchLoadManager})
+		app.metricsCollector.SetCacheBatchLoad(app.batchLoadManager)
 	}
 
 	slog.Info("Calling app.Serve()")

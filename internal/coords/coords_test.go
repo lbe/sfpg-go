@@ -246,3 +246,56 @@ func TestParseCoordinatePairs(t *testing.T) {
 func almostEqual(a, b, tolerance float64) bool {
 	return math.Abs(a-b) <= tolerance
 }
+
+func TestParseDMS_ParseErrors(t *testing.T) {
+	tests := []struct {
+		name    string
+		matches []string
+	}{
+		{
+			name:    "invalid degrees",
+			matches: []string{"", "abc", "30", "30", "N"},
+		},
+		{
+			name:    "invalid minutes",
+			matches: []string{"", "40", "abc", "30", "N"},
+		},
+		{
+			name:    "invalid seconds",
+			matches: []string{"", "40", "30", "abc", "N"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := parseDMS(tt.matches)
+			if err == nil {
+				t.Errorf("parseDMS() expected error but got none")
+			}
+		})
+	}
+}
+
+func TestParseDMS_NegativeDegrees(t *testing.T) {
+	result, err := parseDMS([]string{"", "-40", "30", "30", "N"})
+	if err != nil {
+		t.Fatalf("parseDMS() unexpected error: %v", err)
+	}
+
+	expected := 39.49166666666667
+	if !almostEqual(result, expected, 0.000001) {
+		t.Errorf("parseDMS() = %v, want %v", result, expected)
+	}
+}
+
+func TestParseDMS_NoDirection(t *testing.T) {
+	result, err := parseDMS([]string{"", "40", "30", "30", ""})
+	if err != nil {
+		t.Fatalf("parseDMS() unexpected error: %v", err)
+	}
+
+	expected := 40.50833333333333
+	if !almostEqual(result, expected, 0.000001) {
+		t.Errorf("parseDMS() = %v, want %v", result, expected)
+	}
+}

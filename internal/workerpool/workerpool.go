@@ -16,6 +16,11 @@ import (
 	"github.com/lbe/sfpg-go/internal/dbconnpool"
 )
 
+var (
+	// runtimeNumCPU is a testable hook for runtime.NumCPU.
+	runtimeNumCPU = runtime.NumCPU
+)
+
 // PoolStats holds statistics about the worker pool.
 // All fields are protected by atomic operations for lock-free access.
 type PoolStats struct {
@@ -84,7 +89,7 @@ func (p *Pool) AddSuccessful() {
 // getMinMaxPoolWorkers determines the default minimum and maximum number of workers
 // based on the number of available CPU cores.
 func (p *Pool) getMinMaxPoolWorkers(minPoolWorkers, maxPoolWorkers int) (int, int) {
-	numCPU := runtime.NumCPU()
+	numCPU := runtimeNumCPU()
 
 	if maxPoolWorkers == 0 {
 		switch {

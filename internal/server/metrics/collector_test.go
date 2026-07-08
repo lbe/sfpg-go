@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lbe/sfpg-go/internal/server/cachebatch"
 	"github.com/lbe/sfpg-go/internal/server/cachepreload"
 	"github.com/lbe/sfpg-go/internal/workerpool"
 	"github.com/lbe/sfpg-go/internal/writebatcher"
@@ -58,10 +59,10 @@ func (m *mockFileProcessor) GetStats() FileProcessingMetrics {
 
 // mockCacheBatchLoad is a mock implementation of CacheBatchLoadSource for testing.
 type mockCacheBatchLoad struct {
-	metrics CacheBatchLoadMetrics
+	metrics cachebatch.Metrics
 }
 
-func (m *mockCacheBatchLoad) GetMetrics() CacheBatchLoadMetrics {
+func (m *mockCacheBatchLoad) GetBatchLoadSnapshot() cachebatch.Metrics {
 	return m.metrics
 }
 
@@ -133,7 +134,7 @@ func TestCollector_SetCachePreload(t *testing.T) {
 
 func TestCollector_SetCacheBatchLoad(t *testing.T) {
 	c := NewCollector()
-	mock := &mockCacheBatchLoad{metrics: CacheBatchLoadMetrics{TargetsTotal: 100}}
+	mock := &mockCacheBatchLoad{metrics: cachebatch.Metrics{TargetsTotal: 100}}
 
 	c.SetCacheBatchLoad(mock)
 
@@ -341,14 +342,14 @@ func TestCollector_Collect(t *testing.T) {
 	}
 
 	cbl := &mockCacheBatchLoad{
-		metrics: CacheBatchLoadMetrics{
+		metrics: cachebatch.Metrics{
 			TargetsTotal:     200,
 			TargetsScheduled: 150,
 			TargetsCompleted: 100,
 			TargetsFailed:    5,
 			TargetsSkipped:   50,
 			InFlight:         45,
-			IsRunning:        true,
+			IsRunning:        1,
 		},
 	}
 	c.SetCacheBatchLoad(cbl)
@@ -457,6 +458,9 @@ func TestFormatDuration(t *testing.T) {
 		{500 * time.Millisecond, "500ms"},
 		{5 * time.Second, "5s"},
 		{90 * time.Second, "1m30s"},
+		{1 * time.Hour, "1h 0m"},
+		{90 * time.Minute, "1h 30m"},
+		{25*time.Hour + 15*time.Minute, "25h 15m"},
 	}
 
 	for _, tt := range tests {
@@ -472,14 +476,14 @@ func TestCollector_Collect_WithCacheBatchLoadSource(t *testing.T) {
 	ctx := context.Background()
 
 	cbl := &mockCacheBatchLoad{
-		metrics: CacheBatchLoadMetrics{
+		metrics: cachebatch.Metrics{
 			TargetsTotal:     500,
 			TargetsScheduled: 400,
 			TargetsCompleted: 300,
 			TargetsFailed:    10,
 			TargetsSkipped:   100,
 			InFlight:         90,
-			IsRunning:        false,
+			IsRunning:        0,
 		},
 	}
 	c.SetCacheBatchLoad(cbl)

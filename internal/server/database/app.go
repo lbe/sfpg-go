@@ -24,6 +24,17 @@ import (
 	"github.com/lbe/sfpg-go/migrations"
 )
 
+// Testable hooks for dependency injection. Defaults delegate to real implementations.
+var (
+	osMkdirAll               = os.MkdirAll
+	osOpenFile               = os.OpenFile
+	migrateDBFn              = migrateDB
+	migrateBlobsDBFn         = migrateBlobsDB
+	newDbSQLConnPool         = dbconnpool.NewDbSQLConnPool
+	dbRwPoolGet              = (*dbconnpool.DbSQLConnPool).Get
+	ensureRootFolderExistsFn = ensureRootFolderExists
+)
+
 // DatabasePaths holds the file paths for both application databases.
 type DatabasePaths struct {
 	Main   string // Path to sfpg.db
@@ -40,24 +51,24 @@ func Setup(ctx context.Context, rootDir string, cfg *config.Config) (DatabasePat
 	// 1. Directory Setup
 	dbDir := filepath.Join(rootDir, "DB")
 	if _, err := os.Stat(dbDir); os.IsNotExist(err) {
-		if err := os.MkdirAll(dbDir, 0o755); err != nil {
+		if err := osMkdirAll(dbDir, 0o755); err != nil {
 			return DatabasePaths{}, nil, nil, fmt.Errorf("failed to create DB directory: %w", err)
 		}
 	}
 	dbPath := filepath.Join(dbDir, "sfpg.db")
 	thumbsDir := filepath.Join(dbDir, "thumbs")
 	if _, err := os.Stat(thumbsDir); os.IsNotExist(err) {
-		if err := os.MkdirAll(thumbsDir, 0o755); err != nil {
+		if err := osMkdirAll(thumbsDir, 0o755); err != nil {
 			return DatabasePaths{}, nil, nil, fmt.Errorf("failed to create thumbs DB directory: %w", err)
 		}
 	}
 	thumbsDBPath := filepath.Join(thumbsDir, "thumbs.db")
 
 	// 2. Migrations
-	if err := migrateDB(dbPath); err != nil {
+	if err := migrateDBFn(dbPath); err != nil {
 		return DatabasePaths{}, nil, nil, fmt.Errorf("migration failed: %w", err)
 	}
-	if err := migrateBlobsDB(thumbsDBPath); err != nil {
+	if err := migrateBlobsDBFn(thumbsDBPath); err != nil {
 		return DatabasePaths{}, nil, nil, fmt.Errorf("thumbs migration failed: %w", err)
 	}
 
@@ -69,7 +80,7 @@ func Setup(ctx context.Context, rootDir string, cfg *config.Config) (DatabasePat
 	}
 
 	// 4. Root Folder Check
-	cpcRw, err := dbRwPool.Get()
+	cpcRw, err := dbRwPoolGet(dbRwPool)
 	if err != nil {
 		dbRwPool.Close()
 		dbRoPool.Close()
@@ -77,7 +88,7 @@ func Setup(ctx context.Context, rootDir string, cfg *config.Config) (DatabasePat
 	}
 	defer dbRwPool.Put(cpcRw)
 
-	if err := ensureRootFolderExists(ctx, cpcRw, rootDir); err != nil {
+	if err := ensureRootFolderExistsFn(ctx, cpcRw, rootDir); err != nil {
 		dbRwPool.Close()
 		dbRoPool.Close()
 		return DatabasePaths{}, nil, nil, fmt.Errorf("root folder check failed: %w", err)
@@ -88,7 +99,7 @@ func Setup(ctx context.Context, rootDir string, cfg *config.Config) (DatabasePat
 
 func migrateDB(dbPath string) error {
 	// Open a temporary connection to ensure file exists
-	db, err := os.OpenFile(dbPath, os.O_RDWR|os.O_CREATE, 0o666)
+	db, err := osOpenFile(dbPath, os.O_RDWR|os.O_CREATE, 0o666)
 	if err != nil {
 		return fmt.Errorf("failed to open database file: %w", err)
 	}
@@ -118,7 +129,7 @@ func migrateDB(dbPath string) error {
 }
 
 func migrateBlobsDB(dbPath string) error {
-	db, err := os.OpenFile(dbPath, os.O_RDWR|os.O_CREATE, 0o666)
+	db, err := osOpenFile(dbPath, os.O_RDWR|os.O_CREATE, 0o666)
 	if err != nil {
 		return fmt.Errorf("failed to open thumbs database file: %w", err)
 	}
@@ -187,7 +198,7 @@ func createDatabasePools(ctx context.Context, roDsn, rwDsn, thumbsDBPath string,
 		monitorInterval = cfg.DBPoolMonitorInterval
 	}
 
-	dbRwPool, err := dbconnpool.NewDbSQLConnPool(ctx, rwDsn,
+	dbRwPool, err := newDbSQLConnPool(ctx, rwDsn,
 		dbconnpool.Config{
 			DriverName:         "sqlite3",
 			MaxConnections:     maxPoolSize,
@@ -210,7 +221,7 @@ func createDatabasePools(ctx context.Context, roDsn, rwDsn, thumbsDBPath string,
 		dbRwPool.Put(cpcRw)
 	}
 
-	dbRoPool, err := dbconnpool.NewDbSQLConnPool(ctx, roDsn,
+	dbRoPool, err := newDbSQLConnPool(ctx, roDsn,
 		dbconnpool.Config{
 			DriverName:         "sqlite3",
 			MaxConnections:     maxPoolSize,

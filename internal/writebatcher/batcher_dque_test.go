@@ -1876,3 +1876,277 @@ func TestReconfigure_CloseOldFirst(t *testing.T) {
 		t.Errorf("second Close failed: %v", err)
 	}
 }
+
+// mockDQue is a deterministic dqueQueue implementation for tests.
+type mockDQue[T any] struct {
+	sizeFn     func() int
+	dequeueFn  func() (*T, error)
+	enqueueFn  func(*T) error
+	turboOnFn  func() error
+	closeFn    func() error
+	enqueueLog []*T
+}
+
+func (m *mockDQue[T]) Size() int {
+	if m.sizeFn != nil {
+		return m.sizeFn()
+	}
+	return 0
+}
+
+func (m *mockDQue[T]) Dequeue() (*T, error) {
+	if m.dequeueFn != nil {
+		return m.dequeueFn()
+	}
+	return nil, dque.ErrEmpty
+}
+
+func (m *mockDQue[T]) Enqueue(item *T) error {
+	m.enqueueLog = append(m.enqueueLog, item)
+	if m.enqueueFn != nil {
+		return m.enqueueFn(item)
+	}
+	return nil
+}
+
+func (m *mockDQue[T]) TurboOn() error {
+	if m.turboOnFn != nil {
+		return m.turboOnFn()
+	}
+	return nil
+}
+
+func (m *mockDQue[T]) Close() error {
+	if m.closeFn != nil {
+		return m.closeFn()
+	}
+	return nil
+}
+
+func TestDrainDQueAll_DrainsItemsOnDqNotify(t *testing.T) {
+	item := 42
+	var mMu sync.Mutex
+	dequeued := false
+	mq := &mockDQue[int]{
+		sizeFn: func() int {
+			mMu.Lock()
+			defer mMu.Unlock()
+			if dequeued {
+				return 0
+			}
+			return 1
+		},
+		dequeueFn: func() (*int, error) {
+			mMu.Lock()
+			defer mMu.Unlock()
+			if dequeued {
+				return nil, dque.ErrEmpty
+			}
+			dequeued = true
+			return &item, nil
+		},
+	}
+
+	var mu sync.Mutex
+	var flushed []int
+
+	db := testDB(t)
+	cfg := Config[int]{
+		BeginTx: testBeginTx(db),
+		Flush: func(ctx context.Context, tx *sql.Tx, batch []int) error {
+			mu.Lock()
+			defer mu.Unlock()
+			flushed = append(flushed, batch...)
+			return nil
+		},
+		MaxBatchSize:  100,
+		FlushInterval: 50 * time.Millisecond,
+		testQueue:     mq,
+	}
+
+	wb, err := New(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer wb.Close()
+
+	select {
+	case wb.dqNotify <- struct{}{}:
+	default:
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if wb.PendingCount() == 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(flushed) != 1 || flushed[0] != 42 {
+		t.Errorf("expected [42] flushed, got %v", flushed)
+	}
+	if wb.PendingCount() != 0 {
+		t.Errorf("expected PendingCount() = 0, got %d", wb.PendingCount())
+	}
+}
+
+func TestDrainDQueAll_DQueDequeueError(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	mq := &mockDQue[int]{
+		sizeFn: func() int { return 1 },
+		dequeueFn: func() (*int, error) {
+			return nil, errors.New("dequeue denied")
+		},
+	}
+
+	db := testDB(t)
+	cfg := Config[int]{
+		BeginTx:       testBeginTx(db),
+		Flush:         func(ctx context.Context, tx *sql.Tx, batch []int) error { return nil },
+		MaxBatchSize:  100,
+		FlushInterval: 10 * time.Second,
+		testQueue:     mq,
+	}
+
+	wb, err := New(ctx, cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	select {
+	case wb.dqNotify <- struct{}{}:
+	default:
+	}
+
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	select {
+	case <-wb.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("worker did not exit after context cancellation")
+	}
+}
+
+func TestDrainRemaining_ChannelEmptyFlushesBatch(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	mq := &mockDQue[int]{
+		sizeFn: func() int { return 0 },
+	}
+
+	var mu sync.Mutex
+	var flushed []int
+
+	db := testDB(t)
+	cfg := Config[int]{
+		BeginTx: testBeginTx(db),
+		Flush: func(ctx context.Context, tx *sql.Tx, batch []int) error {
+			mu.Lock()
+			defer mu.Unlock()
+			flushed = append(flushed, batch...)
+			return nil
+		},
+		MaxBatchSize:  10,
+		FlushInterval: 10 * time.Second,
+		testQueue:     mq,
+	}
+
+	wb, err := New(ctx, cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	for _, v := range []int{1, 2, 3} {
+		if err := wb.Submit(v); err != nil {
+			t.Fatalf("Submit: %v", err)
+		}
+	}
+
+	cancel()
+
+	select {
+	case <-wb.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("worker did not exit after context cancellation")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(flushed) != 3 {
+		t.Errorf("expected 3 items flushed, got %d: %v", len(flushed), flushed)
+	}
+	if wb.PendingCount() != 0 {
+		t.Errorf("expected PendingCount() = 0, got %d", wb.PendingCount())
+	}
+}
+
+func TestDrainRemaining_DQueDequeueError(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	var mMu sync.Mutex
+	dqueSize := 0
+	mq := &mockDQue[int]{
+		sizeFn: func() int {
+			mMu.Lock()
+			defer mMu.Unlock()
+			return dqueSize
+		},
+		dequeueFn: func() (*int, error) {
+			return nil, errors.New("dequeue denied")
+		},
+	}
+
+	var mu sync.Mutex
+	var flushed []int
+
+	db := testDB(t)
+	cfg := Config[int]{
+		BeginTx: testBeginTx(db),
+		Flush: func(ctx context.Context, tx *sql.Tx, batch []int) error {
+			mu.Lock()
+			defer mu.Unlock()
+			flushed = append(flushed, batch...)
+			return nil
+		},
+		MaxBatchSize:  10,
+		FlushInterval: 10 * time.Second,
+		testQueue:     mq,
+	}
+
+	wb, err := New(ctx, cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	for _, v := range []int{1, 2, 3} {
+		if err := wb.Submit(v); err != nil {
+			t.Fatalf("Submit: %v", err)
+		}
+	}
+
+	mMu.Lock()
+	dqueSize = 1
+	mMu.Unlock()
+
+	cancel()
+
+	select {
+	case <-wb.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("worker did not exit after context cancellation")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(flushed) != 3 {
+		t.Errorf("expected 3 channel items flushed, got %d: %v", len(flushed), flushed)
+	}
+	if wb.PendingCount() != 0 {
+		t.Errorf("expected PendingCount() = 0, got %d", wb.PendingCount())
+	}
+}

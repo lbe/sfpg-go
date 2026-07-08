@@ -123,6 +123,161 @@ func TestMockQueuer(t *testing.T) {
 	}
 }
 
+func TestMockDequeuer_IsEmpty(t *testing.T) {
+	tests := []struct {
+		name      string
+		items     []string
+		dequeue   int
+		closed    bool
+		wantEmpty bool
+		wantLen   int
+	}{
+		{
+			name:      "not empty",
+			items:     []string{"a", "b"},
+			dequeue:   0,
+			wantEmpty: false,
+			wantLen:   2,
+		},
+		{
+			name:      "empty after dequeue",
+			items:     []string{"a", "b"},
+			dequeue:   2,
+			wantEmpty: true,
+			wantLen:   0,
+		},
+		{
+			name:      "closed with remaining items",
+			items:     []string{"a", "b"},
+			dequeue:   0,
+			closed:    true,
+			wantEmpty: false,
+			wantLen:   2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &MockDequeuer[string]{
+				Items:  tt.items,
+				Closed: tt.closed,
+			}
+			for range tt.dequeue {
+				if _, err := mock.Dequeue(); err != nil {
+					t.Fatalf("Dequeue: %v", err)
+				}
+			}
+			if got := mock.IsEmpty(); got != tt.wantEmpty {
+				t.Errorf("IsEmpty() = %v, want %v", got, tt.wantEmpty)
+			}
+			if got := mock.Len(); got != tt.wantLen {
+				t.Errorf("Len() = %d, want %d", got, tt.wantLen)
+			}
+		})
+	}
+}
+
+func TestMockQueuer_Enqueue_Errors(t *testing.T) {
+	customErr := errors.New("custom enqueue error")
+
+	tests := []struct {
+		name      string
+		closed    bool
+		err       error
+		wantErr   error
+		wantItems []string
+	}{
+		{
+			name:      "closed",
+			closed:    true,
+			wantErr:   ErrClosedQueue,
+			wantItems: []string{"existing"},
+		},
+		{
+			name:      "custom error",
+			err:       customErr,
+			wantErr:   customErr,
+			wantItems: []string{"existing"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &MockQueuer[string]{
+				Items:  []string{"existing"},
+				Closed: tt.closed,
+				Err:    tt.err,
+			}
+			err := mock.Enqueue("new")
+			if !errors.Is(err, tt.wantErr) {
+				t.Errorf("Enqueue error = %v, want %v", err, tt.wantErr)
+			}
+			if len(mock.Items) != len(tt.wantItems) {
+				t.Errorf("len(Items) = %d, want %d", len(mock.Items), len(tt.wantItems))
+			}
+			for i, want := range tt.wantItems {
+				if mock.Items[i] != want {
+					t.Errorf("Items[%d] = %q, want %q", i, mock.Items[i], want)
+				}
+			}
+		})
+	}
+}
+
+func TestMockQueuer_IsEmpty(t *testing.T) {
+	tests := []struct {
+		name      string
+		items     []string
+		dequeue   int
+		closed    bool
+		wantEmpty bool
+		wantLen   int
+	}{
+		{
+			name:      "not empty",
+			items:     []string{"a", "b", "c"},
+			dequeue:   0,
+			wantEmpty: false,
+			wantLen:   3,
+		},
+		{
+			name:      "empty after dequeue",
+			items:     []string{"a", "b", "c"},
+			dequeue:   3,
+			wantEmpty: true,
+			wantLen:   0,
+		},
+		{
+			name:      "closed with remaining items",
+			items:     []string{"a", "b", "c"},
+			dequeue:   0,
+			closed:    true,
+			wantEmpty: false,
+			wantLen:   3,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &MockQueuer[string]{
+				Items:  tt.items,
+				Closed: tt.closed,
+			}
+			for range tt.dequeue {
+				if _, err := mock.Dequeue(); err != nil {
+					t.Fatalf("Dequeue: %v", err)
+				}
+			}
+			if got := mock.IsEmpty(); got != tt.wantEmpty {
+				t.Errorf("IsEmpty() = %v, want %v", got, tt.wantEmpty)
+			}
+			if got := mock.Len(); got != tt.wantLen {
+				t.Errorf("Len() = %d, want %d", got, tt.wantLen)
+			}
+		})
+	}
+}
+
 // BenchmarkMockDequeuer shows the speed advantage.
 func BenchmarkMockDequeuer(b *testing.B) {
 	items := make([]string, 1000)

@@ -24,32 +24,89 @@ import (
 	"github.com/lbe/sfpg-go/internal/writebatcher"
 )
 
+// databaseInitializer abstracts database.Setup and database.RecreatePoolsWithConfig.
+type databaseInitializer interface {
+	Setup(ctx context.Context, rootDir string, cfg *config.Config) (database.DatabasePaths, *dbconnpool.DbSQLConnPool, *dbconnpool.DbSQLConnPool, error)
+	RecreatePoolsWithConfig(ctx context.Context, dbPaths database.DatabasePaths, cfg *config.Config, oldRw, oldRo *dbconnpool.DbSQLConnPool) (*dbconnpool.DbSQLConnPool, *dbconnpool.DbSQLConnPool, error)
+}
+
+// defaultDatabaseInitializer is the production implementation of databaseInitializer.
+type defaultDatabaseInitializer struct{}
+
+func (defaultDatabaseInitializer) Setup(ctx context.Context, rootDir string, cfg *config.Config) (database.DatabasePaths, *dbconnpool.DbSQLConnPool, *dbconnpool.DbSQLConnPool, error) {
+	return database.Setup(ctx, rootDir, cfg)
+}
+
+func (defaultDatabaseInitializer) RecreatePoolsWithConfig(ctx context.Context, dbPaths database.DatabasePaths, cfg *config.Config, oldRw, oldRo *dbconnpool.DbSQLConnPool) (*dbconnpool.DbSQLConnPool, *dbconnpool.DbSQLConnPool, error) {
+	return database.RecreatePoolsWithConfig(ctx, dbPaths, cfg, oldRw, oldRo)
+}
+
+// dbPoolForCheckpoint is the subset of *dbconnpool.DbSQLConnPool used by WAL checkpoint logic.
+type dbPoolForCheckpoint interface {
+	Get() (*dbconnpool.CpConn, error)
+	Put(*dbconnpool.CpConn)
+}
+
+// cacheMiddlewareForEvict is the subset of *cachelite.HTTPCacheMiddleware used by maybeEvictCacheEntries.
+type cacheMiddlewareForEvict interface {
+	Config() cachelite.CacheConfig
+}
+
+// cacheRotator abstracts cachelite.RotateCacheTable.
+type cacheRotator interface {
+	RotateCacheTable(ctx context.Context, pool *dbconnpool.DbSQLConnPool) error
+}
+
+// defaultCacheRotator is the production implementation of cacheRotator.
+type defaultCacheRotator struct{}
+
+func (defaultCacheRotator) RotateCacheTable(ctx context.Context, pool *dbconnpool.DbSQLConnPool) error {
+	return cachelite.RotateCacheTable(ctx, pool)
+}
+
 // InfrastructureService owns database pools, HTTP cache, write batcher,
 // and file-system paths. No context is stored — ctx is received as a
 // parameter where needed.
 type InfrastructureService struct {
-	dbPaths                database.DatabasePaths
-	dbRwPool               *dbconnpool.DbSQLConnPool
-	dbRoPool               *dbconnpool.DbSQLConnPool
-	cacheStore             cachelite.CacheStore
-	cacheSizeBytes         atomic.Int64
-	cacheMW                *cachelite.HTTPCacheMiddleware
-	writeBatcher           *writebatcher.WriteBatcher[BatchedWrite]
-	batcherQueries         *gallerydb.CustomQueries
-	dqueDirPath            string
-	rootDir                string
-	imagesDir              string
-	normalizedImagesDir    string
-	ImporterFactory        func(conn *sql.Conn, q *gallerydb.CustomQueries) files.Importer
-	testHookHandlerQueries interfaces.HandlerQueries
+	dbPaths                         database.DatabasePaths
+	dbRwPool                        *dbconnpool.DbSQLConnPool
+	dbRoPool                        *dbconnpool.DbSQLConnPool
+	cacheStore                      cachelite.CacheStore
+	cacheSizeBytes                  atomic.Int64
+	cacheMW                         *cachelite.HTTPCacheMiddleware
+	writeBatcher                    *writebatcher.WriteBatcher[BatchedWrite]
+	batcherQueries                  *gallerydb.CustomQueries
+	dqueDirPath                     string
+	rootDir                         string
+	imagesDir                       string
+	normalizedImagesDir             string
+	ImporterFactory                 func(conn *sql.Conn, q *gallerydb.CustomQueries) files.Importer
+	dbInitializer                   databaseInitializer
+	cacheMWForEvict                 cacheMiddlewareForEvict
+	cacheRotator                    cacheRotator
+	testHookBuildWriteBatcher       func(ctx context.Context, maxBatchSize int, flushInterval time.Duration) (*writebatcher.WriteBatcher[BatchedWrite], error)
+	testHookShutdownWriteBatcher    func() error
+	testHookPerformWALCheckpoint    func(ctx context.Context)
+	testHookPragmaOptimize          func(ctx context.Context, pool dbPoolForCheckpoint)
+	testHookWALCheckpointQuery      func(ctx context.Context, conn *sql.Conn) (*sql.Rows, error)
+	testHookGetCacheSizeBytes       func(ctx context.Context, pool *dbconnpool.DbSQLConnPool) (int64, error)
+	testHookEvictLRU                func(ctx context.Context, pool *dbconnpool.DbSQLConnPool, targetFree int64) (int64, error)
+	testHookFlushBatchedWrites      func(ctx context.Context, tx *sql.Tx, batch []BatchedWrite) error
+	testHookHandlerQueries          interfaces.HandlerQueries
+	testHookRecreatePoolsWithConfig func(ctx context.Context, dbPaths database.DatabasePaths, cfg *config.Config, oldRw, oldRo *dbconnpool.DbSQLConnPool) (*dbconnpool.DbSQLConnPool, *dbconnpool.DbSQLConnPool, error)
 }
 
 func NewInfrastructureService() *InfrastructureService {
-	return &InfrastructureService{
+	s := &InfrastructureService{
 		ImporterFactory: func(conn *sql.Conn, q *gallerydb.CustomQueries) files.Importer {
 			return &gallerylib.Importer{Conn: conn, Q: q}
 		},
+		dbInitializer: defaultDatabaseInitializer{},
+		cacheRotator:  defaultCacheRotator{},
 	}
+	s.testHookGetCacheSizeBytes = cachelite.GetCacheSizeBytes
+	s.testHookEvictLRU = cachelite.EvictLRU
+	return s
 }
 
 // =====================================================================
@@ -71,7 +128,7 @@ func (s *InfrastructureService) CacheMW() *cachelite.HTTPCacheMiddleware { retur
 // size counter. Called early in startup before config is loaded.
 func (s *InfrastructureService) SetupDB(ctx context.Context, config *config.Config) {
 	var err error
-	s.dbPaths, s.dbRwPool, s.dbRoPool, err = database.Setup(ctx, s.rootDir, config)
+	s.dbPaths, s.dbRwPool, s.dbRoPool, err = s.dbInitializer.Setup(ctx, s.rootDir, config)
 	if err != nil {
 		slog.Error("failed to setup database", "err", err)
 		panic("main")
@@ -91,7 +148,11 @@ func (s *InfrastructureService) SetupDB(ctx context.Context, config *config.Conf
 	slog.Info("database pools initialized")
 	s.logDBPoolConfiguredVsEffective("SetupDB", configuredMax, configuredMinIdle)
 
-	s.writeBatcher, err = s.buildWriteBatcher(ctx, 10000, 50*time.Millisecond)
+	if s.testHookBuildWriteBatcher != nil {
+		s.writeBatcher, err = s.testHookBuildWriteBatcher(ctx, 10000, 50*time.Millisecond)
+	} else {
+		s.writeBatcher, err = s.buildWriteBatcher(ctx, 10000, 50*time.Millisecond)
+	}
 	if err != nil {
 		slog.Error("failed to create unified WriteBatcher", "err", err)
 		panic("failed to create unified WriteBatcher")
@@ -102,7 +163,7 @@ func (s *InfrastructureService) SetupDB(ctx context.Context, config *config.Conf
 		"dque_dir", s.dqueDirPath, "dque_enabled", s.dqueDirPath != "")
 
 	s.cacheStore = cachelite.NewSQLiteCacheStore(s.dbRwPool)
-	if size, sizeErr := s.cacheStore.SizeBytes(ctx); sizeErr == nil {
+	if size, sizeErr := s.testHookGetCacheSizeBytes(ctx, s.dbRwPool); sizeErr == nil {
 		s.cacheSizeBytes.Store(size)
 	} else {
 		slog.Warn("Failed to initialize cache size counter", "err", sizeErr)
@@ -126,9 +187,13 @@ func (s *InfrastructureService) ReconfigurePools(ctx context.Context, config *co
 		"old_max", oldMaxConns, "new_max", newMaxConns,
 		"old_min_idle", oldMinIdle, "new_min_idle", newMinIdle)
 
-	newRw, newRo, rErr := database.RecreatePoolsWithConfig(
-		ctx, s.dbPaths, config, s.dbRwPool, s.dbRoPool,
-	)
+	var newRw, newRo *dbconnpool.DbSQLConnPool
+	var rErr error
+	if s.testHookRecreatePoolsWithConfig != nil {
+		newRw, newRo, rErr = s.testHookRecreatePoolsWithConfig(ctx, s.dbPaths, config, s.dbRwPool, s.dbRoPool)
+	} else {
+		newRw, newRo, rErr = s.dbInitializer.RecreatePoolsWithConfig(ctx, s.dbPaths, config, s.dbRwPool, s.dbRoPool)
+	}
 	if rErr != nil {
 		return rErr
 	}
@@ -140,7 +205,11 @@ func (s *InfrastructureService) ReconfigurePools(ctx context.Context, config *co
 		s.writeBatcher.Close()
 	}
 	var bwErr error
-	s.writeBatcher, bwErr = s.buildWriteBatcher(ctx, 1000, 200*time.Millisecond)
+	if s.testHookBuildWriteBatcher != nil {
+		s.writeBatcher, bwErr = s.testHookBuildWriteBatcher(ctx, 1000, 200*time.Millisecond)
+	} else {
+		s.writeBatcher, bwErr = s.buildWriteBatcher(ctx, 1000, 200*time.Millisecond)
+	}
 	if bwErr != nil {
 		slog.Error("failed to recreate write batcher", "err", bwErr)
 	}
@@ -153,11 +222,21 @@ func (s *InfrastructureService) ReconfigurePools(ctx context.Context, config *co
 	return nil
 }
 
+// Shutdown closes the write batcher. The real writeBatcher.Close error branch
+// is unreachable in production because WriteBatcher.Close always returns nil;
+// it is exercised via testHookShutdownWriteBatcher.
 func (s *InfrastructureService) Shutdown() {
-	if s.writeBatcher != nil {
-		if err := s.writeBatcher.Close(); err != nil {
+	if s.testHookShutdownWriteBatcher != nil {
+		if err := s.testHookShutdownWriteBatcher(); err != nil {
 			slog.Error("error closing write batcher", "err", err)
 		}
+		return
+	}
+	if s.writeBatcher == nil {
+		return
+	}
+	if err := s.writeBatcher.Close(); err != nil {
+		slog.Error("error closing write batcher", "err", err)
 	}
 }
 
@@ -185,7 +264,12 @@ func (s *InfrastructureService) buildWriteBatcher(ctx context.Context, maxBatchS
 			s.batcherQueries = cpcRw.Queries
 			return cpcRw.Conn.BeginTx(ctx, nil)
 		},
-		Flush: s.flushBatchedWrites,
+		Flush: func(ctx context.Context, tx *sql.Tx, batch []BatchedWrite) error {
+			if s.testHookFlushBatchedWrites != nil {
+				return s.testHookFlushBatchedWrites(ctx, tx, batch)
+			}
+			return s.flushBatchedWrites(ctx, tx, batch)
+		},
 		OnSuccess: func(batch []BatchedWrite) {
 			if cpcRw != nil {
 				s.dbRwPool.Put(cpcRw)
@@ -225,7 +309,7 @@ func (s *InfrastructureService) buildWriteBatcher(ctx context.Context, maxBatchS
 			if cacheEntriesCount > 0 {
 				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 				defer cancel()
-				if size, sizeErr := cachelite.GetCacheSizeBytes(ctx, s.dbRwPool); sizeErr == nil {
+				if size, sizeErr := s.testHookGetCacheSizeBytes(ctx, s.dbRwPool); sizeErr == nil {
 					s.cacheSizeBytes.Store(size)
 				}
 			}
@@ -304,11 +388,11 @@ func (s *InfrastructureService) maybeEvictCacheEntries(batch []BatchedWrite) {
 			break
 		}
 	}
-	if !hasCacheEntries || s.cacheMW == nil {
+	if !hasCacheEntries || s.cacheMWForEvict == nil {
 		return
 	}
 
-	cfg := s.cacheMW.Config()
+	cfg := s.cacheMWForEvict.Config()
 	if cfg.MaxTotalSize <= 0 {
 		return
 	}
@@ -316,14 +400,14 @@ func (s *InfrastructureService) maybeEvictCacheEntries(batch []BatchedWrite) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	currentSize, err := cachelite.GetCacheSizeBytes(ctx, s.dbRwPool)
+	currentSize, err := s.testHookGetCacheSizeBytes(ctx, s.dbRwPool)
 	if err != nil {
 		slog.Warn("failed to get cache size for eviction check", "err", err)
 		return
 	}
 	if currentSize > cfg.MaxTotalSize {
 		targetFree := currentSize - cfg.MaxTotalSize + cfg.MaxTotalSize/10
-		freed, evErr := cachelite.EvictLRU(ctx, s.dbRwPool, targetFree)
+		freed, evErr := s.testHookEvictLRU(ctx, s.dbRwPool, targetFree)
 		if evErr != nil {
 			slog.Warn("cache eviction failed", "err", evErr, "target", targetFree, "freed", freed)
 		}
@@ -347,33 +431,55 @@ func (s *InfrastructureService) walCheckpointAfterCommit(ctx context.Context, la
 		}
 	} else if info.Size() > walSizeThreshold {
 		slog.Info("WAL file exceeds threshold, forcing checkpoint")
-		s.performWALCheckpoint(ctx)
+		if s.testHookPerformWALCheckpoint != nil {
+			s.testHookPerformWALCheckpoint(ctx)
+		} else {
+			s.performWALCheckpoint(ctx, s.dbRwPool)
+		}
 		return
 	}
 	if !lastWalCheckpointTime.IsZero() && time.Since(lastWalCheckpointTime) >= 5*time.Minute {
 		slog.Info("WAL checkpoint: 5 minutes elapsed")
-		s.performWALCheckpoint(ctx)
+		if s.testHookPerformWALCheckpoint != nil {
+			s.testHookPerformWALCheckpoint(ctx)
+		} else {
+			s.performWALCheckpoint(ctx, s.dbRwPool)
+		}
 	}
 	if !lastOptimizeTime.IsZero() && time.Since(lastOptimizeTime) >= 1*time.Hour {
 		slog.Info("PRAGMA optimize: 1 hour elapsed")
-		cpcRw, poolErr := s.dbRwPool.Get()
-		if poolErr != nil {
-			slog.Warn("failed to get connection for PRAGMA optimize", "err", poolErr)
-			return
+		if s.testHookPragmaOptimize != nil {
+			s.testHookPragmaOptimize(ctx, s.dbRwPool)
+		} else {
+			s.pragmaOptimize(ctx, s.dbRwPool)
 		}
-		cpcRw.PragmaOptimize(ctx)
-		s.dbRwPool.Put(cpcRw)
 	}
 }
 
-func (s *InfrastructureService) performWALCheckpoint(ctx context.Context) {
-	cpcRw, err := s.dbRwPool.Get()
+func (s *InfrastructureService) pragmaOptimize(ctx context.Context, pool dbPoolForCheckpoint) {
+	cpcRw, poolErr := pool.Get()
+	if poolErr != nil {
+		slog.Warn("failed to get connection for PRAGMA optimize", "err", poolErr)
+		return
+	}
+	defer pool.Put(cpcRw)
+	cpcRw.PragmaOptimize(ctx)
+}
+
+func (s *InfrastructureService) performWALCheckpoint(ctx context.Context, pool dbPoolForCheckpoint) {
+	cpcRw, err := pool.Get()
 	if err != nil {
 		slog.Error("failed to get connection for WAL checkpoint", "err", err)
 		return
 	}
-	defer s.dbRwPool.Put(cpcRw)
-	result, qErr := cpcRw.Conn.QueryContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)")
+	defer pool.Put(cpcRw)
+	var result *sql.Rows
+	var qErr error
+	if s.testHookWALCheckpointQuery != nil {
+		result, qErr = s.testHookWALCheckpointQuery(ctx, cpcRw.Conn)
+	} else {
+		result, qErr = cpcRw.Conn.QueryContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)")
+	}
 	if qErr != nil {
 		slog.Error("WAL checkpoint failed", "err", qErr)
 		return
@@ -419,6 +525,7 @@ func (s *InfrastructureService) InitializeHTTPCache(config *config.Config) {
 		submitFunc = s.submitCacheWrite
 	}
 	s.cacheMW = cachelite.NewHTTPCacheMiddleware(s.dbRoPool, cfg, &s.cacheSizeBytes, submitFunc)
+	s.cacheMWForEvict = s.cacheMW
 }
 
 // SetCacheOnGalleryHit replaces the OnGalleryCacheHit callback (wired by
@@ -433,7 +540,7 @@ func (s *InfrastructureService) InvalidateHTTPCache() {
 	if s.dbRwPool == nil {
 		return
 	}
-	if err := cachelite.RotateCacheTable(context.Background(), s.dbRwPool); err != nil {
+	if err := s.cacheRotator.RotateCacheTable(context.Background(), s.dbRwPool); err != nil {
 		slog.Error("failed to invalidate HTTP cache", "err", err)
 		return
 	}
@@ -468,6 +575,10 @@ func (s *InfrastructureService) GetMetadataQueries(cpc *dbconnpool.CpConn) inter
 	return cpc.Queries
 }
 
+func (s *InfrastructureService) GetConfigQueries(cpc *dbconnpool.CpConn) config.ConfigQueries {
+	return cpc.Queries
+}
+
 // =====================================================================
 // ETag
 // =====================================================================
@@ -485,7 +596,7 @@ func (s *InfrastructureService) IncrementETag(ctx context.Context, cfgService co
 	if err := cfgService.Save(ctx, cfg); err != nil {
 		return "", fmt.Errorf("failed to save config: %w", err)
 	}
-	if err := cachelite.RotateCacheTable(ctx, s.dbRwPool); err != nil {
+	if err := s.cacheRotator.RotateCacheTable(ctx, s.dbRwPool); err != nil {
 		slog.Warn("failed to rotate HTTP cache after ETag increment", "err", err)
 	} else {
 		s.cacheSizeBytes.Store(0)

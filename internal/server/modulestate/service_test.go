@@ -217,3 +217,316 @@ func TestService_GetLastStartedAt_NoRow(t *testing.T) {
 		t.Fatalf("expected lastStarted=0 for no row, got %d", lastStarted)
 	}
 }
+
+type fakePool struct {
+	getFunc func() (*dbconnpool.CpConn, error)
+	putFunc func(*dbconnpool.CpConn)
+}
+
+func (f *fakePool) Get() (*dbconnpool.CpConn, error) { return f.getFunc() }
+func (f *fakePool) Put(cpc *dbconnpool.CpConn)       { f.putFunc(cpc) }
+
+type fakeQuerier struct {
+	getFunc func(ctx context.Context, name string) (gallerydb.ModuleState, error)
+	setFunc func(ctx context.Context, arg gallerydb.SetModuleStateParams) error
+}
+
+func (f *fakeQuerier) GetModuleState(ctx context.Context, name string) (gallerydb.ModuleState, error) {
+	return f.getFunc(ctx, name)
+}
+func (f *fakeQuerier) SetModuleState(ctx context.Context, arg gallerydb.SetModuleStateParams) error {
+	return f.setFunc(ctx, arg)
+}
+
+func TestService_IsActive_NilService(t *testing.T) {
+	active, err := (*Service)(nil).IsActive(context.Background(), "discovery")
+	if !errors.Is(err, sql.ErrConnDone) {
+		t.Fatalf("expected sql.ErrConnDone, got %v", err)
+	}
+	if active {
+		t.Fatal("expected inactive for nil service")
+	}
+}
+
+func TestService_IsActive_NilPool(t *testing.T) {
+	active, err := (&Service{}).IsActive(context.Background(), "discovery")
+	if !errors.Is(err, sql.ErrConnDone) {
+		t.Fatalf("expected sql.ErrConnDone, got %v", err)
+	}
+	if active {
+		t.Fatal("expected inactive for nil pool")
+	}
+}
+
+func TestService_IsActive_PoolGetError(t *testing.T) {
+	putCalls := 0
+	svc := &Service{dbRwPool: &fakePool{
+		getFunc: func() (*dbconnpool.CpConn, error) {
+			return nil, errors.New("get denied")
+		},
+		putFunc: func(*dbconnpool.CpConn) {
+			putCalls++
+		},
+	}}
+
+	active, err := svc.IsActive(context.Background(), "discovery")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "get denied") {
+		t.Fatalf("expected error to wrap 'get denied', got %v", err)
+	}
+	if active {
+		t.Fatal("expected inactive on pool get error")
+	}
+	if putCalls != 0 {
+		t.Fatalf("expected Put not to be called, got %d calls", putCalls)
+	}
+}
+
+func TestService_IsActive_QueryError(t *testing.T) {
+	putCalls := 0
+	returnedConn := &dbconnpool.CpConn{}
+	svc := &Service{dbRwPool: &fakePool{
+		getFunc: func() (*dbconnpool.CpConn, error) {
+			return returnedConn, nil
+		},
+		putFunc: func(cpc *dbconnpool.CpConn) {
+			putCalls++
+			if cpc != returnedConn {
+				t.Fatalf("Put received unexpected connection")
+			}
+		},
+	}}
+
+	original := queriesFromCpConn
+	queriesFromCpConn = func(*dbconnpool.CpConn) moduleStateQuerier {
+		return &fakeQuerier{
+			getFunc: func(context.Context, string) (gallerydb.ModuleState, error) {
+				return gallerydb.ModuleState{}, errors.New("query denied")
+			},
+		}
+	}
+	t.Cleanup(func() { queriesFromCpConn = original })
+
+	active, err := svc.IsActive(context.Background(), "discovery")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "query denied") {
+		t.Fatalf("expected error to wrap 'query denied', got %v", err)
+	}
+	if active {
+		t.Fatal("expected inactive on query error")
+	}
+	if putCalls != 1 {
+		t.Fatalf("expected Put called once, got %d calls", putCalls)
+	}
+}
+
+func TestService_IsActive_RowInactive(t *testing.T) {
+	putCalls := 0
+	returnedConn := &dbconnpool.CpConn{}
+	svc := &Service{dbRwPool: &fakePool{
+		getFunc: func() (*dbconnpool.CpConn, error) {
+			return returnedConn, nil
+		},
+		putFunc: func(*dbconnpool.CpConn) { putCalls++ },
+	}}
+
+	original := queriesFromCpConn
+	queriesFromCpConn = func(*dbconnpool.CpConn) moduleStateQuerier {
+		return &fakeQuerier{
+			getFunc: func(context.Context, string) (gallerydb.ModuleState, error) {
+				return gallerydb.ModuleState{Name: "discovery", IsActive: 0}, nil
+			},
+		}
+	}
+	t.Cleanup(func() { queriesFromCpConn = original })
+
+	active, err := svc.IsActive(context.Background(), "discovery")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if active {
+		t.Fatal("expected inactive when row.IsActive == 0")
+	}
+	if putCalls != 1 {
+		t.Fatalf("expected Put called once, got %d calls", putCalls)
+	}
+}
+
+func TestService_GetLastStartedAt_NilService(t *testing.T) {
+	lastStarted, ok, err := (*Service)(nil).GetLastStartedAt(context.Background(), "discovery")
+	if !errors.Is(err, sql.ErrConnDone) {
+		t.Fatalf("expected sql.ErrConnDone, got %v", err)
+	}
+	if ok {
+		t.Fatal("expected ok=false for nil service")
+	}
+	if lastStarted != 0 {
+		t.Fatalf("expected lastStarted=0, got %d", lastStarted)
+	}
+}
+
+func TestService_GetLastStartedAt_NilPool(t *testing.T) {
+	lastStarted, ok, err := (&Service{}).GetLastStartedAt(context.Background(), "discovery")
+	if !errors.Is(err, sql.ErrConnDone) {
+		t.Fatalf("expected sql.ErrConnDone, got %v", err)
+	}
+	if ok {
+		t.Fatal("expected ok=false for nil pool")
+	}
+	if lastStarted != 0 {
+		t.Fatalf("expected lastStarted=0, got %d", lastStarted)
+	}
+}
+
+func TestService_GetLastStartedAt_PoolGetError(t *testing.T) {
+	svc := &Service{dbRwPool: &fakePool{
+		getFunc: func() (*dbconnpool.CpConn, error) {
+			return nil, errors.New("get denied")
+		},
+		putFunc: func(*dbconnpool.CpConn) {},
+	}}
+
+	lastStarted, ok, err := svc.GetLastStartedAt(context.Background(), "discovery")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "get denied") {
+		t.Fatalf("expected error to wrap 'get denied', got %v", err)
+	}
+	if ok {
+		t.Fatal("expected ok=false on pool get error")
+	}
+	if lastStarted != 0 {
+		t.Fatalf("expected lastStarted=0, got %d", lastStarted)
+	}
+}
+
+func TestService_GetLastStartedAt_QueryError(t *testing.T) {
+	putCalls := 0
+	returnedConn := &dbconnpool.CpConn{}
+	svc := &Service{dbRwPool: &fakePool{
+		getFunc: func() (*dbconnpool.CpConn, error) {
+			return returnedConn, nil
+		},
+		putFunc: func(cpc *dbconnpool.CpConn) {
+			putCalls++
+			if cpc != returnedConn {
+				t.Fatalf("Put received unexpected connection")
+			}
+		},
+	}}
+
+	original := queriesFromCpConn
+	queriesFromCpConn = func(*dbconnpool.CpConn) moduleStateQuerier {
+		return &fakeQuerier{
+			getFunc: func(context.Context, string) (gallerydb.ModuleState, error) {
+				return gallerydb.ModuleState{}, errors.New("query denied")
+			},
+		}
+	}
+	t.Cleanup(func() { queriesFromCpConn = original })
+
+	lastStarted, ok, err := svc.GetLastStartedAt(context.Background(), "discovery")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "query denied") {
+		t.Fatalf("expected error to wrap 'query denied', got %v", err)
+	}
+	if ok {
+		t.Fatal("expected ok=false on query error")
+	}
+	if lastStarted != 0 {
+		t.Fatalf("expected lastStarted=0, got %d", lastStarted)
+	}
+	if putCalls != 1 {
+		t.Fatalf("expected Put called once, got %d calls", putCalls)
+	}
+}
+
+func TestService_GetLastStartedAt_NullStartedAt(t *testing.T) {
+	putCalls := 0
+	returnedConn := &dbconnpool.CpConn{}
+	svc := &Service{dbRwPool: &fakePool{
+		getFunc: func() (*dbconnpool.CpConn, error) {
+			return returnedConn, nil
+		},
+		putFunc: func(*dbconnpool.CpConn) { putCalls++ },
+	}}
+
+	original := queriesFromCpConn
+	queriesFromCpConn = func(*dbconnpool.CpConn) moduleStateQuerier {
+		return &fakeQuerier{
+			getFunc: func(context.Context, string) (gallerydb.ModuleState, error) {
+				return gallerydb.ModuleState{Name: "discovery", LastStartedAt: sql.NullInt64{Valid: false}}, nil
+			},
+		}
+	}
+	t.Cleanup(func() { queriesFromCpConn = original })
+
+	lastStarted, ok, err := svc.GetLastStartedAt(context.Background(), "discovery")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ok {
+		t.Fatal("expected ok=false for null LastStartedAt")
+	}
+	if lastStarted != 0 {
+		t.Fatalf("expected lastStarted=0, got %d", lastStarted)
+	}
+	if putCalls != 1 {
+		t.Fatalf("expected Put called once, got %d calls", putCalls)
+	}
+}
+
+func TestService_SetActive_QueryError(t *testing.T) {
+	putCalls := 0
+	returnedConn := &dbconnpool.CpConn{}
+	svc := &Service{dbRwPool: &fakePool{
+		getFunc: func() (*dbconnpool.CpConn, error) {
+			return returnedConn, nil
+		},
+		putFunc: func(cpc *dbconnpool.CpConn) {
+			putCalls++
+			if cpc != returnedConn {
+				t.Fatalf("Put received unexpected connection")
+			}
+		},
+	}}
+
+	original := queriesFromCpConn
+	var receivedArg gallerydb.SetModuleStateParams
+	queriesFromCpConn = func(*dbconnpool.CpConn) moduleStateQuerier {
+		return &fakeQuerier{
+			setFunc: func(_ context.Context, arg gallerydb.SetModuleStateParams) error {
+				receivedArg = arg
+				return errors.New("set denied")
+			},
+		}
+	}
+	t.Cleanup(func() { queriesFromCpConn = original })
+
+	err := svc.SetActive(context.Background(), "discovery", true)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "set denied") {
+		t.Fatalf("expected error to wrap 'set denied', got %v", err)
+	}
+	if receivedArg.IsActive != 1 {
+		t.Fatalf("expected IsActive=1, got %d", receivedArg.IsActive)
+	}
+	if !receivedArg.LastStartedAt.Valid {
+		t.Fatal("expected LastStartedAt to be valid")
+	}
+	if receivedArg.LastStartedAt.Int64 == 0 {
+		t.Fatal("expected non-zero LastStartedAt")
+	}
+	if putCalls != 1 {
+		t.Fatalf("expected Put called once, got %d calls", putCalls)
+	}
+}

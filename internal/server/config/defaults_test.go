@@ -18,14 +18,25 @@ func TestDefaultConfig_EnableCachePreload(t *testing.T) {
 // TestRecoverFromCorruption_EnableCachePreload verifies RecoverFromCorruption includes EnableCachePreload.
 
 func TestRecoverFromCorruption_EnableCachePreload(t *testing.T) {
-	defaults := DefaultConfig()
-	defaults.EnableCachePreload = false
-	cfg := DefaultConfig()
-	cfg.EnableCachePreload = true // corrupt to different value
-	cfg.RecoverFromCorruption(defaults)
-	if cfg.EnableCachePreload {
-		t.Error("expected EnableCachePreload false after recovery, got true")
-	}
+	t.Run("recovers value from defaults", func(t *testing.T) {
+		defaults := DefaultConfig()
+		defaults.EnableCachePreload = false
+		cfg := DefaultConfig()
+		cfg.EnableCachePreload = true // corrupt to different value
+		cfg.RecoverFromCorruption(defaults)
+		if cfg.EnableCachePreload {
+			t.Error("expected EnableCachePreload false after recovery, got true")
+		}
+	})
+
+	t.Run("nil defaults leaves config unchanged", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.SiteName = "Preserved"
+		cfg.RecoverFromCorruption(nil)
+		if cfg.SiteName != "Preserved" {
+			t.Errorf("SiteName = %q, want 'Preserved'", cfg.SiteName)
+		}
+	})
 }
 
 // TestDefaultConfig_MaxHTTPCacheEntryInsertPerTransaction verifies the field exists with default 10.

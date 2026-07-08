@@ -136,7 +136,7 @@ func (q *Queries) GetFoldersViewsByParentIDOrderByName(ctx context.Context, pare
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer rowsCloseFn(rows)
 	var items []FolderView
 	for rows.Next() {
 		var i FolderView
@@ -153,10 +153,10 @@ func (q *Queries) GetFoldersViewsByParentIDOrderByName(ctx context.Context, pare
 		}
 		items = append(items, i)
 	}
-	if err := rows.Close(); err != nil {
+	if err := rowsCloseFn(rows); err != nil {
 		return nil, err
 	}
-	if err := rows.Err(); err != nil {
+	if err := rowsErrFn(rows); err != nil {
 		return nil, err
 	}
 	return items, nil

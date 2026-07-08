@@ -188,7 +188,7 @@ git config core.hooksPath .githooks
     air
     ```
 
-    The application will be available at `http://localhost:8081`.
+    The application will be available at `http://localhost:8083` (`.air.toml` uses port 8083 to avoid conflicts).
 
     > Windows users: run Air with the Windows config file to produce an .exe binary:
 
@@ -220,15 +220,17 @@ The project includes a Makefile with common development tasks:
 
 ```shell
 # Run tests
-make test      # Run tests for default package (./internal/server)
-make test-all  # Run tests across all packages
-make test-race # Run tests with race detector
+make test         # Run tests for all packages (PKG=./... by default)
+make test-all     # Run unit, integration, e2e, and e2eweb tests across all packages
+make test-race    # Run tests with race detector
+make test-browser # Run Playwright browser tests
 
 # Code quality
-make lint               # Run golangci-lint (required before commits)
-make validate-templates # Validate Go template rendering + Hyperscript
-make format             # Format Go code and run Prettier
-make format-check       # Check formatting without writing changes
+make lint                 # Run golangci-lint (required before commits)
+make validate-templates   # Validate Go template rendering + Hyperscript
+make validate-hyperscript # Validate Hyperscript syntax in templates
+make format               # Format Go code and run Prettier
+make format-check         # Check formatting without writing changes
 
 # Coverage and benchmarks
 make cover  # Generate coverage report (coverage.html)
@@ -236,9 +238,17 @@ make bench  # Run benchmarks (single iteration)
 make bench5 # Run benchmarks (5 iterations)
 
 # Build and run
-make build # Build the binary
-make run   # Build and run the server
-make clean # Remove build artifacts
+make build        # Build the binary
+make build-assets # Build embedded CSS/JS assets
+make run          # Build and run the server
+make clean        # Remove build artifacts
+
+# Performance testing
+make perf-test-setup         # Set up performance test fixtures
+make perf-test               # Run performance tests
+make perf-test-compare-cache # Compare cached vs uncached performance
+make perf-test-clean         # Clean up performance test artifacts
+make perf-test-help          # Show performance test options
 ```
 
 **Before committing:** The pre-commit hooks will automatically run `make validate-templates`, `make test-all`, `make format-check`, and `make lint`. If any check fails, the commit will be aborted.
@@ -273,31 +283,60 @@ golangci-lint run --max-same-issues 0 ./...
 
 ### Command-Line Options
 
-The application supports the following command-line flags. All flags can also be set via environment variables.
+Most settings can be provided via command-line flags, environment variables, or a `config.yaml` file. The following flags have corresponding environment variables; flags listed as **CLI-only** have no environment-variable equivalent.
 
-| Flag                       | Environment Variable          | Description                                                     | Default |
-| -------------------------- | ----------------------------- | --------------------------------------------------------------- | ------- |
-| `-port`                    | `SFG_PORT`                    | TCP port for the HTTP server.                                   | `8081`  |
-| `-discover`                | `SFG_DISCOVER`                | Run file discovery on startup.                                  | `false` |
-| `-debug-delay-ms`          | `SFG_DEBUG_DELAY_MS`          | Artificial delay in milliseconds for debugging.                 | `0`     |
-| `-profile`                 | `SFG_PROFILE`                 | Profiling mode: 'cpu', 'mem', 'block', etc.                     | `''`    |
-| `-compression`             | `SFG_COMPRESSION`             | Enable gzip/brotli response compression.                        | `true`  |
-| `-http-cache`              | `SFG_HTTP_CACHE`              | Enable SQLite HTTP response cache.                              | `true`  |
-| `-cache-preload`           | `SFG_CACHE_PRELOAD`           | Enable cache preloading when folders are opened.                | `false` |
-| `-unlock-account`          | `SFG_UNLOCK_ACCOUNT`          | Unlock a locked account by username.                            | `''`    |
-| `-restore-last-known-good` | `SFG_RESTORE_LAST_KNOWN_GOOD` | Restore last known good configuration from database on startup. | `false` |
-| `-increment-etag`          | `SFG_INCREMENT_ETAG`          | Increment application-wide ETag version on startup.             | `false` |
+| Flag                       | Environment Variable          | Description                                                     | Effective Default |
+| -------------------------- | ----------------------------- | --------------------------------------------------------------- | ----------------- |
+| `-port`                    | `SFG_PORT`                    | TCP port for the HTTP server.                                   | `8081`            |
+| `-discover`                | `SFG_DISCOVER`                | Run file discovery on startup.                                  | `true`            |
+| `-debug-delay-ms`          | `SFG_DEBUG_DELAY_MS`          | Artificial delay in milliseconds for debugging.                 | `0`               |
+| `-profile`                 | `SFG_PROFILE`                 | Profiling mode: 'cpu', 'mem', 'block', etc.                     | `''`              |
+| `-compression`             | `SFG_COMPRESSION`             | Enable gzip/brotli response compression.                        | `true`            |
+| `-http-cache`              | `SFG_HTTP_CACHE`              | Enable SQLite HTTP response cache.                              | `true`            |
+| `-cache-preload`           | `SFG_CACHE_PRELOAD`           | Enable cache preloading when folders are opened.                | `true`            |
+| `-unlock-account`          | `SFG_UNLOCK_ACCOUNT`          | Unlock a locked account by username.                            | `''`              |
+| `-restore-last-known-good` | `SFG_RESTORE_LAST_KNOWN_GOOD` | Restore last known good configuration from database on startup. | `false`           |
+| `-increment-etag`          | _(CLI-only)_                  | Increment application-wide ETag version on startup.             | `false`           |
+| `-cache-batch-load`        | _(CLI-only)_                  | Warm the HTTP cache and exit.                                   | `false`           |
 
-Precedence order: **Defaults** < **Database** < **Environment variables** < **CLI flags**
+**Note on defaults:** Flag zero-values shown by `./sfpg-go -help` may differ from the effective defaults above. The effective defaults come from `config.DefaultConfig()` and are used unless overridden by the database, YAML, environment variables, or CLI flags.
 
-Configuration is loaded in stages: application defaults are applied first, then values from the database override them, then environment variables take precedence, and finally command-line flags override everything. This allows flexibility in deployment while ensuring secure defaults.
+Precedence order (lowest to highest): **Defaults** → **Database** → **YAML files** → **CLI/Env**
+
+Configuration is loaded in stages:
+
+1. Hard-coded defaults are applied.
+2. Values persisted in the database (via the Configuration UI) override defaults.
+3. `config.yaml` files override database values.
+4. Environment variables and CLI flags are merged into a single `getopt.Opt` tier; CLI flags override environment variables for the same setting.
+
+This allows flexibility in deployment while ensuring secure defaults.
+
+#### YAML Configuration Files
+
+In addition to flags and environment variables, the application reads `config.yaml` from:
+
+- The directory containing the executable.
+- The platform-specific user config directory (`~/.config/sfpg/config.yaml` on Linux/macOS, `%APPDATA%\sfpg\config.yaml` on Windows).
+
+Example `config.yaml` keys:
+
+```yaml
+listener-port: 8081
+http-cache: true
+enable-cache-preload: true
+discover: true
+session-secret: "change-me-in-production"
+```
+
+See `internal/server/config/fields.go` for the full set of supported YAML keys.
 
 ### Configuration Sequencing Guarantee
 
 To enforce precedence for database-dependent runtime settings (especially DB pool sizing), startup includes a reconciliation step after config load:
 
 - Bootstrap may initialize DB pools before full config is loaded.
-- `loadConfig()` then applies precedence (`Default -> DB -> Env -> CLI`).
+- `loadConfig()` then applies precedence (`Default -> DB -> YAML -> CLI/Env`).
 - `reconfigurePoolsFromConfig()` reconciles configured values with effective RW/RO pool values.
 
 This specifically prevents the historical mismatch where `DBMaxPoolSize=500` was stored in the DB but effective pools remained at default `100`.
@@ -481,20 +520,37 @@ Configuration is managed via the web interface.
 The application is organized with a clear separation of concerns, with most of the core logic encapsulated in the `internal/server` package.
 
 - **`main.go`**: The application entry point. It initializes and runs the main server application from `internal/server`.
-- **`internal/server`**: The core application package.
-  - `app.go`: The central `App` struct, holding shared state like database pools and configuration.
-  - `server.go`: The HTTP server, router, and middleware chain.
-  - `batched_write.go`, `batched_write_flush.go`: Unified WriteBatcher for consolidating all database writes (Feb 2026).
-  - `batcher_adapter.go`: Adapter pattern to break circular dependencies between packages.
-  - `handlers/`: Domain-specific HTTP handlers (auth, gallery, config, health).
-  - `config/`: Configuration service (load, save, validate, export, import).
-  - `files/`: File processing service (discovery, MIME detection, EXIF, thumbnails).
+- **`internal/server`**: The core application package, organized into domain-driven subpackages.
+  - `app.go`: The central `App` struct and service wiring.
+  - `server.go`: HTTP server lifecycle.
+  - `router.go`: Route registration and middleware chain.
+  - `auth/`: Authentication service (bcrypt credential verification, account lockout).
+  - `batched_write.go`, `batched_write_flush.go`: Unified `BatchedWrite` union and flush logic for file metadata and HTTP cache entries.
+  - `batcher_adapter.go`: Adapter that lets the `files` package submit writes without importing `server`.
+  - `cachebatch/`: One-shot HTTP cache batch-load manager.
+  - `cachepreload/`: Cache preloading when folders are opened.
+  - `compress/`, `conditional/`: Pure helper packages for compression negotiation and ETag/304 handling.
+  - `config/`: Configuration service (load, save, validate, export, import, restore).
+  - `database/`: Database setup, migrations, and connection-pool configuration.
+  - `files/`: File processing service (discovery, MIME detection, EXIF, thumbnail generation).
+  - `handlers/`: Domain-specific HTTP handlers (auth, gallery, config, dashboard, server, theme, menu, health).
+  - `interfaces/`: Shared interfaces such as `HandlerQueries` to avoid circular imports.
+  - `logging/`: Bootstrap logging setup.
+  - `menu/`: Session-aware hamburger-menu rendering.
+  - `metrics/`: Runtime metrics collection.
   - `middleware/`: Reusable middleware (auth, compress, conditional, CSRF, logging).
+  - `modulestate/`: Tracks active background modules (discovery, cache batch load).
+  - `pathutil/`: Path-manipulation utilities with path-traversal checks.
+  - `security/`: Lockout thresholds, unlock tasks, and security helpers.
   - `session/`: Session management and CSRF helpers.
+  - `subsystem/`: Background subsystem coordination helpers.
+  - `template/`: Template data helpers.
+  - `theme/`: Theme selection handlers.
   - `ui/`: Template parsing and rendering logic.
-- **`internal/`**: Other supporting packages providing reusable components.
+  - `validation/`: Input validation rules.
+- **`internal/`**: Reusable infrastructure packages.
   - `cachelite`: The SQLite-backed HTTP response cache middleware.
-  - `writebatcher`: Generic batched database writer for high-throughput operations (used by unified batcher), with optional persistent on-disk overflow queue.
+  - `writebatcher`: Generic batched database writer (used by the unified server batcher), with optional persistent on-disk overflow queue.
   - `dque`: Generic, segment-backed persistent on-disk FIFO queue used by `writebatcher` for overflow and crash recovery.
   - `flock`: Minimal cross-platform file locking (flock on Unix, `LockFileEx` on Windows) used by `dque`.
   - `errors`: Focused error sentinels/wrappers used by `dque`.
@@ -517,6 +573,9 @@ The application is organized with a clear separation of concerns, with most of t
   - `testutil`: Shared testing helpers and mocks.
   - `gen-test-files`: Utility for generating synthetic test files and directory structures.
 - **`web/`**: Contains embedded static assets and Go HTML templates.
-- **`DB/`**: The default directory where the `sfpg.db` SQLite database file is stored.
+- **`DB/`**: The default directory for application data.
+  - `sfpg.db` — main SQLite database (folders, files, config, HTTP cache, etc.).
+  - `thumbs/thumbs.db` — separate SQLite database for thumbnail JPEG blobs.
+  - `sfpg.db-dque/` — persistent write-overflow queue used by `writebatcher`.
 - **`docs/`**: Comprehensive architecture documentation and design diagrams.
 - **`Images/`**: The default directory where you should place your photos.

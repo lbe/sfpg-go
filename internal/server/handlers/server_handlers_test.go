@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -415,6 +416,33 @@ func TestServerCacheBatchLoadPost_StartsRunWhenIdle(t *testing.T) {
 	msg := findTextContains(doc, "Cache batch load started")
 	if msg == "" {
 		t.Error("expected response body to contain 'Cache batch load started'")
+	}
+}
+
+func TestServerCacheBatchLoadPost_StartError(t *testing.T) {
+	if err := ui.ParseTemplates(web.FS); err != nil {
+		t.Fatalf("ParseTemplates failed: %v", err)
+	}
+
+	sm := &mockSessionManagerWithCSRF{}
+	deps := &mockServerDeps{
+		CSRFToken: "valid-csrf-token",
+		BatchErr:  errors.New("batch load failed"),
+	}
+	handlers := NewServerHandlers(sm, deps)
+
+	req := httptest.NewRequest(http.MethodPost, "/server/cache-batch-load", strings.NewReader("csrf_token=valid-csrf-token"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+
+	handlers.ServerCacheBatchLoadPost(rr, req)
+
+	if rr.Code != http.StatusInternalServerError {
+		t.Errorf("expected status %d, got %d", http.StatusInternalServerError, rr.Code)
+	}
+	body := strings.TrimSpace(rr.Body.String())
+	if body != "Internal Server Error" {
+		t.Errorf("expected %q, got %q", "Internal Server Error", body)
 	}
 }
 

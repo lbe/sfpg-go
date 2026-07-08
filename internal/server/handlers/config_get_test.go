@@ -56,6 +56,56 @@ func TestConfigHandlers_ConfigGet_LoadError(t *testing.T) {
 	}
 }
 
+func TestConfigHandlers_ConfigGet_UsernameFallback(t *testing.T) {
+	if err := ui.ParseTemplates(web.FS); err != nil {
+		t.Fatalf("ParseTemplates failed: %v", err)
+	}
+
+	mockSvc := &mockConfigServiceForConfig{
+		getConfigValueFun: func(ctx context.Context, key string) (string, error) {
+			return "", errors.New("username lookup failed")
+		},
+	}
+	ch := setupTestConfigHandlers(t, mockSvc, &mockAuthServiceForConfig{})
+	ch.SessionManager.(*mockSessionManagerAuth).authenticated = true
+
+	req := httptest.NewRequest(http.MethodGet, "/config", nil)
+	w := httptest.NewRecorder()
+
+	ch.ConfigGet(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "admin") {
+		t.Error("expected rendered output to contain default username 'admin'")
+	}
+}
+
+func TestConfigHandlers_ConfigGet_WithCategory(t *testing.T) {
+	if err := ui.ParseTemplates(web.FS); err != nil {
+		t.Fatalf("ParseTemplates failed: %v", err)
+	}
+
+	ch := setupTestConfigHandlers(t, &mockConfigServiceForConfig{}, &mockAuthServiceForConfig{})
+	ch.SessionManager.(*mockSessionManagerAuth).authenticated = true
+
+	req := httptest.NewRequest(http.MethodGet, "/config?category=security", nil)
+	w := httptest.NewRecorder()
+
+	ch.ConfigGet(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+	// The config-modal template does not currently emit the category as a visible
+	// marker; this test exercises the category branch in ConfigGet and confirms
+	// the modal still renders successfully.
+	if !strings.Contains(w.Body.String(), "Configuration") {
+		t.Error("expected config modal to render")
+	}
+}
+
 func TestConfigHandlers_ConfigGet_ThemesSorted(t *testing.T) {
 	if err := ui.ParseTemplates(web.FS); err != nil {
 		t.Fatalf("ParseTemplates failed: %v", err)

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"net/http/httptest"
 	"testing"
 
@@ -246,5 +247,212 @@ func TestAddCommonTemplateData_AboutModal(t *testing.T) {
 		t.Errorf("Expected humanize.Comma(%d) to return %q, got %q", testNum, expected, formatted)
 	} else {
 		t.Logf("✓ Number formatting verified: %d → %s", testNum, formatted)
+	}
+}
+
+func TestAddCommonTemplateData_ModuleStateNil_StatsSuccess(t *testing.T) {
+	app := CreateApp(t)
+	defer app.Shutdown()
+
+	app.moduleStateService = nil
+	app.testHookGetGalleryStatistics = func(ctx context.Context) (GalleryStats, error) {
+		return GalleryStats{Folders: "1", Images: "2", ImagesSize: 3}, nil
+	}
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	rr := httptest.NewRecorder()
+
+	result := app.AddCommonTemplateData(rr, req, nil, false)
+	stats, ok := result["GalleryStats"].(GalleryStats)
+	if !ok {
+		t.Fatalf("expected GalleryStats, got %T", result["GalleryStats"])
+	}
+	if stats.Folders != "1" || stats.Images != "2" || stats.ImagesSize != 3 {
+		t.Errorf("stats = %+v, want Folders=1 Images=2 ImagesSize=3", stats)
+	}
+}
+
+func TestAddCommonTemplateData_ModuleStateNil_StatsError(t *testing.T) {
+	app := CreateApp(t)
+	defer app.Shutdown()
+
+	app.moduleStateService = nil
+	app.testHookGetGalleryStatistics = func(ctx context.Context) (GalleryStats, error) {
+		return GalleryStats{}, errors.New("stats failed")
+	}
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	rr := httptest.NewRecorder()
+
+	result := app.AddCommonTemplateData(rr, req, nil, false)
+	stats, ok := result["GalleryStats"].(GalleryStats)
+	if !ok {
+		t.Fatalf("expected GalleryStats, got %T", result["GalleryStats"])
+	}
+	if stats != (GalleryStats{}) {
+		t.Errorf("stats = %+v, want zero GalleryStats", stats)
+	}
+}
+
+func TestAddCommonTemplateData_ModuleStateActive_CachedHit(t *testing.T) {
+	app := CreateApp(t)
+	defer app.Shutdown()
+
+	app.testHookAddCommonDataIsActive = func(ctx context.Context, name string) (bool, error) {
+		return true, nil
+	}
+	app.testHookAddCommonDataLastStarted = func(ctx context.Context, name string) (int64, bool, error) {
+		return 12345, true, nil
+	}
+	app.SetGalleryStatsCache(&GalleryStats{Folders: "5"}, 12345)
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	rr := httptest.NewRecorder()
+
+	result := app.AddCommonTemplateData(rr, req, nil, false)
+	stats := result["GalleryStats"].(GalleryStats)
+	if stats.Folders != "5" {
+		t.Errorf("Folders = %q, want %q", stats.Folders, "5")
+	}
+}
+
+func TestAddCommonTemplateData_ModuleStateActive_CachedMiss(t *testing.T) {
+	app := CreateApp(t)
+	defer app.Shutdown()
+
+	app.testHookAddCommonDataIsActive = func(ctx context.Context, name string) (bool, error) {
+		return true, nil
+	}
+	app.testHookAddCommonDataLastStarted = func(ctx context.Context, name string) (int64, bool, error) {
+		return 12345, true, nil
+	}
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	rr := httptest.NewRecorder()
+
+	result := app.AddCommonTemplateData(rr, req, nil, false)
+	stats := result["GalleryStats"].(GalleryStats)
+	if stats != (GalleryStats{}) {
+		t.Errorf("stats = %+v, want zero GalleryStats", stats)
+	}
+}
+
+func TestAddCommonTemplateData_ModuleStateInactive_CachedHit(t *testing.T) {
+	app := CreateApp(t)
+	defer app.Shutdown()
+
+	app.testHookAddCommonDataIsActive = func(ctx context.Context, name string) (bool, error) {
+		return false, nil
+	}
+	app.testHookAddCommonDataLastStarted = func(ctx context.Context, name string) (int64, bool, error) {
+		return 67890, true, nil
+	}
+	app.SetGalleryStatsCache(&GalleryStats{Images: "9"}, 67890)
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	rr := httptest.NewRecorder()
+
+	result := app.AddCommonTemplateData(rr, req, nil, false)
+	stats := result["GalleryStats"].(GalleryStats)
+	if stats.Images != "9" {
+		t.Errorf("Images = %q, want %q", stats.Images, "9")
+	}
+}
+
+func TestAddCommonTemplateData_ModuleStateInactive_CachedMiss_RefreshSuccess(t *testing.T) {
+	app := CreateApp(t)
+	defer app.Shutdown()
+
+	app.testHookAddCommonDataIsActive = func(ctx context.Context, name string) (bool, error) {
+		return false, nil
+	}
+	app.testHookAddCommonDataLastStarted = func(ctx context.Context, name string) (int64, bool, error) {
+		return 11111, true, nil
+	}
+	app.testHookGetGalleryStatistics = func(ctx context.Context) (GalleryStats, error) {
+		return GalleryStats{Folders: "3"}, nil
+	}
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	rr := httptest.NewRecorder()
+
+	result := app.AddCommonTemplateData(rr, req, nil, false)
+	stats := result["GalleryStats"].(GalleryStats)
+	if stats.Folders != "3" {
+		t.Errorf("Folders = %q, want %q", stats.Folders, "3")
+	}
+
+	cached := app.getGalleryStatsCached(11111)
+	if cached == nil || cached.Folders != "3" {
+		t.Error("expected cache to be seeded with refreshed stats")
+	}
+}
+
+func TestAddCommonTemplateData_ModuleStateInactive_CachedMiss_RefreshError(t *testing.T) {
+	app := CreateApp(t)
+	defer app.Shutdown()
+
+	app.testHookAddCommonDataIsActive = func(ctx context.Context, name string) (bool, error) {
+		return false, nil
+	}
+	app.testHookAddCommonDataLastStarted = func(ctx context.Context, name string) (int64, bool, error) {
+		return 22222, true, nil
+	}
+	app.testHookGetGalleryStatistics = func(ctx context.Context) (GalleryStats, error) {
+		return GalleryStats{}, errors.New("refresh failed")
+	}
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	rr := httptest.NewRecorder()
+
+	result := app.AddCommonTemplateData(rr, req, nil, false)
+	stats := result["GalleryStats"].(GalleryStats)
+	if stats != (GalleryStats{}) {
+		t.Errorf("stats = %+v, want zero GalleryStats", stats)
+	}
+}
+
+func TestAddCommonTemplateData_ModuleStateIsActiveError(t *testing.T) {
+	app := CreateApp(t)
+	defer app.Shutdown()
+
+	app.testHookAddCommonDataIsActive = func(ctx context.Context, name string) (bool, error) {
+		return false, errors.New("isactive failed")
+	}
+	app.testHookAddCommonDataLastStarted = func(ctx context.Context, name string) (int64, bool, error) {
+		return 0, false, nil
+	}
+	app.testHookGetGalleryStatistics = func(ctx context.Context) (GalleryStats, error) {
+		return GalleryStats{}, nil
+	}
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	rr := httptest.NewRecorder()
+
+	result := app.AddCommonTemplateData(rr, req, nil, false)
+	stats := result["GalleryStats"].(GalleryStats)
+	if stats != (GalleryStats{}) {
+		t.Errorf("stats = %+v, want zero GalleryStats", stats)
+	}
+}
+
+func TestAddCommonTemplateData_ModuleStateLastStartedError(t *testing.T) {
+	app := CreateApp(t)
+	defer app.Shutdown()
+
+	app.testHookAddCommonDataIsActive = func(ctx context.Context, name string) (bool, error) {
+		return true, nil
+	}
+	app.testHookAddCommonDataLastStarted = func(ctx context.Context, name string) (int64, bool, error) {
+		return 0, false, errors.New("laststarted failed")
+	}
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	rr := httptest.NewRecorder()
+
+	result := app.AddCommonTemplateData(rr, req, nil, false)
+	stats := result["GalleryStats"].(GalleryStats)
+	if stats != (GalleryStats{}) {
+		t.Errorf("stats = %+v, want zero GalleryStats", stats)
 	}
 }

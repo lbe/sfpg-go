@@ -11,22 +11,25 @@ This guide explains how to deploy SFPG to production securely behind a reverse p
 
 ## Runtime Configuration
 
-Configuration is loaded from (in order of precedence):
+Configuration is loaded from (in order of precedence, lowest to highest):
 
-1. **CLI Flags**
-2. **Environment Variables**
-3. **`config.yaml`** (in executable directory or `~/.config/sfpg/` / `%APPDATA%/sfpg/`)
-4. **Database** (settings changed via UI)
-5. **Defaults**
+1. **Defaults** (hard-coded in `config.DefaultConfig()`)
+2. **Database** (settings changed via the web UI and persisted to `sfpg.db`)
+3. **`config.yaml`** (in the executable directory or `~/.config/sfpg/` / `%APPDATA%\sfpg\`)
+4. **Environment Variables / CLI Flags** (merged into a single tier; CLI flags override environment variables for the same setting)
 
 Common flags/variables:
 
-- `-port` (`SFG_PORT`): HTTP listen port (default `8081`).
-- `-discover` (`SFG_DISCOVER`): Enable background filesystem scan (default `true`).
-- `-cache-preload` (`SFG_CACHE_PRELOAD`): Enable cache preloading when folders are opened (default `false`).
+- `-port` (`SFG_PORT`): HTTP listen port (effective default `8081`).
+- `-discover` (`SFG_DISCOVER`): Run file discovery on startup (effective default `true`; CLI flag zero-value is `false`).
+- `-cache-preload` (`SFG_CACHE_PRELOAD`): Enable cache preloading when folders are opened (effective default `true`).
+- `-compression` (`SFG_COMPRESSION`): Enable gzip/brotli response compression (effective default `true`).
+- `-http-cache` (`SFG_HTTP_CACHE`): Enable SQLite HTTP response cache (effective default `true`).
 - `-unlock-account` (`SFG_UNLOCK_ACCOUNT`): Unlock a locked account by username (e.g. `admin`).
-- `-restore-last-known-good` (`SFG_RESTORE_LAST_KNOWN_GOOD`): Restore last known good configuration from DB on startup.
+- `-restore-last-known-good` (`SFG_RESTORE_LAST_KNOWN_GOOD`): Restore last known good configuration from DB on startup (default `false`).
 - `-debug-delay-ms` (`SFG_DEBUG_DELAY_MS`): Artificial handler delay (default `0`).
+- `-increment-etag` _(CLI-only)_: Increment application-wide ETag version on startup.
+- `-cache-batch-load` _(CLI-only)_: Warm the HTTP cache and exit.
 
 Example:
 
@@ -69,17 +72,17 @@ Notes:
 
 ## Reverse Proxy Expectations
 
-The server enforces a same-origin protection for unsafe HTTP methods (POST/PUT/PATCH/DELETE) by requiring a valid `Origin` header that matches the request `Host`. Behind a reverse proxy:
+The server enforces same-origin protection for unsafe HTTP methods (POST/PUT/PATCH/DELETE) by requiring a valid `Origin` header that matches the request `Host`. Behind a reverse proxy:
 
 - Terminate TLS at the proxy and forward HTTP to the backend.
-- Preserve the original `Host` header when proxying to the backend.
+- Preserve the original `Host` header when proxying to the backend; the origin check compares the request `Host` to the `Origin` header and does not consume `X-Forwarded-*` headers.
 - Serve the application on a single origin (domain + port) to satisfy the Origin checks.
 
-Recommended headers to pass:
+Required header to pass:
 
-- `Host`
-- `X-Forwarded-Proto`
-- `X-Forwarded-For`
+- `Host` (must match the public origin)
+
+You may also pass standard proxy headers such as `X-Forwarded-Proto` and `X-Forwarded-For` for logging or upstream use, but they are not used by the application's security checks.
 
 ### Example: Nginx
 
@@ -98,7 +101,7 @@ server {
     # (Recommended) redirect HTTP->HTTPS in a separate server block on 80
 
     location / {
-        proxy_set_header Host $host;                # preserve host for Origin checks
+        proxy_set_header Host $host;                # REQUIRED: preserve host for Origin checks
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_http_version 1.1;
@@ -169,7 +172,7 @@ WantedBy=multi-user.target
 - Filesystem & Data
   - [ ] Run as a dedicated, least-privileged user
   - [ ] Ensure `DB/` and `Images/` directories exist and are writable by the service user
-  - [ ] Back up `DB/sfpg.db` (and WAL files) and `Images/` regularly
+  - [ ] Back up `DB/sfpg.db` (and WAL files), `DB/thumbs/thumbs.db` (and WAL files), and `Images/` regularly
   - [ ] Back up `DB/sfpg.db-dque/` (auto-created persistent write overflow queue) alongside the DB to preserve in-flight pending writes across restarts
 - Operations
   - [ ] Configure systemd (or equivalent) with restart policy
@@ -192,18 +195,27 @@ WantedBy=multi-user.target
 
 ## Health Checks and Monitoring
 
-For production deployments, implement health checks to monitor application availability. The application doesn't have a dedicated `/health` endpoint, but you can use existing routes:
+For production deployments, implement health checks to monitor application availability.
+
+### Dedicated Health Endpoint
+
+The application exposes a lightweight health endpoint:
+
+```bash
+# Returns {"status":"ok"} and does not require authentication
+curl -f http://localhost:8081/health -o /dev/null -s
+```
 
 ### Liveness Check (Basic Availability)
 
 Check if the server is responding:
 
 ```bash
-# Check static asset (doesn't require authentication)
-curl -f http://localhost:8081/static/favicon.svg -o /dev/null -s
+# Dedicated health endpoint (recommended)
+curl -f http://localhost:8081/health -o /dev/null -s
 
-# Or test the login page
-curl -f http://localhost:8081/login -o /dev/null -s
+# Or a static asset (doesn't require authentication)
+curl -f http://localhost:8081/static/favicon/favicon.svg -o /dev/null -s
 ```
 
 For Kubernetes/Docker health probes:
@@ -211,7 +223,7 @@ For Kubernetes/Docker health probes:
 ```yaml
 livenessProbe:
   httpGet:
-    path: /static/favicon.svg
+    path: /health
     port: 8081
   initialDelaySeconds: 5
   periodSeconds: 10
@@ -219,13 +231,10 @@ livenessProbe:
 
 ### Readiness Check (Application Ready)
 
-Verify database connectivity by attempting login page render:
+Verify the server is serving requests:
 
 ```bash
-# Login page requires DB access for session store
-curl -f -H "User-Agent: HealthCheck/1.0" \
-  http://localhost:8081/login \
-  -o /dev/null -s -w "%{http_code}\n"
+curl -f http://localhost:8081/health -o /dev/null -s -w "%{http_code}\n"
 
 # Expected: 200
 ```
@@ -235,18 +244,18 @@ curl -f -H "User-Agent: HealthCheck/1.0" \
 When using a reverse proxy, health checks should target the backend directly to avoid false positives from proxy caching:
 
 ```bash
-# Nginx upstream health check (nginx-plus or third-party module)
-curl -f http://127.0.0.1:8081/static/favicon.svg
+# Backend health check
+curl -f http://127.0.0.1:8081/health
 
-# Or via the proxy with a specific header
+# Or via the proxy with the correct Host header
 curl -f -H "Host: gallery.example.com" \
-  https://gallery.example.com/static/favicon.svg
+  https://gallery.example.com/health
 ```
 
 ### Monitoring Recommendations
 
-- **Liveness**: Check `/static/favicon.svg` every 10-30 seconds
-- **Readiness**: Check `/login` after startup and on deploy
+- **Liveness**: Check `/health` every 10-30 seconds
+- **Readiness**: Check `/health` after startup and on deploy
 - **Logs**: Monitor `logs/sfpg-*.log` for ERROR level entries
 - **Disk**: Alert when `DB/` or `Images/` partitions exceed 80% usage
 - **Metrics**: Track response times for `/gallery/1` (requires auth setup)

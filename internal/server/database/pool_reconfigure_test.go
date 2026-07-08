@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -168,4 +169,135 @@ func TestPoolReconfiguration_NoCloseWhileActive(t *testing.T) {
 	// EXPECTED: This test SHOULD FAIL until pool reconfiguration is fixed to
 	// handle active connections gracefully (e.g., draining active connections
 	// before closing, or using a grace period).
+}
+
+func TestRecreatePoolsWithConfig_CreatePoolsFails(t *testing.T) {
+	ctx := context.Background()
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "test.db")
+	thumbsDBPath := filepath.Join(tempDir, "thumbs.db")
+
+	// Run main migrations
+	db, err := sql.Open("sqlite3", "file:"+filepath.ToSlash(dbPath))
+	if err != nil {
+		t.Fatalf("failed to open test database: %v", err)
+	}
+
+	driver, err := sqlite.WithInstance(db, &sqlite.Config{})
+	if err != nil {
+		db.Close()
+		t.Fatalf("failed to create sqlite driver instance: %v", err)
+	}
+
+	d, err := iofs.New(migrations.FS, "migrations")
+	if err != nil {
+		db.Close()
+		t.Fatalf("failed to create iofs source driver: %v", err)
+	}
+
+	m, err := migrate.NewWithInstance("iofs", d, "sqlite", driver)
+	if err != nil {
+		db.Close()
+		t.Fatalf("failed to create migrate instance: %v", err)
+	}
+
+	if upErr := m.Up(); upErr != nil && !errors.Is(upErr, migrate.ErrNoChange) {
+		db.Close()
+		t.Fatalf("failed to apply migrations: %v", upErr)
+	}
+	db.Close()
+
+	// Run thumbs migration
+	if migErr := migrateBlobsDB(thumbsDBPath); migErr != nil {
+		t.Fatalf("migrateBlobsDB failed: %v", migErr)
+	}
+
+	cfg := config.DefaultConfig()
+	roDsn, rwDsn := configureDatabaseDSN(dbPath)
+	rwPool, roPool, err := createDatabasePools(ctx, roDsn, rwDsn, thumbsDBPath, cfg)
+	if err != nil {
+		t.Fatalf("failed to create initial pools: %v", err)
+	}
+	defer func() {
+		_ = rwPool.Close()
+		_ = roPool.Close()
+	}()
+
+	paths := DatabasePaths{Main: dbPath, Thumbs: thumbsDBPath}
+	badCfg := config.DefaultConfig()
+	badCfg.DBMaxPoolSize = 1
+	badCfg.DBMinIdleConnections = 10
+
+	_, _, err = RecreatePoolsWithConfig(ctx, paths, badCfg, rwPool, roPool)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "failed to recreate pools with config") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRecreatePoolsWithConfig_CloseOldPoolsErrors(t *testing.T) {
+	ctx := context.Background()
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "test.db")
+	thumbsDBPath := filepath.Join(tempDir, "thumbs.db")
+
+	// Run main migrations
+	db, err := sql.Open("sqlite3", "file:"+filepath.ToSlash(dbPath))
+	if err != nil {
+		t.Fatalf("failed to open test database: %v", err)
+	}
+
+	driver, err := sqlite.WithInstance(db, &sqlite.Config{})
+	if err != nil {
+		db.Close()
+		t.Fatalf("failed to create sqlite driver instance: %v", err)
+	}
+
+	d, err := iofs.New(migrations.FS, "migrations")
+	if err != nil {
+		db.Close()
+		t.Fatalf("failed to create iofs source driver: %v", err)
+	}
+
+	m, err := migrate.NewWithInstance("iofs", d, "sqlite", driver)
+	if err != nil {
+		db.Close()
+		t.Fatalf("failed to create migrate instance: %v", err)
+	}
+
+	if upErr := m.Up(); upErr != nil && !errors.Is(upErr, migrate.ErrNoChange) {
+		db.Close()
+		t.Fatalf("failed to apply migrations: %v", upErr)
+	}
+	db.Close()
+
+	// Run thumbs migration
+	if migErr := migrateBlobsDB(thumbsDBPath); migErr != nil {
+		t.Fatalf("migrateBlobsDB failed: %v", migErr)
+	}
+
+	cfg := config.DefaultConfig()
+	roDsn, rwDsn := configureDatabaseDSN(dbPath)
+	rwPool, roPool, err := createDatabasePools(ctx, roDsn, rwDsn, thumbsDBPath, cfg)
+	if err != nil {
+		t.Fatalf("failed to create initial pools: %v", err)
+	}
+
+	// Close old pools explicitly so RecreatePoolsWithConfig's Close calls return errors.
+	_ = rwPool.Close()
+	_ = roPool.Close()
+
+	paths := DatabasePaths{Main: dbPath, Thumbs: thumbsDBPath}
+	newRwPool, newRoPool, err := RecreatePoolsWithConfig(ctx, paths, cfg, rwPool, roPool)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if newRwPool == nil || newRoPool == nil {
+		t.Fatal("expected new pools")
+	}
+
+	_ = newRwPool.Close()
+	_ = newRoPool.Close()
 }

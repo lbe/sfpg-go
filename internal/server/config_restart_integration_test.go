@@ -186,7 +186,7 @@ func TestDBConfig_ListenerPortChangeRequiresRestart(t *testing.T) {
 	}
 
 	// Verify restart flag starts as false
-	if app.restartRequired.Load() {
+	if app.RestartRequired() {
 		t.Fatal("expected restartRequired to be false initially")
 	}
 
@@ -229,7 +229,7 @@ func TestDBConfig_ListenerPortChangeRequiresRestart(t *testing.T) {
 	}
 
 	// Verify restart flag is now set
-	if !app.restartRequired.Load() {
+	if !app.RestartRequired() {
 		t.Errorf("expected restartRequired to be true after port change, got false")
 	}
 }

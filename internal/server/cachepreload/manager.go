@@ -15,6 +15,19 @@ import (
 	"github.com/lbe/sfpg-go/internal/server/interfaces"
 )
 
+var (
+	// managerSchedulerAddTaskFn wraps Scheduler.AddTask used by PreloadManager.
+	managerSchedulerAddTaskFn = func(s *scheduler.Scheduler, task scheduler.Task, mode scheduler.ExecutionMode, start time.Time) (string, error) {
+		return s.AddTask(task, mode, start)
+	}
+
+	// managerSchedulerRemoveTaskFn wraps Scheduler.RemoveTask used by PreloadManager
+	// during session-folder-change cancellation.
+	managerSchedulerRemoveTaskFn = func(s *scheduler.Scheduler, id string) error {
+		return s.RemoveTask(id)
+	}
+)
+
 // PreloadManager manages the cache preload scheduler lifecycle with dynamic enable/disable support.
 // It implements PreloadService and can replace the scheduler instance when toggling.
 type PreloadManager struct {
@@ -169,7 +182,7 @@ func (pm *PreloadManager) ScheduleFolderPreload(ctx context.Context, folderID in
 		if prevFolderID != 0 && taskTracker != nil {
 			taskIDs := taskTracker.CancelSessionTasks(sessionID)
 			for _, id := range taskIDs {
-				if err := sched.RemoveTask(id); err != nil {
+				if err := managerSchedulerRemoveTaskFn(sched, id); err != nil {
 					slog.Debug("cache preload remove task error", "id", id, "err", err)
 				}
 			}
@@ -199,7 +212,7 @@ func (pm *PreloadManager) ScheduleFolderPreload(ctx context.Context, folderID in
 	}
 
 	// Schedule FolderPreloadTask (fire-and-forget)
-	_, err := sched.AddTask(fpt, scheduler.OneTime, time.Now())
+	_, err := managerSchedulerAddTaskFn(sched, fpt, scheduler.OneTime, time.Now())
 	if err != nil {
 		slog.Warn("failed to schedule folder preload", "folder_id", folderID, "error", err)
 	}

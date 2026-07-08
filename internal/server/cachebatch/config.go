@@ -5,8 +5,12 @@ import (
 	"net/http"
 
 	"github.com/lbe/sfpg-go/internal/gallerydb"
-	"github.com/lbe/sfpg-go/internal/server/modulestate"
 )
+
+// moduleStateService is the minimal interface needed to guard batch load against active discovery.
+type moduleStateService interface {
+	IsActive(ctx context.Context, name string) (bool, error)
+}
 
 // Config holds dependencies for BatchLoadManager.
 type Config struct {
@@ -22,7 +26,7 @@ type Config struct {
 	GetETagVersion func() string
 
 	// ModuleStateService for discovery active check; nil skips guard.
-	ModuleStateService *modulestate.Service
+	ModuleStateService moduleStateService
 }
 
 // BatchLoadQueries is the minimal interface needed for batch load.

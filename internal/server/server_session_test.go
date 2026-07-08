@@ -3,6 +3,9 @@ package server
 import (
 	"testing"
 
+	"github.com/lbe/sfpg-go/internal/getopt"
+	"github.com/lbe/sfpg-go/internal/server/session"
+
 	_ "github.com/ncruces/go-sqlite3/driver"
 )
 
@@ -90,5 +93,38 @@ func TestEnsureSession(t *testing.T) {
 	}
 	if app.sessionManager == nil {
 		t.Error("Expected sessionManager to be initialized")
+	}
+}
+
+func TestGetSessionOptions_FallbackWithoutSessionManager(t *testing.T) {
+	app := New(getopt.Opt{SessionSecret: getopt.OptString{String: "secret", IsSet: true}}, "x.y.z")
+
+	// Ensure sessionManager stays nil and config is nil so the fallback path
+	// delegates to session.GetSessionOptions(nil).
+	app.configMu.Lock()
+	app.config = nil
+	app.configMu.Unlock()
+
+	if app.sessionManager != nil {
+		t.Fatal("expected sessionManager to be nil for this test")
+	}
+
+	opts := app.getSessionOptions()
+	if opts == nil {
+		t.Fatal("expected non-nil session options")
+	}
+
+	want := session.GetSessionOptions(nil)
+	if opts.MaxAge != want.MaxAge {
+		t.Errorf("MaxAge = %d, want %d", opts.MaxAge, want.MaxAge)
+	}
+	if opts.HttpOnly != want.HttpOnly {
+		t.Errorf("HttpOnly = %v, want %v", opts.HttpOnly, want.HttpOnly)
+	}
+	if opts.Secure != want.Secure {
+		t.Errorf("Secure = %v, want %v", opts.Secure, want.Secure)
+	}
+	if opts.SameSite != want.SameSite {
+		t.Errorf("SameSite = %v, want %v", opts.SameSite, want.SameSite)
 	}
 }

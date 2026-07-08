@@ -171,7 +171,7 @@ func TestConfigRestore_PoolSettingsRequireRestart(t *testing.T) {
 	}
 
 	// ASSERTION 1: Restart flag should be set if pool settings changed
-	restartRequired := app.restartRequired.Load()
+	restartRequired := app.RestartRequired()
 
 	// Note: loadConfig might not set restart flag automatically - this is part of the defect
 	// The test documents expected behavior

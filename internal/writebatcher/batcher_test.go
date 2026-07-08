@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -1293,5 +1294,348 @@ func TestFlush_FailureReEnqueuesBatch(t *testing.T) {
 
 	if firstCall {
 		t.Error("FlushFunc was never called successfully — re-enqueue may not have worked")
+	}
+}
+
+func TestFlush_BeginTxFails(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+
+	var mu sync.Mutex
+	var errReported error
+	var batchReported []int
+	beginAttempts := 0
+
+	cfg := Config[int]{
+		BeginTx: func(ctx context.Context) (*sql.Tx, error) {
+			mu.Lock()
+			beginAttempts++
+			if beginAttempts == 1 {
+				mu.Unlock()
+				return nil, errors.New("begin denied")
+			}
+			mu.Unlock()
+			return testBeginTx(db)(ctx)
+		},
+		Flush: func(ctx context.Context, tx *sql.Tx, batch []int) error {
+			return nil
+		},
+		OnError: func(err error, batch []int) {
+			mu.Lock()
+			defer mu.Unlock()
+			errReported = err
+			batchReported = append([]int(nil), batch...)
+		},
+		MaxBatchSize: 1,
+	}
+
+	wb, err := New(ctx, cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer wb.Close()
+
+	if err := wb.Submit(42); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+
+	time.Sleep(500 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if errReported == nil || !strings.Contains(errReported.Error(), "begin denied") {
+		t.Errorf("expected 'begin denied' error, got %v", errReported)
+	}
+	if len(batchReported) != 1 || batchReported[0] != 42 {
+		t.Errorf("expected batch [42], got %v", batchReported)
+	}
+	if wb.totalErrors.Load() < 1 {
+		t.Errorf("expected totalErrors >= 1, got %d", wb.totalErrors.Load())
+	}
+}
+
+func TestFlush_CommitFails(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+
+	origCommit := commitTx
+	commitTx = func(tx *sql.Tx) error { return errors.New("commit denied") }
+	t.Cleanup(func() { commitTx = origCommit })
+
+	rollbackCalled := make(chan struct{}, 1)
+	origRollback := rollbackTx
+	rollbackTx = func(tx *sql.Tx) error {
+		select {
+		case rollbackCalled <- struct{}{}:
+		default:
+		}
+		return origRollback(tx)
+	}
+	t.Cleanup(func() { rollbackTx = origRollback })
+
+	onErrorCalled := make(chan struct{}, 1)
+	var mu sync.Mutex
+	var errReported error
+
+	cfg := Config[int]{
+		BeginTx: testBeginTx(db),
+		Flush: func(ctx context.Context, tx *sql.Tx, batch []int) error {
+			return nil
+		},
+		OnError: func(err error, batch []int) {
+			mu.Lock()
+			defer mu.Unlock()
+			errReported = err
+			select {
+			case onErrorCalled <- struct{}{}:
+			default:
+			}
+		},
+		MaxBatchSize: 1,
+	}
+
+	wb, err := New(ctx, cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer wb.Close()
+
+	if err := wb.Submit(42); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+
+	select {
+	case <-rollbackCalled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("rollback was not called after commit failure")
+	}
+
+	select {
+	case <-onErrorCalled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("OnError was not called after commit failure")
+	}
+
+	// Close the batcher before asserting to stop the worker's retry loop.
+	if err := wb.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if errReported == nil || !strings.Contains(errReported.Error(), "commit denied") {
+		t.Errorf("expected 'commit denied' error, got %v", errReported)
+	}
+}
+
+func TestFlush_RollbackAfterFlushErrorFails(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+
+	origRollback := rollbackTx
+	rollbackTx = func(tx *sql.Tx) error { return errors.New("rollback denied") }
+	t.Cleanup(func() { rollbackTx = origRollback })
+
+	var mu sync.Mutex
+	var errReported error
+
+	cfg := Config[int]{
+		BeginTx: testBeginTx(db),
+		Flush: func(ctx context.Context, tx *sql.Tx, batch []int) error {
+			return errors.New("flush denied")
+		},
+		OnError: func(err error, batch []int) {
+			mu.Lock()
+			defer mu.Unlock()
+			errReported = err
+		},
+		MaxBatchSize: 1,
+	}
+
+	wb, err := New(ctx, cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer wb.Close()
+
+	if err := wb.Submit(42); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+
+	time.Sleep(500 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if errReported == nil || !strings.Contains(errReported.Error(), "flush denied") {
+		t.Errorf("expected 'flush denied' error, got %v", errReported)
+	}
+}
+
+func TestFlush_RollbackAfterCommitErrorFails(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+
+	commitTx = func(tx *sql.Tx) error { return errors.New("commit denied") }
+	rollbackTx = func(tx *sql.Tx) error { return errors.New("rollback denied") }
+	t.Cleanup(func() {
+		commitTx = func(tx *sql.Tx) error { return tx.Commit() }
+		rollbackTx = func(tx *sql.Tx) error { return tx.Rollback() }
+	})
+
+	var mu sync.Mutex
+	var errReported error
+
+	cfg := Config[int]{
+		BeginTx: testBeginTx(db),
+		Flush: func(ctx context.Context, tx *sql.Tx, batch []int) error {
+			return nil
+		},
+		OnError: func(err error, batch []int) {
+			mu.Lock()
+			defer mu.Unlock()
+			errReported = err
+		},
+		MaxBatchSize: 1,
+	}
+
+	wb, err := New(ctx, cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer wb.Close()
+
+	if err := wb.Submit(42); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+
+	time.Sleep(500 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if errReported == nil || !strings.Contains(errReported.Error(), "commit denied") {
+		t.Errorf("expected 'commit denied' error, got %v", errReported)
+	}
+}
+
+func TestWorker_MaintenanceTimer(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+
+	var mu sync.Mutex
+	var calls []struct {
+		ctxCtx            context.Context
+		lastWalCheckpoint time.Time
+		lastOptimize      time.Time
+		totalCommitted    int64
+	}
+
+	cfg := Config[int]{
+		BeginTx: testBeginTx(db),
+		Flush: func(ctx context.Context, tx *sql.Tx, batch []int) error {
+			return nil
+		},
+		OnAfterCommit: func(ctx context.Context, lastWalCheckpoint time.Time, lastOptimize time.Time, totalCommitted int64) {
+			mu.Lock()
+			defer mu.Unlock()
+			calls = append(calls, struct {
+				ctxCtx            context.Context
+				lastWalCheckpoint time.Time
+				lastOptimize      time.Time
+				totalCommitted    int64
+			}{ctxCtx: ctx, lastWalCheckpoint: lastWalCheckpoint, lastOptimize: lastOptimize, totalCommitted: totalCommitted})
+		},
+		MaxBatchSize:        10,
+		FlushInterval:       10 * time.Second,
+		MaintenanceInterval: 50 * time.Millisecond,
+	}
+
+	wb, err := New(ctx, cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer wb.Close()
+
+	if err := wb.Submit(1); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+
+	time.Sleep(200 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(calls) == 0 {
+		t.Fatal("expected OnAfterCommit to be called at least once")
+	}
+	if calls[0].ctxCtx == nil {
+		t.Error("expected non-nil context in first OnAfterCommit call")
+	}
+	if calls[0].totalCommitted < 0 {
+		t.Errorf("expected totalCommitted >= 0, got %d", calls[0].totalCommitted)
+	}
+
+	var sawNonZeroWal bool
+	var sawNonZeroOpt bool
+	for _, c := range calls {
+		if !c.lastWalCheckpoint.IsZero() {
+			sawNonZeroWal = true
+		}
+		if !c.lastOptimize.IsZero() {
+			sawNonZeroOpt = true
+		}
+	}
+	if !sawNonZeroWal {
+		t.Error("expected at least one OnAfterCommit call with non-zero lastWalCheckpointTime")
+	}
+	if !sawNonZeroOpt {
+		t.Error("expected at least one OnAfterCommit call with non-zero lastOptimizeTime")
+	}
+}
+
+func TestWorker_ContextCancel_DrainsPendingBatch(t *testing.T) {
+	db := testDB(t)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	var mu sync.Mutex
+	var flushed []int
+
+	cfg := Config[int]{
+		BeginTx: testBeginTx(db),
+		Flush: func(ctx context.Context, tx *sql.Tx, batch []int) error {
+			mu.Lock()
+			defer mu.Unlock()
+			flushed = append(flushed, batch...)
+			return nil
+		},
+		MaxBatchSize:  10,
+		FlushInterval: 10 * time.Second,
+	}
+
+	wb, err := New(ctx, cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	if err := wb.Submit(1); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if err := wb.Submit(2); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+
+	cancel()
+
+	select {
+	case <-wb.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("worker did not exit after context cancellation")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(flushed) != 2 {
+		t.Errorf("expected 2 items flushed on context cancel, got %d: %v", len(flushed), flushed)
+	}
+	if wb.PendingCount() != 0 {
+		t.Errorf("expected PendingCount() = 0, got %d", wb.PendingCount())
 	}
 }

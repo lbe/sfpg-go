@@ -110,11 +110,16 @@ func (s *Service) ClearAttempts(ctx context.Context, username string) error {
 	return s.store.ClearLoginAttempts(ctx, username)
 }
 
-// verifyPassword compares a hashed password with a plaintext password.
-// This is a variable to allow mocking in tests.
-var verifyPassword = func(hashedPassword, plaintextPassword string) error {
-	return bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(plaintextPassword))
-}
+var (
+	// verifyPassword compares a hashed password with a plaintext password.
+	// This is a variable to allow mocking in tests.
+	verifyPassword = func(hashedPassword, plaintextPassword string) error {
+		return bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(plaintextPassword))
+	}
+
+	// generateFromPassword is a testable hook for bcrypt.GenerateFromPassword.
+	generateFromPassword = bcrypt.GenerateFromPassword
+)
 
 // CredentialStore extends UserStore with credential update operations.
 type CredentialStore interface {
@@ -228,7 +233,7 @@ func (s *Service) UpdateCredentials(ctx context.Context, opts CredentialUpdateOp
 	}
 
 	if result.ChangingPassword {
-		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+		hashedPassword, err := generateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
 		if err != nil {
 			result.ValidationErrors["_global"] = "Failed to hash password"
 			return result, err

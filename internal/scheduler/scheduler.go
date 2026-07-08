@@ -116,6 +116,20 @@ const (
 	schedulerMaxDelay  = 1 * time.Second
 )
 
+var (
+	// timeNow is a testable hook for time.Now used by scheduling decisions.
+	timeNow = time.Now
+
+	// numCPU is a testable hook for runtime.NumCPU used by NewScheduler.
+	numCPU = runtime.NumCPU
+
+	// newShutdownCtx is a testable hook for creating the scheduler's internal
+	// shutdown context. Production defaults to context.WithCancel(context.Background()).
+	newShutdownCtx = func() (context.Context, context.CancelFunc) {
+		return context.WithCancel(context.Background())
+	}
+)
+
 // NewScheduler creates a new scheduler with the specified maximum concurrent tasks.
 // If maxConcurrentTasks is 0, it is set to runtime.NumCPU().
 // If maxConcurrentTasks is less than 1 (but not 0), it is set to 1.
@@ -123,12 +137,12 @@ const (
 // The scheduler is created in a stopped state. Call Start to begin execution.
 func NewScheduler(maxConcurrentTasks int) *Scheduler {
 	if maxConcurrentTasks == 0 {
-		maxConcurrentTasks = runtime.NumCPU()
+		maxConcurrentTasks = numCPU()
 	}
 	if maxConcurrentTasks < 1 {
 		maxConcurrentTasks = 1
 	}
-	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
+	shutdownCtx, shutdownCancel := newShutdownCtx()
 	return &Scheduler{
 		MaxConcurrentTasks: maxConcurrentTasks,
 		tasks:              make(map[string]*scheduledTask),
@@ -256,7 +270,7 @@ func (s *Scheduler) executeReadyTasks(ctx context.Context) time.Duration {
 		return schedulerIdleDelay
 	}
 
-	now := time.Now()
+	now := timeNow()
 	var readyTasks []*scheduledTask
 	var earliest time.Time
 	hadReady := false
@@ -295,7 +309,7 @@ func (s *Scheduler) executeReadyTasks(ctx context.Context) time.Duration {
 			// from seeing this task as ready while it's being executed
 			if st.mode == OneTime {
 				st.mu.Lock()
-				st.nextRun = time.Now().Add(365 * 24 * time.Hour)
+				st.nextRun = timeNow().Add(365 * 24 * time.Hour)
 				st.mu.Unlock()
 			}
 			// Acquired, can execute
@@ -371,7 +385,7 @@ func (s *Scheduler) calculateNextRun(startTime time.Time, mode ExecutionMode, ru
 	case Monthly:
 		return startTime.AddDate(0, int(runCount), 0)
 	default:
-		return time.Now().Add(365 * 24 * time.Hour)
+		return timeNow().Add(365 * 24 * time.Hour)
 	}
 }
 

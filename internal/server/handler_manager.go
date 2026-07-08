@@ -26,6 +26,10 @@ type HandlerManager struct {
 	configThemesHandler  *handlers.ConfigThemesHandler
 	configRestartHandler *handlers.ConfigRestartHandler
 	configETagHandler    *handlers.ConfigETagHandler
+
+	// Test seam (nil in production). When set, Build delegates to this function
+	// instead of constructing the real handlers.
+	testHookBuildHandlers func(fs fs.FS) error
 }
 
 func NewHandlerManager() *HandlerManager { return &HandlerManager{} }
@@ -42,6 +46,10 @@ func (m *HandlerManager) Build(
 	getETagVersion func() string,
 	metricsCollector *metrics.Collector,
 ) error {
+	if m.testHookBuildHandlers != nil {
+		return m.testHookBuildHandlers(templateFS)
+	}
+
 	tmpl, err := parseConfigUITemplates(templateFS)
 	if err != nil {
 		return err
@@ -74,7 +82,7 @@ func (m *HandlerManager) Build(
 	return nil
 }
 
-func (m *HandlerManager) SetPreloadService(pm *cachepreload.PreloadManager) {
+func (m *HandlerManager) SetPreloadService(pm cachepreload.PreloadService) {
 	if m.galleryHandlers != nil && pm != nil {
 		m.galleryHandlers.PreloadService = pm
 	}

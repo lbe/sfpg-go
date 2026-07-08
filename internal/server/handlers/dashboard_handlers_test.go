@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -165,5 +166,93 @@ func TestDashboardHandlers_DashboardGet_HTMXPartial(t *testing.T) {
 	vary := rr.Header().Get("Vary")
 	if !strings.Contains(vary, "HX-Request") {
 		t.Errorf("expected Vary header to contain HX-Request, got: %s", vary)
+	}
+}
+
+func TestDashboardHandlers_MetricsJSON_Unauthorized(t *testing.T) {
+	sessionMgr := &mockSessionManager{isAuthenticated: false}
+	handlers := NewDashboardHandlers(sessionMgr, nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/metrics", nil)
+	rr := httptest.NewRecorder()
+
+	handlers.MetricsJSON(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("expected status 401, got %d", rr.Code)
+	}
+
+	var body map[string]string
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode error body: %v", err)
+	}
+	if body["error"] != "Unauthorized" {
+		t.Errorf("error = %q, want %q", body["error"], "Unauthorized")
+	}
+}
+
+func TestDashboardHandlers_MetricsJSON_Authorized(t *testing.T) {
+	snapshot := metrics.Snapshot{
+		Timestamp: time.Now(),
+		Runtime: metrics.RuntimeMetrics{
+			NumGoroutine: 10,
+			NumCPU:       4,
+		},
+		Modules: []metrics.ModuleStatus{
+			{Name: "discovery", Status: "active"},
+		},
+	}
+
+	sessionMgr := &mockSessionManager{isAuthenticated: true}
+	collector := &mockCollector{snapshot: snapshot}
+	handlers := NewDashboardHandlers(sessionMgr, collector, nil, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/metrics", nil)
+	rr := httptest.NewRecorder()
+
+	handlers.MetricsJSON(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d", rr.Code)
+	}
+	if ct := rr.Header().Get("Content-Type"); ct != "application/json; charset=utf-8" {
+		t.Errorf("Content-Type = %q, want %q", ct, "application/json; charset=utf-8")
+	}
+
+	var got metrics.Snapshot
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode metrics JSON: %v", err)
+	}
+	if got.Runtime.NumGoroutine != snapshot.Runtime.NumGoroutine {
+		t.Errorf("NumGoroutine = %d, want %d", got.Runtime.NumGoroutine, snapshot.Runtime.NumGoroutine)
+	}
+	if got.Runtime.NumCPU != snapshot.Runtime.NumCPU {
+		t.Errorf("NumCPU = %d, want %d", got.Runtime.NumCPU, snapshot.Runtime.NumCPU)
+	}
+	if len(got.Modules) != 1 || got.Modules[0].Name != "discovery" {
+		t.Errorf("Modules = %+v, want [discovery]", got.Modules)
+	}
+}
+
+func TestDashboardHandlers_MetricsJSON_EncodeError(t *testing.T) {
+	snapshot := metrics.Snapshot{
+		Timestamp: time.Now(),
+		Runtime: metrics.RuntimeMetrics{
+			NumGoroutine: 10,
+		},
+	}
+
+	sessionMgr := &mockSessionManager{isAuthenticated: true}
+	collector := &mockCollector{snapshot: snapshot}
+	handlers := NewDashboardHandlers(sessionMgr, collector, nil, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/metrics", nil)
+	w := &errorResponseWriter{}
+
+	// The handler logs the encode error; it must not panic.
+	handlers.MetricsJSON(w, req)
+
+	if w.status != http.StatusOK {
+		t.Errorf("expected WriteHeader status 200 before encode error, got %d", w.status)
 	}
 }

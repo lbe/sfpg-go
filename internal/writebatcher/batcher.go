@@ -75,6 +75,27 @@ import (
 	"github.com/lbe/sfpg-go/internal/humanize"
 )
 
+var (
+	// osMkdirAll is a testable hook for os.MkdirAll used by openDQue.
+	osMkdirAll = os.MkdirAll
+
+	// commitTx is a testable hook for (*sql.Tx).Commit used by flush.
+	commitTx = func(tx *sql.Tx) error { return tx.Commit() }
+
+	// rollbackTx is a testable hook for (*sql.Tx).Rollback used by flush.
+	rollbackTx = func(tx *sql.Tx) error { return tx.Rollback() }
+)
+
+// dqueQueue is the minimal surface WriteBatcher needs from its durable queue.
+// Production uses *dque.DQue[T]; tests may supply a mock implementation.
+type dqueQueue[T any] interface {
+	Size() int
+	Dequeue() (*T, error)
+	Enqueue(item *T) error
+	TurboOn() error
+	Close() error
+}
+
 // Sentinel errors returned by Submit.
 var (
 	ErrClosed = errors.New("writebatcher: closed")
@@ -126,6 +147,11 @@ type Config[T any] struct {
 	// DQueItemsPerSegment is the number of items per dque segment file.
 	// When zero or negative, defaults to 250.
 	DQueItemsPerSegment int
+
+	// testQueue is an optional override for the durable queue. When nil,
+	// openDQue creates a real *dque.DQue[T]. Tests set this to inject
+	// deterministic errors without touching the filesystem.
+	testQueue dqueQueue[T]
 }
 
 // WriteBatcher collects items of type T and flushes them in batched transactions
@@ -151,7 +177,7 @@ type WriteBatcher[T any] struct {
 	overflowCount atomic.Int64
 	overflowWG    sync.WaitGroup // tracks in-flight overflow Submits for Close barrier
 
-	dq       *dque.DQue[T]
+	dq       dqueQueue[T]
 	dqNotify chan struct{}
 }
 
@@ -231,9 +257,15 @@ func New[T any](ctx context.Context, cfg Config[T]) (*WriteBatcher[T], error) {
 	}
 
 	// DQue overflow directory setup (pass by value so cfg is not mutated)
-	dq, err := openDQue(cfg)
-	if err != nil {
-		return nil, err
+	var dq dqueQueue[T]
+	if cfg.testQueue != nil {
+		dq = cfg.testQueue
+	} else {
+		var err error
+		dq, err = openDQue(cfg)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -268,7 +300,7 @@ func New[T any](ctx context.Context, cfg Config[T]) (*WriteBatcher[T], error) {
 // Returns nil when DQueDirPath is empty. It also applies defaults for
 // DQueItemsPerSegment (default 250 when <= 0). Turbo mode is always enabled
 // when DQueDirPath is set.
-func openDQue[T any](cfg Config[T]) (*dque.DQue[T], error) {
+func openDQue[T any](cfg Config[T]) (dqueQueue[T], error) {
 	if cfg.DQueDirPath == "" {
 		return nil, nil
 	}
@@ -276,7 +308,7 @@ func openDQue[T any](cfg Config[T]) (*dque.DQue[T], error) {
 		cfg.DQueItemsPerSegment = 250
 	}
 
-	if err := os.MkdirAll(cfg.DQueDirPath, 0755); err != nil {
+	if err := osMkdirAll(cfg.DQueDirPath, 0755); err != nil {
 		return nil, err
 	}
 
@@ -592,7 +624,7 @@ func (wb *WriteBatcher[T]) flush(ctx context.Context, batch []T, batchBytes int6
 	if err := wb.cfg.Flush(flushCtx, tx, batch); err != nil {
 		wb.totalErrors.Add(1)
 		if tx != nil {
-			if rbErr := tx.Rollback(); rbErr != nil {
+			if rbErr := rollbackTx(tx); rbErr != nil {
 				slog.Warn("writebatcher flush: rollback after FlushFunc error", "err", rbErr)
 			}
 		}
@@ -606,9 +638,9 @@ func (wb *WriteBatcher[T]) flush(ctx context.Context, batch []T, batchBytes int6
 	}
 
 	if tx != nil {
-		if err := tx.Commit(); err != nil {
+		if err := commitTx(tx); err != nil {
 			wb.totalErrors.Add(1)
-			if rbErr := tx.Rollback(); rbErr != nil {
+			if rbErr := rollbackTx(tx); rbErr != nil {
 				slog.Warn("writebatcher flush: rollback after Commit error", "err", rbErr)
 			}
 			wb.reEnqueueBatch(batch)

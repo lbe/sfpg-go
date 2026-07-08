@@ -19,11 +19,19 @@ var FS embed.FS
 //go:embed thumbs/*.sql
 var ThumbsFS embed.FS
 
+var (
+	// iofsNewFn is a testable hook for iofs.New.
+	iofsNewFn = iofs.New
+
+	// migrateNewWithSourceInstanceFn is a testable hook for migrate.NewWithSourceInstance.
+	migrateNewWithSourceInstanceFn = migrate.NewWithSourceInstance
+)
+
 // NewMigrator creates a new migrator instance from the embedded migration files.
 // It initializes the migration engine using the embedded FS and connects it to the provided database path.
 // dbPath should be the SQLite database file path (e.g., "/tmp/test.db") or ":memory:" for in-memory.
 func NewMigrator(dbPath string) (*migrate.Migrate, error) {
-	d, err := iofs.New(FS, "migrations")
+	d, err := iofsNewFn(FS, "migrations")
 	if err != nil {
 		return nil, fmt.Errorf("create migrations source: %w", err)
 	}
@@ -36,7 +44,7 @@ func NewMigrator(dbPath string) (*migrate.Migrate, error) {
 		dsn = "sqlite://" + filepath.ToSlash(dbPath)
 	}
 
-	m, err := migrate.NewWithSourceInstance("iofs", d, dsn)
+	m, err := migrateNewWithSourceInstanceFn("iofs", d, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("initialize migrator: %w", err)
 	}
@@ -46,7 +54,7 @@ func NewMigrator(dbPath string) (*migrate.Migrate, error) {
 
 // NewThumbsMigrator creates a migrator for the thumbnail blob database (thumbs.db).
 func NewThumbsMigrator(dbPath string) (*migrate.Migrate, error) {
-	d, err := iofs.New(ThumbsFS, "thumbs")
+	d, err := iofsNewFn(ThumbsFS, "thumbs")
 	if err != nil {
 		return nil, fmt.Errorf("create thumbs migrations source: %w", err)
 	}
@@ -58,7 +66,7 @@ func NewThumbsMigrator(dbPath string) (*migrate.Migrate, error) {
 		dsn = "sqlite://" + filepath.ToSlash(dbPath)
 	}
 
-	m, err := migrate.NewWithSourceInstance("iofs", d, dsn)
+	m, err := migrateNewWithSourceInstanceFn("iofs", d, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("initialize thumbs migrator: %w", err)
 	}

@@ -1,6 +1,7 @@
 package session
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -579,5 +580,277 @@ func TestManagerSetAuthenticated_NoRotationWhenAlreadyAuthenticated(t *testing.T
 	}
 	if cookies2[0].Value != oldValue {
 		t.Error("expected session cookie value to remain unchanged when already authenticated")
+	}
+}
+
+func TestIsAuthenticated_PackageLevel(t *testing.T) {
+	store := sessions.NewCookieStore([]byte("test-secret"))
+
+	t.Run("authenticated", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		rec := httptest.NewRecorder()
+		sess, _ := store.Get(req, SessionName)
+		sess.Values["authenticated"] = true
+		if err := sess.Save(req, rec); err != nil {
+			t.Fatalf("failed to save session: %v", err)
+		}
+
+		req2 := httptest.NewRequest(http.MethodGet, "/", nil)
+		for _, c := range rec.Result().Cookies() {
+			req2.AddCookie(c)
+		}
+		rec2 := httptest.NewRecorder()
+
+		if !IsAuthenticated(store, rec2, req2) {
+			t.Error("IsAuthenticated() = false, want true")
+		}
+	})
+
+	t.Run("unauthenticated", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		rec := httptest.NewRecorder()
+		sess, _ := store.Get(req, SessionName)
+		sess.Values["authenticated"] = false
+		if err := sess.Save(req, rec); err != nil {
+			t.Fatalf("failed to save session: %v", err)
+		}
+
+		req2 := httptest.NewRequest(http.MethodGet, "/", nil)
+		for _, c := range rec.Result().Cookies() {
+			req2.AddCookie(c)
+		}
+		rec2 := httptest.NewRecorder()
+
+		if IsAuthenticated(store, rec2, req2) {
+			t.Error("IsAuthenticated() = true, want false")
+		}
+	})
+
+	t.Run("invalid cookie", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.AddCookie(&http.Cookie{Name: SessionName, Value: "bad"})
+		rec := httptest.NewRecorder()
+
+		if IsAuthenticated(store, rec, req) {
+			t.Error("IsAuthenticated() = true for invalid cookie, want false")
+		}
+
+		var cleared bool
+		for _, c := range rec.Result().Cookies() {
+			if c.Name == SessionName && c.MaxAge == -1 && c.Value == "" {
+				cleared = true
+				break
+			}
+		}
+		if !cleared {
+			t.Error("expected invalid session cookie to be cleared")
+		}
+	})
+}
+
+func TestGenerateCSRFToken(t *testing.T) {
+	token := GenerateCSRFToken()
+	if token == "" {
+		t.Fatal("GenerateCSRFToken() returned empty token")
+	}
+	if len(token) != 64 {
+		t.Errorf("token length = %d, want 64", len(token))
+	}
+	isHex := func(r rune) bool {
+		return (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')
+	}
+	for _, r := range token {
+		if !isHex(r) {
+			t.Errorf("token contains non-hex character: %q", r)
+			break
+		}
+	}
+
+	token2 := GenerateCSRFToken()
+	if token == token2 {
+		t.Error("two generated tokens are equal, expected different values")
+	}
+}
+
+func TestManagerEnsureCSRFToken(t *testing.T) {
+	store := sessions.NewCookieStore([]byte("test-secret"))
+	mgr := NewManager(store, func() *OptionsConfig { return &OptionsConfig{} })
+
+	t.Run("existing token", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		rec := httptest.NewRecorder()
+		sess, _ := store.Get(req, SessionName)
+		sess.Values["csrf_token"] = "existing-token"
+		if err := sess.Save(req, rec); err != nil {
+			t.Fatalf("failed to save session: %v", err)
+		}
+
+		req2 := httptest.NewRequest(http.MethodGet, "/", nil)
+		for _, c := range rec.Result().Cookies() {
+			req2.AddCookie(c)
+		}
+		rec2 := httptest.NewRecorder()
+
+		token := mgr.EnsureCSRFToken(rec2, req2)
+		if token != "existing-token" {
+			t.Errorf("token = %q, want %q", token, "existing-token")
+		}
+		if len(rec2.Result().Cookies()) != 0 {
+			t.Error("expected no new cookie when token already exists")
+		}
+	})
+
+	t.Run("new token", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		rec := httptest.NewRecorder()
+
+		token := mgr.EnsureCSRFToken(rec, req)
+		if token == "" {
+			t.Fatal("expected non-empty token")
+		}
+		if len(token) != 64 {
+			t.Errorf("token length = %d, want 64", len(token))
+		}
+
+		cookies := rec.Result().Cookies()
+		if len(cookies) == 0 {
+			t.Fatal("expected session cookie to be set")
+		}
+	})
+
+	t.Run("invalid cookie", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.AddCookie(&http.Cookie{Name: SessionName, Value: "bad"})
+		rec := httptest.NewRecorder()
+
+		token := mgr.EnsureCSRFToken(rec, req)
+		if token == "" {
+			t.Fatal("expected non-empty token")
+		}
+
+		var cleared bool
+		for _, c := range rec.Result().Cookies() {
+			if c.Name == SessionName && c.MaxAge == -1 {
+				cleared = true
+				break
+			}
+		}
+		if !cleared {
+			t.Error("expected invalid session cookie to be cleared")
+		}
+	})
+}
+
+func TestManagerValidateCSRFToken(t *testing.T) {
+	store := sessions.NewCookieStore([]byte("test-secret"))
+	mgr := NewManager(store, func() *OptionsConfig { return &OptionsConfig{} })
+
+	t.Run("missing session token", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("csrf_token=token"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		if mgr.ValidateCSRFToken(req) {
+			t.Error("expected validation to fail when session token is missing")
+		}
+	})
+
+	t.Run("missing form token", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		rec := httptest.NewRecorder()
+		sess, _ := store.Get(req, SessionName)
+		sess.Values["csrf_token"] = "token"
+		if err := sess.Save(req, rec); err != nil {
+			t.Fatalf("failed to save session: %v", err)
+		}
+
+		req2 := httptest.NewRequest(http.MethodPost, "/", nil)
+		for _, c := range rec.Result().Cookies() {
+			req2.AddCookie(c)
+		}
+		if mgr.ValidateCSRFToken(req2) {
+			t.Error("expected validation to fail when form token is missing")
+		}
+	})
+
+	t.Run("mismatch", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		rec := httptest.NewRecorder()
+		sess, _ := store.Get(req, SessionName)
+		sess.Values["csrf_token"] = "token"
+		if err := sess.Save(req, rec); err != nil {
+			t.Fatalf("failed to save session: %v", err)
+		}
+
+		req2 := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("csrf_token=other"))
+		req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		for _, c := range rec.Result().Cookies() {
+			req2.AddCookie(c)
+		}
+		if mgr.ValidateCSRFToken(req2) {
+			t.Error("expected validation to fail when tokens do not match")
+		}
+	})
+
+	t.Run("success", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		rec := httptest.NewRecorder()
+		sess, _ := store.Get(req, SessionName)
+		sess.Values["csrf_token"] = "token"
+		if err := sess.Save(req, rec); err != nil {
+			t.Fatalf("failed to save session: %v", err)
+		}
+
+		req2 := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("csrf_token=token"))
+		req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		for _, c := range rec.Result().Cookies() {
+			req2.AddCookie(c)
+		}
+		if !mgr.ValidateCSRFToken(req2) {
+			t.Error("expected validation to succeed when tokens match")
+		}
+	})
+}
+
+func TestGenerateCSRFToken_RandReadFails(t *testing.T) {
+	oldRandRead := randRead
+	randRead = func(b []byte) (int, error) { return 0, errors.New("rand denied") }
+	t.Cleanup(func() { randRead = oldRandRead })
+
+	token := GenerateCSRFToken()
+	if token != "" {
+		t.Errorf("token = %q, want empty", token)
+	}
+}
+
+func TestManagerIsAuthenticated_InvalidCookie(t *testing.T) {
+	store := sessions.NewCookieStore([]byte("test-secret"))
+	mgr := NewManager(store, func() *OptionsConfig { return &OptionsConfig{} })
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(&http.Cookie{Name: SessionName, Value: "bad"})
+
+	if mgr.IsAuthenticated(req) {
+		t.Error("IsAuthenticated() = true for invalid cookie, want false")
+	}
+}
+
+func TestManagerIsAuthenticated_ExplicitFalse(t *testing.T) {
+	store := sessions.NewCookieStore([]byte("test-secret"))
+	mgr := NewManager(store, func() *OptionsConfig { return &OptionsConfig{} })
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	sess, _ := store.Get(req, SessionName)
+	sess.Values["authenticated"] = false
+	if err := sess.Save(req, rec); err != nil {
+		t.Fatalf("failed to save session: %v", err)
+	}
+
+	req2 := httptest.NewRequest(http.MethodGet, "/", nil)
+	for _, c := range rec.Result().Cookies() {
+		req2.AddCookie(c)
+	}
+
+	if mgr.IsAuthenticated(req2) {
+		t.Error("IsAuthenticated() = true when authenticated=false, want false")
 	}
 }

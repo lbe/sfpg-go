@@ -122,17 +122,12 @@ graph TB
 sequenceDiagram
     participant Client as Browser
     participant Router as HTTP Router
-    participant AuthMW as Auth Middleware
     participant CacheMW as Cache Middleware
     participant Handler as Handler
     participant Service as Service
     participant DB as Database
 
     Client->>Router: GET /gallery/1
-    Router->>AuthMW: Forward
-    AuthMW->>AuthMW: Check session cookie
-    AuthMW->>Router: Authenticated
-
     Router->>CacheMW: Forward
     CacheMW->>CacheMW: Check cache (key)
     alt Cache Hit
@@ -151,6 +146,8 @@ sequenceDiagram
     end
 ```
 
+Authentication is applied route-specifically (e.g., `/config`, `/dashboard`, `/server/*`) inside the mux after routing.
+
 ---
 
 ## Core Components
@@ -159,35 +156,54 @@ sequenceDiagram
 
 The application is organized into domain-driven packages under `internal/`:
 
-| Package             | Purpose                                | Key Exports                       |
-| ------------------- | -------------------------------------- | --------------------------------- |
-| **server**          | HTTP server, routing, orchestration    | `App`, handlers, middleware       |
-| **cachelite**       | HTTP response caching                  | `HTTPCacheMiddleware`, `EvictLRU` |
-| **workerpool**      | Concurrent task processing             | `Pool`, `Worker`                  |
-| **scheduler**       | Cron-like task scheduling              | `Scheduler`, `Task` interface     |
-| **queue**           | Thread-safe deque                      | `Queue`                           |
-| **writebatcher**    | Batch database operations              | `WriteBatcher`, `Config`          |
-| **dque**            | Persistent on-disk FIFO overflow queue | `New`, `Queue`                    |
-| **flock**           | Cross-platform file locking            | `Flock`                           |
-| **errors**          | Error sentinels for dque               | `ErrXxx` sentinels                |
-| **dbconnpool**      | SQLite connection pools                | `DbSQLConnPool`                   |
-| **gallerydb**       | Database queries (sqlc)                | `Queries`, `CustomQueries`        |
-| **gallerylib**      | File import / path-chain upserts       | `Importer`                        |
-| **thumbnail**       | Thumbnail generation                   | `Generator`                       |
-| **imagemeta**       | EXIF/IPTC/XMP extraction               | Metadata parsers                  |
-| **files**           | File processing pipeline               | `FileProcessor`                   |
-| **config**          | Configuration management               | `ConfigService`                   |
-| **session**         | Session & CSRF management              | `SessionManager`                  |
-| **multihandler**    | Multi-handler structured logging       | `MultiHandler`                    |
-| **profiler**        | Optional CPU/mem/block profiling       | `Start`                           |
-| **coords**          | Geographic coordinate parsing          | `Parse`                           |
-| **humanize**        | Human-readable formatting              | formatters                        |
-| **log**             | Structured logging                     | `Logger`                          |
-| **gensyncpool**     | Reset-enforcing `sync.Pool` wrappers   | `NewPool`                         |
-| **getopt**          | Config from flags/env/YAML             | config loader                     |
-| **parallelwalkdir** | Concurrent directory scanning          | `WalkFunc`                        |
-| **testutil**        | Shared test helpers                    | `Equals`, `HTMLContains`          |
-| **gen-test-files**  | Synthetic test file generation         | `Generate`                        |
+| Package                 | Purpose                                | Key Exports                        |
+| ----------------------- | -------------------------------------- | ---------------------------------- |
+| **server**              | HTTP server, routing, orchestration    | `App`, `getRouter`, middleware     |
+| **server/auth**         | Authentication service                 | `AuthService`, `Authenticate`      |
+| **server/cachebatch**   | Cache batch-load coordination          | batch loader helpers               |
+| **server/cachepreload** | Cache preload manager & tasks          | `Manager`, preload tasks           |
+| **server/config**       | Configuration management               | `Config`, `ConfigService`          |
+| **server/database**     | Database setup, migrations, pools      | `Setup`, `RecreatePoolsWithConfig` |
+| **server/files**        | File processing pipeline               | `FileProcessor`, `ProcessFile`     |
+| **server/handlers**     | Route handlers                         | `GalleryHandlers`, `AuthHandlers`  |
+| **server/interfaces**   | Dependency interfaces for handlers     | `ServerDeps`, `HandlerQueries`     |
+| **server/logging**      | Request logging helpers                | logging middleware wrappers        |
+| **server/menu**         | Hamburger menu handler                 | `MenuHandlers`                     |
+| **server/metrics**      | Runtime metrics collection             | `Collector`                        |
+| **server/middleware**   | HTTP middleware (auth, CSRF, etc.)     | `AuthMiddleware`, `CSRFProtection` |
+| **server/modulestate**  | Module active-state tracking           | `ModuleStateService`               |
+| **server/pathutil**     | Image-directory path utilities         | `RemoveImagesDirPrefix`            |
+| **server/runtime**      | Process runtime / restart management   | `RuntimeManager`                   |
+| **server/security**     | Lockout calculations                   | `CalculateLockout`, `IsLocked`     |
+| **server/session**      | Session & CSRF management              | `SessionManager`, `Manager`        |
+| **server/subsystem**    | Lifecycle management for subsystems    | `SubsystemManager`                 |
+| **server/template**     | Shared template data helpers           | `AddCommonData`                    |
+| **server/theme**        | Theme cookie handling                  | theme helpers                      |
+| **server/ui**           | Template rendering helpers             | `RenderTemplate`                   |
+| **server/validation**   | Config validation helpers              | validators                         |
+| **cachelite**           | HTTP response caching                  | `HTTPCacheMiddleware`, `EvictLRU`  |
+| **workerpool**          | Concurrent task processing             | `Pool`, `Worker`                   |
+| **scheduler**           | Cron-like task scheduling              | `Scheduler`, `Task` interface      |
+| **queue**               | Thread-safe deque                      | `Queue`                            |
+| **writebatcher**        | Batch database operations              | `WriteBatcher`, `Config`           |
+| **dque**                | Persistent on-disk FIFO overflow queue | `New`, `Queue`                     |
+| **flock**               | Cross-platform file locking            | `Flock`                            |
+| **errors**              | Error sentinels for dque               | `ErrXxx` sentinels                 |
+| **dbconnpool**          | SQLite connection pools                | `DbSQLConnPool`                    |
+| **gallerydb**           | Database queries (sqlc)                | `Queries`, `CustomQueries`         |
+| **gallerylib**          | File import / path-chain upserts       | `Importer`                         |
+| **thumbnail**           | Thumbnail generation                   | `GenerateThumbnailAndHashes`       |
+| **imagemeta**           | EXIF extraction (local `replace`)      | Metadata parsers                   |
+| **multihandler**        | Multi-handler structured logging       | `MultiHandler`                     |
+| **profiler**            | Optional CPU/mem/block profiling       | `Start`                            |
+| **coords**              | Geographic coordinate parsing          | `Parse`                            |
+| **humanize**            | Human-readable formatting              | formatters                         |
+| **log**                 | Structured logging                     | `Logger`                           |
+| **gensyncpool**         | Reset-enforcing `sync.Pool` wrappers   | `NewPool`                          |
+| **getopt**              | Config from flags/env                  | config loader                      |
+| **parallelwalkdir**     | Concurrent directory scanning          | `WalkFunc`                         |
+| **testutil**            | Shared test helpers                    | `Equals`, `HTMLContains`           |
+| **gen-test-files**      | Synthetic test file generation         | `Generate`                         |
 
 ### Component Diagram
 
@@ -200,9 +216,9 @@ graph TB
     end
 
     subgraph "Services"
-        ConfigSvc[config.ConfigService]
-        FileProc[files.FileProcessor]
-        SessionMgr[session.Manager]
+        ConfigSvc[server/config.ConfigService]
+        FileProc[server/files.FileProcessor]
+        SessionMgr[server/session.Manager]
     end
 
     subgraph "Infrastructure"
@@ -281,7 +297,7 @@ To make `BatchedWrite` items persistable, `BatchedWrite` and `files.File` implem
 
 ### Database Architecture
 
-SFPG uses SQLite with separate read-only and read-write connection pools to maximize concurrency:
+SFPG uses SQLite with separate read-only and read-write connection pools, plus a separate `thumbs.db` for thumbnail blobs, to maximize concurrency and keep large binary data out of the main database:
 
 ```mermaid
 graph TB
@@ -295,35 +311,45 @@ graph TB
         RW[Read-Write Pool<br/>configurable<br/>serialized writes]
     end
 
-    subgraph "SQLite Database"
-        DB[(sfpg.db)]
+    subgraph "SQLite Databases"
+        MainDB[(DB/sfpg.db)]
+        ThumbsDB[(DB/thumbs/thumbs.db)]
     end
 
-    subgraph "Schema Tables"
+    subgraph "Main Schema Tables"
         Files[files]
         Folders[folders]
         Thumbnails[thumbnails]
         Config[config]
         HTTPCache[http_cache]
-        Admin[admin]
         LoginAttempts[login_attempts]
+        ModuleState[module_state]
+    end
+
+    subgraph "Thumbs Schema Tables"
+        ThumbnailBlobs[thumbnail_blobs]
     end
 
     Handler -->|SELECT| RO
     Worker -->|SELECT| RO
     Worker -->|INSERT/UPDATE| RW
 
-    RO --> DB
-    RW --> DB
+    RO --> MainDB
+    RW --> MainDB
+    RW -.-> ThumbsDB
 
-    DB -.-> Files
-    DB -.-> Folders
-    DB -.-> Thumbnails
-    DB -.-> Config
-    DB -.-> HTTPCache
-    DB -.-> Admin
-    DB -.-> LoginAttempts
+    MainDB -.-> Files
+    MainDB -.-> Folders
+    MainDB -.-> Thumbnails
+    MainDB -.-> Config
+    MainDB -.-> HTTPCache
+    MainDB -.-> LoginAttempts
+    MainDB -.-> ModuleState
+    ThumbsDB -.-> ThumbnailBlobs
 ```
+
+- **Main database:** `DB/sfpg.db` holds folders, files, metadata, config, HTTP cache, and module state.
+- **Thumbnails database:** `DB/thumbs/thumbs.db` holds only `thumbnail_blobs(thumbnail_id, data)` so large JPEG blobs don't bloat the main database or its WAL.
 
 ### Connection Pool Design
 
@@ -339,21 +365,32 @@ graph TB
 Both pools share the same configurable size, controlled by the database configuration keys `db_max_pool_size` (default `100`) and `db_min_idle_connections` (default `10`), with a pool monitor interval `db_pool_monitor_interval` (default `1m`). Pool sizing is reconciled against effective values at startup/restart via `reconfigurePoolsFromConfig()`.
 
 ```go
-Read-Only Pool:  MaxConnections = db_max_pool_size  (query_only = true, WAL mode)
-Read-Write Pool: MaxConnections = db_max_pool_size  (journal_mode = WAL, _txlock = immediate)
+Read-Only Pool:  MaxConnections = db_max_pool_size  (mode=ro, WAL mode persisted by RW pool)
+Read-Write Pool: MaxConnections = db_max_pool_size  (journal_mode=WAL, _txlock=immediate)
 ```
 
 ### Database Schema
 
-| Table              | Purpose                 | Key Fields                                                   |
-| ------------------ | ----------------------- | ------------------------------------------------------------ |
-| **files**          | Image metadata          | id, folder_id, filename, mime_type, width, height, exif_json |
-| **folders**        | Directory structure     | id, path, parent_id, name                                    |
-| **thumbnails**     | Generated thumbnails    | id, file_id, size, width, height, data                       |
-| **config**         | Key-value configuration | key, value, type                                             |
-| **http_cache**     | HTTP response cache     | id, path, etag, content_length, body, headers                |
-| **admin**          | Admin credentials       | id, username, password_hash, failed_attempts, locked_until   |
-| **login_attempts** | Failed login tracking   | id, username, timestamp, ip_address                          |
+| Table               | Purpose                  | Key Fields                                                                                                                                                                                                |
+| ------------------- | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **file_paths**      | Normalized file paths    | `id`, `path` (unique)                                                                                                                                                                                     |
+| **folder_paths**    | Normalized folder paths  | `id`, `path` (unique)                                                                                                                                                                                     |
+| **files**           | Image metadata           | `id`, `folder_id`, `path_id`, `filename`, `size_bytes`, `mtime`, `md5`, `phash`, `mime_type`, `width`, `height`                                                                                           |
+| **folders**         | Directory structure      | `id`, `parent_id`, `path_id`, `name`, `mtime`, `tile_id`                                                                                                                                                  |
+| **thumbnails**      | Generated thumbnail refs | `id`, `file_id`, `size_label`, `width`, `height`, `format`                                                                                                                                                |
+| **thumbnail_blobs** | Thumbnail JPEG bytes     | `thumbnail_id`, `data` (in `thumbs.db`)                                                                                                                                                                   |
+| **exif_metadata**   | EXIF camera/location     | `file_id`, `camera_make/model`, `focal_length`, `aperture`, `iso`, `capture_date`, etc.                                                                                                                   |
+| **iptc_metadata**   | IPTC fields              | `file_id`, `title`, `description`, `keywords`, etc.                                                                                                                                                       |
+| **iptc_keywords**   | IPTC keyword rows        | `id`, `file_id`, `keyword`                                                                                                                                                                                |
+| **xmp_properties**  | XMP property rows        | `id`, `file_id`, `namespace`, `property`, `value`                                                                                                                                                         |
+| **xmp_raw**         | Raw XMP packet           | `file_id`, `raw_xml`                                                                                                                                                                                      |
+| **config**          | Key-value configuration  | `key`, `value`, `type`, `category`, `requires_restart`, `description`, `default_value`, etc.                                                                                                              |
+| **http_cache**      | HTTP response cache      | `key`, `method`, `path`, `query_string`, `encoding`, `status`, `content_type`, `cache_control`, `etag`, `last_modified`, `vary`, `body`, `content_length`, `created_at`, `expires_at`, `content_encoding` |
+| **login_attempts**  | Failed login tracking    | `username` (PK), `failed_attempts`, `locked_until`, `last_attempt_at`                                                                                                                                     |
+| **invalid_files**   | Unprocessable files      | `path`, `mtime`, `size`, `reason`, `created_at`, `updated_at`                                                                                                                                             |
+| **module_state**    | Module active state      | `name` (PK), `is_active`, `last_started_at`, `last_finished_at`                                                                                                                                           |
+
+**Views:** `folder_view`, `file_view`, `thumbnail_exists_view`, `folder_tile_exists_view` (plus quality-control views `qc_file_path_subset_file_name` and `qc_folder_path_subset_file_path`).
 
 ### Query Generation (sqlc)
 
@@ -405,57 +442,62 @@ stateDiagram-v2
 ```mermaid
 graph TB
     Request[Incoming Request] --> LogMW[Logging Middleware]
-    LogMW --> CORS[CORS Check]
-    CORS --> AuthMW[Authentication Middleware]
-    AuthMW --> CSRFMW[CSRF Middleware]
-    CSRFMW --> CacheMW[Cache Middleware]
-    CacheMW --> Handler[Route Handler]
-    Handler --> CacheMW
-    CacheMW --> Response[Response]
+    LogMW --> CacheMW[HTTP Cache Middleware]
+    CacheMW --> CompressMW[Compression Middleware]
+    CompressMW --> CSRFMW[CSRF Protection]
+    CSRFMW --> Mux[Route Mux]
+    Mux --> AuthMW[Route-Specific Auth]
+    AuthMW --> Handler[Route Handler]
+    Handler --> AuthMW
+    AuthMW --> CSRFMW
+    CSRFMW --> CompressMW
+    CompressMW --> CacheMW
+    CacheMW --> LogMW
+    LogMW --> Response[Response]
 
     style LogMW fill:#e1f5e1
-    style AuthMW fill:#ffe1e1
     style CacheMW fill:#e1f1ff
     style CSRFMW fill:#fff4e1
 ```
 
 **Middleware Order (Critical):**
 
-1. **Logging** - Log all requests first
-2. **CORS** - Check Origin header early
-3. **Authentication** - Verify session cookie
-4. **CSRF** - Validate CSRF token for unsafe methods
-5. **Cache** - Check HTTP cache before handler
-6. **Handler** - Process request
-7. **Cache (on return)** - Store response if cacheable
+1. **Logging** (outermost) - Log all requests first
+2. **HTTP Cache** - Check SQLite-backed response cache; return 304/hit if present
+3. **Compression** - Gzip/Brotli encode/decode if enabled
+4. **CSRF Protection** - Same-origin check for unsafe methods
+5. **Mux** - Route matching
+6. **Authentication** - Applied selectively to protected routes (not global)
+7. **Handler** - Process request
+
+There is no separate global "CORS" middleware.
 
 ### Route Organization
 
-Routes are organized into handler groups by domain:
+Routes are registered in `internal/server/router.go` and organized into handler groups by domain:
 
-| Handler Group         | Routes                                             | Purpose                      |
-| --------------------- | -------------------------------------------------- | ---------------------------- |
-| **AuthHandlers**      | POST /login, GET /login-form, POST /logout         | Authentication               |
-| **ConfigHandlers**    | GET+POST /config, /config/export, /config/import   | Configuration                |
-| **DashboardHandlers** | GET /dashboard                                     | Admin dashboard              |
-| **GalleryHandlers**   | /gallery, /image, /thumbnail, /lightbox, /info     | Browsing & viewing           |
-| **HealthHandlers**    | /health, /version, root redirect                   | Health & profiling           |
-| **MenuHandlers**      | GET /hamburger-menu                                | Session-aware menu rendering |
-| **ServerHandlers**    | POST /server/{shutdown,discovery,cache-batch-load} | Server management            |
-| **ThemeHandlers**     | GET /theme/modal, POST /theme                      | Theme selection              |
+| Handler Group         | Routes                                                                                                                                                                                                                                                     | Purpose                      |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
+| **AuthHandlers**      | POST /login, GET /login-form, GET /logout-form, POST /logout                                                                                                                                                                                               | Authentication               |
+| **ConfigHandlers**    | GET /config, POST /config, POST /config/themes, POST /config/increment-etag, POST /config/export/to-file, POST /config/import/preview, POST /config/import/commit, POST /config/restore-last-known-good, POST /config/restart, GET /config/export/download | Configuration                |
+| **DashboardHandlers** | GET /dashboard, GET /api/metrics                                                                                                                                                                                                                           | Admin dashboard              |
+| **GalleryHandlers**   | GET /gallery/{id}, GET /image/{id}, GET /raw-image/{id}, GET /thumbnail/file/{id}, GET /thumbnail/folder/{id}, GET /lightbox/{id}, GET /info/folder/{id}, GET /info/image/{id}                                                                             | Browsing & viewing           |
+| **HealthHandlers**    | GET /, GET /health                                                                                                                                                                                                                                         | Health & root redirect       |
+| **MenuHandlers**      | GET /hamburger-menu                                                                                                                                                                                                                                        | Session-aware menu rendering |
+| **ServerHandlers**    | POST /server/shutdown, POST /server/discovery, POST /server/cache-batch-load, POST /server/restart                                                                                                                                                         | Server management            |
+| **ThemeHandlers**     | GET /theme/modal, POST /theme                                                                                                                                                                                                                              | Theme selection              |
+| **pprof**             | GET /debug/pprof/\*                                                                                                                                                                                                                                        | Profiling (authenticated)    |
 
 **Example:**
 
 ```go
-// Gallery handlers (public, cacheable)
-router.HandleFunc("/gallery/{id}", gh.GalleryByIDHandler)       // Browse gallery
-router.HandleFunc("/image/{id}", gh.ImageByIDHandler)           // View image
-router.HandleFunc("/info/{id}", gh.InfoHandler)                // Image metadata
+// Gallery handlers (public, some cacheable)
+mux.HandleFunc("GET /gallery/{id}", app.galleryHandlers.GalleryByID)
+mux.HandleFunc("GET /image/{id}", app.galleryHandlers.ImageByID)
+mux.HandleFunc("GET /info/folder/{id}", app.galleryHandlers.InfoBoxFolder)
 
 // Config handlers (authenticated, not cacheable)
-router.HandleFunc("/config", ch.ConfigPageHandler)              // GET/POST config
-router.HandleFunc("/config/export", ch.ExportConfigHandler)     // Export YAML
-router.HandleFunc("/config/import", ch.ImportConfigHandler)     // Import YAML
+mux.Handle("GET /config", app.authMiddleware(cfgAuth(app.configHandlers.ConfigGet)))
 ```
 
 ---
@@ -489,8 +531,10 @@ flowchart TD
 **Worker Pool Configuration:**
 
 ```go
-Workers:      NumCPU - 2 (when NumCPU > 4); 2 (3-4 cores); 1 otherwise
-              // overridable via config: WorkerPoolMax / WorkerPoolMinIdle
+Max Workers:  NumCPU - 2 (when NumCPU > 4); 2 (3-4 cores); 1 otherwise
+              // overridable via config: WorkerPoolMax
+Min Workers:  4 (when NumCPU > 6); 2 (3-4 cores); 1 otherwise
+              // overridable via config: WorkerPoolMinIdle
 Queue Size:   10,000 paths
               // overridable via config: QueueSize
 Idle Timeout: 10 seconds
@@ -509,39 +553,26 @@ flowchart TD
     MIME -->|Image| Modified{Modified Since<br/>Last Processed?}
 
     Modified -->|No| Skip
-    Modified -->|Yes| Parallel[Parallel Processing]
+    Modified -->|Yes| EXIF[Extract EXIF<br/>metadata]
 
-    Parallel --> EXIF[Extract EXIF<br/>metadata]
-    Parallel --> IPTC[Extract IPTC<br/>metadata]
-    Parallel --> XMP[Extract XMP<br/>metadata]
-
-    EXIF --> Merge
-    IPTC --> Merge
-    XMP --> Merge
-
-    Merge --> ThumbGen{Generate<br/>Thumbnails}
-    ThumbGen --> Small[Small: 150x150]
-    ThumbGen --> Medium[Medium: 640x480]
-    ThumbGen --> Large[Large: 1920x1080]
-
-    Small --> WriteDB[Write to Database]
-    Medium --> WriteDB
-    Large --> WriteDB
+    EXIF --> Decode[Decode image config]
+    Decode --> ThumbGen[Generate Thumbnail]
+    ThumbGen --> WriteDB[Write to Database]
 
     WriteDB --> Done([Processing Complete])
     Skip --> Done
 
-    style Parallel fill:#ffe1e1
     style WriteDB fill:#e1f1ff
 ```
 
 **Processing Steps:**
 
-1. **MIME Detection** - Determine file type (image/jpeg, image/png, etc.)
-2. **Modification Check** - Compare `mtime` with database
-3. **Metadata Extraction** - EXIF, IPTC, XMP (parallel)
-4. **Thumbnail Generation** - 3 sizes in parallel
-5. **Database Write** - Batch insert/update
+1. **MIME Detection** - Determine file type (image/jpeg, image/png, image/webp, etc.)
+2. **Modification Check** - Compare `mtime` and `size` with database
+3. **Metadata Extraction** - EXIF only; IPTC/XMP tables exist but are not populated
+4. **Image Decode** - Read width/height via `image.DecodeConfig`
+5. **Thumbnail Generation** - Single size `"m"` (200x150 box), JPEG, stored in `thumbs.db`
+6. **Database Write** - Batch insert/update via unified WriteBatcher
 
 ### Task Scheduler
 
@@ -583,7 +614,7 @@ graph TB
 - Drift-free intervals (won't skip scheduled times)
 - Context-based cancellation (graceful shutdown)
 - Error isolation (task errors don't stop scheduler)
-- Configurable concurrency (max 5 concurrent by default)
+- Configurable concurrency (0 means `runtime.NumCPU()`; defaults to `runtime.NumCPU()` if created with 0)
 
 ---
 
@@ -639,14 +670,24 @@ graph TB
 
 **Purpose:** Persist entire HTTP responses (headers + compressed body) in SQLite
 
-**Cache Key:** `METHOD:/path?query|encoding`
+**Cache Key:** `METHOD:/path?query|HX=...|HXTarget=...|IsVariant=...|Theme=...|encoding`
+
+The key includes:
+
+- HTTP method and path
+- Query string
+- HTMX request headers (`HX-Request`, `HX-Target`, variant flag)
+- Selected theme cookie (default `dark`)
+- Normalized `Accept-Encoding` (`gzip`, `br`, or `identity`)
 
 Example:
 
 ```
-GET:/gallery/1?sort=name|gzip
-GET:/gallery/1?sort=name|br
+GET:/gallery/1?sort=name|HX=true|HXTarget=gallery-content|IsVariant=true|Theme=dark|gzip
+GET:/lightbox/1?|HX=true|HXTarget=lightbox-ui|IsVariant=true|Theme=light|br
 ```
+
+**Cacheable Routes:** `/gallery/`, `/lightbox/`, `/info/folder/`, `/info/image/`
 
 **Cache Flow:**
 
@@ -717,6 +758,7 @@ sequenceDiagram
 - Database is queried for actual size (source of truth)
 - 10% buffer added to eviction target to avoid thrashing
 - Atomic counter updated for runtime eviction calculations
+- WAL checkpointing runs after every successful batch commit and periodically (every 5 minutes or when the WAL exceeds 256 MB); `PRAGMA optimize` runs hourly
 
 ### Cache Preload
 
@@ -780,11 +822,11 @@ stateDiagram-v2
 ```mermaid
 graph TB
     subgraph "Layers"
-        L1[1. Authentication<br/>bcrypt hashed passwords]
+        L1[1. Authentication<br/>bcrypt hashed passwords stored in config]
         L2[2. Session Management<br/>HttpOnly + Secure + SameSite]
-        L3[3. CSRF Protection<br/>Token validation]
+        L3[3. CSRF Protection<br/>Origin check + token validation]
         L4[4. Path Traversal Prevention<br/>Relative paths + ID lookups]
-        L5[5. Input Validation<br/>Config & admin forms]
+        L5[5. Input Validation<br/>Config forms]
         L6[6. SQL Injection Prevention<br/>Parameterized queries]
     end
 
@@ -830,8 +872,9 @@ auth-changed
 
 **Account Lockout:**
 
+- Credentials are stored in the `config` table (keys `user` and `password`), not in a separate `admin` table
 - Threshold: 3 failed attempts
-- Duration: 1 hour (configurable)
+- Duration: configurable via `LockoutDuration` (`lockout_duration`, default 1 hour)
 - Automatic unlock after duration
 
 ### CSRF Protection
@@ -860,10 +903,11 @@ sequenceDiagram
 
 **CSRF Middleware:**
 
+- Same-origin check (`Origin` header matches request host) for unsafe methods
 - Generates token on first access
 - Token stored in session
 - All POST/PUT/DELETE/PATCH must include valid token
-- Single-use tokens (regenerated after validation)
+- Tokens are **not** single-use; the same token is reused across requests
 
 ### Path Traversal Prevention
 
@@ -909,14 +953,16 @@ flowchart LR
     subgraph "Sources"
         Defaults[Default Values]
         Database[(Database<br/>config table)]
+        YAML[YAML Files]
         ENV[Environment<br/>Variables]
         CLI[CLI Flags]
     end
 
     subgraph "Loading Process"
         M1[Merge Defaults + DB]
-        M2[Override with ENV]
-        M3[Override with CLI]
+        M2[Override with YAML]
+        M3[Override with ENV]
+        M4[Override with CLI]
         Validate[Validate Rules]
         Apply[Apply to Runtime]
     end
@@ -928,20 +974,25 @@ flowchart LR
     Defaults --> M1
     Database --> M1
     M1 --> M2
-    ENV --> M2
+    YAML --> M2
     M2 --> M3
-    CLI --> M3
-    M3 --> Validate
+    ENV --> M3
+    M3 --> M4
+    CLI --> M4
+    M4 --> Validate
     Validate --> Apply
     Apply --> Config
 ```
 
 **Precedence (highest to lowest):**
 
-1. CLI flags (`--listen-port=8080`)
-2. Environment variables (`SEPG_LISTEN_PORT=8080`)
-3. Database values (from `/config` page)
-4. Default values (hardcoded)
+1. CLI flags (`--port=8080`)
+2. Environment variables (`SFG_PORT=8080`)
+3. YAML files (`config.yaml`)
+4. Database values (from `/config` page)
+5. Default values (hardcoded)
+
+The precedence inside `getopt.Parse()` is specifically CLI > Environment. `config.Load()` then applies Defaults → Database → YAML → CLI/Env.
 
 ### Precedence Hardening Guarantees (Mar 2026)
 
@@ -1013,7 +1064,6 @@ classDiagram
         +bool SessionHttpOnly
         +bool SessionSecure
         +string SameSite
-        +int LockoutThreshold
         +int LockoutDuration
     }
 
@@ -1044,7 +1094,6 @@ stateDiagram-v2
     CheckType -->|Log directory| RestartRequired
     CheckType -->|Cache settings| RuntimeUpdate
     CheckType -->|Session settings| RuntimeUpdate
-    CheckType -->|Admin credentials| RuntimeUpdate
 
     RestartRequired --> Restart: Request process restart
     RuntimeUpdate --> Running: Apply immediately
@@ -1398,7 +1447,7 @@ go test -tags integration -race ./...
 - Comprehensive table-driven tests (285 `t.Run()` across 45 files)
 - Descriptive error messages with input/got/want context
 - Proper cleanup with `t.Cleanup()` where appropriate
-- See [GO_TESTING_CODE_REVIEW_2025-02-10.md](GO_TESTING_CODE_REVIEW_2025-02-10.md) for details
+- See `references/tdd_process.md` and `references/methodology-html-content-test-writing.md` for testing methodology details
 
 ---
 
@@ -1482,7 +1531,8 @@ Removing `font-mono` from stat values aligns them with the rest of the UI's sans
 ```
 sfpg-go/
 ├── cmd/
-│   └── sfpg/                    # Main application entry point
+│   ├── sfpg-go-dashboard/       # TUI dashboard entry point
+│   └── (main package at root)   # Main application entry point (root main.go)
 ├── docs/
 │   ├── diagrams/                # Architecture diagrams
 │   └── ARCHITECTURE.md          # This file
@@ -1499,10 +1549,10 @@ sfpg-go/
 │   ├── gallerydb/               # Database queries (sqlc)
 │   ├── gallerylib/              # File import / path-chain upserts
 │   ├── thumbnail/               # Thumbnail generation
-│   ├── imagemeta/               # EXIF/IPTC/XMP extraction
+│   ├── imagemeta/               # EXIF extraction (local replace of evanoberholster/imagemeta)
 │   ├── parallelwalkdir/         # Concurrent directory scanning
 │   ├── gensyncpool/             # Reset-enforcing sync.Pool wrappers
-│   ├── getopt/                  # Config from flags/env/YAML
+│   ├── getopt/                  # Config from flags/env
 │   ├── multihandler/            # Multi-handler structured logging
 │   ├── profiler/                # Optional CPU/mem/block profiling
 │   ├── coords/                  # Geographic coordinate parsing
@@ -1510,39 +1560,69 @@ sfpg-go/
 │   ├── log/                     # Structured logging wrappers
 │   ├── testutil/                # Shared test helpers
 │   ├── gen-test-files/          # Synthetic test file generation
-│   ├── files/                   # File processing
 │   ├── server/                  # Web server
+│   │   ├── auth/                # Authentication service
+│   │   ├── cachebatch/          # Cache batch-load coordination
+│   │   ├── cachepreload/        # Cache preload manager
+│   │   ├── config/              # Configuration management
+│   │   ├── database/            # Database setup and pools
+│   │   ├── files/               # File processing pipeline
 │   │   ├── handlers/            # Route handlers
+│   │   ├── interfaces/          # Handler dependency interfaces
+│   │   ├── logging/             # Logging helpers
+│   │   ├── menu/                # Hamburger menu handler
+│   │   ├── metrics/             # Runtime metrics
 │   │   ├── middleware/          # HTTP middleware
-│   │   ├── config/              # Configuration
-│   │   └── ...
+│   │   ├── modulestate/         # Module active-state tracking
+│   │   ├── pathutil/            # Path utilities
+│   │   ├── runtime/             # Process runtime / restart
+│   │   ├── security/            # Lockout calculations
+│   │   ├── session/             # Session & CSRF management
+│   │   ├── subsystem/           # Subsystem lifecycle
+│   │   ├── template/            # Shared template data
+│   │   ├── theme/               # Theme handling
+│   │   ├── ui/                  # Template rendering
+│   │   └── validation/          # Validation helpers
 │   └── ...
 ├── migrations/                  # Database migrations
+│   ├── migrations/              # Main database migrations
+│   └── thumbs/                  # Thumbnails database migrations
 ├── sqlc/                        # SQL query definitions
-├── web/                         # HTML templates
+├── web/                         # HTML templates and static assets
 └── scripts/                     # Utility scripts
 ```
 
 ### External Dependencies
 
-| Dependency                      | Purpose                     | License      |
-| ------------------------------- | --------------------------- | ------------ |
-| **github.com/gorilla/sessions** | Session management          | BSD-3-Clause |
-| **github.com/jmoiron/sqlx**     | SQL extensions              | MIT          |
-| **golang.org/x/net/html**       | HTML parsing                | BSD-3-Clause |
-| **golang.org/x/sync/errgroup**  | Concurrency primitives      | BSD-3-Clause |
-| **github.com/rclone/imagemeta** | EXIF/IPTC/XMP               | MIT          |
-| **github.com/htmx/htmx.go**     | HTMX integration (optional) | MIT          |
+| Dependency                                        | Purpose                           | License      |
+| ------------------------------------------------- | --------------------------------- | ------------ |
+| **github.com/andybalholm/brotli**                 | Brotli compression                | MIT          |
+| **github.com/charmbracelet/bubbles**              | TUI dashboard components          | MIT          |
+| **github.com/charmbracelet/bubbletea**            | TUI framework                     | MIT          |
+| **github.com/charmbracelet/lipgloss**             | TUI styling                       | MIT          |
+| **github.com/dop251/goja**                        | JavaScript runtime (tests)        | BSD-2-Clause |
+| **github.com/evanoberholster/imagemeta**          | EXIF metadata (replaced locally)  | MIT          |
+| **github.com/golang-migrate/migrate/v4**          | Database migrations               | MIT          |
+| **github.com/gorilla/sessions**                   | Session management                | BSD-3-Clause |
+| **github.com/ncruces/go-sqlite3**                 | SQLite driver                     | MIT          |
+| **github.com/nfnt/resize**                        | Image resizing                    | ISC          |
+| **github.com/phsym/console-slog**                 | Console slog handler              | MIT          |
+| **github.com/pkg/profile**                        | CPU/mem/block profiling           | BSD-2-Clause |
+| **github.com/playwright-community/playwright-go** | Browser E2E tests                 | MIT          |
+| **golang.org/x/crypto**                           | bcrypt password hashing           | BSD-3-Clause |
+| **golang.org/x/image**                            | WebP decode support               | BSD-3-Clause |
+| **golang.org/x/net**                              | Networking utilities              | BSD-3-Clause |
+| **golang.org/x/sync**                             | `errgroup` concurrency primitives | BSD-3-Clause |
+| **gopkg.in/yaml.v3**                              | YAML config parsing               | MIT          |
 
 ---
 
 ## Related Documentation
 
 - [Development Setup](../../README.md#development)
-- [API Documentation](../API.md)
 - [Deployment Guide](../../DEPLOYMENT.md)
 - [Configuration Reference](../../ENV_CONFIGURATION.md)
-- [Architecture Diagrams](diagrams/ARCHITECTURE_DIAGRAMS.md)
+- [Architecture Diagrams](diagrams/)
 
 ---
 

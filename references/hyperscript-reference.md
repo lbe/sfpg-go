@@ -868,7 +868,8 @@ When asking AI for Hyperscript code, include these constraints:
 ### DOM Manipulation
 
     - Prefer toggle/show/hide over direct style manipulation
-    - Use <.class/> (with angle brackets) to select all matches
+    - Use <.class/> (with angle brackets) to select all matches in `_="..."` attributes
+    - Inside `<script type="text/hyperscript">` blocks, use `querySelectorAll('.class')` instead of `<.class/>` because Go's `html/template` escapes `<` characters
     - Use "closest" for finding ancestor elements
     - Use "in me" to scope selectors to descendants
 
@@ -1021,7 +1022,7 @@ Commands:
 - Errors only: `go run ./scripts/validate-hyperscript.go -quiet web/templates`
 - JSON output: `go run ./scripts/validate-hyperscript.go -json web/templates`
 - Custom extensions: `go run ./scripts/validate-hyperscript.go -ext=".html,.tmpl,.gohtml" web/templates`
-- Local hyperscript.js: `go run ./scripts/validate-hyperscript.go -hyperscript=third_party/_hyperscript.min.js web/templates`
+- Local hyperscript.js: `go run ./scripts/validate-hyperscript.go -hyperscript=web/static/js/_hyperscript.min.js web/templates`
 
 Behavior:
 
@@ -1035,7 +1036,7 @@ Workflow:
 - Fix reported errors respecting Go `html/template` quoting rules (use `'...'` outer + `&quot;` inner), then re-run.
 - Makefile shortcut: `make validate-hyperscript`.
 
-See HYPSCRIPT_VALIDATION.md for full details.
+See `scripts/hyperscript_validation.md` for full details.
 
 ### Forward-Reference Detection
 
@@ -1067,7 +1068,7 @@ See `scripts/hyperscript_validation.md` for full details.
       log "step 2, x=" x
       if x is empty
         log "x was empty, halting"
-        halt
+        halt the event
       end
       log "step 3, continuing"
 
@@ -1076,4 +1077,4 @@ See `scripts/hyperscript_validation.md` for full details.
     on click
       log "matches .active?" (I match .active)
       log "disabled?" (my @disabled)
-      log "visible?" (my.offsetParent is not null)
+      log "visible?" (my.offsetParent exists)

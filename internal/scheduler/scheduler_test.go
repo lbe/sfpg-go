@@ -850,6 +850,187 @@ func TestRemoveTask_ExecutingTask(t *testing.T) {
 	}
 }
 
+// TestSchedulerError_Error verifies the SchedulerError message formatting and
+// sentinel pointer identity.
+func TestSchedulerError_Error(t *testing.T) {
+	err := &SchedulerError{msg: "task cannot be nil"}
+	if got := err.Error(); got != "task cannot be nil" {
+		t.Errorf("expected %q, got %q", "task cannot be nil", got)
+	}
+
+	if got := ErrNilTask.Error(); got != "task cannot be nil" {
+		t.Errorf("expected %q, got %q", "task cannot be nil", got)
+	}
+
+	// Sentinel errors are compared by pointer identity.
+	sentinel := ErrNilTask
+	if sentinel != ErrNilTask {
+		t.Error("sentinel pointer identity lost")
+	}
+}
+
+// TestStart_AlreadyRunning verifies Start returns ErrSchedulerAlreadyRunning
+// when invoked while the scheduler is already running.
+func TestStart_AlreadyRunning(t *testing.T) {
+	scheduler := NewScheduler(1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = scheduler.Start(ctx)
+	}()
+
+	for !scheduler.running.Load() {
+		time.Sleep(time.Millisecond)
+	}
+
+	if err := scheduler.Start(ctx); !errors.Is(err, ErrSchedulerAlreadyRunning) {
+		t.Errorf("expected ErrSchedulerAlreadyRunning, got: %v", err)
+	}
+
+	cancel()
+	<-done
+}
+
+// TestStart_TimerDrivenPoll verifies a future one-time task is executed when
+// the scheduler loop is driven by the timer alone (no wake signal from AddTask
+// after Start).
+func TestStart_TimerDrivenPoll(t *testing.T) {
+	scheduler := NewScheduler(1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	task := &TestTask{id: "timer-driven-task"}
+	if _, err := scheduler.AddTask(task, OneTime, time.Now().Add(50*time.Millisecond)); err != nil {
+		t.Fatalf("AddTask: %v", err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if err := scheduler.Start(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			t.Errorf("Start: %v", err)
+		}
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	<-done
+
+	if task.ExecutionCount() != 1 {
+		t.Errorf("expected task to execute exactly once, got %d", task.ExecutionCount())
+	}
+}
+
+// TestStart_WakeChannelDrainsTimer verifies that adding a task after the
+// scheduler has settled into a timer wait wakes the loop and correctly drains
+// any pending timer value before resetting.
+func TestStart_WakeChannelDrainsTimer(t *testing.T) {
+	scheduler := NewScheduler(1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if err := scheduler.Start(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			t.Errorf("Start: %v", err)
+		}
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+
+	task := &TestTask{id: "wake-channel-task"}
+	if _, err := scheduler.AddTask(task, OneTime, time.Now()); err != nil {
+		t.Fatalf("AddTask: %v", err)
+	}
+
+	for task.ExecutionCount() == 0 {
+		time.Sleep(time.Millisecond)
+	}
+
+	cancel()
+	<-done
+
+	if task.ExecutionCount() != 1 {
+		t.Errorf("expected task to execute exactly once, got %d", task.ExecutionCount())
+	}
+}
+
+// TestStart_ShutdownContextPath verifies the scheduler returns
+// ErrSchedulerShutdown when its internal shutdown context is cancelled while
+// Start is running.
+func TestStart_ShutdownContextPath(t *testing.T) {
+	origNewShutdownCtx := newShutdownCtx
+	defer func() { newShutdownCtx = origNewShutdownCtx }()
+
+	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
+	defer shutdownCancel()
+
+	newShutdownCtx = func() (context.Context, context.CancelFunc) {
+		return shutdownCtx, shutdownCancel
+	}
+
+	scheduler := NewScheduler(1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- scheduler.Start(ctx)
+	}()
+
+	task := &TestTask{id: "slow-task", sleep: 100 * time.Millisecond}
+	if _, err := scheduler.AddTask(task, OneTime, time.Now()); err != nil {
+		t.Fatalf("AddTask: %v", err)
+	}
+
+	// Wait for the task to start executing.
+	for task.execCount.Load() == 0 {
+		time.Sleep(time.Millisecond)
+	}
+
+	shutdownCancel()
+
+	err := <-done
+	if !errors.Is(err, ErrSchedulerShutdown) {
+		t.Errorf("expected ErrSchedulerShutdown, got: %v", err)
+	}
+}
+
+// TestCalculateNextRun_DefaultUsesTimeNow verifies the default branch of
+// calculateNextRun uses the timeNow seam.
+func TestCalculateNextRun_DefaultUsesTimeNow(t *testing.T) {
+	origTimeNow := timeNow
+	defer func() { timeNow = origTimeNow }()
+
+	fixedTime := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	timeNow = func() time.Time { return fixedTime }
+
+	s := NewScheduler(1)
+	got := s.calculateNextRun(fixedTime, ExecutionMode(999), 0)
+	want := fixedTime.Add(365 * 24 * time.Hour)
+	if !got.Equal(want) {
+		t.Errorf("expected %v, got %v", want, got)
+	}
+}
+
+// TestNewScheduler_NumCPUSeam verifies NewScheduler uses the numCPU seam when
+// maxConcurrentTasks is 0.
+func TestNewScheduler_NumCPUSeam(t *testing.T) {
+	origNumCPU := numCPU
+	defer func() { numCPU = origNumCPU }()
+
+	numCPU = func() int { return 42 }
+
+	s := NewScheduler(0)
+	if s.MaxConcurrentTasks != 42 {
+		t.Errorf("expected MaxConcurrentTasks to be 42, got %d", s.MaxConcurrentTasks)
+	}
+}
+
 // TestRemoveTask_RecurringTask verifies that removed recurring tasks don't run again
 func TestRemoveTask_RecurringTask(t *testing.T) {
 	scheduler := NewScheduler(1)

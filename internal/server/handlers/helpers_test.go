@@ -157,18 +157,19 @@ func (l lightboxList) GetFileViewsByFolderIDOrderByFileName(ctx context.Context,
 // mockServerDeps implements interfaces.ServerDeps for handler unit tests.
 // All methods return safe zero values; override fields for specific test behavior.
 type mockServerDeps struct {
-	HQ         interfaces.HandlerQueries
-	MQ         interfaces.MetadataQueries
-	Cfg        *config.Config
-	ImgDir     string
-	ETag       string
-	BatchLoad  interfaces.StartCacheBatchLoadResult
-	BatchErr   error
-	CSRFToken  string
-	Authed     bool
-	User       *session.User
-	LockedOut  bool
-	LockoutErr error
+	HQ            interfaces.HandlerQueries
+	MQ            interfaces.MetadataQueries
+	ConfigQueries config.ConfigQueries
+	Cfg           *config.Config
+	ImgDir        string
+	ETag          string
+	BatchLoad     interfaces.StartCacheBatchLoadResult
+	BatchErr      error
+	CSRFToken     string
+	Authed        bool
+	User          *session.User
+	LockedOut     bool
+	LockoutErr    error
 }
 
 func (m *mockServerDeps) CheckAccountLockout(ctx context.Context, username string) (bool, error) {
@@ -202,6 +203,12 @@ func (m *mockServerDeps) GetMetadataQueries(cpc *dbconnpool.CpConn) interfaces.M
 	}
 	return mockMetadataQueries{}
 }
+func (m *mockServerDeps) GetConfigQueries(cpc *dbconnpool.CpConn) config.ConfigQueries {
+	if m.ConfigQueries != nil {
+		return m.ConfigQueries
+	}
+	return cpc.Queries
+}
 func (m *mockServerDeps) GetETagVersion() string { return m.ETag }
 func (m *mockServerDeps) ImagesDir() string      { return m.ImgDir }
 
@@ -224,9 +231,6 @@ func (m *mockServerDeps) AddCommonTemplateData(w http.ResponseWriter, r *http.Re
 }
 func (m *mockServerDeps) ServerError(w http.ResponseWriter, r *http.Request, err error) {
 	http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-}
-func (m *mockServerDeps) RenderTemplate(w http.ResponseWriter, name string, data any) error {
-	return ui.RenderTemplate(w, name, data)
 }
 
 // mockMetadataQueries returns sql.ErrNoRows for all metadata queries.

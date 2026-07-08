@@ -14,5 +14,14 @@ type Generator interface {
 	GenerateThumbnailAndHashes(r io.ReadSeeker) (*bytes.Buffer, *sql.NullString, *sql.NullInt64, error)
 }
 
-// Ensure the existing function signature is compatible
-// The existing GenerateThumbnailAndHashes takes *os.File which implements io.ReadSeeker
+// generatorFunc adapts the package-level GenerateThumbnailAndHashes function to
+// the Generator interface.
+type generatorFunc func(io.ReadSeeker) (*bytes.Buffer, *sql.NullString, *sql.NullInt64, error)
+
+// GenerateThumbnailAndHashes implements Generator by calling the wrapped function.
+func (f generatorFunc) GenerateThumbnailAndHashes(r io.ReadSeeker) (*bytes.Buffer, *sql.NullString, *sql.NullInt64, error) {
+	return f(r)
+}
+
+// Compile-time check that GenerateThumbnailAndHashes can be wired into Generator.
+var _ Generator = generatorFunc(GenerateThumbnailAndHashes)

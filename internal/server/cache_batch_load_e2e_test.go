@@ -65,7 +65,7 @@ func createAppWithBatchLoadForE2E(t *testing.T) *App {
 		ModuleStateService: app.moduleStateService,
 	})
 	if app.metricsCollector != nil {
-		app.metricsCollector.SetCacheBatchLoad(&cacheBatchLoadAdapter{m: app.batchLoadManager})
+		app.metricsCollector.SetCacheBatchLoad(app.batchLoadManager)
 	}
 	return app
 }

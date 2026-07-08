@@ -2,11 +2,15 @@ package log
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/lbe/sfpg-go/internal/scheduler"
 )
 
 // TestFindLogFiles_FindsAllLogFiles verifies that findLogFiles finds all
@@ -348,5 +352,197 @@ func TestRetentionTask_Run_ExecutesRetentionCleanup(t *testing.T) {
 	// Verify active file still exists
 	if _, err := os.Stat(activeFilePath); err != nil {
 		t.Fatalf("active file should not be deleted: %v", err)
+	}
+}
+
+// mockDirEntry is a test double for os.DirEntry.
+type mockDirEntry struct {
+	name    string
+	isDir   bool
+	infoErr error
+}
+
+func (m mockDirEntry) Name() string               { return m.name }
+func (m mockDirEntry) IsDir() bool                { return m.isDir }
+func (m mockDirEntry) Type() os.FileMode          { return 0 }
+func (m mockDirEntry) Info() (os.FileInfo, error) { return &mockFileInfo{name: m.name}, m.infoErr }
+
+// mockFileInfo is a test double for os.FileInfo.
+type mockFileInfo struct{ name string }
+
+func (m *mockFileInfo) Name() string       { return m.name }
+func (m *mockFileInfo) Size() int64        { return 0 }
+func (m *mockFileInfo) Mode() os.FileMode  { return 0 }
+func (m *mockFileInfo) ModTime() time.Time { return time.Time{} }
+func (m *mockFileInfo) IsDir() bool        { return false }
+func (m *mockFileInfo) Sys() any           { return nil }
+
+// TestFindLogFiles_MissingPaths exercises error and skip paths in findLogFiles.
+func TestFindLogFiles_MissingPaths(t *testing.T) {
+	originalReadDir := osReadDir
+	t.Cleanup(func() { osReadDir = originalReadDir })
+
+	tests := []struct {
+		name       string
+		entries    []os.DirEntry
+		readDirErr error
+		wantErr    bool
+		wantNames  []string
+	}{
+		{
+			name:       "read dir error",
+			readDirErr: errors.New("read dir denied"),
+			wantErr:    true,
+		},
+		{
+			name: "directory entry skipped",
+			entries: []os.DirEntry{
+				mockDirEntry{name: "sfpg-file.log", isDir: false},
+				mockDirEntry{name: "subdirectory", isDir: true},
+			},
+			wantNames: []string{"sfpg-file.log"},
+		},
+		{
+			name: "info error skipped",
+			entries: []os.DirEntry{
+				mockDirEntry{name: "sfpg-good.log", infoErr: nil},
+				mockDirEntry{name: "sfpg-bad.log", infoErr: errors.New("info denied")},
+			},
+			wantNames: []string{"sfpg-good.log"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			osReadDir = func(string) ([]os.DirEntry, error) {
+				return tt.entries, tt.readDirErr
+			}
+
+			files, err := findLogFiles("/unused")
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if len(files) != len(tt.wantNames) {
+				t.Fatalf("expected %d files, got %d", len(tt.wantNames), len(files))
+			}
+			for i, want := range tt.wantNames {
+				if files[i].Name() != want {
+					t.Fatalf("expected file %q at index %d, got %q", want, i, files[i].Name())
+				}
+			}
+		})
+	}
+}
+
+// TestScheduleRetentionCleanup_RemoveTaskError verifies that scheduleRetentionCleanup
+// continues and schedules a new task even when removing the old task fails.
+func TestScheduleRetentionCleanup_RemoveTaskError(t *testing.T) {
+	tmpDir := t.TempDir()
+	sched := testScheduler(t)
+
+	logger, err := NewBootstrapLogger(tmpDir, sched, "x.y.z")
+	if err != nil {
+		t.Fatalf("NewBootstrapLogger should not fail: %v", err)
+	}
+	defer func() {
+		if sErr := logger.Shutdown(); sErr != nil {
+			t.Fatal(sErr)
+		}
+	}()
+
+	logger.mu.Lock()
+	logger.retentionTaskID = "non-existent-task-id"
+	logger.mu.Unlock()
+
+	originalRemoveTask := schedulerRemoveTask
+	schedulerRemoveTask = func(*scheduler.Scheduler, string) error {
+		return errors.New("remove denied")
+	}
+	t.Cleanup(func() { schedulerRemoveTask = originalRemoveTask })
+
+	taskID, err := scheduleRetentionCleanup(logger, 7, sched)
+	if err != nil {
+		t.Fatalf("scheduleRetentionCleanup should not fail: %v", err)
+	}
+	if taskID == "" {
+		t.Fatal("expected non-empty task ID")
+	}
+}
+
+// TestScheduleRetentionCleanup_RemoveTaskSuccess verifies that scheduleRetentionCleanup
+// removes an existing task and schedules a new one with a different ID.
+func TestScheduleRetentionCleanup_RemoveTaskSuccess(t *testing.T) {
+	tmpDir := t.TempDir()
+	sched := testScheduler(t)
+
+	logger, err := NewBootstrapLogger(tmpDir, sched, "x.y.z")
+	if err != nil {
+		t.Fatalf("NewBootstrapLogger should not fail: %v", err)
+	}
+	defer func() {
+		if sErr := logger.Shutdown(); sErr != nil {
+			t.Fatal(sErr)
+		}
+	}()
+
+	firstID, err := scheduleRetentionCleanup(logger, 7, sched)
+	if err != nil {
+		t.Fatalf("scheduleRetentionCleanup should not fail: %v", err)
+	}
+	if firstID == "" {
+		t.Fatal("expected non-empty first task ID")
+	}
+
+	logger.mu.Lock()
+	logger.retentionTaskID = firstID
+	logger.mu.Unlock()
+
+	secondID, err := scheduleRetentionCleanup(logger, 7, sched)
+	if err != nil {
+		t.Fatalf("scheduleRetentionCleanup should not fail: %v", err)
+	}
+	if secondID == "" {
+		t.Fatal("expected non-empty second task ID")
+	}
+	if secondID == firstID {
+		t.Fatal("expected new task ID to differ from the old task ID")
+	}
+}
+
+// TestScheduleRetentionCleanup_AddTaskError verifies that scheduleRetentionCleanup
+// returns an error when adding the retention task fails.
+func TestScheduleRetentionCleanup_AddTaskError(t *testing.T) {
+	tmpDir := t.TempDir()
+	sched := testScheduler(t)
+
+	logger, err := NewBootstrapLogger(tmpDir, sched, "x.y.z")
+	if err != nil {
+		t.Fatalf("NewBootstrapLogger should not fail: %v", err)
+	}
+	defer func() {
+		if sErr := logger.Shutdown(); sErr != nil {
+			t.Fatal(sErr)
+		}
+	}()
+
+	originalAddTask := schedulerAddTask
+	schedulerAddTask = func(*scheduler.Scheduler, scheduler.Task, scheduler.ExecutionMode, time.Time) (string, error) {
+		return "", errors.New("add denied")
+	}
+	t.Cleanup(func() { schedulerAddTask = originalAddTask })
+
+	_, err = scheduleRetentionCleanup(logger, 7, sched)
+	if err == nil {
+		t.Fatal("expected error when AddTask fails, got nil")
+	}
+	if !strings.Contains(err.Error(), "failed to add retention task to scheduler") {
+		t.Fatalf("expected error to wrap %q, got %v", "failed to add retention task to scheduler", err)
 	}
 }

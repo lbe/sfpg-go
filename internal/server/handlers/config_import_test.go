@@ -313,6 +313,98 @@ func TestConfigHandlers_ImportPreview_MultipartSuccess(t *testing.T) {
 	}
 }
 
+func TestConfigHandlers_ImportCommit_ApplyValidationError(t *testing.T) {
+	if err := ui.ParseTemplates(web.FS); err != nil {
+		t.Fatalf("ParseTemplates failed: %v", err)
+	}
+
+	mockSvc := &mockConfigServiceForConfig{
+		validateFunc: func(cfg *config.Config) error {
+			return errors.New("invalid config")
+		},
+	}
+	ch := setupTestConfigHandlers(t, mockSvc, &mockAuthServiceForConfig{})
+	ch.SessionManager.(*mockSessionManagerAuth).authenticated = true
+
+	req := httptest.NewRequest(http.MethodPost, "/config/import/commit", strings.NewReader("yaml=site_name: Test"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+
+	ch.ImportConfigCommitHandler(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status 400, got %d", w.Code)
+	}
+	body := strings.TrimSpace(w.Body.String())
+	if !strings.HasPrefix(body, "Import failed:") {
+		t.Errorf("expected Import failed error, got %s", body)
+	}
+}
+
+func TestConfigHandlers_ImportCommit_ApplyError(t *testing.T) {
+	if err := ui.ParseTemplates(web.FS); err != nil {
+		t.Fatalf("ParseTemplates failed: %v", err)
+	}
+
+	mockSvc := &mockConfigServiceForConfig{
+		loadFunc: func(ctx context.Context) (*config.Config, error) {
+			return config.DefaultConfig(), nil
+		},
+		saveFunc: func(ctx context.Context, cfg *config.Config) error {
+			return errors.New("persist failed")
+		},
+	}
+	ch := setupTestConfigHandlers(t, mockSvc, &mockAuthServiceForConfig{})
+	ch.SessionManager.(*mockSessionManagerAuth).authenticated = true
+
+	req := httptest.NewRequest(http.MethodPost, "/config/import/commit", strings.NewReader("yaml=site_name: Test"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+
+	ch.ImportConfigCommitHandler(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected status 500, got %d", w.Code)
+	}
+	body := strings.TrimSpace(w.Body.String())
+	if !strings.Contains(body, "Import failed: unable to persist config") {
+		t.Errorf("expected persist error, got %s", body)
+	}
+}
+
+func TestConfigHandlers_ImportCommit_RestartRequired(t *testing.T) {
+	if err := ui.ParseTemplates(web.FS); err != nil {
+		t.Fatalf("ParseTemplates failed: %v", err)
+	}
+
+	current := config.DefaultConfig()
+	current.ListenerPort = 8081
+	mockSvc := &mockConfigServiceForConfig{
+		loadFunc: func(ctx context.Context) (*config.Config, error) {
+			return current, nil
+		},
+	}
+	ch := setupTestConfigHandlers(t, mockSvc, &mockAuthServiceForConfig{})
+	ch.SessionManager.(*mockSessionManagerAuth).authenticated = true
+
+	req := httptest.NewRequest(http.MethodPost, "/config/import/commit", strings.NewReader("yaml=listener-port: 9090"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+
+	ch.ImportConfigCommitHandler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+	doc, err := testutil.ParseHTML(w.Body)
+	if err != nil {
+		t.Fatalf("parse HTML: %v", err)
+	}
+	if testutil.FindElementByID(doc, "config-restart-badge") == nil {
+		t.Error("expected restart-initiated alert #config-restart-badge")
+	}
+}
+
 func TestConfigHandlers_ImportCommit_LoadError(t *testing.T) {
 	if err := ui.ParseTemplates(web.FS); err != nil {
 		t.Fatalf("ParseTemplates failed: %v", err)

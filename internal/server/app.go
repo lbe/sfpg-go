@@ -8,16 +8,19 @@ import (
 	"html/template"
 	"io/fs"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
 	"time"
 
+	"github.com/lbe/sfpg-go/internal/dbconnpool"
 	"github.com/lbe/sfpg-go/internal/gallerydb"
 	"github.com/lbe/sfpg-go/internal/gallerylib" // Added for ImporterFactory
 	"github.com/lbe/sfpg-go/internal/getopt"
 	"github.com/lbe/sfpg-go/internal/log"
 	"github.com/lbe/sfpg-go/internal/profiler"
+	"github.com/lbe/sfpg-go/internal/scheduler"
 	"github.com/lbe/sfpg-go/internal/server/cachebatch"
 	"github.com/lbe/sfpg-go/internal/server/cachepreload"
 	"github.com/lbe/sfpg-go/internal/server/config"
@@ -33,6 +36,12 @@ import (
 const (
 	// SQLiteDriverName is the name of the SQLite driver to use
 	SQLiteDriverName = "sqlite3"
+)
+
+// Test hooks for New (nil in production).
+var (
+	testHookNewParseTemplates func(fs.FS) error
+	testHookNewExit           func(code int)
 )
 
 // App holds the shared state and resources for the entire application.
@@ -53,6 +62,40 @@ type App struct {
 
 	logger *log.Logger // Logger manages all logging functionality including rollover and retention
 	opt    getopt.Opt
+
+	// Test seams (nil in production).
+
+	// testHookGetGalleryStatistics delegates getGalleryStatistics to this function
+	// instead of querying the database.
+	testHookGetGalleryStatistics func(ctx context.Context) (GalleryStats, error)
+	// testHookServe replaces App.Serve for tests.
+	testHookServe func(handler http.Handler, addr string) error
+	// testHookProfilerStart replaces profiler.Start for tests.
+	testHookProfilerStart func(cfg profiler.Config) (stop func(), err error)
+	// testHookMemoryReclaimer replaces the memoryReclaimer goroutine for tests.
+	testHookMemoryReclaimer func(cfg MemoryReclaimerConfig)
+	// testHookModuleStateActive replaces moduleStateService.IsActive in StartCacheBatchLoad.
+	testHookModuleStateActive func() (bool, error)
+	// testHookBatchLoadManagerRun replaces batchLoadManager.Run in StartCacheBatchLoad.
+	testHookBatchLoadManagerRun func(ctx context.Context) error
+	// testHookGetLastStartedAt replaces moduleStateService.GetLastStartedAt in Run no-discovery branch.
+	testHookGetLastStartedAt func(ctx context.Context, module string) (int64, bool, error)
+	// testHookAddCommonDataIsActive replaces moduleStateService.IsActive in AddCommonTemplateData.
+	testHookAddCommonDataIsActive func(ctx context.Context, name string) (bool, error)
+	// testHookAddCommonDataLastStarted replaces moduleStateService.GetLastStartedAt in AddCommonTemplateData.
+	testHookAddCommonDataLastStarted func(ctx context.Context, name string) (int64, bool, error)
+	// testHookFallbackConfig supplies the config used when loadConfig fails in Run.
+	testHookFallbackConfig func() *config.Config
+	// testHookConfigService replaces config.NewService(...) in setDB and reconfigurePoolsFromConfig.
+	testHookConfigService config.ConfigService
+	// testHookLoadConfig replaces config.Load in loadConfig.
+	testHookLoadConfig func() (*config.Config, error)
+	// testHookExecutable replaces os.Executable() in setRootDir.
+	testHookExecutable func() (string, error)
+	// testHookSetupBootstrapLogging replaces logging.SetupBootstrap in setupBootstrapLogging.
+	testHookSetupBootstrapLogging func(rootDir string, scheduler *scheduler.Scheduler, version string) (*log.Logger, error)
+	// testHookDatabaseSetup replaces database.Setup in InitForUnlock/InitForIncrementETag.
+	testHookDatabaseSetup func(ctx context.Context, rootDir string, cfg *config.Config) (database.DatabasePaths, *dbconnpool.DbSQLConnPool, *dbconnpool.DbSQLConnPool, error)
 }
 
 // New creates and initializes a new App instance. It sets up the application
@@ -77,11 +120,21 @@ func New(opt getopt.Opt, version string) *App {
 	}
 
 	// Initialize templates using the embedded filesystem
-	if err := ui.ParseTemplates(web.FS); err != nil {
+	var parseErr error
+	if testHookNewParseTemplates != nil {
+		parseErr = testHookNewParseTemplates(web.FS)
+	} else {
+		parseErr = ui.ParseTemplates(web.FS)
+	}
+	if parseErr != nil {
 		// We use fmt.Printf because the logger might not be fully initialized yet
 		// and this is a fatal startup error.
-		fmt.Printf("failed to parse templates: %v\n", err)
-		os.Exit(1)
+		fmt.Printf("failed to parse templates: %v\n", parseErr)
+		if testHookNewExit != nil {
+			testHookNewExit(1)
+		} else {
+			os.Exit(1)
+		}
 	}
 
 	return app
@@ -137,7 +190,13 @@ func (app *App) setRootDir(d *string) {
 	}
 
 	// Get the directory where the executable is located
-	exePath, err := os.Executable()
+	var exePath string
+	var err error
+	if app.testHookExecutable != nil {
+		exePath, err = app.testHookExecutable()
+	} else {
+		exePath, err = os.Executable()
+	}
 	if err != nil {
 		slog.Error("failed to get executable path", "err", err)
 		panic("main")
@@ -148,11 +207,23 @@ func (app *App) setRootDir(d *string) {
 // setupBootstrapLogging delegates to the logging package.
 func (app *App) setupBootstrapLogging() {
 	var err error
-	app.logger, err = logging.SetupBootstrap(app.rootDir, app.scheduler, app.version)
+	if app.testHookSetupBootstrapLogging != nil {
+		app.logger, err = app.testHookSetupBootstrapLogging(app.rootDir, app.scheduler, app.version)
+	} else {
+		app.logger, err = logging.SetupBootstrap(app.rootDir, app.scheduler, app.version)
+	}
 	if err != nil {
 		slog.Error("failed to setup bootstrap logging", "err", err)
 		panic("main")
 	}
+}
+
+// setupDatabase initializes database pools for minimal startup paths.
+func (app *App) setupDatabase(ctx context.Context, cfg *config.Config) (database.DatabasePaths, *dbconnpool.DbSQLConnPool, *dbconnpool.DbSQLConnPool, error) {
+	if app.testHookDatabaseSetup != nil {
+		return app.testHookDatabaseSetup(ctx, app.rootDir, cfg)
+	}
+	return database.Setup(ctx, app.rootDir, cfg)
 }
 
 // reloadLoggingFromConfig delegates to the logging package.
@@ -188,7 +259,13 @@ func (app *App) setConfigDefaults() {
 
 // loadConfig delegates to the config package.
 func (app *App) loadConfig() error {
-	cfg, err := config.Load(app.ctx, app.rootDir, app.configService, app.opt)
+	var cfg *config.Config
+	var err error
+	if app.testHookLoadConfig != nil {
+		cfg, err = app.testHookLoadConfig()
+	} else {
+		cfg, err = config.Load(app.ctx, app.rootDir, app.configService, app.opt)
+	}
 
 	app.SetConfig(cfg)
 	app.logLoadedConfigDiagnostics(cfg)
@@ -321,29 +398,38 @@ func (app *App) ApplyConfig() {
 func (app *App) StartCacheBatchLoad() (interfaces.StartCacheBatchLoadResult, error) {
 	ctx := app.getCtx()
 
-	if app.moduleStateService != nil {
-		active, err := app.moduleStateService.IsActive(ctx, "discovery")
-		if err != nil {
-			return interfaces.StartCacheBatchLoadResult{}, err
-		}
-		if active {
-			return interfaces.StartCacheBatchLoadResult{
-				Blocked: true,
-				Message: "Cache batch load blocked: discovery active",
-			}, nil
-		}
+	var active bool
+	var err error
+	if app.testHookModuleStateActive != nil {
+		active, err = app.testHookModuleStateActive()
+	} else if app.moduleStateService != nil {
+		active, err = app.moduleStateService.IsActive(ctx, "discovery")
+	}
+	if err != nil {
+		return interfaces.StartCacheBatchLoadResult{}, err
+	}
+	if active {
+		return interfaces.StartCacheBatchLoadResult{
+			Blocked: true,
+			Message: "Cache batch load blocked: discovery active",
+		}, nil
 	}
 
-	if app.batchLoadManager == nil {
+	if app.batchLoadManager == nil && app.testHookBatchLoadManagerRun == nil {
 		return interfaces.StartCacheBatchLoadResult{
 			Blocked: false,
 			Message: "Cache batch load not available",
 		}, nil
 	}
 
-	mgr := app.batchLoadManager
 	go func() {
-		if err := mgr.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		var err error
+		if app.testHookBatchLoadManagerRun != nil {
+			err = app.testHookBatchLoadManagerRun(ctx)
+		} else {
+			err = app.batchLoadManager.Run(ctx)
+		}
+		if err != nil && !errors.Is(err, context.Canceled) {
 			slog.Warn("cache batch load run failed", "err", err)
 		}
 	}()
@@ -372,16 +458,11 @@ func (app *App) Shutdown() {
 		}
 		app.wg.Wait()
 
-		if app.preloadManager != nil {
-			app.preloadManager.Shutdown()
-		}
+		app.SubsystemManager.Shutdown()
 		if app.scheduler != nil {
 			if err := app.scheduler.Shutdown(); err != nil {
 				slog.Error("error shutting down scheduler", "err", err)
 			}
-		}
-		if app.fileProcessor != nil {
-			app.fileProcessor.Close()
 		}
 
 		if app.dbRoPool != nil {
@@ -421,23 +502,14 @@ func (app *App) refreshGalleryStatsCache(ctx context.Context, discoveryLastStart
 	if err != nil {
 		return GalleryStats{}, err
 	}
-	app.galleryStatsMu.Lock()
-	app.galleryStatsCache = &stats
-	app.galleryStatsAt = discoveryLastStartedAt
-	app.galleryStatsMu.Unlock()
+	app.SetGalleryStatsCache(&stats, discoveryLastStartedAt)
 	return stats, nil
 }
 
 // getGalleryStatsCached returns cached stats if valid for current discoveryLastStartedAt.
 // If invalid or stale, returns nil and caller should call refreshGalleryStatsCache.
 func (app *App) getGalleryStatsCached(discoveryLastStartedAt int64) *GalleryStats {
-	app.galleryStatsMu.RLock()
-	defer app.galleryStatsMu.RUnlock()
-	if app.galleryStatsCache == nil || app.galleryStatsAt != discoveryLastStartedAt {
-		return nil
-	}
-	copy := *app.galleryStatsCache
-	return &copy
+	return app.GetGalleryStatsCached(discoveryLastStartedAt)
 }
 
 // MemoryReclaimerConfig holds the configuration for the memory reclaimer.
@@ -492,7 +564,7 @@ func (app *App) InitForUnlock() error {
 	app.setRootDir(nil)
 	var err error
 	// Setup database with nil config (will use defaults for pool sizes)
-	app.dbPaths, app.dbRwPool, app.dbRoPool, err = database.Setup(app.ctx, app.rootDir, nil)
+	app.dbPaths, app.dbRwPool, app.dbRoPool, err = app.setupDatabase(app.ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to setup database for unlock: %w", err)
 	}
@@ -521,13 +593,17 @@ func (app *App) InitForIncrementETag(opt getopt.Opt) error {
 
 	// Setup database with nil config (loads defaults)
 	var err error
-	app.dbPaths, app.dbRwPool, app.dbRoPool, err = database.Setup(app.ctx, app.rootDir, nil)
+	app.dbPaths, app.dbRwPool, app.dbRoPool, err = app.setupDatabase(app.ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to setup database for increment-etag: %w", err)
 	}
 
 	// Initialize config service
-	app.configService = config.NewService(app.dbRwPool, app.dbRoPool)
+	if app.testHookConfigService != nil {
+		app.configService = app.testHookConfigService
+	} else {
+		app.configService = config.NewService(app.dbRwPool, app.dbRoPool)
+	}
 
 	// Ensure defaults are set (creates config entries if missing)
 	if err := app.configService.EnsureDefaults(app.ctx, app.rootDir); err != nil {

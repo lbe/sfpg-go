@@ -1,6 +1,9 @@
 package config
 
 import (
+	"context"
+	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -60,4 +63,177 @@ func TestImportedConfigReportsStructuredDurationErrors(t *testing.T) {
 			t.Errorf("CacheMaxTime = %v, want %v", cfg.CacheMaxTime, 90*time.Minute)
 		}
 	})
+}
+
+func TestApplyValidationError(t *testing.T) {
+	sentinel := errors.New("port invalid")
+	err := &ApplyValidationError{err: sentinel}
+
+	if got := err.Error(); got != sentinel.Error() {
+		t.Errorf("Error() = %q, want %q", got, sentinel.Error())
+	}
+	if !errors.Is(err, sentinel) {
+		t.Error("errors.Is(err, sentinel) = false, want true")
+	}
+
+	var nilErr *ApplyValidationError
+	if got := nilErr.Error(); got != "configuration validation failed" {
+		t.Errorf("nil Error() = %q, want %q", got, "configuration validation failed")
+	}
+	if got := nilErr.Unwrap(); got != nil {
+		t.Errorf("nil Unwrap() = %v, want nil", got)
+	}
+	if errors.Is(nilErr, sentinel) {
+		t.Error("errors.Is(nilErr, sentinel) = true, want false")
+	}
+}
+
+func TestApplyPersistenceError(t *testing.T) {
+	sentinel := errors.New("db down")
+	err := &ApplyPersistenceError{err: sentinel}
+
+	if got := err.Error(); got != sentinel.Error() {
+		t.Errorf("Error() = %q, want %q", got, sentinel.Error())
+	}
+	if !errors.Is(err, sentinel) {
+		t.Error("errors.Is(err, sentinel) = false, want true")
+	}
+
+	var nilErr *ApplyPersistenceError
+	if got := nilErr.Error(); got != "failed to persist configuration" {
+		t.Errorf("nil Error() = %q, want %q", got, "failed to persist configuration")
+	}
+	if got := nilErr.Unwrap(); got != nil {
+		t.Errorf("nil Unwrap() = %v, want nil", got)
+	}
+	if errors.Is(nilErr, sentinel) {
+		t.Error("errors.Is(nilErr, sentinel) = true, want false")
+	}
+}
+
+func TestApplyConfig(t *testing.T) {
+	ctx := context.Background()
+	current := DefaultConfig()
+	current.ListenerPort = 8081
+
+	t.Run("happy path with restart required", func(t *testing.T) {
+		svc := &fakeService{}
+		candidate := DefaultConfig()
+		candidate.ListenerPort = 9090
+
+		result, err := ApplyConfig(ctx, svc, current, candidate)
+		if err != nil {
+			t.Fatalf("ApplyConfig unexpected error: %v", err)
+		}
+		if result.Config.ListenerPort != candidate.ListenerPort {
+			t.Errorf("Config.ListenerPort = %d, want %d", result.Config.ListenerPort, candidate.ListenerPort)
+		}
+		if !result.RestartRequired {
+			t.Error("RestartRequired = false, want true")
+		}
+		if !slices.Contains(result.RestartRequiredKeys, "listener_port") {
+			t.Errorf("RestartRequiredKeys = %v, want containing %q", result.RestartRequiredKeys, "listener_port")
+		}
+	})
+
+	t.Run("no restart required", func(t *testing.T) {
+		svc := &fakeService{}
+		candidate := DefaultConfig()
+		candidate.SiteName = "Changed Site Name"
+
+		result, err := ApplyConfig(ctx, svc, current, candidate)
+		if err != nil {
+			t.Fatalf("ApplyConfig unexpected error: %v", err)
+		}
+		if result.RestartRequired {
+			t.Error("RestartRequired = true, want false")
+		}
+		if len(result.RestartRequiredKeys) != 0 {
+			t.Errorf("RestartRequiredKeys = %v, want empty", result.RestartRequiredKeys)
+		}
+	})
+
+	t.Run("validation error", func(t *testing.T) {
+		sentinel := errors.New("invalid")
+		svc := &fakeService{validateErr: sentinel}
+		candidate := DefaultConfig()
+
+		_, err := ApplyConfig(ctx, svc, current, candidate)
+		if err == nil {
+			t.Fatal("ApplyConfig expected error, got nil")
+		}
+		var applyErr *ApplyValidationError
+		if !errors.As(err, &applyErr) {
+			t.Errorf("err type = %T, want *ApplyValidationError", err)
+		}
+		if !errors.Is(err, sentinel) {
+			t.Error("errors.Is(err, sentinel) = false, want true")
+		}
+	})
+
+	t.Run("persistence error", func(t *testing.T) {
+		sentinel := errors.New("db down")
+		svc := &fakeService{saveErr: sentinel}
+		candidate := DefaultConfig()
+
+		_, err := ApplyConfig(ctx, svc, current, candidate)
+		if err == nil {
+			t.Fatal("ApplyConfig expected error, got nil")
+		}
+		var applyErr *ApplyPersistenceError
+		if !errors.As(err, &applyErr) {
+			t.Errorf("err type = %T, want *ApplyPersistenceError", err)
+		}
+		if !errors.Is(err, sentinel) {
+			t.Error("errors.Is(err, sentinel) = false, want true")
+		}
+	})
+
+	t.Run("nil service", func(t *testing.T) {
+		candidate := DefaultConfig()
+		_, err := ApplyConfig(ctx, nil, current, candidate)
+		if err == nil {
+			t.Error("ApplyConfig(nil service) expected error, got nil")
+		}
+	})
+
+	t.Run("nil current", func(t *testing.T) {
+		svc := &fakeService{}
+		candidate := DefaultConfig()
+		_, err := ApplyConfig(ctx, svc, nil, candidate)
+		if err == nil {
+			t.Error("ApplyConfig(nil current) expected error, got nil")
+		}
+	})
+
+	t.Run("nil candidate", func(t *testing.T) {
+		svc := &fakeService{}
+		_, err := ApplyConfig(ctx, svc, current, nil)
+		if err == nil {
+			t.Error("ApplyConfig(nil candidate) expected error, got nil")
+		}
+	})
+}
+
+// TestNormalizePath covers path normalization edge cases.
+func TestNormalizePath(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"empty string", "", ""},
+		{"whitespace only", "   ", ""},
+		{"clean path", "foo/bar/../baz", "foo/baz"},
+		{"trim and clean", "  /tmp/../var/log  ", "/var/log"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := normalizePath(tt.input)
+			if got != tt.expected {
+				t.Errorf("normalizePath(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
 }

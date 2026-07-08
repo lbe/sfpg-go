@@ -12,6 +12,21 @@ import (
 	"github.com/lbe/sfpg-go/internal/scheduler"
 )
 
+var (
+	// osReadDir is a testable hook for os.ReadDir.
+	osReadDir = os.ReadDir
+
+	// schedulerAddTask is a testable hook for (*scheduler.Scheduler).AddTask.
+	schedulerAddTask = func(sched *scheduler.Scheduler, task scheduler.Task, mode scheduler.ExecutionMode, startTime time.Time) (string, error) {
+		return sched.AddTask(task, mode, startTime)
+	}
+
+	// schedulerRemoveTask is a testable hook for (*scheduler.Scheduler).RemoveTask.
+	schedulerRemoveTask = func(sched *scheduler.Scheduler, taskID string) error {
+		return sched.RemoveTask(taskID)
+	}
+)
+
 // CleanupOldLogs removes log files exceeding the retention count.
 // It never deletes the active log file.
 func CleanupOldLogs(logDir string, activeFilePath string, retentionCount int) error {
@@ -54,7 +69,7 @@ func CleanupOldLogs(logDir string, activeFilePath string, retentionCount int) er
 
 // findLogFiles finds all log files matching the pattern sfpg-*.log in the given directory.
 func findLogFiles(logDir string) ([]os.FileInfo, error) {
-	entries, err := os.ReadDir(logDir)
+	entries, err := osReadDir(logDir)
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +116,7 @@ func (t *RetentionTask) Run(ctx context.Context) error {
 func scheduleRetentionCleanup(logger *Logger, logRetentionCount int, sched *scheduler.Scheduler) (string, error) {
 	// Remove old task if it exists
 	if logger.retentionTaskID != "" {
-		if err := sched.RemoveTask(logger.retentionTaskID); err != nil {
+		if err := schedulerRemoveTask(sched, logger.retentionTaskID); err != nil {
 			// Log warning but continue - add new task anyway
 			slog.Warn("failed to remove old retention task", "task_id", logger.retentionTaskID, "err", err)
 		}
@@ -117,7 +132,7 @@ func scheduleRetentionCleanup(logger *Logger, logRetentionCount int, sched *sche
 		logRetentionCount: logRetentionCount,
 	}
 
-	taskID, err := sched.AddTask(task, scheduler.Daily, startTime)
+	taskID, err := schedulerAddTask(sched, task, scheduler.Daily, startTime)
 	if err != nil {
 		return "", fmt.Errorf("failed to add retention task to scheduler: %w", err)
 	}

@@ -122,9 +122,35 @@ func setUsageExit(fn func(string)) {
 	usageExit = fn
 }
 
+// osGOOS is a testable hook for runtime.GOOS.
+var osGOOS = func() string { return runtime.GOOS }
+
+// getOsGOOS returns the current osGOOS function for testing.
+func getOsGOOS() func() string {
+	return osGOOS
+}
+
+// setOsGOOS sets the osGOOS function for testing.
+func setOsGOOS(fn func() string) {
+	osGOOS = fn
+}
+
+// osExecutable is a testable hook for os.Executable.
+var osExecutable = os.Executable
+
+// getOsExecutable returns the current osExecutable function for testing.
+func getOsExecutable() func() (string, error) {
+	return osExecutable
+}
+
+// setOsExecutable sets the osExecutable function for testing.
+func setOsExecutable(fn func() (string, error)) {
+	osExecutable = fn
+}
+
 // Phase 1.1: getExecutableDir returns the directory of the running executable.
 func getExecutableDir() (string, error) {
-	ex, err := os.Executable()
+	ex, err := osExecutable()
 	if err != nil {
 		return "", err
 	}
@@ -133,7 +159,7 @@ func getExecutableDir() (string, error) {
 
 // Phase 1.2: getPlatformConfigDir returns the platform-specific config directory.
 func getPlatformConfigDir() (string, error) {
-	if runtime.GOOS == "windows" {
+	if osGOOS() == "windows" {
 		appData := os.Getenv("APPDATA")
 		if appData == "" {
 			return "", fmt.Errorf("APPDATA environment variable not set")

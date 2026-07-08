@@ -153,6 +153,7 @@ func (q *Queue[T]) AddBack(item T) error {
 	q.buf[q.tail] = item
 	q.tail = (q.tail + 1) & (len(q.buf) - 1)
 	q.size++
+	q.ctAddBack++
 	return nil
 }
 
@@ -172,6 +173,7 @@ func (q *Queue[T]) AddFront(item T) error {
 	q.head = (q.head - 1 + len(q.buf)) & (len(q.buf) - 1)
 	q.buf[q.head] = item
 	q.size++
+	q.ctAddFront++
 	return nil
 }
 
@@ -197,6 +199,7 @@ func (q *Queue[T]) RemoveFront() (T, error) {
 	q.buf[q.head] = zero // GC
 	q.head = (q.head + 1) & (len(q.buf) - 1)
 	q.size--
+	q.ctRemoveFront++
 	q.shrinkIfNeeded()
 	return item, nil
 }
@@ -223,6 +226,7 @@ func (q *Queue[T]) RemoveBack() (T, error) {
 	item := q.buf[q.tail]
 	q.buf[q.tail] = zero // GC
 	q.size--
+	q.ctRemoveBack++
 	q.shrinkIfNeeded()
 	return item, nil
 }

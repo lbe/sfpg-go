@@ -1,5 +1,7 @@
 # HTMX Reference for AI Context
 
+> **Project note:** This file is a generic HTMX cheat sheet. For project-specific patterns actually used in SFPG templates (e.g., `hx-sync`, `hx-select`, `hx-vals` for CSRF tokens, polling), see `web/templates/` and `references/hyperscript-reference.md`.
+
 ## Overview
 
 HTMX extends HTML with attributes that enable AJAX requests, CSS transitions, WebSockets, and Server-Sent Events directly in markup. Responses are HTML fragments, not JSON.

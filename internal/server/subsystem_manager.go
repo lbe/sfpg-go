@@ -21,6 +21,17 @@ import (
 	"github.com/lbe/sfpg-go/internal/workerpool"
 )
 
+// preloadManager is the subset of cachepreload.PreloadManager used by SubsystemManager.
+type preloadManager interface {
+	Configure(cfg cachepreload.PreloadConfig)
+	IsEnabled() bool
+	SetEnabled(enabled bool)
+	Shutdown()
+	GetScheduler() *scheduler.Scheduler
+	ScheduleFolderPreload(ctx context.Context, folderID int64, sessionID, acceptEncoding string)
+	GetMetrics() cachepreload.PreloadMetricsSnapshot
+}
+
 // SubsystemManager owns background processing subsystems.
 type SubsystemManager struct {
 	pool               *workerpool.Pool
@@ -29,7 +40,7 @@ type SubsystemManager struct {
 	fileProcessor      files.FileProcessor
 	processingStats    *files.ProcessingStats
 	scheduler          *scheduler.Scheduler
-	preloadManager     *cachepreload.PreloadManager
+	preloadManager     preloadManager
 	batchLoadManager   *cachebatch.Manager
 	moduleStateService *modulestate.Service
 
@@ -50,6 +61,7 @@ func NewSubsystemManager(infra *InfrastructureService) *SubsystemManager {
 func (m *SubsystemManager) Start(
 	ctx context.Context,
 	cfg *config.Config,
+	minPoolWorkers, maxPoolWorkers int,
 	imagesDir, normalizedImagesDir string,
 	removeImagesDirPrefixFn func(string, string) (string, error),
 	getRouter func() http.Handler,
@@ -66,32 +78,37 @@ func (m *SubsystemManager) Start(
 	}
 	m.q = queue.NewQueue[string](queueSize)
 
-	// File processor
-	batcherAdapter := newBatcherAdapter(m.infra.WriteBatcher())
-	m.fileProcessor = files.NewFileProcessor(
-		m.infra.DBRoPool(), m.infra.DBRwPool(),
-		m.infra.ImporterFactory, imagesDir, batcherAdapter,
-	)
+	// File processor (tests may inject a fake via m.fileProcessor)
+	if m.fileProcessor == nil {
+		batcherAdapter := newBatcherAdapter(m.infra.WriteBatcher())
+		m.fileProcessor = files.NewFileProcessor(
+			m.infra.DBRoPool(), m.infra.DBRwPool(),
+			m.infra.ImporterFactory, imagesDir, batcherAdapter,
+		)
+	}
 
-	// Cache preload manager
-	enablePreload := true
-	if cfg != nil {
-		enablePreload = cfg.EnableCachePreload
+	// Cache preload manager (tests may inject a fake via m.preloadManager)
+	if m.preloadManager == nil {
+		enablePreload := true
+		if cfg != nil {
+			enablePreload = cfg.EnableCachePreload
+		}
+		routes := []string{"/gallery/", "/lightbox/", "/info/folder/", "/info/image/"}
+		if m.infra.CacheMW() != nil {
+			routes = m.infra.CacheMW().Config().CacheableRoutes
+		}
+		pm := cachepreload.NewPreloadManager(routes, enablePreload)
+		pm.Configure(cachepreload.PreloadConfig{
+			TaskTracker:    &cachepreload.TaskTracker{},
+			SessionTracker: &cachepreload.SessionTracker{},
+			DBRoPool:       m.infra.DBRoPool(),
+			GetQueries:     getHandlerQueries,
+			GetHandler:     getRouter,
+			GetETagVersion: getETagVersion,
+			Metrics:        &cachepreload.PreloadMetrics{},
+		})
+		m.preloadManager = pm
 	}
-	routes := []string{"/gallery/", "/lightbox/", "/info/folder/", "/info/image/"}
-	if m.infra.CacheMW() != nil {
-		routes = m.infra.CacheMW().Config().CacheableRoutes
-	}
-	m.preloadManager = cachepreload.NewPreloadManager(routes, enablePreload)
-	m.preloadManager.Configure(cachepreload.PreloadConfig{
-		TaskTracker:    &cachepreload.TaskTracker{},
-		SessionTracker: &cachepreload.SessionTracker{},
-		DBRoPool:       m.infra.DBRoPool(),
-		GetQueries:     getHandlerQueries,
-		GetHandler:     getRouter,
-		GetETagVersion: getETagVersion,
-		Metrics:        &cachepreload.PreloadMetrics{},
-	})
 
 	// Wire OnGalleryCacheHit
 	m.infra.SetCacheOnGalleryHit(func(ctx context.Context, folderID int64, sessionID, acceptEncoding string) {
@@ -100,30 +117,31 @@ func (m *SubsystemManager) Start(
 		}
 	})
 
-	// Worker pool
-	maxPoolWorkers := 100
-	minPoolWorkers := 10
+	// Worker pool: App.Run parameters are the base defaults; config overrides
+	// only when explicitly positive (> 0). 0/0 means auto-calculate based on CPU.
+	maxWorkers := maxPoolWorkers
+	minIdle := minPoolWorkers
 	if cfg != nil {
 		if cfg.WorkerPoolMax > 0 {
-			maxPoolWorkers = cfg.WorkerPoolMax
+			maxWorkers = cfg.WorkerPoolMax
 		}
 		if cfg.WorkerPoolMinIdle > 0 {
-			minPoolWorkers = cfg.WorkerPoolMinIdle
+			minIdle = cfg.WorkerPoolMinIdle
 		}
 	}
 	maxIdleTime := 10 * time.Second
 	if cfg != nil {
 		maxIdleTime = cfg.WorkerPoolMaxIdleTime
 	}
-	m.pool = workerpool.NewPool(ctx, maxPoolWorkers, minPoolWorkers, maxIdleTime)
+	m.pool = workerpool.NewPool(ctx, maxWorkers, minIdle, maxIdleTime)
 
 	m.processingStats = &files.ProcessingStats{}
 }
 
 // StartPool launches the worker pool goroutine.
-func (m *SubsystemManager) StartPool(ctx context.Context, poolDone chan struct{}, normalizedImagesDir string, removeImagesDirPrefixFn func(string, string) (string, error)) {
+func (m *SubsystemManager) StartPool(ctx context.Context, poolDone chan struct{}, normalizedImagesDir string, removeImagesDirPrefixFn func(string, string) (string, error), processor files.FileProcessor) {
 	pf := files.NewPoolFuncWithProcessor(
-		m.fileProcessor, m.q, normalizedImagesDir, removeImagesDirPrefixFn, m.processingStats,
+		processor, m.q, normalizedImagesDir, removeImagesDirPrefixFn, m.processingStats,
 	)
 	go func() {
 		defer close(poolDone)

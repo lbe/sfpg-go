@@ -10,9 +10,27 @@ import (
 	"github.com/lbe/sfpg-go/internal/gallerydb"
 )
 
+// pool is the subset of dbconnpool.DbSQLConnPool used by Service.
+type pool interface {
+	Get() (*dbconnpool.CpConn, error)
+	Put(*dbconnpool.CpConn)
+}
+
+// moduleStateQuerier is the subset of gallerydb.CustomQueries used by Service.
+type moduleStateQuerier interface {
+	GetModuleState(ctx context.Context, name string) (gallerydb.ModuleState, error)
+	SetModuleState(ctx context.Context, arg gallerydb.SetModuleStateParams) error
+}
+
+// queriesFromCpConn extracts the querier from a pool connection.
+// Tests override this to return mock queriers without a real database.
+var queriesFromCpConn = func(cpc *dbconnpool.CpConn) moduleStateQuerier {
+	return cpc.Queries
+}
+
 // Service provides access to the module_state table.
 type Service struct {
-	dbRwPool *dbconnpool.DbSQLConnPool
+	dbRwPool pool
 }
 
 // NewService creates a new module state service.
@@ -42,7 +60,7 @@ func (s *Service) SetActive(ctx context.Context, name string, active bool) error
 		lastFinished = sql.NullInt64{Int64: now, Valid: true}
 	}
 
-	return cpcRw.Queries.SetModuleState(ctx, gallerydb.SetModuleStateParams{
+	return queriesFromCpConn(cpcRw).SetModuleState(ctx, gallerydb.SetModuleStateParams{
 		Name:           name,
 		IsActive:       boolToInt(active),
 		LastStartedAt:  lastStarted,
@@ -62,7 +80,7 @@ func (s *Service) IsActive(ctx context.Context, name string) (bool, error) {
 	}
 	defer s.dbRwPool.Put(cpcRw)
 
-	row, err := cpcRw.Queries.GetModuleState(ctx, name)
+	row, err := queriesFromCpConn(cpcRw).GetModuleState(ctx, name)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return false, nil
@@ -85,7 +103,7 @@ func (s *Service) GetLastStartedAt(ctx context.Context, name string) (int64, boo
 	}
 	defer s.dbRwPool.Put(cpcRw)
 
-	row, err := cpcRw.Queries.GetModuleState(ctx, name)
+	row, err := queriesFromCpConn(cpcRw).GetModuleState(ctx, name)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return 0, false, nil

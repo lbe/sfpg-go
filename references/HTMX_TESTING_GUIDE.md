@@ -12,11 +12,13 @@ These issues often only manifest in the browser console, not in unit tests that 
 
 ## Solution
 
-Use the `validateHTMXResponseStructure()` helper function in tests to catch structural issues before they reach the browser.
+Use the `validateHTMXResponseStructure()` helper function in `internal/server/htmx_validation_test.go` to catch structural issues before they reach the browser.
+
+> **Note:** This helper is unexported and is currently only used inside its own test file. If you want to reuse it across packages, copy it into `internal/testutil` or a similar shared package.
 
 ## Usage
 
-Add validation to any test that checks HTMX responses:
+Add validation in tests that exercise HTMX responses:
 
 ```go
 // After getting the response but before parsing HTML
@@ -38,7 +40,7 @@ if err := validateHTMXResponseStructure(w.Body.String(), "outerHTML", "config-er
 
 ## When to Use
 
-**Always validate HTMX responses in tests when:**
+**Validate HTMX responses in tests when:**
 
 - The handler returns HTML for HTMX swaps
 - Using `hx-swap="outerHTML"` (most common case)
@@ -76,7 +78,7 @@ func TestMyHTMXHandler(t *testing.T) {
 
 ## Integration with Existing Tests
 
-The validation function is in `htmx_validation_test.go` and can be used across all test files in the `server` package.
+The validation function is defined in `internal/server/htmx_validation_test.go` and is only callable from the `server` package (it is unexported). New tests in the `server` package can copy the helper call pattern shown above.
 
 ## Future Enhancements
 

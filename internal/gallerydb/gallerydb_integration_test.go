@@ -5,6 +5,7 @@ package gallerydb
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"reflect"
@@ -2095,4 +2096,473 @@ func TestCustomQueriesThumbsDB(t *testing.T) {
 	if string(got) != string(blobData) {
 		t.Errorf("blob mismatch: got %q, want %q", got, blobData)
 	}
+}
+
+func TestConfigKeyExists(t *testing.T) {
+	_, q, ctx := setupTestDB(t)
+
+	exists, err := q.ConfigKeyExists(ctx, "test_exists_key")
+	if err != nil {
+		t.Fatalf("ConfigKeyExists failed: %v", err)
+	}
+	if exists {
+		t.Error("expected ConfigKeyExists to return false for missing key")
+	}
+
+	err = q.UpsertConfigValueOnly(ctx, UpsertConfigValueOnlyParams{
+		Key:       "test_exists_key",
+		Value:     "exists_value",
+		CreatedAt: time.Now().Unix(),
+		UpdatedAt: time.Now().Unix(),
+	})
+	if err != nil {
+		t.Fatalf("UpsertConfigValueOnly failed: %v", err)
+	}
+
+	exists, err = q.ConfigKeyExists(ctx, "test_exists_key")
+	if err != nil {
+		t.Fatalf("ConfigKeyExists failed: %v", err)
+	}
+	if !exists {
+		t.Error("expected ConfigKeyExists to return true for existing key")
+	}
+}
+
+func TestInsertConfigIfNotExists(t *testing.T) {
+	_, q, ctx := setupTestDB(t)
+	now := time.Now().Unix()
+
+	err := q.InsertConfigIfNotExists(ctx, InsertConfigIfNotExistsParams{
+		Key:       "insert_if_not_exists_key",
+		Value:     "original_value",
+		CreatedAt: now,
+		UpdatedAt: now,
+	})
+	if err != nil {
+		t.Fatalf("InsertConfigIfNotExists failed: %v", err)
+	}
+
+	value, err := q.GetConfigValueByKey(ctx, "insert_if_not_exists_key")
+	if err != nil {
+		t.Fatalf("GetConfigValueByKey failed: %v", err)
+	}
+	if value != "original_value" {
+		t.Errorf("expected value 'original_value', got %s", value)
+	}
+
+	err = q.InsertConfigIfNotExists(ctx, InsertConfigIfNotExistsParams{
+		Key:       "insert_if_not_exists_key",
+		Value:     "new_value",
+		CreatedAt: now,
+		UpdatedAt: now,
+	})
+	if err != nil {
+		t.Fatalf("InsertConfigIfNotExists (second) failed: %v", err)
+	}
+
+	value, err = q.GetConfigValueByKey(ctx, "insert_if_not_exists_key")
+	if err != nil {
+		t.Fatalf("GetConfigValueByKey (second) failed: %v", err)
+	}
+	if value != "original_value" {
+		t.Errorf("expected value to remain 'original_value', got %s", value)
+	}
+}
+
+func TestModuleStateQueries(t *testing.T) {
+	_, q, ctx := setupTestDB(t)
+
+	_, err := q.GetModuleState(ctx, "discovery")
+	if err != sql.ErrNoRows {
+		t.Fatalf("expected sql.ErrNoRows, got %v", err)
+	}
+
+	startedAt := time.Now().Unix()
+	err = q.SetModuleState(ctx, SetModuleStateParams{
+		Name:          "discovery",
+		IsActive:      1,
+		LastStartedAt: sql.NullInt64{Int64: startedAt, Valid: true},
+	})
+	if err != nil {
+		t.Fatalf("SetModuleState failed: %v", err)
+	}
+
+	state, err := q.GetModuleState(ctx, "discovery")
+	if err != nil {
+		t.Fatalf("GetModuleState failed: %v", err)
+	}
+	if state.IsActive != 1 {
+		t.Errorf("expected IsActive=1, got %d", state.IsActive)
+	}
+	if !state.LastStartedAt.Valid || state.LastStartedAt.Int64 != startedAt {
+		t.Errorf("expected LastStartedAt=%d, got %v", startedAt, state.LastStartedAt)
+	}
+
+	finishedAt := startedAt + 10
+	err = q.SetModuleState(ctx, SetModuleStateParams{
+		Name:           "discovery",
+		IsActive:       0,
+		LastFinishedAt: sql.NullInt64{Int64: finishedAt, Valid: true},
+	})
+	if err != nil {
+		t.Fatalf("SetModuleState (update) failed: %v", err)
+	}
+
+	state, err = q.GetModuleState(ctx, "discovery")
+	if err != nil {
+		t.Fatalf("GetModuleState (after update) failed: %v", err)
+	}
+	if state.IsActive != 0 {
+		t.Errorf("expected IsActive=0, got %d", state.IsActive)
+	}
+	if !state.LastFinishedAt.Valid || state.LastFinishedAt.Int64 != finishedAt {
+		t.Errorf("expected LastFinishedAt=%d, got %v", finishedAt, state.LastFinishedAt)
+	}
+}
+
+func TestGetConfigs_RowsCloseError(t *testing.T) {
+	db, q, ctx := setupTestDB(t)
+	_ = db
+
+	seedConfigRows(t, q, ctx)
+
+	orig := rowsCloseFn
+	rowsCloseFn = func(r *sql.Rows) error { return errors.New("rows close denied") }
+	t.Cleanup(func() { rowsCloseFn = orig })
+
+	_, err := q.GetConfigs(ctx)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
+
+func TestGetConfigs_RowsErrError(t *testing.T) {
+	db, q, ctx := setupTestDB(t)
+	_ = db
+
+	seedConfigRows(t, q, ctx)
+
+	orig := rowsErrFn
+	rowsErrFn = func(r *sql.Rows) error { return errors.New("rows err denied") }
+	t.Cleanup(func() { rowsErrFn = orig })
+
+	_, err := q.GetConfigs(ctx)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
+
+func TestGetFileViewsByFolderIDOrderByFileName_RowsCloseError(t *testing.T) {
+	_, q, ctx := setupTestDB(t)
+	folderID := seedFileViewRows(t, q, ctx)
+
+	orig := rowsCloseFn
+	rowsCloseFn = func(r *sql.Rows) error { return errors.New("rows close denied") }
+	t.Cleanup(func() { rowsCloseFn = orig })
+
+	_, err := q.GetFileViewsByFolderIDOrderByFileName(ctx, sql.NullInt64{Int64: folderID, Valid: true})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
+
+func TestGetFileViewsByFolderIDOrderByFileName_RowsErrError(t *testing.T) {
+	_, q, ctx := setupTestDB(t)
+	folderID := seedFileViewRows(t, q, ctx)
+
+	orig := rowsErrFn
+	rowsErrFn = func(r *sql.Rows) error { return errors.New("rows err denied") }
+	t.Cleanup(func() { rowsErrFn = orig })
+
+	_, err := q.GetFileViewsByFolderIDOrderByFileName(ctx, sql.NullInt64{Int64: folderID, Valid: true})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
+
+func TestGetFoldersViewsByParentIDOrderByName_RowsCloseError(t *testing.T) {
+	_, q, ctx := setupTestDB(t)
+	parentID := seedFolderViewRows(t, q, ctx)
+
+	orig := rowsCloseFn
+	rowsCloseFn = func(r *sql.Rows) error { return errors.New("rows close denied") }
+	t.Cleanup(func() { rowsCloseFn = orig })
+
+	_, err := q.GetFoldersViewsByParentIDOrderByName(ctx, sql.NullInt64{Int64: parentID, Valid: true})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
+
+func TestGetFoldersViewsByParentIDOrderByName_RowsErrError(t *testing.T) {
+	_, q, ctx := setupTestDB(t)
+	parentID := seedFolderViewRows(t, q, ctx)
+
+	orig := rowsErrFn
+	rowsErrFn = func(r *sql.Rows) error { return errors.New("rows err denied") }
+	t.Cleanup(func() { rowsErrFn = orig })
+
+	_, err := q.GetFoldersViewsByParentIDOrderByName(ctx, sql.NullInt64{Int64: parentID, Valid: true})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
+
+func TestGetHttpCacheOldestCreated_RowsCloseError(t *testing.T) {
+	_, q, ctx := setupTestDB(t)
+	seedHttpCacheRows(t, q, ctx)
+
+	orig := rowsCloseFn
+	rowsCloseFn = func(r *sql.Rows) error { return errors.New("rows close denied") }
+	t.Cleanup(func() { rowsCloseFn = orig })
+
+	_, err := q.GetHttpCacheOldestCreated(ctx, 10)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
+
+func TestGetHttpCacheOldestCreated_RowsErrError(t *testing.T) {
+	_, q, ctx := setupTestDB(t)
+	seedHttpCacheRows(t, q, ctx)
+
+	orig := rowsErrFn
+	rowsErrFn = func(r *sql.Rows) error { return errors.New("rows err denied") }
+	t.Cleanup(func() { rowsErrFn = orig })
+
+	_, err := q.GetHttpCacheOldestCreated(ctx, 10)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
+
+func TestGetIPTCKeywords_RowsCloseError(t *testing.T) {
+	_, q, ctx := setupTestDB(t)
+	fileID := seedIPTCKeywordRows(t, q, ctx)
+
+	orig := rowsCloseFn
+	rowsCloseFn = func(r *sql.Rows) error { return errors.New("rows close denied") }
+	t.Cleanup(func() { rowsCloseFn = orig })
+
+	_, err := q.GetIPTCKeywords(ctx, fileID)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
+
+func TestGetIPTCKeywords_RowsErrError(t *testing.T) {
+	_, q, ctx := setupTestDB(t)
+	fileID := seedIPTCKeywordRows(t, q, ctx)
+
+	orig := rowsErrFn
+	rowsErrFn = func(r *sql.Rows) error { return errors.New("rows err denied") }
+	t.Cleanup(func() { rowsErrFn = orig })
+
+	_, err := q.GetIPTCKeywords(ctx, fileID)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
+
+func TestGetXMPPropertiesByFile_RowsCloseError(t *testing.T) {
+	_, q, ctx := setupTestDB(t)
+	fileID := seedXMPPropertyRows(t, q, ctx)
+
+	orig := rowsCloseFn
+	rowsCloseFn = func(r *sql.Rows) error { return errors.New("rows close denied") }
+	t.Cleanup(func() { rowsCloseFn = orig })
+
+	_, err := q.GetXMPPropertiesByFile(ctx, fileID)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
+
+func TestGetXMPPropertiesByFile_RowsErrError(t *testing.T) {
+	_, q, ctx := setupTestDB(t)
+	fileID := seedXMPPropertyRows(t, q, ctx)
+
+	orig := rowsErrFn
+	rowsErrFn = func(r *sql.Rows) error { return errors.New("rows err denied") }
+	t.Cleanup(func() { rowsErrFn = orig })
+
+	_, err := q.GetXMPPropertiesByFile(ctx, fileID)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
+
+func seedConfigRows(t *testing.T, q *CustomQueries, ctx context.Context) {
+	t.Helper()
+	now := time.Now().Unix()
+	if err := q.UpsertConfigValueOnly(ctx, UpsertConfigValueOnlyParams{
+		Key:       "seed_key_1",
+		Value:     "seed_value_1",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("failed to seed config row: %v", err)
+	}
+}
+
+func seedFileViewRows(t *testing.T, q *CustomQueries, ctx context.Context) int64 {
+	t.Helper()
+	folderPathID, err := q.UpsertFolderPathReturningID(ctx, "/seedfiles")
+	if err != nil {
+		t.Fatalf("UpsertFolderPathReturningID failed: %v", err)
+	}
+	folder, err := q.UpsertFolderReturningFolder(ctx, UpsertFolderReturningFolderParams{
+		PathID:    folderPathID,
+		Name:      "seedfiles",
+		CreatedAt: time.Now().Unix(),
+		UpdatedAt: time.Now().Unix(),
+	})
+	if err != nil {
+		t.Fatalf("UpsertFolderReturningFolder failed: %v", err)
+	}
+	filePathID, err := q.UpsertFilePathReturningID(ctx, "/seedfiles/photo.jpg")
+	if err != nil {
+		t.Fatalf("UpsertFilePathReturningID failed: %v", err)
+	}
+	_, err = q.UpsertFileReturningFile(ctx, UpsertFileReturningFileParams{
+		FolderID:  sql.NullInt64{Int64: folder.ID, Valid: true},
+		PathID:    filePathID,
+		Filename:  "photo.jpg",
+		CreatedAt: time.Now().Unix(),
+		UpdatedAt: time.Now().Unix(),
+	})
+	if err != nil {
+		t.Fatalf("UpsertFileReturningFile failed: %v", err)
+	}
+	return folder.ID
+}
+
+func seedFolderViewRows(t *testing.T, q *CustomQueries, ctx context.Context) int64 {
+	t.Helper()
+	parentPathID, err := q.UpsertFolderPathReturningID(ctx, "/seedparent")
+	if err != nil {
+		t.Fatalf("UpsertFolderPathReturningID failed: %v", err)
+	}
+	parent, err := q.UpsertFolderReturningFolder(ctx, UpsertFolderReturningFolderParams{
+		PathID:    parentPathID,
+		Name:      "seedparent",
+		CreatedAt: time.Now().Unix(),
+		UpdatedAt: time.Now().Unix(),
+	})
+	if err != nil {
+		t.Fatalf("UpsertFolderReturningFolder failed: %v", err)
+	}
+	childPathID, err := q.UpsertFolderPathReturningID(ctx, "/seedparent/child")
+	if err != nil {
+		t.Fatalf("UpsertFolderPathReturningID failed: %v", err)
+	}
+	_, err = q.UpsertFolderReturningFolder(ctx, UpsertFolderReturningFolderParams{
+		ParentID:  sql.NullInt64{Int64: parent.ID, Valid: true},
+		PathID:    childPathID,
+		Name:      "child",
+		CreatedAt: time.Now().Unix(),
+		UpdatedAt: time.Now().Unix(),
+	})
+	if err != nil {
+		t.Fatalf("UpsertFolderReturningFolder failed: %v", err)
+	}
+	return parent.ID
+}
+
+func seedHttpCacheRows(t *testing.T, q *CustomQueries, ctx context.Context) {
+	t.Helper()
+	now := time.Now().Unix()
+	err := q.UpsertHttpCache(ctx, UpsertHttpCacheParams{
+		Key:       "seed_cache_key",
+		Method:    "GET",
+		Path:      "/seed",
+		Encoding:  "gzip",
+		Status:    200,
+		CreatedAt: now,
+	})
+	if err != nil {
+		t.Fatalf("UpsertHttpCache failed: %v", err)
+	}
+}
+
+func seedIPTCKeywordRows(t *testing.T, q *CustomQueries, ctx context.Context) int64 {
+	t.Helper()
+	folderPathID, err := q.UpsertFolderPathReturningID(ctx, "/seediptc")
+	if err != nil {
+		t.Fatalf("UpsertFolderPathReturningID failed: %v", err)
+	}
+	folder, err := q.UpsertFolderReturningFolder(ctx, UpsertFolderReturningFolderParams{
+		PathID:    folderPathID,
+		Name:      "seediptc",
+		CreatedAt: time.Now().Unix(),
+		UpdatedAt: time.Now().Unix(),
+	})
+	if err != nil {
+		t.Fatalf("UpsertFolderReturningFolder failed: %v", err)
+	}
+	filePathID, err := q.UpsertFilePathReturningID(ctx, "/seediptc/photo.jpg")
+	if err != nil {
+		t.Fatalf("UpsertFilePathReturningID failed: %v", err)
+	}
+	file, err := q.UpsertFileReturningFile(ctx, UpsertFileReturningFileParams{
+		FolderID:  sql.NullInt64{Int64: folder.ID, Valid: true},
+		PathID:    filePathID,
+		Filename:  "photo.jpg",
+		CreatedAt: time.Now().Unix(),
+		UpdatedAt: time.Now().Unix(),
+	})
+	if err != nil {
+		t.Fatalf("UpsertFileReturningFile failed: %v", err)
+	}
+	err = q.InsertIPTCKeyword(ctx, InsertIPTCKeywordParams{
+		ID:      1,
+		FileID:  file.ID,
+		Keyword: "seedkeyword",
+	})
+	if err != nil {
+		t.Fatalf("InsertIPTCKeyword failed: %v", err)
+	}
+	return file.ID
+}
+
+func seedXMPPropertyRows(t *testing.T, q *CustomQueries, ctx context.Context) int64 {
+	t.Helper()
+	folderPathID, err := q.UpsertFolderPathReturningID(ctx, "/seedxmp")
+	if err != nil {
+		t.Fatalf("UpsertFolderPathReturningID failed: %v", err)
+	}
+	folder, err := q.UpsertFolderReturningFolder(ctx, UpsertFolderReturningFolderParams{
+		PathID:    folderPathID,
+		Name:      "seedxmp",
+		CreatedAt: time.Now().Unix(),
+		UpdatedAt: time.Now().Unix(),
+	})
+	if err != nil {
+		t.Fatalf("UpsertFolderReturningFolder failed: %v", err)
+	}
+	filePathID, err := q.UpsertFilePathReturningID(ctx, "/seedxmp/photo.jpg")
+	if err != nil {
+		t.Fatalf("UpsertFilePathReturningID failed: %v", err)
+	}
+	file, err := q.UpsertFileReturningFile(ctx, UpsertFileReturningFileParams{
+		FolderID:  sql.NullInt64{Int64: folder.ID, Valid: true},
+		PathID:    filePathID,
+		Filename:  "photo.jpg",
+		CreatedAt: time.Now().Unix(),
+		UpdatedAt: time.Now().Unix(),
+	})
+	if err != nil {
+		t.Fatalf("UpsertFileReturningFile failed: %v", err)
+	}
+	err = q.UpsertXMPProperty(ctx, UpsertXMPPropertyParams{
+		ID:        1,
+		FileID:    file.ID,
+		Namespace: "dc",
+		Property:  "title",
+		Value:     sql.NullString{String: "seed title", Valid: true},
+	})
+	if err != nil {
+		t.Fatalf("UpsertXMPProperty failed: %v", err)
+	}
+	return file.ID
 }

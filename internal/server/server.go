@@ -22,7 +22,6 @@ import (
 	"github.com/lbe/sfpg-go/internal/server/pathutil"
 	"github.com/lbe/sfpg-go/internal/server/session"
 	"github.com/lbe/sfpg-go/internal/server/template"
-	"github.com/lbe/sfpg-go/internal/server/ui"
 	"github.com/lbe/sfpg-go/web"
 )
 
@@ -66,7 +65,13 @@ func (app *App) SetPreloadEnabled(enabled bool) {
 // SetRestartRequired marks the application as needing a restart for
 // configuration changes to take effect.
 func (app *App) SetRestartRequired(b bool) {
-	app.restartRequired.Store(b)
+	app.RuntimeManager.SetRestartRequired(b)
+}
+
+// RestartRequired reports whether a restart is required for pending
+// configuration changes to take effect.
+func (app *App) RestartRequired() bool {
+	return app.RuntimeManager.RestartRequired()
 }
 
 // GetMetadataQueries returns the metadata query interface for a connection.
@@ -84,12 +89,7 @@ func (app *App) UpdateConfigWithPrecedence(c *config.Config, changedFields []str
 
 // ResetStats resets the file processing statistics counters.
 func (app *App) ResetStats() {
-	app.processingStats.Reset()
-}
-
-// RenderTemplate renders a named template with the given data to the response writer.
-func (app *App) RenderTemplate(w http.ResponseWriter, name string, data any) error {
-	return ui.RenderTemplate(w, name, data)
+	app.SubsystemManager.ResetStats()
 }
 
 // GetConfig returns the current application configuration.
@@ -203,6 +203,9 @@ func (app *App) Serve() error {
 	addr := fmt.Sprintf("%s:%d", app.config.ListenerAddress, app.config.ListenerPort)
 	app.configMu.RUnlock()
 
+	if app.testHookServe != nil {
+		return app.testHookServe(mux, addr)
+	}
 	return app.RuntimeManager.Serve(mux, addr)
 }
 
@@ -283,11 +286,23 @@ func (app *App) AddCommonTemplateData(w http.ResponseWriter, r *http.Request, da
 			}
 		} else {
 			ctx := r.Context()
-			isActive, aErr := app.moduleStateService.IsActive(ctx, "discovery")
+			var isActive bool
+			var aErr error
+			if app.testHookAddCommonDataIsActive != nil {
+				isActive, aErr = app.testHookAddCommonDataIsActive(ctx, "discovery")
+			} else {
+				isActive, aErr = app.moduleStateService.IsActive(ctx, "discovery")
+			}
 			if aErr != nil {
 				slog.Error("failed to check discovery active state", "err", aErr)
 			}
-			lastStarted, _, lsErr := app.moduleStateService.GetLastStartedAt(ctx, "discovery")
+			var lastStarted int64
+			var lsErr error
+			if app.testHookAddCommonDataLastStarted != nil {
+				lastStarted, _, lsErr = app.testHookAddCommonDataLastStarted(ctx, "discovery")
+			} else {
+				lastStarted, _, lsErr = app.moduleStateService.GetLastStartedAt(ctx, "discovery")
+			}
 			if lsErr != nil {
 				slog.Error("failed to get discovery last started at", "err", lsErr)
 			}
@@ -340,6 +355,10 @@ type GalleryStats struct {
 
 // getGalleryStatistics retrieves gallery statistics from the database.
 func (app *App) getGalleryStatistics(ctx context.Context) (GalleryStats, error) {
+	if app.testHookGetGalleryStatistics != nil {
+		return app.testHookGetGalleryStatistics(ctx)
+	}
+
 	cpcRo, err := app.dbRoPool.Get()
 	if err != nil {
 		return GalleryStats{}, fmt.Errorf("failed to get database connection: %w", err)

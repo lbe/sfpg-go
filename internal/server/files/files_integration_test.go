@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
-	"errors"
 	"image"
 	"image/jpeg"
 	"os"
@@ -474,280 +473,50 @@ func TestNewPoolFunc_RunPoolWorkerSuccess(t *testing.T) {
 	}
 }
 
-// TestRunPoolWorker_ContextCancelled verifies pool worker handles cancelled context gracefully.
-func TestRunPoolWorker_ContextCancelled(t *testing.T) {
-	roPool, rwPool, imagesDir, _ := createTestPoolsAndDir(t)
-	q := queue.NewQueue[string](1)
-
-	processor := NewFileProcessor(roPool, rwPool, func(conn *sql.Conn, q *gallerydb.CustomQueries) Importer {
-		return &gallerylib.Importer{Conn: conn, Q: q}
-	}, imagesDir, &mockUnifiedBatcher{})
-	defer processor.Close()
-
-	pool := workerpool.NewPool(context.Background(), 1, 1, 10*time.Millisecond)
-	pool.Stats.RunningWorkers.Add(1)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	poolFunc := NewPoolFuncWithProcessor(processor, q, filepath.ToSlash(imagesDir), testRemovePrefix, nil)
-	if err := poolFunc(ctx, pool, roPool, rwPool, q.Len, 1); err != nil {
-		t.Fatalf("expected nil error on cancelled context, got %v", err)
-	}
-}
-
-// TestNewPoolFuncWithProcessor_Success verifies pool func processes files correctly with fake processor.
-func TestNewPoolFuncWithProcessor_Success(t *testing.T) {
-	q := queue.NewQueue[string](1)
-	if err := q.Enqueue("/tmp/Images/test.jpg"); err != nil {
-		t.Fatalf("enqueue: %v", err)
-	}
-
-	fp := &fakeProcessor{}
-	pool := workerpool.NewPool(context.Background(), 1, 1, 10*time.Millisecond)
-	pool.Stats.RunningWorkers.Add(1)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	poolFunc := NewPoolFuncWithProcessor(fp, q, "/tmp/Images", testRemovePrefix, nil)
-	done := make(chan error, 1)
-	baseline := pool.Stats.CompletedTasks.Load()
-
-	go func() {
-		done <- poolFunc(ctx, pool, nil, nil, q.Len, 1)
-	}()
-
-	waitForCompleted(t, pool, baseline+1)
-	cancel()
-
-	if err := <-done; err != nil {
-		t.Fatalf("runPoolWorkerWithProcessor returned error: %v", err)
-	}
-	if pool.Stats.SuccessfulTasks.Load() == 0 {
-		t.Fatalf("expected successful task count to be > 0")
-	}
-}
-
-// TestRunPoolWorkerWithProcessor_ErrorPaths verifies error paths are handled correctly.
-func TestRunPoolWorkerWithProcessor_ErrorPaths(t *testing.T) {
-	t.Run("remove prefix error", func(t *testing.T) {
-		q := queue.NewQueue[string](1)
-		if err := q.Enqueue("/bad/prefix/file.jpg"); err != nil {
-			t.Fatalf("enqueue: %v", err)
-		}
-
-		fp := &fakeProcessor{}
-		pool := workerpool.NewPool(context.Background(), 1, 1, 10*time.Millisecond)
-		pool.Stats.RunningWorkers.Add(1)
-
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		done := make(chan error, 1)
-		baseline := pool.Stats.CompletedTasks.Load()
-		go func() {
-			done <- runPoolWorkerWithProcessor(ctx, pool, nil, q.Len, 1, fp, q, "/tmp/Images", testRemovePrefix, nil)
-		}()
-
-		waitForCompleted(t, pool, baseline+1)
-		cancel()
-
-		if err := <-done; err != nil {
-			t.Fatalf("runPoolWorkerWithProcessor returned error: %v", err)
-		}
-		if pool.Stats.FailedTasks.Load() == 0 {
-			t.Fatalf("expected failed task count to be > 0")
-		}
-	})
-
-	t.Run("process and thumbnail errors", func(t *testing.T) {
-		q := queue.NewQueue[string](2)
-		if err := q.Enqueue("/tmp/Images/process-bad.jpg"); err != nil {
-			t.Fatalf("enqueue: %v", err)
-		}
-		if err := q.Enqueue("/tmp/Images/thumb-bad.jpg"); err != nil {
-			t.Fatalf("enqueue: %v", err)
-		}
-
-		fp := &fakeProcessor{
-			processErrByPath: map[string]error{
-				"process-bad.jpg": errors.New("process failed"),
-			},
-			thumbErrByPath: map[string]error{
-				"thumb-bad.jpg": errors.New("thumb failed"),
-			},
-		}
-		pool := workerpool.NewPool(context.Background(), 1, 1, 10*time.Millisecond)
-		pool.Stats.RunningWorkers.Add(1)
-
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		done := make(chan error, 1)
-		baseline := pool.Stats.CompletedTasks.Load()
-		go func() {
-			done <- runPoolWorkerWithProcessor(ctx, pool, nil, q.Len, 1, fp, q, "/tmp/Images", testRemovePrefix, nil)
-		}()
-
-		waitForCompleted(t, pool, baseline+2)
-		cancel()
-
-		if err := <-done; err != nil {
-			t.Fatalf("runPoolWorkerWithProcessor returned error: %v", err)
-		}
-		if pool.Stats.FailedTasks.Load() < 2 {
-			t.Fatalf("expected failed task count >= 2")
-		}
-	})
-}
-
-// TestFileProcessor_ProcessFile verifies FileProcessor.ProcessFile works with real database.
-func TestFileProcessor_ProcessFile(t *testing.T) {
+// TestFileProcessor_ProcessFile_Integration verifies FileProcessor.ProcessFile works with real database.
+func TestFileProcessor_ProcessFile_Integration(t *testing.T) {
 	processor, _, _, imagesDir := createTestProcessor(t, nil)
 
-	tests := []struct {
-		name     string
-		ctx      context.Context
-		filePath string
-		wantErr  bool
-	}{
-		{
-			name:     "valid context and file path",
-			ctx:      context.Background(),
-			filePath: createTestImage(t, imagesDir, "test.jpg"),
-			wantErr:  false,
-		},
-		{
-			name:     "cancelled context",
-			ctx:      func() context.Context { ctx, cancel := context.WithCancel(context.Background()); cancel(); return ctx }(),
-			filePath: "test.jpg",
-			wantErr:  true,
-		},
-		{
-			name:     "empty file path",
-			ctx:      context.Background(),
-			filePath: "",
-			wantErr:  true,
-		},
+	file, err := processor.ProcessFile(context.Background(), createTestImage(t, imagesDir, "test.jpg"))
+	if err != nil {
+		t.Fatalf("ProcessFile() error = %v", err)
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			file, err := processor.ProcessFile(tt.ctx, tt.filePath)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("ProcessFile() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if !tt.wantErr && file == nil {
-				t.Error("ProcessFile() returned nil file on success")
-			}
-		})
+	if file == nil {
+		t.Fatal("ProcessFile() returned nil file on success")
 	}
 }
 
-// TestFileProcessor_CheckIfModified verifies FileProcessor.CheckIfModified with real database.
-func TestFileProcessor_CheckIfModified(t *testing.T) {
+// TestFileProcessor_CheckIfModified_Integration verifies FileProcessor.CheckIfModified with real database.
+func TestFileProcessor_CheckIfModified_Integration(t *testing.T) {
 	processor, _, _, imagesDir := createTestProcessor(t, nil)
 	createTestImage(t, imagesDir, "test.jpg")
 
-	tests := []struct {
-		name          string
-		ctx           context.Context
-		filePath      string
-		wantUnchanged bool
-		wantErr       bool
-	}{
-		{
-			name:          "valid context and file path",
-			ctx:           context.Background(),
-			filePath:      "test.jpg",
-			wantUnchanged: false,
-			wantErr:       false,
-		},
-		{
-			name:          "cancelled context",
-			ctx:           func() context.Context { ctx, cancel := context.WithCancel(context.Background()); cancel(); return ctx }(),
-			filePath:      "test.jpg",
-			wantUnchanged: false,
-			wantErr:       true,
-		},
-		{
-			name:          "empty file path",
-			ctx:           context.Background(),
-			filePath:      "",
-			wantUnchanged: false,
-			wantErr:       true,
-		},
+	unchanged, err := processor.CheckIfModified(context.Background(), "test.jpg")
+	if err != nil {
+		t.Fatalf("CheckIfModified() error = %v", err)
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			unchanged, err := processor.CheckIfModified(tt.ctx, tt.filePath)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("CheckIfModified() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if !tt.wantErr && unchanged != tt.wantUnchanged {
-				t.Errorf("CheckIfModified() unchanged = %v, want %v", unchanged, tt.wantUnchanged)
-			}
-		})
+	if unchanged {
+		t.Errorf("CheckIfModified() unchanged = %v, want false", unchanged)
 	}
 }
 
-// TestFileProcessor_GenerateThumbnail verifies FileProcessor.GenerateThumbnail with real database.
-func TestFileProcessor_GenerateThumbnail(t *testing.T) {
+// TestFileProcessor_GenerateThumbnail_Integration verifies FileProcessor.GenerateThumbnail with real database.
+func TestFileProcessor_GenerateThumbnail_Integration(t *testing.T) {
 	processor, _, _, imagesDir := createTestProcessor(t, nil)
 	path := createTestImage(t, imagesDir, "test.jpg")
 
-	tests := []struct {
-		name    string
-		ctx     context.Context
-		file    *File
-		wantErr bool
-	}{
-		{
-			name:    "valid context and file",
-			ctx:     context.Background(),
-			file:    nil, // filled below
-			wantErr: false,
-		},
-		{
-			name:    "cancelled context",
-			ctx:     func() context.Context { ctx, cancel := context.WithCancel(context.Background()); cancel(); return ctx }(),
-			file:    &File{},
-			wantErr: true,
-		},
-		{
-			name:    "nil file",
-			ctx:     context.Background(),
-			file:    nil,
-			wantErr: true,
-		},
+	f, err := processor.ProcessFile(context.Background(), path)
+	if err != nil {
+		t.Fatalf("pre-process file: %v", err)
 	}
 
-	for i, tt := range tests {
-		if tt.name == "valid context and file" {
-			f, err := processor.ProcessFile(tt.ctx, path)
-			if err != nil {
-				t.Fatalf("pre-process file: %v", err)
-			}
-			tests[i].file = f
-		}
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := processor.GenerateThumbnail(tt.ctx, tt.file)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("GenerateThumbnail() error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
+	if err := processor.GenerateThumbnail(context.Background(), f); err != nil {
+		t.Fatalf("GenerateThumbnail() error = %v", err)
 	}
 }
 
-// TestWriteFileInTx verifies WriteFileInTx writes file data within a transaction.
-func TestWriteFileInTx(t *testing.T) {
+// TestWriteFileInTx_Integration verifies WriteFileInTx writes file data within a transaction.
+func TestWriteFileInTx_Integration(t *testing.T) {
 	roPool, rwPool, imagesDir, ctx := createTestPoolsAndDir(t)
 
 	// Create test image and process it

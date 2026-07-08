@@ -169,6 +169,8 @@ Screenshot*
 
 #exclude coverage files
 cover.*
+cover*.out
+cover*.html
 
 # exclude node modules
 node_modules/*

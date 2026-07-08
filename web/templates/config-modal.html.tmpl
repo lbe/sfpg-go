@@ -989,16 +989,6 @@
         Business
       </option>
       <option
-        value="caramellatte"
-        {{- if $themes }}
-          {{ range $themes }}
-            {{ if eq . "caramellatte" }}selected{{ end }}
-          {{ end }}
-        {{ end -}}
-      >
-        Caramellatte
-      </option>
-      <option
         value="coffee"
         {{- if $themes }}
           {{ range $themes }}{{ if eq . "coffee" }}selected{{ end }}{{ end }}
@@ -1151,14 +1141,6 @@
         Retro
       </option>
       <option
-        value="silk"
-        {{- if $themes }}
-          {{ range $themes }}{{ if eq . "silk" }}selected{{ end }}{{ end }}
-        {{ end -}}
-      >
-        Silk
-      </option>
-      <option
         value="sunset"
         {{- if $themes }}
           {{ range $themes }}{{ if eq . "sunset" }}selected{{ end }}{{ end }}
@@ -1197,14 +1179,6 @@
         {{ end -}}
       >
         Winter
-      </option>
-      <option
-        value="abyss"
-        {{- if $themes }}
-          {{ range $themes }}{{ if eq . "abyss" }}selected{{ end }}{{ end }}
-        {{ end -}}
-      >
-        Abyss
       </option>
     </select>
     <label class="label">

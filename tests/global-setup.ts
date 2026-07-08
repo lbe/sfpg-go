@@ -70,6 +70,9 @@ async function waitForHealth(): Promise<void> {
   }
 }
 
+// TODO: Replace regex-based HTML token extraction with a proper HTML parser
+// (e.g., jsdom or Playwright Page DOM access). Regex is brittle and depends on
+// the exact attribute order/output of the server-rendered forms.
 function extractCSRFToken(html: string): string | null {
   const match = html.match(/name=["']csrf_token["']\s+value=["']([^"']+)["']/);
   return match?.[1] ?? null;
@@ -124,7 +127,26 @@ function cacheBatchLoadDoneCount(metrics: MetricsSnapshot): number {
   );
 }
 
-async function ensureDiscoveryComplete(ctx: APIRequestContext): Promise<void> {
+async function extractCSRFTokenFromConfig(
+  ctx: APIRequestContext,
+): Promise<string> {
+  const resp = await ctx.get("/config");
+  if (resp.status() !== 200) {
+    throw new Error(
+      `GET /config failed: ${resp.status()} ${await resp.text()}`,
+    );
+  }
+  const token = extractCSRFToken(await resp.text());
+  if (!token) {
+    throw new Error("Could not extract csrf_token from /config");
+  }
+  return token;
+}
+
+async function ensureDiscoveryComplete(
+  ctx: APIRequestContext,
+  csrfToken: string,
+): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < MODULE_TIMEOUT_MS) {
     const metrics = await getMetrics(ctx);
@@ -134,6 +156,7 @@ async function ensureDiscoveryComplete(ctx: APIRequestContext): Promise<void> {
     if (metrics.file_processing.in_flight === 0) {
       const resp = await ctx.post("/server/discovery", {
         headers: { Origin: BASE_URL },
+        form: { csrf_token: csrfToken },
       });
       if (resp.status() !== 200) {
         throw new Error(
@@ -148,6 +171,7 @@ async function ensureDiscoveryComplete(ctx: APIRequestContext): Promise<void> {
 
 async function ensureCacheBatchLoadComplete(
   ctx: APIRequestContext,
+  csrfToken: string,
 ): Promise<void> {
   const start = Date.now();
   let triggered = false;
@@ -173,6 +197,7 @@ async function ensureCacheBatchLoadComplete(
 
       const resp = await ctx.post("/server/cache-batch-load", {
         headers: { Origin: BASE_URL },
+        form: { csrf_token: csrfToken },
       });
       if (resp.status() === 200) {
         triggered = true;
@@ -199,8 +224,9 @@ export default async function globalSetup(_config: FullConfig): Promise<void> {
   const ctx = await request.newContext({ baseURL: BASE_URL });
   try {
     await loginAsAdmin(ctx);
-    await ensureDiscoveryComplete(ctx);
-    await ensureCacheBatchLoadComplete(ctx);
+    const csrfToken = await extractCSRFTokenFromConfig(ctx);
+    await ensureDiscoveryComplete(ctx, csrfToken);
+    await ensureCacheBatchLoadComplete(ctx, csrfToken);
   } finally {
     await ctx.dispose();
   }

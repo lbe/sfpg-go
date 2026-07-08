@@ -19,10 +19,23 @@ type Config struct {
 	Mode string
 }
 
+// profilerHandle is the minimal interface we need from profile.Start.
+type profilerHandle interface {
+	Stop()
+}
+
 var (
 	profileDir     string
 	profileModeStr string
 	mu             sync.RWMutex
+
+	// osMkdirTemp is a testable hook for os.MkdirTemp.
+	osMkdirTemp = os.MkdirTemp
+
+	// profileStartFn is a testable hook for profile.Start.
+	profileStartFn = func(opts ...func(*profile.Profile)) profilerHandle {
+		return profile.Start(opts...)
+	}
 )
 
 // Dir returns the directory where profile artifacts were written, or empty string if profiling disabled.
@@ -81,7 +94,7 @@ func Start(cfg Config) (stop func(), err error) {
 
 	// Create a temp directory to capture the profile output path for logging.
 	// This keeps outputs under /tmp while giving us a deterministic location to report.
-	tempDir, mkErr := os.MkdirTemp("", "profile")
+	tempDir, mkErr := osMkdirTemp("", "profile")
 	if mkErr != nil {
 		return nil, fmt.Errorf("failed to create temporary profile dir: %w", mkErr)
 	}
@@ -114,7 +127,7 @@ func Start(cfg Config) (stop func(), err error) {
 	if memProfileRate != nil {
 		opts = append(opts, profile.MemProfileRate(*memProfileRate))
 	}
-	prof := profile.Start(opts...)
+	prof := profileStartFn(opts...)
 
 	return func() {
 		prof.Stop()

@@ -278,6 +278,102 @@ func TestGenerateThumbnailAndHashes(t *testing.T) {
 	})
 }
 
+// TestGenerateThumbnailAndHashesEmbeddedEXIF exercises the embedded EXIF
+// thumbnail path and verifies fallback to full decode.
+func TestGenerateThumbnailAndHashesEmbeddedEXIF(t *testing.T) {
+	testdata := filepath.Join("..", "..", "testdata", "thumbnail")
+
+	cases := []struct {
+		name      string
+		filename  string
+		wantErr   bool
+		expectedW int
+		expectedH int
+	}{
+		{
+			name:      "JPEG with EXIF thumbnail",
+			filename:  "exif-thumb.jpg",
+			expectedW: 200,
+			expectedH: 150,
+		},
+		{
+			name:      "JPEG without EXIF thumbnail falls back",
+			filename:  "no-exif-thumb.jpg",
+			expectedW: 200,
+			expectedH: 150,
+		},
+		{
+			name:     "truncated APP1 falls back and fails",
+			filename: "truncated-app1.jpg",
+			wantErr:  true,
+		},
+		{
+			name:      "WebP with EXIF prefix",
+			filename:  "exif-thumb.webp",
+			expectedW: 200,
+			expectedH: 150,
+		},
+		{
+			name:      "WebP with EXIF no prefix",
+			filename:  "exif-thumb-no-prefix.webp",
+			expectedW: 200,
+			expectedH: 150,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(testdata, tc.filename)
+			file, err := os.Open(path)
+			if err != nil {
+				t.Fatalf("failed to open %s: %v", tc.filename, err)
+			}
+			defer func() {
+				if closeErr := file.Close(); closeErr != nil {
+					slog.Error("failed to close image file", "error", closeErr)
+				}
+			}()
+
+			thumbBytesBuffer, md5, phash, err := thumbnail.GenerateThumbnailAndHashes(file)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected an error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("GenerateThumbnailAndHashes failed: %v", err)
+			}
+
+			if thumbBytesBuffer.Len() == 0 {
+				t.Fatal("generateThumbnail returned empty byte slice")
+			}
+			if !md5.Valid || md5.String == "" {
+				t.Error("expected a valid, non-empty md5 hash")
+			}
+			if !phash.Valid || phash.Int64 == 0 {
+				t.Error("expected a valid, non-zero phash")
+			}
+
+			thumbImg, format, err := image.Decode(thumbBytesBuffer)
+			if err != nil {
+				t.Fatalf("failed to decode generated thumbnail bytes: %v", err)
+			}
+			if format != "jpeg" {
+				t.Errorf("expected thumbnail format to be jpeg, but got %s", format)
+			}
+			bounds := thumbImg.Bounds()
+			if bounds.Dx() != tc.expectedW || bounds.Dy() != tc.expectedH {
+				t.Errorf("expected thumbnail dimensions to be %dx%d, but got %dx%d", tc.expectedW, tc.expectedH, bounds.Dx(), bounds.Dy())
+			}
+
+			thumbnail.PutBytesBuffer(thumbBytesBuffer)
+			thumbnail.PutNullInt64(phash)
+			thumbnail.PutNullString(md5)
+		})
+	}
+}
+
 // BenchmarkGenerateThumbnailAndHashes benchmarks the GenerateThumbnailAndHashes function.
 func BenchmarkGenerateThumbnailAndHashes(b *testing.B) {
 	tempDir := b.TempDir()

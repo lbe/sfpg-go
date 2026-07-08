@@ -2,11 +2,14 @@ package cachepreload
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"testing"
 	"time"
 
 	"github.com/lbe/sfpg-go/internal/dbconnpool"
+	"github.com/lbe/sfpg-go/internal/scheduler"
 	"github.com/lbe/sfpg-go/internal/server/interfaces"
 )
 
@@ -180,4 +183,242 @@ func TestPreloadManager_ConfigureAndSchedule(t *testing.T) {
 		// Should not panic when called with incomplete config
 		pm.ScheduleFolderPreload(context.Background(), 1, "session-1", "gzip")
 	})
+}
+
+func TestTruncateSessionID(t *testing.T) {
+	cases := []struct {
+		input    string
+		maxLen   int
+		expected string
+	}{
+		{input: "short", maxLen: 10, expected: "short"},
+		{input: "exactlyten", maxLen: 10, expected: "exactlyten"},
+		{input: "longerthanten", maxLen: 10, expected: "longerthan..."},
+		{input: "", maxLen: 5, expected: ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(fmt.Sprintf("input=%q_maxLen=%d", tc.input, tc.maxLen), func(t *testing.T) {
+			got := truncateSessionID(tc.input, tc.maxLen)
+			if got != tc.expected {
+				t.Errorf("truncateSessionID(%q, %d) = %q, want %q", tc.input, tc.maxLen, got, tc.expected)
+			}
+		})
+	}
+}
+
+func TestScheduleFolderPreload_MissingDeps(t *testing.T) {
+	origAdd := managerSchedulerAddTaskFn
+	defer func() { managerSchedulerAddTaskFn = origAdd }()
+
+	var addedTasks []scheduler.Task
+	managerSchedulerAddTaskFn = func(_ *scheduler.Scheduler, task scheduler.Task, _ scheduler.ExecutionMode, _ time.Time) (string, error) {
+		addedTasks = append(addedTasks, task)
+		return "task-id", nil
+	}
+
+	baseDBRoPool := &dbconnpool.DbSQLConnPool{}
+	baseGetQueries := func(*dbconnpool.CpConn) interfaces.HandlerQueries { return nil }
+	baseGetHandler := func() http.Handler { return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}) }
+	baseGetETag := func() string { return "v1" }
+
+	cases := []struct {
+		name      string
+		configure func(*PreloadConfig)
+	}{
+		{
+			name: "nil DBRoPool",
+			configure: func(cfg *PreloadConfig) {
+				cfg.DBRoPool = nil
+			},
+		},
+		{
+			name: "nil GetQueries",
+			configure: func(cfg *PreloadConfig) {
+				cfg.GetQueries = nil
+			},
+		},
+		{
+			name: "nil GetHandler",
+			configure: func(cfg *PreloadConfig) {
+				cfg.GetHandler = nil
+			},
+		},
+		{
+			name: "nil GetETagVersion",
+			configure: func(cfg *PreloadConfig) {
+				cfg.GetETagVersion = nil
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			addedTasks = nil
+			pm := NewPreloadManager([]string{"/gallery/"}, true)
+			defer pm.Shutdown()
+			waitForSched(pm)
+
+			cfg := PreloadConfig{
+				TaskTracker:    &TaskTracker{},
+				SessionTracker: &SessionTracker{},
+				DBRoPool:       baseDBRoPool,
+				GetQueries:     baseGetQueries,
+				GetHandler:     baseGetHandler,
+				GetETagVersion: baseGetETag,
+			}
+			tc.configure(&cfg)
+			pm.Configure(cfg)
+
+			pm.ScheduleFolderPreload(context.Background(), 1, "session-1", "gzip")
+
+			if len(addedTasks) != 0 {
+				t.Errorf("expected no tasks scheduled when %s, got %d", tc.name, len(addedTasks))
+			}
+		})
+	}
+}
+
+func TestScheduleFolderPreload_NilHandler(t *testing.T) {
+	origAdd := managerSchedulerAddTaskFn
+	defer func() { managerSchedulerAddTaskFn = origAdd }()
+
+	var addedTasks []scheduler.Task
+	managerSchedulerAddTaskFn = func(_ *scheduler.Scheduler, task scheduler.Task, _ scheduler.ExecutionMode, _ time.Time) (string, error) {
+		addedTasks = append(addedTasks, task)
+		return "task-id", nil
+	}
+
+	pm := NewPreloadManager([]string{"/gallery/"}, true)
+	defer pm.Shutdown()
+	waitForSched(pm)
+
+	cfg := PreloadConfig{
+		TaskTracker:    &TaskTracker{},
+		SessionTracker: &SessionTracker{},
+		DBRoPool:       &dbconnpool.DbSQLConnPool{},
+		GetQueries:     func(*dbconnpool.CpConn) interfaces.HandlerQueries { return nil },
+		GetHandler:     func() http.Handler { return nil },
+		GetETagVersion: func() string { return "v1" },
+	}
+	pm.Configure(cfg)
+
+	pm.ScheduleFolderPreload(context.Background(), 1, "session-1", "gzip")
+
+	if len(addedTasks) != 0 {
+		t.Errorf("expected no tasks scheduled when handler is nil, got %d", len(addedTasks))
+	}
+}
+
+func TestScheduleFolderPreload_CancelPreviousTasks(t *testing.T) {
+	origAdd := managerSchedulerAddTaskFn
+	origRemove := managerSchedulerRemoveTaskFn
+	defer func() {
+		managerSchedulerAddTaskFn = origAdd
+		managerSchedulerRemoveTaskFn = origRemove
+	}()
+
+	var removedIDs []string
+	managerSchedulerRemoveTaskFn = func(_ *scheduler.Scheduler, id string) error {
+		removedIDs = append(removedIDs, id)
+		return nil
+	}
+	managerSchedulerAddTaskFn = func(_ *scheduler.Scheduler, _ scheduler.Task, _ scheduler.ExecutionMode, _ time.Time) (string, error) {
+		return "new-task-id", nil
+	}
+
+	pm := NewPreloadManager([]string{"/gallery/"}, true)
+	defer pm.Shutdown()
+	waitForSched(pm)
+
+	sessionID := "session-cancel"
+	tt := &TaskTracker{}
+	st := &SessionTracker{}
+	tt.RegisterTask("prev-key", sessionID, "prev-task")
+
+	pm.Configure(PreloadConfig{
+		TaskTracker:    tt,
+		SessionTracker: st,
+		DBRoPool:       &dbconnpool.DbSQLConnPool{},
+		GetQueries:     func(*dbconnpool.CpConn) interfaces.HandlerQueries { return nil },
+		GetHandler:     func() http.Handler { return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}) },
+		GetETagVersion: func() string { return "v1" },
+	})
+
+	pm.ScheduleFolderPreload(context.Background(), 1, sessionID, "gzip")
+	pm.ScheduleFolderPreload(context.Background(), 2, sessionID, "gzip")
+
+	found := false
+	for _, id := range removedIDs {
+		if id == "prev-task" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected 'prev-task' to be removed, got removed IDs: %v", removedIDs)
+	}
+}
+
+func TestScheduleFolderPreload_CancelRemoveTaskError(t *testing.T) {
+	origAdd := managerSchedulerAddTaskFn
+	origRemove := managerSchedulerRemoveTaskFn
+	defer func() {
+		managerSchedulerAddTaskFn = origAdd
+		managerSchedulerRemoveTaskFn = origRemove
+	}()
+
+	managerSchedulerRemoveTaskFn = func(_ *scheduler.Scheduler, _ string) error {
+		return errors.New("remove failed")
+	}
+	managerSchedulerAddTaskFn = func(_ *scheduler.Scheduler, _ scheduler.Task, _ scheduler.ExecutionMode, _ time.Time) (string, error) {
+		return "new-task-id", nil
+	}
+
+	pm := NewPreloadManager([]string{"/gallery/"}, true)
+	defer pm.Shutdown()
+	waitForSched(pm)
+
+	sessionID := "session-cancel-err"
+	tt := &TaskTracker{}
+	st := &SessionTracker{}
+	tt.RegisterTask("prev-key", sessionID, "prev-task")
+
+	pm.Configure(PreloadConfig{
+		TaskTracker:    tt,
+		SessionTracker: st,
+		DBRoPool:       &dbconnpool.DbSQLConnPool{},
+		GetQueries:     func(*dbconnpool.CpConn) interfaces.HandlerQueries { return nil },
+		GetHandler:     func() http.Handler { return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}) },
+		GetETagVersion: func() string { return "v1" },
+	})
+
+	// Should not panic despite the remove error.
+	pm.ScheduleFolderPreload(context.Background(), 1, sessionID, "gzip")
+	pm.ScheduleFolderPreload(context.Background(), 2, sessionID, "gzip")
+}
+
+func TestScheduleFolderPreload_AddTaskError(t *testing.T) {
+	origAdd := managerSchedulerAddTaskFn
+	defer func() { managerSchedulerAddTaskFn = origAdd }()
+
+	managerSchedulerAddTaskFn = func(_ *scheduler.Scheduler, _ scheduler.Task, _ scheduler.ExecutionMode, _ time.Time) (string, error) {
+		return "", errors.New("scheduler full")
+	}
+
+	pm := NewPreloadManager([]string{"/gallery/"}, true)
+	defer pm.Shutdown()
+	waitForSched(pm)
+
+	pm.Configure(PreloadConfig{
+		TaskTracker:    &TaskTracker{},
+		SessionTracker: &SessionTracker{},
+		DBRoPool:       &dbconnpool.DbSQLConnPool{},
+		GetQueries:     func(*dbconnpool.CpConn) interfaces.HandlerQueries { return nil },
+		GetHandler:     func() http.Handler { return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}) },
+		GetETagVersion: func() string { return "v1" },
+	})
+
+	// Should not panic when AddTask returns an error.
+	pm.ScheduleFolderPreload(context.Background(), 1, "session-1", "gzip")
 }

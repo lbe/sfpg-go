@@ -3,7 +3,9 @@ package server
 import (
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -441,6 +443,99 @@ func TestEnsureCsrfToken_Additional(t *testing.T) {
 	}
 }
 
+func TestSessionExpiry(t *testing.T) {
+	app := CreateApp(t)
+	defer app.Shutdown()
+
+	server := httptest.NewServer(app.getRouter())
+	defer server.Close()
+
+	// Reduce session lifetime so the cookie expires during the test.
+	app.configMu.Lock()
+	app.config.SessionMaxAge = 1
+	app.configMu.Unlock()
+	app.store.Options = app.getSessionOptions()
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("failed to create cookie jar: %v", err)
+	}
+	client := &http.Client{Jar: jar}
+
+	// Fetch the CSRF token from the login form.
+	loginResp, err := client.Get(server.URL + "/login-form")
+	if err != nil {
+		t.Fatalf("GET /login-form failed: %v", err)
+	}
+	doc, err := html.Parse(loginResp.Body)
+	loginResp.Body.Close()
+	if err != nil {
+		t.Fatalf("failed to parse login form HTML: %v", err)
+	}
+	var csrfToken string
+	var findCSRF func(*html.Node)
+	findCSRF = func(n *html.Node) {
+		if n.Type == html.ElementNode && n.Data == "input" {
+			var name, value string
+			for _, a := range n.Attr {
+				if a.Key == "name" {
+					name = a.Val
+				}
+				if a.Key == "value" {
+					value = a.Val
+				}
+			}
+			if name == "csrf_token" && value != "" {
+				csrfToken = value
+				return
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			if csrfToken == "" {
+				findCSRF(c)
+			}
+		}
+	}
+	findCSRF(doc)
+	if csrfToken == "" {
+		t.Fatal("csrf_token not found in login form")
+	}
+
+	// Log in via HTTP so the client receives an expiring session cookie.
+	form := url.Values{}
+	form.Set("username", "admin")
+	form.Set("password", "admin")
+	form.Set("csrf_token", csrfToken)
+
+	req, err := http.NewRequest(http.MethodPost, server.URL+"/login", strings.NewReader(form.Encode()))
+	if err != nil {
+		t.Fatalf("failed to create login request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", server.URL)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("POST /login failed: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 after login, got %d", resp.StatusCode)
+	}
+
+	// Wait for the cookie to expire in the jar.
+	time.Sleep(2 * time.Second)
+
+	resp, err = client.Get(server.URL + "/config")
+	if err != nil {
+		t.Fatalf("GET /config failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusUnauthorized && resp.StatusCode != http.StatusFound && resp.StatusCode != http.StatusSeeOther {
+		t.Errorf("Expected redirect or unauthorized after session expiry, got %d", resp.StatusCode)
+	}
+}
+
 // TestAddAuthToTemplateData_Additional tests adding auth info to template data
 func TestAddAuthToTemplateData_Additional(t *testing.T) {
 	app := CreateApp(t)
@@ -488,6 +583,47 @@ func TestIsAuthenticated_EdgeCases(t *testing.T) {
 			t.Error("Expected not authenticated when value is not bool")
 		}
 	})
+
+	t.Run("session without authenticated key", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/", nil)
+		session, _ := app.store.Get(req, "session-name")
+
+		rr := httptest.NewRecorder()
+		if err := session.Save(req, rr); err != nil {
+			t.Fatalf("Failed to save session: %v", err)
+		}
+
+		req2 := httptest.NewRequest("GET", "/", nil)
+		req2.Header.Set("Cookie", rr.Header().Get("Set-Cookie"))
+
+		rr2 := httptest.NewRecorder()
+		if app.IsAuthenticated(rr2, req2) {
+			t.Error("Expected not authenticated when session lacks authenticated key")
+		}
+	})
+}
+
+func TestProtectedRouteAccess(t *testing.T) {
+	app := CreateApp(t)
+	defer app.Shutdown()
+
+	handlerCalled := false
+	dummyHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handlerCalled = true
+		w.WriteHeader(http.StatusOK)
+	})
+	authHandler := app.authMiddleware(dummyHandler)
+
+	req := httptest.NewRequest("GET", "/protected", nil)
+	rr := httptest.NewRecorder()
+	authHandler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("Expected 401 Unauthorized, got %d", rr.Code)
+	}
+	if handlerCalled {
+		t.Error("protected handler was called, but should not have been")
+	}
 }
 
 // TestAddCommonTemplateData_EdgeCases tests additional template data scenarios

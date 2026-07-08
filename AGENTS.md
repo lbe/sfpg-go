@@ -77,35 +77,36 @@ This is my fundamental operating principle. There are no exceptions.
 The application follows a structured design with a clear separation of concerns, leveraging internal packages for modularity.
 
 - **Application Entrypoint (`main.go`, `internal/getopt`):**
-  - **Configuration:** Uses `internal/getopt` to parse configuration with precedence: CLI flags > Environment variables > YAML config files > Defaults.
+  - **Configuration:** Uses `internal/getopt` to parse configuration with precedence: Defaults → Database → YAML files → CLI/Env (CLI flags override environment variables for the same setting).
   - **Initialization:** Sets up structured logging (`slog`) with `internal/multihandler` (console + file), database pools, and starts the server.
   - **Profiling:** `internal/profiler` allows enabling CPU/Mem/Block profiling via config.
 
 - **Web Server (`internal/server`):**
   - **Routing:** Standard `net/http` `ServeMux`. Routes are ID-based (e.g., `/gallery/{id}`, `/image/{id}`) for stability and performance.
-  - **Middleware Chain:**
-    1.  **Cross-Origin Protection:** Enforces strict origin checks for unsafe methods.
-    2.  **Compression:** Gzip/Brotli compression (if enabled).
-    3.  **HTTP Cache (`internal/cachelite`):** A custom SQLite-backed HTTP cache that stores full responses for high performance. It handles `ETag` generation and validation.
-    4.  **Conditional Request:** Handles `304 Not Modified` responses.
-    5.  **Logging:** Structured request/response logging.
+  - **Middleware Chain (outermost → innermost):**
+    1.  **Logging:** Structured request/response logging.
+    2.  **HTTP Cache (`internal/cachelite`):** A custom SQLite-backed HTTP cache that stores full responses for high performance. It handles `ETag` generation and validation.
+    3.  **Compression:** Gzip/Brotli compression (if enabled).
+    4.  **CSRF Protection:** Strict same-origin check for unsafe methods.
+    5.  **Mux / Handler:** Authentication is applied selectively to protected routes inside the mux.
   - **Handlers:**
-    - `galleryByIDHandler`, `imageByIDHandler`: Serve main content.
-    - `lightboxByIDHandler`: Interactive lightbox with loop-around navigation logic.
-    - `infoBoxFolderHandler`, `infoBoxImageHandler`: HTMX-loaded details.
-    - `thumbnailByIDHandler`, `folderThumbnailByIDHandler`: Serve binary image data.
+    - `GalleryByID`, `ImageByID`: Serve main content.
+    - `LightboxByID`: Interactive lightbox with loop-around navigation logic.
+    - `InfoBoxFolder`, `InfoBoxImage`: HTMX-loaded details.
+    - `ThumbnailByID`, `FolderThumbnailByID`: Serve binary image data.
+    - `Config*`, `Dashboard*`, `Server*`, `Theme*`, `Menu*`: Admin and utility handlers.
 
-- **Database Layer (`internal/gallerydb`, `internal/dbconnpool`):**
-  - **Schema:** Comprehensive SQLite schema with foreign keys. Migrations are embedded (`migrations/*.sql`).
+- **Database Layer (`internal/gallerydb`, `internal/dbconnpool`, `internal/server/database`):**
+  - **Schema:** Comprehensive SQLite schema with foreign keys. Migrations are embedded (`migrations/*.sql`). Thumbnail blobs live in a separate `DB/thumbs/thumbs.db`.
   - **Access:** `sqlc` generates type-safe Go code in `internal/gallerydb`.
-  - **Connection Pooling:** `internal/dbconnpool` manages generic `*sql.DB` pools with specific SQLite pragmas (WAL mode, synchronous=NORMAL) for performance.
+  - **Connection Pooling:** `internal/dbconnpool` manages generic `*sql.DB` pools; `internal/server/database` wires them with WAL mode and SQLite-specific pragmas.
 
 - **Data Processing & Infrastructure (`internal/`):**
   - **`gallerylib/importer`:** Logic to ingest file paths and populate the database (folders, files, paths).
   - **`parallelwalkdir`:** High-performance concurrent directory scanner.
   - **`workerpool`:** Dynamic worker pool that scales based on queue depth to process background tasks (importing, thumbnail generation).
   - **`cachelite`:** Database-backed HTTP response cache. Features asynchronous writes via the unified WriteBatcher and post-flush LRU eviction to avoid blocking request processing.
-  - **`writebatcher`:** High-throughput batched database writer for efficiently queuing and executing SQL insert/update operations, with a persistent on-disk overflow queue (`dque`) for burst absorption and crash recovery.
+  - **`writebatcher`:** Generic high-throughput batched database writer used by the unified server batcher, with a persistent on-disk overflow queue (`dque`) for burst absorption and crash recovery.
   - **`dque`/`flock`/`errors`:** Segment-backed persistent FIFO overflow queue, cross-platform file locking, and error sentinels used by `writebatcher`'s overflow path.
   - **`gensyncpool`:** Generic, type-safe wrappers around `sync.Pool` that enforce object resetting to prevent state leakage.
   - **`coords`:** Utility for parsing geographic coordinates (likely for EXIF data).
@@ -114,24 +115,25 @@ The application follows a structured design with a clear separation of concerns,
 
 - **Frontend Architecture:**
   - **Hypermedia-Driven:** Uses `htmx` to swap parts of the page (e.g., opening a folder info box) without full reloads.
-  - **Templates:** `ui.go` manages parsing. `layout.html.tmpl` defines the base shell.
+  - **Templates:** `internal/server/ui/templates.go` and `render.go` manage parsing and rendering. `layout.html.tmpl` defines the base shell.
 
 ## Critical Development Patterns
 
 ### Handler Testing Pattern
 
-When testing handlers, use `hqOverride` to inject mock query behavior:
+Handlers depend on the `HandlerQueries` interface defined in `internal/server/interfaces` for testability:
 
-- Handlers use `HandlerQueries` interface for testability
-- Constructed via dependency injection in `buildHandlers()`
-- Never call handlers directly - use the server's router
+- Unit tests construct handler groups directly and inject `fakeHandlerQueries` (see `internal/server/handlers/helpers_test.go`).
+- Integration tests can replace the live queries via `app.testHookHandlerQueries`.
+- Handler groups are wired in `App.buildHandlers()` (called from `server.go`).
+- For routing/integration tests, use the server's router rather than calling handlers directly.
 
 ### Database Access Pattern
 
 Always get connections from the pool:
 
 ```go
-conn, err := app.dbRwPool.Get(ctx)
+conn, err := app.dbRwPool.Get()
 if err != nil { /* handle error */ }
 defer app.dbRwPool.Put(conn)
 ```
@@ -147,7 +149,7 @@ Many routes are HTMX partials (won't work via direct URL access):
 
 ### Configuration Precedence
 
-Defaults → Database → Environment Variables → CLI flags (highest)
+Defaults → Database → YAML files → CLI/Env (CLI flags override environment variables for the same setting)
 
 ### Hyperscript Integration
 
@@ -156,7 +158,7 @@ Before integrating Hyperscript changes, ALWAYS validate:
 ```bash
 make validate-hyperscript
 # Or specific file:
-go run ./scripts/validate-hyperscript.go web/templates/gallery.html
+go run ./scripts/validate-hyperscript.go web/templates/gallery.html.tmpl
 ```
 
 **After validating, also verify the RENDERED output with curl** — the validator checks
@@ -241,7 +243,7 @@ The project is configured to use `air` for live reloading during development.
 
 ## Development Directives
 
-- **HTML content checks:** When checking HTML content (tests or reviews), use structural HTML assertions (no string/bytes contains checks) per [internal/server/methodology-html-content-test-writing.md](internal/server/methodology-html-content-test-writing.md).
+- **HTML content checks:** When checking HTML content (tests or reviews), use structural HTML assertions (no string/bytes contains checks) per [references/methodology-html-content-test-writing.md](references/methodology-html-content-test-writing.md).
 
 - **Run `gofmt` and `goimports` and `go build -o /dev/null .`** on go files and `prettier` on html.tmpl files immediately after edits.
 

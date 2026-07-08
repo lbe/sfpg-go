@@ -105,12 +105,12 @@ func TestE2E_ConfigRestart_UsesUpdatedPort(t *testing.T) {
 	// background goroutine, so we poll briefly.
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if app.restartRequested.Load() {
+		if app.IsRestartRequested() {
 			break
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	if !app.restartRequested.Load() {
+	if !app.IsRestartRequested() {
 		t.Fatal("restart was not requested after POST /config/restart")
 	}
 

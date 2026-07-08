@@ -678,3 +678,87 @@ func TestAuthHandlers_Login_SetAuthenticatedError(t *testing.T) {
 		t.Errorf("expected status 500, got %d", w.Code)
 	}
 }
+
+func TestAuthHandlers_LoginFormHandler(t *testing.T) {
+	if err := ui.ParseTemplates(web.FS); err != nil {
+		t.Fatalf("ParseTemplates failed: %v", err)
+	}
+
+	authHandlers := NewAuthHandlers(&mockAuthService{}, &mockSessionManagerAuth{})
+
+	req := httptest.NewRequest(http.MethodGet, "/login-form", nil)
+	w := httptest.NewRecorder()
+
+	authHandlers.LoginFormHandler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d", w.Code)
+	}
+	if got := w.Header().Get("Cache-Control"); got != "no-store, no-cache, must-revalidate" {
+		t.Errorf("Cache-Control = %q, want %q", got, "no-store, no-cache, must-revalidate")
+	}
+
+	doc, err := testutil.ParseHTML(w.Body)
+	if err != nil {
+		t.Fatalf("parse HTML: %v", err)
+	}
+	formNode := testutil.FindElementByID(doc, "login-form")
+	if formNode == nil {
+		t.Fatal("missing #login-form")
+	}
+}
+
+func TestAuthHandlers_LoginFormHandler_RenderError(t *testing.T) {
+	authHandlers := NewAuthHandlers(&mockAuthService{}, &mockSessionManagerAuth{})
+
+	req := httptest.NewRequest(http.MethodGet, "/login-form", nil)
+	w := &errorResponseWriter{}
+
+	authHandlers.LoginFormHandler(w, req)
+
+	if w.status != http.StatusInternalServerError {
+		t.Errorf("expected status 500, got %d", w.status)
+	}
+}
+
+func TestAuthHandlers_LogoutFormHandler(t *testing.T) {
+	if err := ui.ParseTemplates(web.FS); err != nil {
+		t.Fatalf("ParseTemplates failed: %v", err)
+	}
+
+	authHandlers := NewAuthHandlers(&mockAuthService{}, &mockSessionManagerAuth{})
+
+	req := httptest.NewRequest(http.MethodGet, "/logout-form", nil)
+	w := httptest.NewRecorder()
+
+	authHandlers.LogoutFormHandler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d", w.Code)
+	}
+	if got := w.Header().Get("Cache-Control"); got != "no-store, no-cache, must-revalidate" {
+		t.Errorf("Cache-Control = %q, want %q", got, "no-store, no-cache, must-revalidate")
+	}
+
+	doc, err := testutil.ParseHTML(w.Body)
+	if err != nil {
+		t.Fatalf("parse HTML: %v", err)
+	}
+	formNode := testutil.FindElementByID(doc, "logout-form")
+	if formNode == nil {
+		t.Fatal("missing #logout-form")
+	}
+}
+
+func TestAuthHandlers_LogoutFormHandler_RenderError(t *testing.T) {
+	authHandlers := NewAuthHandlers(&mockAuthService{}, &mockSessionManagerAuth{})
+
+	req := httptest.NewRequest(http.MethodGet, "/logout-form", nil)
+	w := &errorResponseWriter{}
+
+	authHandlers.LogoutFormHandler(w, req)
+
+	if w.status != http.StatusInternalServerError {
+		t.Errorf("expected status 500, got %d", w.status)
+	}
+}

@@ -42,6 +42,7 @@ type ServerDeps interface {
 	// --- Gallery queries ---
 	GetHandlerQueries(cpc *dbconnpool.CpConn) HandlerQueries
 	GetMetadataQueries(cpc *dbconnpool.CpConn) MetadataQueries
+	GetConfigQueries(cpc *dbconnpool.CpConn) config.ConfigQueries
 	GetETagVersion() string
 	ImagesDir() string
 
@@ -57,7 +58,4 @@ type ServerDeps interface {
 	// --- Template helpers ---
 	AddCommonTemplateData(w http.ResponseWriter, r *http.Request, data map[string]any, fullPage bool) map[string]any
 	ServerError(w http.ResponseWriter, r *http.Request, err error)
-
-	// --- Theme rendering ---
-	RenderTemplate(w http.ResponseWriter, name string, data any) error
 }

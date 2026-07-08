@@ -1,6 +1,8 @@
 package main
 
 import (
+	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -335,5 +337,122 @@ func TestMetricsFetchedUnauthorized(t *testing.T) {
 
 	if model.authState != authStatePrompting {
 		t.Errorf("authState = %v, want %v", model.authState, authStatePrompting)
+	}
+}
+
+// TestMain_Help exits cleanly when -help is requested.
+func TestMain_Help(t *testing.T) {
+	origArgs := os.Args
+	origExit := osExit
+	origRun := runProgram
+	defer func() {
+		os.Args = origArgs
+		osExit = origExit
+		runProgram = origRun
+	}()
+
+	os.Args = []string{"sfpg-go-dashboard", "-help"}
+	var exitCode int
+	osExit = func(code int) {
+		exitCode = code
+	}
+	runProgramCalled := false
+	runProgram = func(*tea.Program) (tea.Model, error) {
+		runProgramCalled = true
+		return nil, nil
+	}
+
+	main()
+
+	if exitCode != 0 {
+		t.Errorf("exitCode = %d, want 0", exitCode)
+	}
+	if runProgramCalled {
+		t.Error("runProgram should not be called when -help is requested")
+	}
+}
+
+// TestMain_RunError exits with code 1 when the program fails.
+func TestMain_RunError(t *testing.T) {
+	origArgs := os.Args
+	origExit := osExit
+	origRun := runProgram
+	origStderr := stderr
+	defer func() {
+		os.Args = origArgs
+		osExit = origExit
+		runProgram = origRun
+		stderr = origStderr
+	}()
+
+	os.Args = []string{"sfpg-go-dashboard", "-server", "http://localhost:8083"}
+	var exitCode int
+	osExit = func(code int) {
+		exitCode = code
+	}
+	runProgram = func(*tea.Program) (tea.Model, error) {
+		return nil, errors.New("tty unavailable")
+	}
+
+	var errOut strings.Builder
+	stderr = &errOut
+
+	main()
+
+	if exitCode != 1 {
+		t.Errorf("exitCode = %d, want 1", exitCode)
+	}
+	if !strings.Contains(errOut.String(), "tty unavailable") {
+		t.Errorf("stderr = %q, want to contain 'tty unavailable'", errOut.String())
+	}
+}
+
+// TestRunDashboard_Help returns 0 without running the program.
+func TestRunDashboard_Help(t *testing.T) {
+	runCalled := false
+	runProgram := func(*tea.Program) (tea.Model, error) {
+		runCalled = true
+		return nil, errors.New("should not be called")
+	}
+
+	code := runDashboard([]string{"-help"}, runProgram)
+	if code != 0 {
+		t.Errorf("code = %d, want 0", code)
+	}
+	if runCalled {
+		t.Error("runProgram should not be called for -help")
+	}
+}
+
+// TestRunDashboard_RunError returns 1 and logs the error.
+func TestRunDashboard_RunError(t *testing.T) {
+	origStderr := stderr
+	defer func() { stderr = origStderr }()
+
+	var errOut strings.Builder
+	stderr = &errOut
+
+	runProgram := func(*tea.Program) (tea.Model, error) {
+		return nil, errors.New("tty unavailable")
+	}
+
+	code := runDashboard([]string{"-server", "http://localhost:8083"}, runProgram)
+	if code != 1 {
+		t.Errorf("code = %d, want 1", code)
+	}
+	if !strings.Contains(errOut.String(), "tty unavailable") {
+		t.Errorf("stderr = %q, want to contain 'tty unavailable'", errOut.String())
+	}
+}
+
+// TestRunDashboard_Success returns 0 on successful program run.
+func TestRunDashboard_Success(t *testing.T) {
+	runProgram := func(*tea.Program) (tea.Model, error) {
+		return Model{}, nil
+	}
+
+	code := runDashboard([]string{"-server", "http://localhost:8083"}, runProgram)
+	if code != 0 {
+		t.Errorf("code = %d, want 0", code)
 	}
 }

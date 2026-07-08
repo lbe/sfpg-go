@@ -13,6 +13,25 @@ import (
 	"sync"
 )
 
+// Package-level hooks that default to real filesystem functions. They are
+// overridden in tests to exercise I/O error branches deterministically.
+var (
+	// filepathEvalSymlinks is a testable hook for filepath.EvalSymlinks.
+	filepathEvalSymlinks = filepath.EvalSymlinks
+
+	// osReadDir is a testable hook for os.ReadDir.
+	osReadDir = os.ReadDir
+
+	// osLstat is a testable hook for os.Lstat.
+	osLstat = os.Lstat
+
+	// osStat is a testable hook for os.Stat.
+	osStat = os.Stat
+
+	// dirEntryInfo is a testable hook for fs.DirEntry.Info.
+	dirEntryInfo = func(de fs.DirEntry) (fs.FileInfo, error) { return de.Info() }
+)
+
 // Walker holds the state for a parallel directory traversal.
 // It manages concurrency, tracks visited paths to prevent loops, and returns
 // results via a channel.
@@ -179,7 +198,7 @@ func (w *Walker) walk(currentPath string, reportedPath string) {
 
 	// --- Loop Detection ---
 	// Resolve the current path to its canonical form to detect loops.
-	realPath, err := filepath.EvalSymlinks(currentPath)
+	realPath, err := filepathEvalSymlinks(currentPath)
 	if err != nil {
 		if w.ctx.Err() == nil {
 			slog.Error("EvalSymlinks error", "currentPath", currentPath, "err", err)
@@ -209,13 +228,13 @@ func (w *Walker) walk(currentPath string, reportedPath string) {
 	}
 
 	// Read the directory entries.
-	entries, err := os.ReadDir(currentPath)
+	entries, err := osReadDir(currentPath)
 	if err != nil {
 		if w.ctx.Err() == nil {
 			slog.Error("ReadDir error", "currentPath", currentPath, "err", err)
 		}
 		// If it's not a directory, it could be a file. Check for this case.
-		info, statErr := os.Lstat(currentPath)
+		info, statErr := osLstat(currentPath)
 		if statErr == nil && !info.IsDir() {
 			// It's a file, apply file-specific filters before reporting.
 			w.filterAndReportFile(reportedPath, info)
@@ -261,7 +280,7 @@ func (w *Walker) walk(currentPath string, reportedPath string) {
 		// If the entry is a symlink, we need to check if it points to a directory.
 		// If it does, delegate it to a new goroutine.
 		if entry.Type()&fs.ModeSymlink != 0 {
-			info, statErr := os.Stat(childPath) // os.Stat follows the symlink.
+			info, statErr := osStat(childPath) // os.Stat follows the symlink.
 			if statErr == nil && info.IsDir() {
 				w.wg.Add(1)
 				go w.walk(childPath, reportedChildPath)
@@ -273,7 +292,7 @@ func (w *Walker) walk(currentPath string, reportedPath string) {
 		}
 
 		// If we reach here, it's a regular file. Apply file-specific filters before reporting.
-		info, statErr := entry.Info()
+		info, statErr := dirEntryInfo(entry)
 		if statErr != nil {
 			select {
 			case w.errs <- &fs.PathError{Op: "Stat", Path: childPath, Err: statErr}:

@@ -30,8 +30,9 @@ graph TB
 
     subgraph "Server Layer"
         Router[HTTP Router]
-        AuthMW[Auth Middleware]
         CacheMW[Cache Middleware]
+        CompressMW[Compression Middleware]
+        CSRFMW[CSRF Protection]
         Handlers[Handler Groups]
     end
 
@@ -40,10 +41,12 @@ graph TB
         ConfigSvc[Config Service]
         FileProc[File Processor]
         SessionMgr[Session Manager]
+        AuthSvc[Auth Service]
     end
 
     subgraph "Data Layer"
-        SQLite[(SQLite Database)]
+        MainDB[(Main SQLite DB<br/>sfpg.db)]
+        ThumbsDB[(Thumbs SQLite DB<br/>thumbs/thumbs.db)]
         ROConn[(Read-Only Pool)]
         RWConn[(Read-Write Pool)]
     end
@@ -56,23 +59,25 @@ graph TB
 
     subgraph "Storage"
         FileSystem[Image Files]
-        Thumbnails[Thumbnails]
     end
 
     Browser --> Router
-    Router --> AuthMW
-    AuthMW --> CacheMW
-    CacheMW --> Handlers
+    Router --> CacheMW
+    CacheMW --> CompressMW
+    CompressMW --> CSRFMW
+    CSRFMW --> Handlers
 
     Handlers --> App
     App --> ConfigSvc
     App --> FileProc
     App --> SessionMgr
+    App --> AuthSvc
 
     App --> ROConn
     App --> RWConn
-    ROConn --> SQLite
-    RWConn --> SQLite
+    ROConn --> MainDB
+    RWConn --> MainDB
+    RWConn --> ThumbsDB
 
     Handlers --> WriteBatcher
     WriteBatcher --> RWConn
@@ -81,7 +86,6 @@ graph TB
 
     FileProc --> Pool
     Pool --> FileSystem
-    Pool --> Thumbnails
     Pool --> RWConn
 ```
 
@@ -95,18 +99,20 @@ Detailed flow of a typical HTTP request through the system:
 sequenceDiagram
     participant Client as Browser
     participant Router as HTTP Router
-    participant AuthMW as Auth Middleware
     participant CacheMW as Cache Middleware
+    participant CompressMW as Compression Middleware
+    participant CSRFMW as CSRF Protection
     participant Handler as Handler
     participant Service as Service
     participant DB as Database
 
     Client->>Router: GET /gallery/1
-    Router->>AuthMW: Forward
-    AuthMW->>AuthMW: Check session cookie
-    AuthMW->>Router: Forward (authenticated)
-
     Router->>CacheMW: Forward
+    CacheMW->>CompressMW: Forward
+    CompressMW->>CSRFMW: Forward
+    CSRFMW->>CSRFMW: Allow safe method
+
+    CSRFMW->>CacheMW: Forward
     CacheMW->>CacheMW: Check cache (cache key)
     alt Cache Hit
         CacheMW-->>Client: Return cached response (304 or 200)
@@ -118,12 +124,8 @@ sequenceDiagram
         Service-->>Handler: Data
 
         Handler-->>CacheMW: Response
-        CacheMW->>CacheMW: Store in cache
+        CacheMW->>CacheMW: Submit to write batcher
         CacheMW-->>Client: Return response
-
-        par Async
-            CacheMW->>DB: Queue cache write
-        end
     end
 ```
 
@@ -136,7 +138,7 @@ Login and session management flow:
 ```mermaid
 stateDiagram-v2
     [*] --> Unauthenticated
-    Unauthenticated --> LoginForm: GET /login
+    Unauthenticated --> LoginForm: GET /login-form
     LoginForm --> Unauthenticated: Cancel
 
     LoginForm --> Validating: POST /login
@@ -323,34 +325,53 @@ graph TB
         RW[Read-Write Pool<br/>db_max_pool_size, default 100]
     end
 
-    subgraph "Database File"
+    subgraph "Database Files"
         SQLiteFile[sfpg.db]
+        ThumbsFile[thumbs/thumbs.db]
     end
 
-    subgraph "Schema Tables"
-        Files[files<br/>---------<br/>id, folder_id,<br/>filename, mime_type,<br/>width, height,<br/>exif_json,<br/>last_modified]
-        Folders[folders<br/>-----------<br/>id, path,<br/>parent_id,<br/>name]
-        Thumbnails[thumbnails<br/>-------------<br/>id, file_id,<br/>size, width,<br/>height, mime_type,<br/>created_at]
-        Config[config<br/>-------<br/>key, value,<br/>type]
-        HTTPCache[http_cache<br/>-----------<br/>id, path, etag,<br/>content_length,<br/>created_at]
-        Admin[admin<br/>------<br/>id, username,<br/>password_hash,<br/>failed_attempts,<br/>locked_until]
+    subgraph "Main Schema Tables"
+        Files[files<br/>---------<br/>id, folder_id, path_id,<br/>filename, mime_type,<br/>width, height,<br/>size_bytes, mtime,<br/>md5, phash]
+        Folders[folders<br/>-----------<br/>id, path_id, parent_id,<br/>name, mtime, tile_id]
+        FilePaths[file_paths<br/>-----------<br/>id, path]
+        FolderPaths[folder_paths<br/>---------------<br/>id, path]
+        Exif[exif_metadata<br/>-----------------<br/>file_id, json]
+        Config[config<br/>-------<br/>key, value,<br/>category, ...]
+        HTTPCache[http_cache<br/>-----------<br/>key, method, path,<br/>encoding, etag,<br/>body, content_length,<br/>created_at, expires_at]
+        LoginAttempts[login_attempts<br/>-------------------<br/>username, failed_attempts,<br/>locked_until, last_attempt_at]
+        ModuleState[module_state<br/>---------------<br/>name, active,<br/>last_started_at]
+    end
+
+    subgraph "Thumbs Schema Tables"
+        Thumbnails[thumbnails<br/>-------------<br/>file_id, size_label,<br/>width, height,<br/>format, blob_id]
+        ThumbnailBlobs[thumbnail_blobs<br/>-----------------<br/>id, data]
     end
 
     RO --> SQLiteFile
     RW --> SQLiteFile
+    RW --> ThumbsFile
 
     RO -.->|SELECT| Files
     RO -.->|SELECT| Folders
-    RO -.->|SELECT| Thumbnails
+    RO -.->|SELECT| FilePaths
+    RO -.->|SELECT| FolderPaths
+    RO -.->|SELECT| Exif
     RO -.->|SELECT| Config
     RO -.->|SELECT| HTTPCache
+    RO -.->|SELECT| LoginAttempts
+    RO -.->|SELECT| ModuleState
 
     RW -->|INSERT/UPDATE| Files
     RW -->|INSERT/UPDATE| Folders
-    RW -->|INSERT/UPDATE| Thumbnails
+    RW -->|INSERT/UPDATE| FilePaths
+    RW -->|INSERT/UPDATE| FolderPaths
+    RW -->|INSERT/UPDATE| Exif
     RW -->|INSERT/UPDATE| Config
     RW -->|INSERT/DELETE| HTTPCache
-    RW -->|UPDATE| Admin
+    RW -->|INSERT/UPDATE| LoginAttempts
+    RW -->|INSERT/UPDATE| ModuleState
+    RW -->|INSERT/UPDATE| Thumbnails
+    RW -->|INSERT/UPDATE| ThumbnailBlobs
 
     style RO fill:#e1f5e1
     style RW fill:#ffe1e1
@@ -367,13 +388,15 @@ flowchart LR
     subgraph "Sources"
         Defaults[Default Values]
         DB[(Database Config)]
+        YAML[YAML Files]
         CLI[CLI Flags]
         ENV[Environment<br/>Variables]
     end
 
     subgraph "Loading Process"
         Merge1[Merge Defaults + DB]
-        Merge2[Override with CLI/ENV]
+        Merge2[Override with YAML]
+        Merge3[Override with CLI/ENV]
         Validate[Validate]
         Apply[Apply to App]
     end
@@ -392,9 +415,11 @@ flowchart LR
     Defaults --> Merge1
     DB --> Merge1
     Merge1 --> Merge2
-    CLI --> Merge2
-    ENV --> Merge2
-    Merge2 --> Validate
+    YAML --> Merge2
+    Merge2 --> Merge3
+    CLI --> Merge3
+    ENV --> Merge3
+    Merge3 --> Validate
     Validate --> Apply
 
     Apply --> RuntimeConfig
@@ -432,6 +457,10 @@ graph TD
         AuthH[handlers/auth_handlers.go]
         GalleryH[handlers/gallery_handlers.go]
         ConfigH[handlers/config_handlers.go]
+        DashboardH[handlers/dashboard_handlers.go]
+        ServerH[handlers/server_handlers.go]
+        ThemeH[handlers/theme_handlers.go]
+        MenuH[handlers/menu_handlers.go]
         HealthH[handlers/health_handlers.go]
     end
 
@@ -439,6 +468,7 @@ graph TD
         ConfigSvc[config/service.go]
         FileProc[files/processor.go]
         SessionMgr[session/manager.go]
+        AuthSvc[auth/service.go]
     end
 
     subgraph "Middleware"
@@ -455,34 +485,52 @@ graph TD
 
     subgraph "Support"
         UI[ui/templates.go]
+        TemplateData[template/data.go]
         Validation[validation/rules.go]
+        Security[security/lockout.go]
         WriteBatch[writebatcher/]
         DQue[dque/]
         Flock[flock/]
         GalleryLib[gallerylib/importer.go]
         PathUtil[pathutil/path.go]
+        CacheBatch[cachebatch/]
+        CachePreload[cachepreload/]
+        ModuleState[modulestate/]
+        Metrics[metrics/]
     end
 
     Router --> AuthH
     Router --> GalleryH
     Router --> ConfigH
+    Router --> DashboardH
+    Router --> ServerH
+    Router --> ThemeH
+    Router --> MenuH
     Router --> HealthH
 
     App --> ConfigSvc
     App --> FileProc
     App --> SessionMgr
+    App --> AuthSvc
     App --> BatchWrite
     App --> BatchFlush
     App --> BatchAdapter
+    App --> CacheBatch
+    App --> CachePreload
+    App --> ModuleState
+    App --> Metrics
 
     App --> Router
     App --> Server
 
     AuthH --> AuthMW
     AuthH --> SessionMgr
+    AuthH --> AuthSvc
     GalleryH --> FileProc
     GalleryH --> DBConn
     ConfigH --> ConfigSvc
+    DashboardH --> Metrics
+    ServerH --> CacheBatch
 
     Router --> CacheMW
     Router --> CSRFMW
@@ -496,6 +544,8 @@ graph TD
 
     GalleryH --> UI
     ConfigH --> Validation
+    ConfigH --> TemplateData
+    AuthSvc --> Security
 
     FileProc --> BatchAdapter
     FileProc --> PathUtil
@@ -504,6 +554,7 @@ graph TD
     BatchFlush --> FileProc
     BatchFlush --> GalleryLib
     BatchFlush --> CacheMW
+    CacheBatch --> CachePreload
 
     style App fill:#f9f
     style ConfigSvc fill:#9cf

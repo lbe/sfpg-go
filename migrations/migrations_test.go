@@ -4,9 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"io/fs"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
+
+	"github.com/golang-migrate/migrate/v4"
+	"github.com/golang-migrate/migrate/v4/source"
 
 	_ "github.com/ncruces/go-sqlite3/driver"
 )
@@ -114,4 +119,118 @@ func TestThumbsMigration(t *testing.T) {
 	if name != "thumbnail_blobs" {
 		t.Errorf("expected thumbnail_blobs, got %s", name)
 	}
+}
+
+func TestNewMigrator_Errors(t *testing.T) {
+	cases := []struct {
+		name    string
+		setup   func() (cleanup func())
+		wantErr string
+	}{
+		{
+			name: "iofs new fails",
+			setup: func() func() {
+				orig := iofsNewFn
+				iofsNewFn = func(fsys fs.FS, path string) (source.Driver, error) {
+					return nil, errors.New("iofs new failed")
+				}
+				return func() { iofsNewFn = orig }
+			},
+			wantErr: "create migrations source",
+		},
+		{
+			name: "new with source instance fails",
+			setup: func() func() {
+				orig := migrateNewWithSourceInstanceFn
+				migrateNewWithSourceInstanceFn = func(sourceName string, instance source.Driver, databaseURL string) (*migrate.Migrate, error) {
+					return nil, errors.New("migrate new failed")
+				}
+				return func() { migrateNewWithSourceInstanceFn = orig }
+			},
+			wantErr: "initialize migrator",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cleanup := tc.setup()
+			defer cleanup()
+
+			_, err := NewMigrator(filepath.Join(t.TempDir(), "test.db"))
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("error = %q, want containing %q", err.Error(), tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestNewMigrator_MemoryDSN(t *testing.T) {
+	m, err := NewMigrator(":memory:")
+	if err != nil {
+		t.Fatalf("NewMigrator(:memory:) error = %v", err)
+	}
+	if m == nil {
+		t.Fatal("expected non-nil migrator")
+	}
+	m.Close()
+}
+
+func TestNewThumbsMigrator_Errors(t *testing.T) {
+	cases := []struct {
+		name    string
+		setup   func() (cleanup func())
+		wantErr string
+	}{
+		{
+			name: "iofs new fails",
+			setup: func() func() {
+				orig := iofsNewFn
+				iofsNewFn = func(fsys fs.FS, path string) (source.Driver, error) {
+					return nil, errors.New("iofs new failed")
+				}
+				return func() { iofsNewFn = orig }
+			},
+			wantErr: "create thumbs migrations source",
+		},
+		{
+			name: "new with source instance fails",
+			setup: func() func() {
+				orig := migrateNewWithSourceInstanceFn
+				migrateNewWithSourceInstanceFn = func(sourceName string, instance source.Driver, databaseURL string) (*migrate.Migrate, error) {
+					return nil, errors.New("migrate new failed")
+				}
+				return func() { migrateNewWithSourceInstanceFn = orig }
+			},
+			wantErr: "initialize thumbs migrator",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cleanup := tc.setup()
+			defer cleanup()
+
+			_, err := NewThumbsMigrator(filepath.Join(t.TempDir(), "test.db"))
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("error = %q, want containing %q", err.Error(), tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestNewThumbsMigrator_MemoryDSN(t *testing.T) {
+	m, err := NewThumbsMigrator(":memory:")
+	if err != nil {
+		t.Fatalf("NewThumbsMigrator(:memory:) error = %v", err)
+	}
+	if m == nil {
+		t.Fatal("expected non-nil migrator")
+	}
+	m.Close()
 }

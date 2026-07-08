@@ -82,25 +82,25 @@ func PrepareCustomQueries(ctx context.Context, db DBTX) (*CustomQueries, error) 
 	_ = db // Placeholder for future ATTACH logic if needed in PrepareContext
 
 	// Prepare all custom statements
-	if cq.getBatchLoadTargetsStmt, err = db.PrepareContext(ctx, getBatchLoadTargets); err != nil {
+	if cq.getBatchLoadTargetsStmt, err = prepareContextFn(ctx, db, getBatchLoadTargets); err != nil {
 		return nil, fmt.Errorf("error preparing query GetBatchLoadTargets: %w", err)
 	}
-	if cq.getFileViewRowsByFolderIDStmt, err = db.PrepareContext(ctx, getFileViewRowsByFolderID); err != nil {
+	if cq.getFileViewRowsByFolderIDStmt, err = prepareContextFn(ctx, db, getFileViewRowsByFolderID); err != nil {
 		return nil, fmt.Errorf("error preparing query GetFileViewRowsByFolderID: %w", err)
 	}
-	if cq.getFileViewRowsByFolderPathStmt, err = db.PrepareContext(ctx, getFileViewRowsByFolderPath); err != nil {
+	if cq.getFileViewRowsByFolderPathStmt, err = prepareContextFn(ctx, db, getFileViewRowsByFolderPath); err != nil {
 		return nil, fmt.Errorf("error preparing query GetFileViewRowsByFolderPath: %w", err)
 	}
-	if cq.getFolderViewThumbnailBlobDataByPathStmt, err = db.PrepareContext(ctx, getFolderViewThumbnailBlobDataByPath); err != nil {
+	if cq.getFolderViewThumbnailBlobDataByPathStmt, err = prepareContextFn(ctx, db, getFolderViewThumbnailBlobDataByPath); err != nil {
 		return nil, fmt.Errorf("error preparing query GetFolderViewThumbnailBlobDataByPath: %w", err)
 	}
-	if cq.getPreloadRoutesByFolderIDStmt, err = db.PrepareContext(ctx, getPreloadRoutesByFolderID); err != nil {
+	if cq.getPreloadRoutesByFolderIDStmt, err = prepareContextFn(ctx, db, getPreloadRoutesByFolderID); err != nil {
 		return nil, fmt.Errorf("error preparing query GetPreloadRoutesByFolderID: %w", err)
 	}
-	if cq.getThumbnailBlobDataByIDStmt, err = db.PrepareContext(ctx, getThumbnailBlobDataByID); err != nil {
+	if cq.getThumbnailBlobDataByIDStmt, err = prepareContextFn(ctx, db, getThumbnailBlobDataByID); err != nil {
 		return nil, fmt.Errorf("error preparing query GetThumbnailBlobDataByID: %w", err)
 	}
-	if cq.upsertThumbnailBlobStmt, err = db.PrepareContext(ctx, upsertThumbnailBlob); err != nil {
+	if cq.upsertThumbnailBlobStmt, err = prepareContextFn(ctx, db, upsertThumbnailBlob); err != nil {
 		return nil, fmt.Errorf("error preparing query UpsertThumbnailBlob: %w", err)
 	}
 
@@ -114,37 +114,37 @@ func (cq *CustomQueries) Close() error {
 	var errs []error
 
 	if cq.getBatchLoadTargetsStmt != nil {
-		if err := cq.getBatchLoadTargetsStmt.Close(); err != nil {
+		if err := stmtCloseFn(cq.getBatchLoadTargetsStmt); err != nil {
 			errs = append(errs, fmt.Errorf("error closing getBatchLoadTargetsStmt: %w", err))
 		}
 	}
 	if cq.getFileViewRowsByFolderIDStmt != nil {
-		if err := cq.getFileViewRowsByFolderIDStmt.Close(); err != nil {
+		if err := stmtCloseFn(cq.getFileViewRowsByFolderIDStmt); err != nil {
 			errs = append(errs, fmt.Errorf("error closing getFileViewRowsByFolderIDStmt: %w", err))
 		}
 	}
 	if cq.getFileViewRowsByFolderPathStmt != nil {
-		if err := cq.getFileViewRowsByFolderPathStmt.Close(); err != nil {
+		if err := stmtCloseFn(cq.getFileViewRowsByFolderPathStmt); err != nil {
 			errs = append(errs, fmt.Errorf("error closing getFileViewRowsByFolderPathStmt: %w", err))
 		}
 	}
 	if cq.getFolderViewThumbnailBlobDataByPathStmt != nil {
-		if err := cq.getFolderViewThumbnailBlobDataByPathStmt.Close(); err != nil {
+		if err := stmtCloseFn(cq.getFolderViewThumbnailBlobDataByPathStmt); err != nil {
 			errs = append(errs, fmt.Errorf("error closing getFolderViewThumbnailBlobDataByPathStmt: %w", err))
 		}
 	}
 	if cq.getPreloadRoutesByFolderIDStmt != nil {
-		if err := cq.getPreloadRoutesByFolderIDStmt.Close(); err != nil {
+		if err := stmtCloseFn(cq.getPreloadRoutesByFolderIDStmt); err != nil {
 			errs = append(errs, fmt.Errorf("error closing getPreloadRoutesByFolderIDStmt: %w", err))
 		}
 	}
 	if cq.getThumbnailBlobDataByIDStmt != nil {
-		if err := cq.getThumbnailBlobDataByIDStmt.Close(); err != nil {
+		if err := stmtCloseFn(cq.getThumbnailBlobDataByIDStmt); err != nil {
 			errs = append(errs, fmt.Errorf("error closing getThumbnailBlobDataByIDStmt: %w", err))
 		}
 	}
 	if cq.upsertThumbnailBlobStmt != nil {
-		if err := cq.upsertThumbnailBlobStmt.Close(); err != nil {
+		if err := stmtCloseFn(cq.upsertThumbnailBlobStmt); err != nil {
 			errs = append(errs, fmt.Errorf("error closing upsertThumbnailBlobStmt: %w", err))
 		}
 	}
@@ -211,7 +211,7 @@ func (cq *CustomQueries) GetBatchLoadTargets(ctx context.Context) ([]BatchLoadTa
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rowsCloseFn(rows) }() //nolint:errcheck
 
 	var out []BatchLoadTarget
 	for rows.Next() {
@@ -221,7 +221,7 @@ func (cq *CustomQueries) GetBatchLoadTargets(ctx context.Context) ([]BatchLoadTa
 		}
 		out = append(out, t)
 	}
-	return out, rows.Err()
+	return out, rowsErrFn(rows)
 }
 
 const getFileViewRowsByFolderID = `-- name: GetFileViewRowsByFolderID :many

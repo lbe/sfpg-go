@@ -107,7 +107,7 @@ func (q *Queries) GetHttpCacheOldestCreated(ctx context.Context, limit int64) ([
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer rowsCloseFn(rows)
 	var items []GetHttpCacheOldestCreatedRow
 	for rows.Next() {
 		var i GetHttpCacheOldestCreatedRow
@@ -116,10 +116,10 @@ func (q *Queries) GetHttpCacheOldestCreated(ctx context.Context, limit int64) ([
 		}
 		items = append(items, i)
 	}
-	if err := rows.Close(); err != nil {
+	if err := rowsCloseFn(rows); err != nil {
 		return nil, err
 	}
-	if err := rows.Err(); err != nil {
+	if err := rowsErrFn(rows); err != nil {
 		return nil, err
 	}
 	return items, nil

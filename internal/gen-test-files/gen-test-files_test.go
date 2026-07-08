@@ -2,6 +2,7 @@ package gentestfiles
 
 import (
 	"bytes"
+	"errors"
 	"image/gif"
 	"image/jpeg"
 	"image/png"
@@ -348,5 +349,45 @@ func TestImageFilesAreDifferent(t *testing.T) {
 	// Images should be different due to random gradients
 	if bytes.Equal(content1, content2) {
 		t.Error("Generated images are identical, expected different gradients")
+	}
+}
+
+func TestCreateTestFiles_BaseDirMkdirAllFails(t *testing.T) {
+	origMkdirAll := osMkdirAll
+	osMkdirAll = func(string, os.FileMode) error {
+		return errors.New("mkdir denied")
+	}
+	defer func() { osMkdirAll = origMkdirAll }()
+
+	err := CreateTestFiles(t.TempDir(), []string{"file.txt"})
+	if err == nil {
+		t.Fatal("expected error when base directory creation fails, got nil")
+	}
+	if !strings.Contains(err.Error(), "failed to create base directory") {
+		t.Errorf("expected error to contain 'failed to create base directory', got: %v", err)
+	}
+}
+
+func TestCreateTestFiles_ParentDirMkdirAllFails(t *testing.T) {
+	origMkdirAll := osMkdirAll
+	callCount := 0
+	osMkdirAll = func(path string, perm os.FileMode) error {
+		callCount++
+		if callCount == 1 {
+			return os.MkdirAll(path, perm)
+		}
+		return errors.New("mkdir parent denied")
+	}
+	defer func() { osMkdirAll = origMkdirAll }()
+
+	tempDir := t.TempDir()
+	err := CreateTestFiles(tempDir, []string{"nested/file.txt"})
+	if err != nil {
+		t.Fatalf("CreateTestFiles failed: %v", err)
+	}
+
+	nestedPath := filepath.Join(tempDir, "nested", "file.txt")
+	if _, err := os.Stat(nestedPath); !os.IsNotExist(err) {
+		t.Errorf("nested file should not exist: %s", nestedPath)
 	}
 }

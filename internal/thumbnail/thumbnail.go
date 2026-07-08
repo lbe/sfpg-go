@@ -16,13 +16,23 @@ import (
 	_ "image/png"
 	"io"
 	"log/slog"
-	"os"
 
 	"github.com/evanoberholster/imagemeta/imagehash"
 	"github.com/nfnt/resize"
 	_ "golang.org/x/image/webp"
 
 	"github.com/lbe/sfpg-go/internal/gensyncpool"
+)
+
+var (
+	// jpegEncodeHook is a testable hook for image/jpeg.Encode.
+	jpegEncodeHook = jpeg.Encode
+
+	// ioCopyHook is a testable hook for io.Copy.
+	ioCopyHook = io.Copy
+
+	// newPHash64Hook is a testable hook for imagehash.NewPHash64.
+	newPHash64Hook = imagehash.NewPHash64
 )
 
 // Buffers are Reset on Put (return) for cleanliness, matching conventional pattern.
@@ -88,56 +98,102 @@ func GetMD5() hash.Hash { return md5Pool.Get() }
 // PutMD5 returns an MD5 hash.Hash to the pool, resetting it first.
 func PutMD5(h hash.Hash) { md5Pool.Put(h) }
 
-// GenerateThumbnailAndHashes creates a thumbnail for the image at the given file.
-// It resizes the image to fit within a 200x150 pixel box while maintaining aspect ratio,
-// and encodes the resulting thumbnail as a JPEG. It also calculates MD5 and pHash.
-// It returns the JPEG data as a bytes.Buffer, and sql.NullString for MD5, and
-// sql.NullInt64 for pHash, or an error if generation fails.
-func GenerateThumbnailAndHashes(file *os.File) (*bytes.Buffer, *sql.NullString, *sql.NullInt64, error) {
-	var err error
+// thumbnail scales img to fit inside maxWidth x maxHeight while preserving
+// aspect ratio. Unlike resize.Thumbnail, it also upscales images that are
+// smaller than the target box, ensuring embedded EXIF thumbnails fill the
+// requested thumbnail dimensions.
+func thumbnail(maxWidth, maxHeight uint, img image.Image, interp resize.InterpolationFunction) image.Image {
+	origBounds := img.Bounds()
+	origWidth := uint(origBounds.Dx())
+	origHeight := uint(origBounds.Dy())
 
-	// Decode source image
-	srcImg, _, err := image.Decode(file)
-	if err != nil {
-		return nil, &sql.NullString{}, &sql.NullInt64{}, err
+	var newWidth, newHeight uint
+	if maxWidth*origHeight <= maxHeight*origWidth {
+		newWidth = maxWidth
+		newHeight = origHeight * maxWidth / origWidth
+	} else {
+		newHeight = maxHeight
+		newWidth = origWidth * maxHeight / origHeight
+	}
+
+	if newWidth < 1 {
+		newWidth = 1
+	}
+	if newHeight < 1 {
+		newHeight = 1
+	}
+
+	return resize.Resize(newWidth, newHeight, img, interp)
+}
+
+// GenerateThumbnailAndHashes creates a thumbnail for the image read from r.
+// If the image (JPEG, TIFF, or WebP) contains an embedded EXIF thumbnail, that
+// thumbnail is decoded instead of the full image, dramatically reducing memory
+// use and CPU time. The source (embedded thumbnail or full image) is resized to
+// fit within a 200x150 pixel box while maintaining aspect ratio and encoded as
+// JPEG. It also calculates MD5 (over the full file bytes) and pHash (over the
+// decoded source). It returns the JPEG data as a bytes.Buffer, sql.NullString
+// for MD5, and sql.NullInt64 for pHash, or an error if generation fails.
+func GenerateThumbnailAndHashes(r io.ReadSeeker) (*bytes.Buffer, *sql.NullString, *sql.NullInt64, error) {
+	var srcImg image.Image
+
+	// Try the embedded EXIF thumbnail first; fall back to full decode.
+	embBuf := GetBytesBuffer()
+	if err := extractEXIFThumbnail(r, embBuf); err == nil {
+		if img, decErr := jpeg.Decode(bytes.NewReader(embBuf.Bytes())); decErr == nil {
+			srcImg = img
+		} else {
+			slog.Debug("embedded thumbnail decode failed; falling back", "err", decErr)
+		}
+	}
+	PutBytesBuffer(embBuf)
+
+	if srcImg == nil {
+		if _, err := r.Seek(0, io.SeekStart); err != nil {
+			return nil, &sql.NullString{}, &sql.NullInt64{}, err
+		}
+		img, _, err := image.Decode(r)
+		if err != nil {
+			return nil, &sql.NullString{}, &sql.NullInt64{}, err
+		}
+		srcImg = img
 	}
 
 	// Generate thumbnail image
-	thumbImg := resize.Thumbnail(200, 150, srcImg, resize.Lanczos3)
+	thumbImg := thumbnail(200, 150, srcImg, resize.Lanczos3)
 	if thumbImg == nil {
-		return nil, &sql.NullString{}, &sql.NullInt64{}, errors.New("resize.Thumbnail returned nil image")
+		return nil, &sql.NullString{}, &sql.NullInt64{}, errors.New("thumbnail returned nil image")
 	}
-
 	thumbnailBytesBuffer := GetBytesBuffer()
-	err = jpeg.Encode(thumbnailBytesBuffer, thumbImg, nil)
-	if err != nil {
+	if err := jpegEncodeHook(thumbnailBytesBuffer, thumbImg, nil); err != nil {
+		PutBytesBuffer(thumbnailBytesBuffer)
 		return nil, &sql.NullString{}, &sql.NullInt64{}, err
 	}
 
-	// Reset f read pointer to beginning of f
-	if _, seekErr := file.Seek(0, 0); seekErr != nil {
-		slog.Error("processFile seek", "err", err)
+	// Calculate MD5 hash over the full file bytes
+	if _, err := r.Seek(0, io.SeekStart); err != nil {
+		slog.Error("GenerateThumbnailAndHashes seek", "err", err)
+		PutBytesBuffer(thumbnailBytesBuffer)
 		return nil, &sql.NullString{}, &sql.NullInt64{}, err
 	}
-
-	// Calculate MD5 hash
 	md5Hasher := GetMD5()
 	defer PutMD5(md5Hasher)
-	if _, copyErr := io.Copy(md5Hasher, file); copyErr != nil {
-		slog.Error("processFile", "err", err)
+	if _, err := ioCopyHook(md5Hasher, r); err != nil {
+		slog.Error("GenerateThumbnailAndHashes md5", "err", err)
+		PutBytesBuffer(thumbnailBytesBuffer)
 		return nil, &sql.NullString{}, &sql.NullInt64{}, err
 	}
-
 	md5 := GetNullString()
 	md5.Valid = true
 	md5.String = fmt.Sprintf("%x", md5Hasher.Sum(nil))
 
-	// Decode image and compute phash
+	// Compute pHash from the (possibly embedded-thumbnail) source image.
+	// Squashing to 64x64 is the standard pHash normalization step.
 	resized := resize.Resize(64, 64, srcImg, resize.Bilinear)
 	phash := GetNullInt64()
-	phash64, err := imagehash.NewPHash64(resized)
+	phash64, err := newPHash64Hook(resized)
 	if err != nil {
-		slog.Error("getThumbnailAndPhash imagehash.NewPHash64", "err", err)
+		slog.Error("GenerateThumbnailAndHashes imagehash.NewPHash64", "err", err)
 	}
 	phash.Valid = true
 	phash.Int64 = int64(phash64)

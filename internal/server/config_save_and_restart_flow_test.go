@@ -14,6 +14,7 @@ import (
 
 	"golang.org/x/net/html"
 
+	"github.com/lbe/sfpg-go/internal/getopt"
 	"github.com/lbe/sfpg-go/internal/testutil"
 )
 
@@ -82,6 +83,57 @@ func TestAuthenticatedConfigSaveAndRestartFlowWorksEndToEnd(t *testing.T) {
 		t.Errorf("site_name persisted value = %q, want %q", savedSiteName, "End-to-End Config Save Test Site")
 	}
 
+	// Step 4b: Save additional restart-required and boolean settings and verify
+	// the router rebuilds from app.config, not app.opt.
+	csrfToken = extractCSRFTokenFromConfig(t, client, ts.URL)
+	formData = url.Values{}
+	formData.Set("csrf_token", csrfToken)
+	formData.Set("listener_address", "0.0.0.0")
+	formData.Set("listener_port", "9999")
+	formData.Set("enable_http_cache", "on")
+	formData.Set("session_http_only", "on")
+	formData.Set("session_secure", "on")
+	formData.Set("run_file_discovery", "on")
+	formData.Set("enable_cache_preload", "on")
+	// server_compression_enable intentionally omitted => saved as false.
+
+	resp, body = postFormExpectOK(t, client, ts.URL+"/config", ts.URL, formData)
+
+	if got := resp.Header.Get("HX-Trigger"); got != "config-saved" {
+		t.Errorf("second POST /config HX-Trigger header = %q, want %q", got, "config-saved")
+	}
+
+	cpcRo, err = app.dbRoPool.Get()
+	if err != nil {
+		t.Fatalf("failed to get DB connection: %v", err)
+	}
+	savedListenerAddress, err := cpcRo.Queries.GetConfigValueByKey(app.ctx, "listener_address")
+	if err != nil {
+		app.dbRoPool.Put(cpcRo)
+		t.Fatalf("failed to read saved listener_address from database: %v", err)
+	}
+	if savedListenerAddress != "0.0.0.0" {
+		t.Errorf("listener_address persisted value = %q, want %q", savedListenerAddress, "0.0.0.0")
+	}
+
+	savedListenerPort, err := cpcRo.Queries.GetConfigValueByKey(app.ctx, "listener_port")
+	if err != nil {
+		app.dbRoPool.Put(cpcRo)
+		t.Fatalf("failed to read saved listener_port from database: %v", err)
+	}
+	if savedListenerPort != "9999" {
+		t.Errorf("listener_port persisted value = %q, want %q", savedListenerPort, "9999")
+	}
+
+	savedCompression, err := cpcRo.Queries.GetConfigValueByKey(app.ctx, "server_compression_enable")
+	app.dbRoPool.Put(cpcRo)
+	if err != nil {
+		t.Fatalf("failed to read saved server_compression_enable from database: %v", err)
+	}
+	if savedCompression != "false" {
+		t.Errorf("server_compression_enable persisted value = %q, want %q", savedCompression, "false")
+	}
+
 	// Step 5: POST /server/restart to initiate a restart.
 	csrfToken = extractCSRFTokenFromConfig(t, client, ts.URL)
 	formData = url.Values{}
@@ -100,13 +152,32 @@ func TestAuthenticatedConfigSaveAndRestartFlowWorksEndToEnd(t *testing.T) {
 	// background goroutine, so we poll briefly.
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if app.restartRequested.Load() {
+		if app.IsRestartRequested() {
 			break
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	if !app.restartRequested.Load() {
+	if !app.IsRestartRequested() {
 		t.Errorf("restart was not requested after POST /server/restart")
+	}
+
+	// Simulate stale CLI/env values and verify getRouter uses the saved config,
+	// not the startup options.
+	app.opt.EnableCompression = getopt.OptBool{Bool: true, IsSet: true}
+	app.opt.EnableHTTPCache = getopt.OptBool{Bool: false, IsSet: true}
+
+	router := app.getRouter()
+	galleryReq := httptest.NewRequest(http.MethodGet, "/gallery/1", nil)
+	galleryReq.AddCookie(MakeAuthCookie(t, app))
+	galleryRR := httptest.NewRecorder()
+	router.ServeHTTP(galleryRR, galleryReq)
+
+	if galleryRR.Code != http.StatusOK {
+		t.Errorf("GET /gallery/1 returned status %d, want %d", galleryRR.Code, http.StatusOK)
+	}
+	vary := galleryRR.Header().Get("Vary")
+	if strings.Contains(vary, "Accept-Encoding") {
+		t.Errorf("response unexpectedly contains Vary: Accept-Encoding (router used opt instead of config); Vary=%q", vary)
 	}
 }
 

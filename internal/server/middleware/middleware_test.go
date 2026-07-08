@@ -1110,6 +1110,101 @@ func TestConditionalMiddleware_Auto304_LastModified(t *testing.T) {
 	}
 }
 
+// TestConditionalResponseWriter_WriteHeader_Idempotent verifies WriteHeader only
+// records the first status code and ignores subsequent calls.
+func TestConditionalResponseWriter_WriteHeader_Idempotent(t *testing.T) {
+	tests := []struct {
+		name       string
+		setup      func(crw *conditionalResponseWriter)
+		wantStatus int
+	}{
+		{
+			name: "first call sets status",
+			setup: func(crw *conditionalResponseWriter) {
+				crw.WriteHeader(http.StatusCreated)
+			},
+			wantStatus: http.StatusCreated,
+		},
+		{
+			name: "second call is ignored",
+			setup: func(crw *conditionalResponseWriter) {
+				crw.WriteHeader(http.StatusCreated)
+				crw.WriteHeader(http.StatusInternalServerError)
+			},
+			wantStatus: http.StatusCreated,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			crw := newConditionalResponseWriter(rec)
+
+			tt.setup(crw)
+
+			if !crw.wroteHeader {
+				t.Error("expected wroteHeader to be true")
+			}
+			if crw.statusCode != tt.wantStatus {
+				t.Errorf("statusCode = %d, want %d", crw.statusCode, tt.wantStatus)
+			}
+		})
+	}
+}
+
+// TestConditionalResponseWriter_Write_ImplicitHeader verifies Write triggers an
+// implicit WriteHeader(http.StatusOK) when no explicit status has been set.
+func TestConditionalResponseWriter_Write_ImplicitHeader(t *testing.T) {
+	tests := []struct {
+		name       string
+		setup      func(crw *conditionalResponseWriter) (int, error)
+		wantStatus int
+		wantBody   string
+	}{
+		{
+			name: "write without explicit header triggers 200",
+			setup: func(crw *conditionalResponseWriter) (int, error) {
+				return crw.Write([]byte("body"))
+			},
+			wantStatus: http.StatusOK,
+			wantBody:   "body",
+		},
+		{
+			name: "write after explicit header preserves status",
+			setup: func(crw *conditionalResponseWriter) (int, error) {
+				crw.WriteHeader(http.StatusCreated)
+				return crw.Write([]byte("more"))
+			},
+			wantStatus: http.StatusCreated,
+			wantBody:   "more",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			crw := newConditionalResponseWriter(rec)
+
+			n, err := tt.setup(crw)
+			if err != nil {
+				t.Fatalf("Write returned unexpected error: %v", err)
+			}
+			if n != len(tt.wantBody) {
+				t.Errorf("Write byte count = %d, want %d", n, len(tt.wantBody))
+			}
+			if !crw.wroteHeader {
+				t.Error("expected wroteHeader to be true")
+			}
+			if crw.statusCode != tt.wantStatus {
+				t.Errorf("statusCode = %d, want %d", crw.statusCode, tt.wantStatus)
+			}
+			if crw.body.String() != tt.wantBody {
+				t.Errorf("body = %q, want %q", crw.body.String(), tt.wantBody)
+			}
+		})
+	}
+}
+
 // ============================================================================
 // CSRF Middleware Tests
 // ============================================================================

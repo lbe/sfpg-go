@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"slices"
 	"testing"
 
@@ -14,7 +13,6 @@ import (
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 	_ "github.com/ncruces/go-sqlite3/driver"
 
-	"github.com/lbe/sfpg-go/internal/dbconnpool"
 	"github.com/lbe/sfpg-go/internal/gallerydb"
 	"github.com/lbe/sfpg-go/migrations"
 )
@@ -89,10 +87,12 @@ func (m *mockSaver) UpsertConfigValueOnly(ctx context.Context, arg gallerydb.Ups
 }
 
 type fakeService struct {
-	cfg        *Config
-	called     bool
-	ensureRoot string
-	ensureErr  error
+	cfg         *Config
+	called      bool
+	ensureRoot  string
+	ensureErr   error
+	validateErr error
+	saveErr     error
 }
 
 func (f *fakeService) Load(ctx context.Context) (*Config, error) {
@@ -100,8 +100,8 @@ func (f *fakeService) Load(ctx context.Context) (*Config, error) {
 	return f.cfg, nil
 }
 
-func (f *fakeService) Save(ctx context.Context, cfg *Config) error { return nil }
-func (f *fakeService) Validate(cfg *Config) error                  { return nil }
+func (f *fakeService) Save(ctx context.Context, cfg *Config) error { return f.saveErr }
+func (f *fakeService) Validate(cfg *Config) error                  { return f.validateErr }
 func (f *fakeService) Export(ctx context.Context) (string, error)  { return "", nil }
 func (f *fakeService) Import(yamlContent string, ctx context.Context) error {
 	return nil
@@ -121,94 +121,30 @@ func (f *fakeService) IncrementETag(ctx context.Context) (string, error) {
 	return "20260129-01", nil
 }
 
-// createTestService creates a ConfigService with temporary file-based database pools for testing.
-func createTestService(t *testing.T) ConfigService {
-	t.Helper()
-	ctx := context.Background()
+// TestLoadFromDatabase_ErrorPath verifies LoadFromDatabase propagates GetConfigs errors.
+func TestLoadFromDatabase_ErrorPath(t *testing.T) {
+	sentinel := errors.New("db unavailable")
+	q := mockConfigQueries{err: sentinel}
+	cfg := DefaultConfig()
 
-	// Use a temporary file-based database so both pools share the same database
-	tempDir := t.TempDir()
-	tempDB := filepath.Join(tempDir, "test.db")
-	thumbsDBPath := filepath.Join(tempDir, "thumbs.db")
-
-	// Run migrations on the database before creating pools
-	// Use simple DSN for migrations - no pragmas needed here
-	db, err := sql.Open("sqlite3", "file:"+filepath.ToSlash(tempDB))
-	if err != nil {
-		t.Fatalf("failed to open test database: %v", err)
+	err := cfg.LoadFromDatabase(context.Background(), q)
+	if err == nil {
+		t.Fatal("LoadFromDatabase expected error, got nil")
 	}
-
-	driver, err := sqlite.WithInstance(db, &sqlite.Config{})
-	if err != nil {
-		db.Close()
-		t.Fatalf("failed to create sqlite driver instance: %v", err)
+	if !errors.Is(err, sentinel) {
+		t.Errorf("error = %v, want wrapping %v", err, sentinel)
 	}
-
-	d, err := iofs.New(migrations.FS, "migrations")
-	if err != nil {
-		db.Close()
-		t.Fatalf("failed to create iofs source driver: %v", err)
-	}
-
-	m, err := migrate.NewWithInstance("iofs", d, "sqlite", driver)
-	if err != nil {
-		db.Close()
-		t.Fatalf("failed to create migrate instance: %v", err)
-	}
-
-	if upErr := m.Up(); upErr != nil && !errors.Is(upErr, migrate.ErrNoChange) {
-		db.Close()
-		t.Fatalf("failed to apply migrations: %v", upErr)
-	}
-	db.Close()
-
-	m2, err := migrations.NewThumbsMigrator(thumbsDBPath)
-	if err != nil {
-		t.Fatalf("failed to create thumbs migrator: %v", err)
-	}
-	if thumbsErr := m2.Up(); thumbsErr != nil && !errors.Is(thumbsErr, migrate.ErrNoChange) {
-		m2.Close()
-		t.Fatalf("failed to run thumbs migrations: %v", thumbsErr)
-	}
-	m2.Close()
-
-	// Create database pools using file-backed database
-	// WAL mode is persistent, so it's already set from previous connections
-	roDSN := "file:" + filepath.ToSlash(tempDB) + "?mode=ro"
-	rwDSN := "file:" + filepath.ToSlash(tempDB) + "?_txlock=immediate&mode=rwc"
-
-	roPool, err := dbconnpool.NewDbSQLConnPool(ctx, roDSN, dbconnpool.Config{
-		DriverName:         "sqlite3",
-		MaxConnections:     10,
-		MinIdleConnections: 1,
-		ReadOnly:           true,
-		QueriesFunc:        gallerydb.NewCustomQueries,
-		ThumbsDBPath:       thumbsDBPath,
-	})
-	if err != nil {
-		t.Fatalf("failed to create RO pool: %v", err)
-	}
-	t.Cleanup(func() { _ = roPool.Close() })
-
-	rwPool, err := dbconnpool.NewDbSQLConnPool(ctx, rwDSN, dbconnpool.Config{
-		DriverName:         "sqlite3",
-		MaxConnections:     10,
-		MinIdleConnections: 1,
-		ReadOnly:           false,
-		QueriesFunc:        gallerydb.NewCustomQueries,
-		ThumbsDBPath:       thumbsDBPath,
-	})
-	if err != nil {
-		t.Fatalf("failed to create RW pool: %v", err)
-	}
-	t.Cleanup(func() { _ = rwPool.Close() })
-
-	return NewService(rwPool, roPool)
 }
 
-// TestDefaultConfig_EnableCachePreload verifies EnableCachePreload field exists with default true.
+// TestFromMap_ErrorPath verifies FromMap returns an error for invalid known values.
+func TestFromMap_ErrorPath(t *testing.T) {
+	_, err := FromMap(map[string]string{"listener_port": "abc"})
+	if err == nil {
+		t.Fatal("FromMap expected error, got nil")
+	}
+}
+
+// contains reports whether values includes target.
 func contains(values []string, target string) bool {
 	return slices.Contains(values, target)
 }
-
-// TestDiscoveryEnabled_ByDefault verifies that file discovery is enabled by default.

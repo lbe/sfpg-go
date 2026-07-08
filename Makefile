@@ -62,7 +62,7 @@ lint:
 .PHONY: cover
 cover:
 	# Generate coverage profile and HTML report
-	SEPG_SESSION_SECURE=false go test -tags "integration" ./... -coverprofile=coverage.out -count=1
+	SEPG_SESSION_SECURE=false go test -tags "integration" ./... -coverprofile=coverage.out
 	go tool cover -html=coverage.out -o coverage.html
 	go tool cover -func=coverage.out | tail -n 1
 	@echo "Coverage report: coverage.html"

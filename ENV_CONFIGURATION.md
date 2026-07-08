@@ -2,6 +2,15 @@
 
 This document describes the environment variables used to configure SFPG. Configuration can also be provided via CLI flags or a `config.yaml` file (located in the executable directory or platform-specific config path).
 
+## Configuration Precedence
+
+Configuration is loaded in the following order, with later sources overriding earlier ones:
+
+1. **Defaults** (hard-coded in `config.DefaultConfig()`)
+2. **Database** (settings changed via the web UI and persisted to `sfpg.db`)
+3. **`config.yaml`** (in the executable directory or `~/.config/sfpg/` / `%APPDATA%\sfpg\`)
+4. **Environment Variables / CLI Flags** (merged; CLI flags override environment variables for the same setting)
+
 ## Application Configuration
 
 General application settings.
@@ -14,12 +23,32 @@ General application settings.
 ### `SFG_DISCOVER`
 
 **Default**: `true`
-**Description**: Enable background filesystem scan for new images on startup.
+**Description**: Run file discovery on startup. The CLI flag `-discover` has a zero-value of `false`, but the effective default from `config.DefaultConfig()` is `true`.
 
 ### `SFG_CACHE_PRELOAD`
 
-**Default**: `false`
+**Default**: `true`
 **Description**: Enable cache preloading. When a folder is opened, the server proactively caches thumbnails and metadata for its contents to speed up subsequent requests.
+
+### `SFG_COMPRESSION`
+
+**Default**: `true`
+**Description**: Enable gzip/brotli response compression.
+
+### `SFG_HTTP_CACHE`
+
+**Default**: `true`
+**Description**: Enable the SQLite-backed HTTP response cache.
+
+### `SFG_DEBUG_DELAY_MS`
+
+**Default**: `0`
+**Description**: Artificial handler delay in milliseconds, useful for debugging timing issues.
+
+### `SFG_PROFILE`
+
+**Default**: `''`
+**Description**: Profiling mode: `cpu`, `mem`, `block`, etc. Enables pprof endpoints at `/debug/pprof/`.
 
 ### `SFG_UNLOCK_ACCOUNT`
 
@@ -30,6 +59,13 @@ General application settings.
 
 **Default**: `false`
 **Description**: If `true`, restores the last known good configuration from the database on startup. Useful for recovering from bad configuration changes.
+
+### CLI-Only Flags
+
+The following flags have no environment-variable equivalent:
+
+- `-increment-etag` — Increment the application-wide ETag version on startup.
+- `-cache-batch-load` — Warm the HTTP cache and exit.
 
 ## Session Security Flags
 
@@ -202,6 +238,10 @@ server {
     ssl_certificate_key /etc/ssl/key.pem;
 
     location / {
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_http_version 1.1;
         proxy_pass http://app;
     }
 }
@@ -287,7 +327,7 @@ spec:
 ```ini
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/sfpg
+ExecStart=/usr/local/bin/sfpg-go
 Environment="SEPG_SESSION_HTTPONLY=true"
 Environment="SEPG_SESSION_SECURE=true"
 Environment="SEPG_SESSION_MAX_AGE=604800"
@@ -297,10 +337,11 @@ Environment="SEPG_SESSION_SECRET=%i"
 
 ## Data Directories
 
-The application creates the following runtime directories alongside the SQLite database (under `DB/` by default):
+The application creates the following runtime directories alongside the SQLite databases (under `DB/` by default):
 
-- **`sfpg.db`, `sfpg.db-shm`, `sfpg.db-wal`** — the SQLite database and its WAL/shared-memory files.
-- **`sfpg.db-dque/`** — a persistent on-disk overflow queue (`dque`) auto-created next to the database. When the in-memory write channel fills during heavy preload/discovery, pending writes spill here instead of being dropped, and they are recovered automatically on the next startup (crash recovery). Back this directory up together with `DB/` to preserve in-flight pending writes.
+- **`sfpg.db`, `sfpg.db-shm`, `sfpg.db-wal`** — the main SQLite database and its WAL/shared-memory files.
+- **`thumbs/thumbs.db`, `thumbs.db-shm`, `thumbs.db-wal`** — separate SQLite database storing thumbnail JPEG blobs.
+- **`sfpg.db-dque/`** — a persistent on-disk overflow queue (`dque`) auto-created next to the main database. When the in-memory write channel fills during heavy preload/discovery, pending writes spill here instead of being dropped, and they are recovered automatically on the next startup (crash recovery). Back this directory up together with `DB/` to preserve in-flight pending writes.
 
 No environment variable is needed to enable the overflow queue; its location is derived from the database path.
 

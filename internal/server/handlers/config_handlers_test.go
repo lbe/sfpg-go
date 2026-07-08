@@ -3,15 +3,21 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"html/template"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"sync"
+	"testing"
 
 	"github.com/gorilla/sessions"
 
 	"github.com/lbe/sfpg-go/internal/server/auth"
 	"github.com/lbe/sfpg-go/internal/server/config"
 	"github.com/lbe/sfpg-go/internal/server/session"
+	"github.com/lbe/sfpg-go/internal/server/ui"
+	"github.com/lbe/sfpg-go/web"
 )
 
 // safeBuffer is a thread-safe wrapper around bytes.Buffer for use in tests
@@ -183,3 +189,72 @@ func (w *flushTrackingResponseWriter) Flush() {
 // TestConfigHandlers_RestartHandler_FlushesResponseAndTriggersRestart verifies
 // that the restart handler flushes the HTTP response before invoking the
 // asynchronous process-restart callback.
+
+func TestConfigHandlers_disableConfigCaching(t *testing.T) {
+	h := NewConfigHandlers(nil, nil, nil, nil, nil, nil, ConfigTemplates{}, context.Background())
+
+	rr := httptest.NewRecorder()
+
+	h.disableConfigCaching(rr)
+
+	if got := rr.Header().Get("Cache-Control"); got != "no-store, no-cache, must-revalidate, private" {
+		t.Errorf("Cache-Control = %q, want %q", got, "no-store, no-cache, must-revalidate, private")
+	}
+	if got := rr.Header().Get("Pragma"); got != "no-cache" {
+		t.Errorf("Pragma = %q, want %q", got, "no-cache")
+	}
+	if got := rr.Header().Get("Expires"); got != "0" {
+		t.Errorf("Expires = %q, want %q", got, "0")
+	}
+}
+
+func TestConfigHandlers_ConfigAuthMiddleware(t *testing.T) {
+	h := NewConfigHandlers(nil, nil, nil, nil, nil, nil, ConfigTemplates{}, context.Background())
+
+	called := false
+	next := func(w http.ResponseWriter, r *http.Request) {
+		called = true
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/config", nil)
+	rr := httptest.NewRecorder()
+
+	middleware := h.ConfigAuthMiddleware(next)
+	middleware(rr, req)
+
+	if !called {
+		t.Error("inner handler was not called")
+	}
+	if got := rr.Header().Get("Cache-Control"); got != "no-store, no-cache, must-revalidate, private" {
+		t.Errorf("Cache-Control = %q, want %q", got, "no-store, no-cache, must-revalidate, private")
+	}
+	if got := rr.Header().Get("Pragma"); got != "no-cache" {
+		t.Errorf("Pragma = %q, want %q", got, "no-cache")
+	}
+	if got := rr.Header().Get("Expires"); got != "0" {
+		t.Errorf("Expires = %q, want %q", got, "0")
+	}
+}
+
+func TestConfigHandlers_executeConfigTemplate_ExecuteError(t *testing.T) {
+	if err := ui.ParseTemplates(web.FS); err != nil {
+		t.Fatalf("ParseTemplates failed: %v", err)
+	}
+
+	tmpl, err := template.New("error-template").Parse(`{{ template "nonexistent-template" . }}`)
+	if err != nil {
+		t.Fatalf("failed to parse error template: %v", err)
+	}
+
+	h := NewConfigHandlers(nil, nil, nil, nil, nil, nil, ConfigTemplates{SaveSuccessAlert: tmpl}, context.Background())
+
+	rr := httptest.NewRecorder()
+	h.executeConfigTemplate(rr, h.Templates.SaveSuccessAlert, "error-template", nil)
+
+	if rr.Code != http.StatusInternalServerError {
+		t.Errorf("expected status %d, got %d", http.StatusInternalServerError, rr.Code)
+	}
+	if body := rr.Body.String(); !strings.Contains(body, "Internal Server Error") {
+		t.Errorf("expected body to contain %q, got %q", "Internal Server Error", body)
+	}
+}

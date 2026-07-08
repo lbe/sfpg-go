@@ -4,6 +4,7 @@
 package humanize
 
 import (
+	"bytes"
 	"fmt"
 	"math"
 	"testing"
@@ -210,6 +211,92 @@ func TestFormatter_Interface(t *testing.T) {
 	// Test that our types implement fmt.Stringer via String() method
 	var _ fmt.Stringer = IBytes(1024)
 	var _ fmt.Stringer = Comma(1234)
+}
+
+func TestIBytes_Format(t *testing.T) {
+	tests := []struct {
+		name      string
+		formatter *ByteFormatter
+		verb      rune
+		want      string
+	}{
+		{"%v basic", IBytes(1024), 'v', "1 KiB"},
+		{"%s with precision", IBytes(1536).WithPrecision(2), 's', "1.50 KiB"},
+		{"%v zero", IBytes(0), 'v', "0 B"},
+		{"%v negative", IBytes(-1024), 'v', "-1 KiB"},
+		{"unsupported verb", IBytes(1024), 'd', "%!d(humanize.ByteFormatter=1 KiB)"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got string
+			switch tt.verb {
+			case 'v':
+				got = fmt.Sprintf("%v", tt.formatter)
+			case 's':
+				got = fmt.Sprintf("%s", tt.formatter)
+			default:
+				got = fmt.Sprintf("%"+string(tt.verb), tt.formatter)
+			}
+			if got != tt.want {
+				t.Errorf("Format with verb %q = %q, want %q", tt.verb, got, tt.want)
+			}
+		})
+	}
+
+	t.Run("fmt.Fprintf with supported verb", func(t *testing.T) {
+		var buf bytes.Buffer
+		_, err := fmt.Fprintf(&buf, "%v", IBytes(2048))
+		if err != nil {
+			t.Fatalf("Fprintf returned error: %v", err)
+		}
+		if got := buf.String(); got != "2 KiB" {
+			t.Errorf("Fprintf = %q, want %q", got, "2 KiB")
+		}
+	})
+}
+
+func TestComma_Format(t *testing.T) {
+	tests := []struct {
+		name      string
+		formatter *CommaFormatter[float64]
+		verb      rune
+		want      string
+	}{
+		{"%v integer-valued float", Comma(float64(1234567)), 'v', "1,234,567"},
+		{"%s with precision", Comma(float64(1234.5678)).WithPrecision(2), 's', "1,234.57"},
+		{"%v zero", Comma(float64(0)), 'v', "0"},
+		{"%v negative", Comma(float64(-1000)), 'v', "-1,000"},
+		{"unsupported verb", Comma(float64(1234567)), 'x', "%!x(humanize.CommaFormatter=1,234,567)"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got string
+			switch tt.verb {
+			case 'v':
+				got = fmt.Sprintf("%v", tt.formatter)
+			case 's':
+				got = fmt.Sprintf("%s", tt.formatter)
+			default:
+				got = fmt.Sprintf("%"+string(tt.verb), tt.formatter)
+			}
+			if got != tt.want {
+				t.Errorf("Format with verb %q = %q, want %q", tt.verb, got, tt.want)
+			}
+		})
+	}
+
+	t.Run("fmt.Fprintf with supported verb", func(t *testing.T) {
+		var buf bytes.Buffer
+		_, err := fmt.Fprintf(&buf, "%s", Comma(float64(1234.5)).WithPrecision(1))
+		if err != nil {
+			t.Fatalf("Fprintf returned error: %v", err)
+		}
+		if got := buf.String(); got != "1,234.5" {
+			t.Errorf("Fprintf = %q, want %q", got, "1,234.5")
+		}
+	})
 }
 
 func BenchmarkIBytes(b *testing.B) {

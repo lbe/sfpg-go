@@ -14,7 +14,11 @@ import (
 func (app *App) setDB() {
 	app.SetupDB(app.ctx, app.config)
 
-	app.SetConfigService(config.NewService(app.dbRwPool, app.dbRoPool))
+	if app.testHookConfigService != nil {
+		app.SetConfigService(app.testHookConfigService)
+	} else {
+		app.SetConfigService(config.NewService(app.dbRwPool, app.dbRoPool))
+	}
 	app.authService = auth.NewService(app)
 	app.moduleStateService = modulestate.NewService(app.dbRwPool)
 
@@ -48,7 +52,11 @@ func (app *App) reconfigurePoolsFromConfig() error {
 		return err
 	}
 
-	app.SetConfigService(config.NewService(app.dbRwPool, app.dbRoPool))
+	if app.testHookConfigService != nil {
+		app.SetConfigService(app.testHookConfigService)
+	} else {
+		app.SetConfigService(config.NewService(app.dbRwPool, app.dbRoPool))
+	}
 	app.moduleStateService = modulestate.NewService(app.dbRwPool)
 	app.authService = auth.NewService(app)
 

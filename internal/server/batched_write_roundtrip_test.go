@@ -3,6 +3,8 @@ package server
 import (
 	"bytes"
 	"database/sql"
+	"encoding/gob"
+	"strings"
 	"testing"
 
 	"github.com/lbe/sfpg-go/internal/gallerydb"
@@ -321,5 +323,45 @@ func TestBatchedWrite_GobRoundTrip_LargeThumbnail(t *testing.T) {
 	}
 	if !bytes.Equal(decoded.File.Thumbnail.Bytes(), largeThumb) {
 		t.Error("Thumbnail content mismatch")
+	}
+}
+
+func TestBatchedWrite_GobDecode_InvalidWireData(t *testing.T) {
+	var decoded BatchedWrite
+	err := decoded.GobDecode([]byte("not gob data"))
+	if err == nil {
+		t.Error("expected error for invalid wire data")
+	}
+}
+
+func TestBatchedWrite_GobDecode_InvalidFileData(t *testing.T) {
+	var buf bytes.Buffer
+	if err := gob.NewEncoder(&buf).Encode(batchedWriteWire{FileData: []byte("not gob data")}); err != nil {
+		t.Fatalf("failed to encode wire: %v", err)
+	}
+
+	var decoded BatchedWrite
+	err := decoded.GobDecode(buf.Bytes())
+	if err == nil {
+		t.Fatal("expected error for invalid FileData")
+	}
+	if !strings.Contains(err.Error(), "gob decode File") {
+		t.Errorf("error = %q, want wrap 'gob decode File'", err.Error())
+	}
+}
+
+func TestBatchedWrite_GobDecode_InvalidCacheEntryData(t *testing.T) {
+	var buf bytes.Buffer
+	if err := gob.NewEncoder(&buf).Encode(batchedWriteWire{CacheEntryData: []byte("not gob data")}); err != nil {
+		t.Fatalf("failed to encode wire: %v", err)
+	}
+
+	var decoded BatchedWrite
+	err := decoded.GobDecode(buf.Bytes())
+	if err == nil {
+		t.Fatal("expected error for invalid CacheEntryData")
+	}
+	if !strings.Contains(err.Error(), "gob decode CacheEntry") {
+		t.Errorf("error = %q, want wrap 'gob decode CacheEntry'", err.Error())
 	}
 }

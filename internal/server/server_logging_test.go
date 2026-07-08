@@ -202,7 +202,6 @@ func TestLogProfileLocation_Coverage(t *testing.T) {
 	app.LogProfileLocation()
 }
 
-// TestRestartRequired_Coverage verifies restart flag status
 func TestSetupBootstrapLogging_ErrorPaths(t *testing.T) {
 	app := CreateApp(t)
 	defer app.Shutdown()

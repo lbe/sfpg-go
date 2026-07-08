@@ -107,6 +107,16 @@ func GetTextContent(n *html.Node) string {
 func ParseHTML(r io.Reader) (*html.Node, error) {
 	return html.Parse(r)
 }
+
+// IsDescendant reports whether descendant is contained within ancestor.
+func IsDescendant(ancestor, descendant *html.Node) bool {
+	for cur := descendant.Parent; cur != nil; cur = cur.Parent {
+		if cur == ancestor {
+			return true
+		}
+	}
+	return false
+}
 ```
 
 ## Example Handler Test
@@ -185,6 +195,8 @@ When writing HTTP handler tests:
    - `GetAttr(node, "attr")` — attribute value check
    - `GetTextContent(node)` — only when text matters
 4. Never use `strings.Contains(rec.Body.String(), "...")` for HTML assertions
+
+> **Note:** This is the project's target convention. Some existing tests may still use string/bytes contains checks; new tests and refactored tests should follow the structural patterns below.
 
 ### Task 2: Refactoring Existing Tests
 

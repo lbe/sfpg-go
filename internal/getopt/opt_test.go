@@ -1,6 +1,7 @@
 package getopt
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -673,5 +674,181 @@ func TestParse_SessionSameSiteEnvVar(t *testing.T) {
 	}
 	if opt.SessionSameSite.String != "Strict" {
 		t.Errorf("expected SessionSameSite.String=Strict, got %s", opt.SessionSameSite.String)
+	}
+}
+
+// TestParseEnvOnly verifies ParseEnvOnly reads environment variables without CLI flags.
+func TestParseEnvOnly(t *testing.T) {
+	resetEnv()
+	t.Setenv("SFG_PORT", "7777")
+	t.Setenv("SEPG_SESSION_SECRET", "env-secret")
+
+	opt := ParseEnvOnly()
+
+	if !opt.Port.IsSet || opt.Port.Int != 7777 {
+		t.Errorf("expected Port.IsSet=true and Port.Int=7777, got IsSet=%v Int=%d", opt.Port.IsSet, opt.Port.Int)
+	}
+	if !opt.SessionSecret.IsSet || opt.SessionSecret.String != "env-secret" {
+		t.Errorf("expected SessionSecret.IsSet=true and String=env-secret, got IsSet=%v String=%q", opt.SessionSecret.IsSet, opt.SessionSecret.String)
+	}
+	if opt.CacheBatchLoad.IsSet {
+		t.Error("expected CacheBatchLoad not set since CLI flags were not parsed")
+	}
+}
+
+// TestGetExecutableDir_Error verifies getExecutableDir returns an error when osExecutable fails.
+func TestGetExecutableDir_Error(t *testing.T) {
+	oldExec := getOsExecutable()
+	defer setOsExecutable(oldExec)
+
+	setOsExecutable(func() (string, error) {
+		return "", errors.New("executable not found")
+	})
+
+	dir, err := getExecutableDir()
+	if err == nil {
+		t.Fatal("expected error from getExecutableDir, got nil")
+	}
+	if dir != "" {
+		t.Errorf("expected empty directory on error, got %q", dir)
+	}
+}
+
+// TestGetPlatformConfigDir_Windows verifies the Windows APPDATA branch.
+func TestGetPlatformConfigDir_Windows(t *testing.T) {
+	oldGOOS := getOsGOOS()
+	defer setOsGOOS(oldGOOS)
+
+	setOsGOOS(func() string { return "windows" })
+	t.Setenv("APPDATA", `C:\Users\Test\AppData\Roaming`)
+	t.Setenv("HOME", "")
+
+	dir, err := getPlatformConfigDir()
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	expected := filepath.Join(`C:\Users\Test\AppData\Roaming`, "sfpg")
+	if dir != expected {
+		t.Errorf("expected %q, got %q", expected, dir)
+	}
+}
+
+// TestGetPlatformConfigDir_WindowsNoAppData verifies error when APPDATA is missing on Windows.
+func TestGetPlatformConfigDir_WindowsNoAppData(t *testing.T) {
+	oldGOOS := getOsGOOS()
+	defer setOsGOOS(oldGOOS)
+
+	setOsGOOS(func() string { return "windows" })
+	t.Setenv("APPDATA", "")
+
+	dir, err := getPlatformConfigDir()
+	if err == nil {
+		t.Fatal("expected error when APPDATA is not set, got nil")
+	}
+	if dir != "" {
+		t.Errorf("expected empty directory on error, got %q", dir)
+	}
+	if !strings.Contains(err.Error(), "APPDATA") {
+		t.Errorf("expected error to mention APPDATA, got %v", err)
+	}
+}
+
+// TestApplyEnvVars_InvalidValues verifies usageExit is called for invalid env var values.
+func TestApplyEnvVars_InvalidValues(t *testing.T) {
+	tests := []struct {
+		name string
+		env  map[string]string
+	}{
+		{
+			name: "invalid SFG_PORT",
+			env:  map[string]string{"SFG_PORT": "not-an-int"},
+		},
+		{
+			name: "invalid SFG_DISCOVER",
+			env:  map[string]string{"SFG_DISCOVER": "not-a-bool"},
+		},
+		{
+			name: "invalid SFG_DEBUG_DELAY_MS",
+			env:  map[string]string{"SFG_DEBUG_DELAY_MS": "not-an-int"},
+		},
+		{
+			name: "invalid SFG_COMPRESSION",
+			env:  map[string]string{"SFG_COMPRESSION": "not-a-bool"},
+		},
+		{
+			name: "invalid SFG_HTTP_CACHE",
+			env:  map[string]string{"SFG_HTTP_CACHE": "not-a-bool"},
+		},
+		{
+			name: "invalid SFG_CACHE_PRELOAD",
+			env:  map[string]string{"SFG_CACHE_PRELOAD": "not-a-bool"},
+		},
+		{
+			name: "invalid SEPG_SESSION_SECURE",
+			env:  map[string]string{"SEPG_SESSION_SECURE": "not-a-bool"},
+		},
+		{
+			name: "invalid SEPG_SESSION_HTTPONLY",
+			env:  map[string]string{"SEPG_SESSION_HTTPONLY": "not-a-bool"},
+		},
+		{
+			name: "invalid SEPG_SESSION_MAX_AGE",
+			env:  map[string]string{"SEPG_SESSION_MAX_AGE": "not-an-int"},
+		},
+		{
+			name: "invalid SFG_RESTORE_LAST_KNOWN_GOOD",
+			env:  map[string]string{"SFG_RESTORE_LAST_KNOWN_GOOD": "not-a-bool"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetEnv()
+			for k, v := range tt.env {
+				t.Setenv(k, v)
+			}
+
+			oldExit := getUsageExit()
+			defer setUsageExit(oldExit)
+
+			var exitMsg string
+			setUsageExit(func(msg string) {
+				exitMsg = msg
+				panic(msg)
+			})
+
+			defer func() {
+				if r := recover(); r == nil {
+					t.Fatal("expected usageExit panic for invalid env var")
+				}
+				for k := range tt.env {
+					if !strings.Contains(exitMsg, k) {
+						t.Errorf("expected usageExit message to contain env var %q, got %q", k, exitMsg)
+					}
+				}
+				if !strings.Contains(exitMsg, "invalid") {
+					t.Errorf("expected usageExit message to contain 'invalid', got %q", exitMsg)
+				}
+			}()
+
+			opt := defaultOpt()
+			applyEnvVars(&opt)
+		})
+	}
+}
+
+// TestApplyEnvVars_RestoreLastKnownGood verifies the restore-last-known-good env var is parsed.
+func TestApplyEnvVars_RestoreLastKnownGood(t *testing.T) {
+	resetEnv()
+	t.Setenv("SFG_RESTORE_LAST_KNOWN_GOOD", "true")
+
+	opt := defaultOpt()
+	applyEnvVars(&opt)
+
+	if !opt.RestoreLastKnownGood.IsSet {
+		t.Error("expected RestoreLastKnownGood.IsSet=true")
+	}
+	if !opt.RestoreLastKnownGood.Bool {
+		t.Errorf("expected RestoreLastKnownGood.Bool=true, got %v", opt.RestoreLastKnownGood.Bool)
 	}
 }
