@@ -11,8 +11,11 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/net/html"
+
 	"github.com/lbe/sfpg-go/internal/gallerydb"
 	"github.com/lbe/sfpg-go/internal/server/cachepreload"
+	"github.com/lbe/sfpg-go/internal/testutil"
 )
 
 type breadcrumbErrorQueries struct {
@@ -101,8 +104,12 @@ func TestGalleryByID_SuccessFullPage(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", w.Code)
 	}
-	if w.Header().Get("HX-Push-URL") == "" {
+	pushURL := w.Header().Get("HX-Push-URL")
+	if pushURL == "" {
 		t.Error("expected HX-Push-URL to be set")
+	}
+	if pushURL != "/gallery/1?v=test-etag" {
+		t.Errorf("expected HX-Push-URL to be /gallery/1?v=test-etag, got %q", pushURL)
 	}
 }
 
@@ -338,6 +345,104 @@ func TestGalleryByID_ETagIncludesTheme(t *testing.T) {
 	}
 }
 
+// sortOrderFake is a fakeHandlerQueries that returns ordered subfolders and files
+// for testing gallery sort order in rendered HTML.
+type sortOrderFake struct {
+	fakeHandlerQueries
+	folders []gallerydb.FolderView
+	files   []gallerydb.FileView
+}
+
+func (s *sortOrderFake) GetFoldersViewsByParentIDOrderByName(ctx context.Context, parent sql.NullInt64) ([]gallerydb.FolderView, error) {
+	return s.folders, nil
+}
+
+func (s *sortOrderFake) GetFileViewsByFolderIDOrderByFileName(ctx context.Context, folderID sql.NullInt64) ([]gallerydb.FileView, error) {
+	return s.files, nil
+}
+
+// TestGalleryByIDHandler_SortOrder verifies that folders and files within a
+// gallery are rendered in the expected sort order: folders first, then files,
+// each group sorted alphabetically.
+func TestGalleryByIDHandler_SortOrder(t *testing.T) {
+	// Create fake queries returning ordered data: folders then files,
+	// each group alphabetically sorted.
+	fq := &sortOrderFake{
+		folders: []gallerydb.FolderView{
+			{ID: 10, Name: "FolderA", ParentID: sql.NullInt64{Int64: 1, Valid: true}},
+			{ID: 11, Name: "FolderB", ParentID: sql.NullInt64{Int64: 1, Valid: true}},
+		},
+		files: []gallerydb.FileView{
+			{ID: 1, Path: "FileA.gif", Filename: "FileA.gif", FolderID: sql.NullInt64{Int64: 1, Valid: true}},
+			{ID: 2, Path: "FileB.png", Filename: "FileB.png", FolderID: sql.NullInt64{Int64: 1, Valid: true}},
+			{ID: 3, Path: "FileC.jpg", Filename: "FileC.jpg", FolderID: sql.NullInt64{Int64: 1, Valid: true}},
+		},
+	}
+
+	gh := setupTestGalleryHandlers(t, fq)
+
+	req := httptest.NewRequest(http.MethodGet, "/gallery/1", nil)
+	req.Header.Set("HX-Request", "true")
+	req.Header.Set("HX-Target", "gallery-content")
+	req.SetPathValue("id", "1")
+	w := httptest.NewRecorder()
+
+	gh.GalleryByID(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	doc, err := testutil.ParseHTML(w.Body)
+	if err != nil {
+		t.Fatalf("failed to parse HTML: %v", err)
+	}
+
+	box := testutil.FindElementByID(doc, "boxgallery")
+	if box == nil {
+		t.Fatal("#boxgallery not found in response")
+	}
+
+	var labels []string
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		if n.Type == html.ElementNode && n.Data == "div" && testutil.GetAttr(n, "role") == "listitem" {
+			for c := n.FirstChild; c != nil; c = c.NextSibling {
+				if c.Type == html.ElementNode && c.Data == "a" {
+					label := testutil.GetAttr(c, "aria-label")
+					if label != "" {
+						labels = append(labels, strings.TrimPrefix(label, "View "))
+					}
+					break
+				}
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(box)
+
+	expected := []string{
+		"📁︎ FolderA",
+		"📁︎ FolderB",
+		"FileA.gif",
+		"FileB.png",
+		"FileC.jpg",
+	}
+	if len(labels) != len(expected) {
+		t.Errorf("expected %d gallery items, got %d: %v", len(expected), len(labels), labels)
+	}
+	for i := range expected {
+		if i >= len(labels) {
+			break
+		}
+		if labels[i] != expected[i] {
+			t.Errorf("gallery item %d: expected %q, got %q", i, expected[i], labels[i])
+		}
+	}
+}
+
 func TestHandleDBError(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -352,7 +457,9 @@ func TestHandleDBError(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := &GalleryHandlers{deps: &mockServerDeps{}}
+			galleryOps := &mockGalleryOps{}
+			helper := &mockTemplateHelpers{}
+			h := &GalleryHandlers{galleryOps: galleryOps, ServerError: helper.ServerError}
 			rec := httptest.NewRecorder()
 			req := httptest.NewRequest(http.MethodGet, "/", nil)
 			got := h.handleDBError(rec, req, tt.err)

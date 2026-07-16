@@ -206,6 +206,105 @@ func TestEnsureBootstrapDefaults_RepairsEmptyCriticalValues(t *testing.T) {
 	}
 }
 
+func TestEnsureBootstrapDefaults_SetsListenerPortAndLogLevel(t *testing.T) {
+	queries, cleanup := createBootstrapQueries(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	rootDir := t.TempDir()
+
+	if err := EnsureBootstrapDefaults(ctx, rootDir, queries); err != nil {
+		t.Fatalf("EnsureBootstrapDefaults failed: %v", err)
+	}
+
+	portValue, err := queries.GetConfigValueByKey(ctx, "listener_port")
+	if err != nil {
+		t.Fatalf("listener_port should exist after initialization: %v", err)
+	}
+	if portValue != "8081" {
+		t.Errorf("expected listener_port to be '8081', got %q", portValue)
+	}
+
+	logLevelValue, err := queries.GetConfigValueByKey(ctx, "log_level")
+	if err != nil {
+		t.Fatalf("log_level should exist after initialization: %v", err)
+	}
+	if logLevelValue != "debug" {
+		t.Errorf("expected log_level to be 'debug', got %q", logLevelValue)
+	}
+}
+
+func TestEnsureBootstrapDefaults_PreservesExistingValue(t *testing.T) {
+	queries, cleanup := createBootstrapQueries(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	rootDir := t.TempDir()
+	now := int64(1)
+
+	// Set existing value before initialization
+	err := queries.UpsertConfigValueOnly(ctx, gallerydb.UpsertConfigValueOnlyParams{
+		Key: "listener_port", Value: "9999", CreatedAt: now, UpdatedAt: now,
+	})
+	if err != nil {
+		t.Fatalf("failed to set existing config: %v", err)
+	}
+
+	// Initialize defaults (should not overwrite existing)
+	if err = EnsureBootstrapDefaults(ctx, rootDir, queries); err != nil {
+		t.Fatalf("EnsureBootstrapDefaults failed: %v", err)
+	}
+
+	// Verify existing value is preserved
+	portValue, err := queries.GetConfigValueByKey(ctx, "listener_port")
+	if err != nil {
+		t.Fatalf("failed to get listener_port: %v", err)
+	}
+	if portValue != "9999" {
+		t.Errorf("expected listener_port to be preserved as '9999', got %q", portValue)
+	}
+}
+
+func TestEnsureBootstrapDefaults_OnlyMissingKeysAdded(t *testing.T) {
+	queries, cleanup := createBootstrapQueries(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	rootDir := t.TempDir()
+	now := int64(1)
+
+	// Set one existing value
+	err := queries.UpsertConfigValueOnly(ctx, gallerydb.UpsertConfigValueOnlyParams{
+		Key: "log_level", Value: "info", CreatedAt: now, UpdatedAt: now,
+	})
+	if err != nil {
+		t.Fatalf("failed to set existing config: %v", err)
+	}
+
+	// Initialize defaults
+	if err = EnsureBootstrapDefaults(ctx, rootDir, queries); err != nil {
+		t.Fatalf("EnsureBootstrapDefaults failed: %v", err)
+	}
+
+	// Verify existing value is preserved
+	logLevelValue, err := queries.GetConfigValueByKey(ctx, "log_level")
+	if err != nil {
+		t.Fatalf("failed to get log_level: %v", err)
+	}
+	if logLevelValue != "info" {
+		t.Errorf("expected log_level to be preserved as 'info', got %q", logLevelValue)
+	}
+
+	// Verify a missing key was added
+	portValue, err := queries.GetConfigValueByKey(ctx, "listener_port")
+	if err != nil {
+		t.Fatalf("listener_port should have been added: %v", err)
+	}
+	if portValue == "" {
+		t.Error("listener_port should have a default value")
+	}
+}
+
 func TestEnsureBootstrapDefaults_LeavesExistingNonCriticalValues(t *testing.T) {
 	queries, cleanup := createBootstrapQueries(t)
 	defer cleanup()

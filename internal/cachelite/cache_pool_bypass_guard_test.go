@@ -55,7 +55,8 @@ func TestCacheRuntimeHelpers_NoRawDBBypass(t *testing.T) {
 		"EvictLRU":          "\n// GetCacheSizeBytes returns the total size of all cache entries in bytes.",
 		"GetCacheSizeBytes": "\n// CountCacheEntries returns the number of entries in the cache.",
 		"CountCacheEntries": "\n// CleanupExpired removes all expired cache entries from the database.",
-		"CleanupExpired":    "\n// CanCacheResponse determines if an HTTP response is eligible for caching.",
+		"CleanupExpired":    "\n// CanCacheResponse determines if an HTTP response is eligible for caching.\n// Returns false if status != 200, Cache-Control contains \"no-store\",\n// or a Set-Cookie header is present (responses that set cookies must not be cached).",
+		"CanCacheResponse":  "",
 	}
 
 	for fnName, endMarker := range sections {

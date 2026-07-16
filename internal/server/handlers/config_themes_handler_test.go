@@ -135,15 +135,15 @@ func TestConfigHandlers_UpdateThemesHandler_Success(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d: %s", w.Code, w.Body.String())
 	}
-	deps := ch.deps.(*mockServerDeps)
-	if deps.Cfg == nil {
+	cfgOps := ch.cfgOps.(*mockConfigOps)
+	if cfgOps.Cfg == nil {
 		t.Fatal("expected UpdateConfigWithPrecedence to be invoked")
 	}
-	if len(deps.Cfg.Themes) != 2 || deps.Cfg.Themes[0] != "light" || deps.Cfg.Themes[1] != "dark" {
-		t.Errorf("expected themes [light dark], got %v", deps.Cfg.Themes)
+	if len(cfgOps.Cfg.Themes) != 2 || cfgOps.Cfg.Themes[0] != "light" || cfgOps.Cfg.Themes[1] != "dark" {
+		t.Errorf("expected themes [light dark], got %v", cfgOps.Cfg.Themes)
 	}
-	if deps.Cfg.CurrentTheme != "light" {
-		t.Errorf("expected current theme adjusted to 'light', got %q", deps.Cfg.CurrentTheme)
+	if cfgOps.Cfg.CurrentTheme != "light" {
+		t.Errorf("expected current theme adjusted to 'light', got %q", cfgOps.Cfg.CurrentTheme)
 	}
 	doc, err := testutil.ParseHTML(w.Body)
 	if err != nil {

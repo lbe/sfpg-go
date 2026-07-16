@@ -128,22 +128,24 @@ func ExtractExifData(f *File, imageFile *os.File) error {
 	defer cancel()
 
 	type result struct {
-		meta exif2.Exif
-		err  error
+		meta   exif2.Exif
+		xmpRaw []byte
+		err    error
 	}
 	resultChan := make(chan result, 1)
 
 	go func() {
-		m, err := imageMetaDecode(imageFile)
-		resultChan <- result{meta: m, err: err}
+		m, xmpRaw, err := metadataDecodeWithXMP(imageFile)
+		resultChan <- result{meta: m, xmpRaw: xmpRaw, err: err}
 	}()
 
 	var m exif2.Exif
+	var xmpRaw []byte
 	var err error
 
 	select {
 	case r := <-resultChan:
-		m, err = r.meta, r.err
+		m, xmpRaw, err = r.meta, r.xmpRaw, r.err
 	case <-ctx.Done():
 		slog.Warn("ExtractExifData timed out - possible corrupted file", "path", f.Path)
 		return fmt.Errorf("EXIF extraction timed out after %v", exifTimeout)
@@ -152,25 +154,26 @@ func ExtractExifData(f *File, imageFile *os.File) error {
 	if err != nil {
 		if !errors.Is(err, imagemeta.ErrNoExif) {
 			slog.Warn("imagemeta.Decode failed", "err", err, "path", f.Path)
-		} else {
-			slog.Debug("imagemeta.Decode: no exif", "err", err, "path", f.Path)
+			populateFileXMPFromRaw(f, xmpRaw) // best-effort XMP even when EXIF decode failed
+			applyExifGPSFromXMP(f)
+			return nil
 		}
-		return nil // It's okay if there's no exif, we just return
+		slog.Debug("imagemeta.Decode: no exif", "err", err, "path", f.Path)
+	} else {
+		f.Exif.CameraMake = sql.NullString{String: m.Make, Valid: m.Make != ""}
+		f.Exif.CameraModel = sql.NullString{String: m.Model, Valid: m.Model != ""}
+		f.Exif.LensModel = sql.NullString{String: m.LensModel, Valid: m.LensModel != ""}
+		f.Exif.FocalLength = sql.NullString{String: m.FocalLength.String(), Valid: m.FocalLength.String() != ""}
+		f.Exif.Aperture = sql.NullString{String: m.FNumber.String(), Valid: m.FNumber.String() != ""}
+		f.Exif.ShutterSpeed = sql.NullString{String: m.ExposureTime.String(), Valid: m.ExposureTime.String() != ""}
+		f.Exif.Iso = sql.NullInt64{Int64: int64(m.ISOSpeed), Valid: m.ISOSpeed != 0}
+		setGPSFromExif(f, m.GPS.Latitude(), m.GPS.Longitude(), m.GPS.Altitude(), true)
+		if !m.CreateDate().IsZero() {
+			f.Exif.CaptureDate = sql.NullInt64{Int64: m.CreateDate().Unix(), Valid: true}
+		}
 	}
 
-	f.Exif.CameraMake = sql.NullString{String: m.Make, Valid: m.Make != ""}
-	f.Exif.CameraModel = sql.NullString{String: m.Model, Valid: m.Model != ""}
-	f.Exif.LensModel = sql.NullString{String: m.LensModel, Valid: m.LensModel != ""}
-	f.Exif.FocalLength = sql.NullString{String: m.FocalLength.String(), Valid: m.FocalLength.String() != ""}
-	f.Exif.Aperture = sql.NullString{String: m.FNumber.String(), Valid: m.FNumber.String() != ""}
-	f.Exif.ShutterSpeed = sql.NullString{String: m.ExposureTime.String(), Valid: m.ExposureTime.String() != ""}
-	f.Exif.Iso = sql.NullInt64{Int64: int64(m.ISOSpeed), Valid: m.ISOSpeed != 0}
-	f.Exif.Latitude = sql.NullFloat64{Float64: m.GPS.Latitude(), Valid: true}
-	f.Exif.Longitude = sql.NullFloat64{Float64: m.GPS.Longitude(), Valid: true}
-	f.Exif.Altitude = sql.NullFloat64{Float64: float64(m.GPS.Altitude()), Valid: true}
-	if !m.CreateDate().IsZero() {
-		f.Exif.CaptureDate = sql.NullInt64{Int64: m.CreateDate().Unix(), Valid: true}
-	}
-
+	populateFileXMPFromRaw(f, xmpRaw)
+	applyExifGPSFromXMP(f)
 	return nil
 }

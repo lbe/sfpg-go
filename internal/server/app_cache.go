@@ -8,16 +8,16 @@ import (
 
 // initializeHTTPCache creates the HTTP cache middleware if caching is enabled.
 func (app *App) initializeHTTPCache() {
-	app.configMu.RLock()
-	cfg := app.config
-	app.configMu.RUnlock()
+	app.ConfigManager.ConfigMu.RLock()
+	cfg := app.ConfigManager.Config
+	app.ConfigManager.ConfigMu.RUnlock()
 	if cfg == nil {
 		return
 	}
 	app.InitializeHTTPCache(cfg)
 }
 
-// invalidateHTTPCache clears all HTTP cache entries. Called when ETag version changes
+// InvalidateHTTPCache clears all HTTP cache entries. Called when ETag version changes
 // to avoid serving stale responses that may contain old cache-busting URLs.
 func (app *App) InvalidateHTTPCache() {
 	app.InfrastructureService.InvalidateHTTPCache()
@@ -27,12 +27,12 @@ func (app *App) scheduleStaleCacheDrop(trigger string) {
 	if app.dbRwPool == nil {
 		return
 	}
-	if !app.staleCacheDropInFlight.CompareAndSwap(false, true) {
+	if !app.RuntimeManager.staleCacheDropInFlight.CompareAndSwap(false, true) {
 		return
 	}
 
 	go func() {
-		defer app.staleCacheDropInFlight.Store(false)
+		defer app.RuntimeManager.staleCacheDropInFlight.Store(false)
 
 		ctx := app.getCtx()
 

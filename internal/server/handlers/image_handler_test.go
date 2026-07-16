@@ -97,4 +97,9 @@ func TestImageByID_Success(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", w.Code)
 	}
+	// HX-Push-URL should be set for image views so history entries are created
+	pushURL := w.Header().Get("HX-Push-URL")
+	if pushURL == "" {
+		t.Error("expected HX-Push-URL to be set for image view")
+	}
 }

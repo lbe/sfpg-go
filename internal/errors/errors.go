@@ -162,11 +162,6 @@ func Join(errs ...error) error {
 	return errors.Join(errs...)
 }
 
-// As delegates to the standard library errors.As.
-func As(err error, target interface{}) bool {
-	return errors.As(err, target)
-}
-
 // Is delegates to the standard library errors.Is.
 func Is(err error, target error) bool {
 	return errors.Is(err, target)

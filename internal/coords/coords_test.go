@@ -122,6 +122,20 @@ func TestParseCoordinate(t *testing.T) {
 			wantErr:  false,
 		},
 
+		// XMP comma-DM formats
+		{
+			name:     "XMP comma-DM latitude",
+			input:    "11,57.1312N",
+			expected: 11.952186666666666,
+			wantErr:  false,
+		},
+		{
+			name:     "XMP comma-DM longitude",
+			input:    "120,11.573E",
+			expected: 120.19288333333333,
+			wantErr:  false,
+		},
+
 		// Edge cases
 		{
 			name:     "zero",

@@ -50,7 +50,7 @@ func loginTestServer(success bool) *httptest.Server {
 	csrfToken := "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.URL.Path == "/gallery/1" && r.Method == http.MethodGet:
+		case r.URL.Path == "/login-form" && r.Method == http.MethodGet:
 			w.Header().Set("Content-Type", "text/html")
 			w.WriteHeader(http.StatusOK)
 			fmt.Fprint(w, galleryPageWithCSRF(csrfToken))

@@ -18,7 +18,7 @@ type File struct {
 	Thumbnail           *bytes.Buffer
 	Exif                gallerydb.UpsertExifParams
 	Itpc                gallerydb.UpsertIPTCParams
-	XmpProp             gallerydb.UpsertXMPPropertyParams
+	XmpProps            []gallerydb.UpsertXMPPropertyParams
 	XmpRaw              gallerydb.UpsertXMPRawParams
 	HasValidJpegMarkers bool // Set by DetectMimeType for JPEG files
 }

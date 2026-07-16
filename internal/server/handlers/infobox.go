@@ -20,13 +20,13 @@ func (h *GalleryHandlers) InfoBoxFolder(w http.ResponseWriter, r *http.Request) 
 	idStr := r.PathValue("id")
 	folderID, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		h.deps.ServerError(w, r, fmt.Errorf("invalid folder id: %s", idStr))
+		h.ServerError(w, r, fmt.Errorf("invalid folder id: %s", idStr))
 		return
 	}
 
 	qh, _, put, err := h.getQueries()
 	if err != nil {
-		h.deps.ServerError(w, r, err)
+		h.ServerError(w, r, err)
 		return
 	}
 	defer put()
@@ -48,13 +48,13 @@ func (h *GalleryHandlers) InfoBoxFolder(w http.ResponseWriter, r *http.Request) 
 
 	subFolders, err := qh.GetFoldersViewsByParentIDOrderByName(h.Ctx, sql.NullInt64{Int64: folderID, Valid: true})
 	if err != nil {
-		h.deps.ServerError(w, r, err)
+		h.ServerError(w, r, err)
 		return
 	}
 
 	fileViews, err := qh.GetFileViewsByFolderIDOrderByFileName(h.Ctx, sql.NullInt64{Int64: folderID, Valid: true})
 	if err != nil {
-		h.deps.ServerError(w, r, err)
+		h.ServerError(w, r, err)
 		return
 	}
 
@@ -82,7 +82,7 @@ func (h *GalleryHandlers) InfoBoxFolder(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if err := ui.RenderTemplate(w, "infobox-folder.html.tmpl", data); err != nil {
-		h.deps.ServerError(w, r, err)
+		h.ServerError(w, r, err)
 	}
 }
 
@@ -92,13 +92,13 @@ func (h *GalleryHandlers) InfoBoxImage(w http.ResponseWriter, r *http.Request) {
 	idStr := r.PathValue("id")
 	fileID, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		h.deps.ServerError(w, r, fmt.Errorf("invalid file id: %s", idStr))
+		h.ServerError(w, r, fmt.Errorf("invalid file id: %s", idStr))
 		return
 	}
 
 	qh, cpcRo, put, err := h.getQueries()
 	if err != nil {
-		h.deps.ServerError(w, r, err)
+		h.ServerError(w, r, err)
 		return
 	}
 	defer put()
@@ -120,7 +120,7 @@ func (h *GalleryHandlers) InfoBoxImage(w http.ResponseWriter, r *http.Request) {
 
 	imagesInFolder, err := qh.GetFileViewsByFolderIDOrderByFileName(h.Ctx, file.FolderID)
 	if err != nil {
-		h.deps.ServerError(w, r, err)
+		h.ServerError(w, r, err)
 		return
 	}
 
@@ -132,10 +132,10 @@ func (h *GalleryHandlers) InfoBoxImage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	mq := h.deps.GetMetadataQueries(cpcRo)
+	mq := h.galleryOps.GetMetadataQueries(cpcRo)
 	exif, err := mq.GetExifByFile(h.Ctx, fileID)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		h.deps.ServerError(w, r, err)
+		h.ServerError(w, r, err)
 		return
 	}
 	if exif.Latitude.Valid && exif.Latitude.Float64 == 0.0 && exif.Longitude.Valid && exif.Longitude.Float64 == 0.0 {
@@ -145,7 +145,7 @@ func (h *GalleryHandlers) InfoBoxImage(w http.ResponseWriter, r *http.Request) {
 
 	iptc, err := mq.GetIPTCByFile(h.Ctx, fileID)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		h.deps.ServerError(w, r, err)
+		h.ServerError(w, r, err)
 		return
 	}
 
@@ -164,6 +164,6 @@ func (h *GalleryHandlers) InfoBoxImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := ui.RenderTemplate(w, "infobox-image.html.tmpl", data); err != nil {
-		h.deps.ServerError(w, r, err)
+		h.ServerError(w, r, err)
 	}
 }

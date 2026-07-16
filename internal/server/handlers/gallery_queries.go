@@ -58,7 +58,7 @@ func (h *GalleryHandlers) fetchGalleryData(folderID int64) (GalleryData, error) 
 		return GalleryData{}, err
 	}
 
-	etagVersion := h.deps.GetETagVersion()
+	etagVersion := h.galleryOps.GetETagVersion()
 	thumbs := make([]DirectoryInfo, 0, 64)
 	for _, sf := range subFolders {
 		thumbs = append(thumbs, DirectoryInfo{

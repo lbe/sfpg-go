@@ -90,6 +90,7 @@ var (
 // Production uses *dque.DQue[T]; tests may supply a mock implementation.
 type dqueQueue[T any] interface {
 	Size() int
+	DiskBytes() int64
 	Dequeue() (*T, error)
 	Enqueue(item *T) error
 	TurboOn() error
@@ -98,8 +99,9 @@ type dqueQueue[T any] interface {
 
 // Sentinel errors returned by Submit.
 var (
-	ErrClosed = errors.New("writebatcher: closed")
-	ErrFull   = errors.New("writebatcher: channel full")
+	ErrClosed        = errors.New("writebatcher: closed")
+	ErrFull          = errors.New("writebatcher: channel full")
+	ErrQuotaExceeded = errors.New("writebatcher: dque disk quota exceeded")
 )
 
 // FlushFunc executes the batch within the provided transaction. The batcher
@@ -148,6 +150,11 @@ type Config[T any] struct {
 	// When zero or negative, defaults to 250.
 	DQueItemsPerSegment int
 
+	// MaxDiskBytes sets a maximum disk usage for the dque overflow queue.
+	// When the dque directory exceeds this threshold, Submit returns
+	// ErrQuotaExceeded instead of overflowing to disk. 0 means unlimited.
+	MaxDiskBytes int64
+
 	// testQueue is an optional override for the durable queue. When nil,
 	// openDQue creates a real *dque.DQue[T]. Tests set this to inject
 	// deterministic errors without touching the filesystem.
@@ -192,6 +199,8 @@ type Stats struct {
 	OverflowCount int64         `json:"overflow_count"`
 	DQueEnabled   bool          `json:"dque_enabled"`
 	DQueSize      int           `json:"dque_size"`
+	DiskBytes     int64         `json:"disk_bytes"`
+	MaxDiskBytes  int64         `json:"max_disk_bytes"`
 }
 
 // GetStats returns the current statistics of the WriteBatcher.
@@ -199,8 +208,10 @@ func (wb *WriteBatcher[T]) GetStats() Stats {
 	isClosed := wb.closed.Load()
 
 	var dqueSize int
+	var diskBytes int64
 	if wb.dq != nil {
 		dqueSize = wb.dq.Size()
+		diskBytes = wb.dq.DiskBytes()
 	}
 
 	return Stats{
@@ -213,6 +224,8 @@ func (wb *WriteBatcher[T]) GetStats() Stats {
 		OverflowCount: wb.overflowCount.Load(),
 		DQueEnabled:   wb.dq != nil,
 		DQueSize:      dqueSize,
+		DiskBytes:     diskBytes,
+		MaxDiskBytes:  wb.cfg.MaxDiskBytes,
 	}
 }
 
@@ -738,6 +751,13 @@ func (wb *WriteBatcher[T]) Submit(item T) error {
 
 	// Overflow path: channel is full. If dque is configured, enqueue there.
 	if wb.dq != nil {
+		// Check disk quota before enqueueing.
+		if wb.cfg.MaxDiskBytes > 0 {
+			if currentBytes := wb.dq.DiskBytes(); currentBytes >= wb.cfg.MaxDiskBytes {
+				return ErrQuotaExceeded
+			}
+		}
+
 		pending := wb.pendingCount.Load()
 
 		wb.overflowWG.Add(1)

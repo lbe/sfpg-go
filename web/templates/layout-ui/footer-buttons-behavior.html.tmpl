@@ -1,0 +1,92 @@
+<script type="text/hyperscript">
+  behavior MobileInfoButton
+    on click
+      if #box_info.children.length is 0
+        send loadfirstinfo to #initial-info-loader
+      end
+      set #box_info_mobile.innerHTML to #box_info.innerHTML
+      set #box_info_mobile.scrollTop to 0
+      set #mobile_info_modal.checked to true
+      wait 10ms
+      set #mobile_info_modal_box.scrollTop to 0
+      set #box_info_mobile.scrollTop to 0
+    end
+  end
+
+  behavior DesktopInfoButton
+    on click
+      -- Desktop: toggle info box wrapper (existing behavior)
+      toggle .hidden on #box_info_wrapper
+      toggle .info-pinned on body
+      trigger resizeMe on #lightbox_modal
+      call updateScaled()
+      -- Persist info box state to sessionStorage
+      if body matches .info-pinned
+        sessionStorage.setItem('infobox-visible', 'true')
+      else
+        sessionStorage.setItem('infobox-visible', 'false')
+      end
+      wait 20ms
+      get #box_info.children.length
+      if it is 0
+        send loadfirstinfo to #initial-info-loader
+      end
+    end
+  end
+
+  behavior CloseLightbox
+    on click
+      trigger closeModal on #lightbox_modal
+    end
+  end
+
+  behavior SlideshowButton
+    init
+      remove .slideshow-running from me
+      repeat forever
+        if I match .slideshow-running
+          send click to #lightbox-next-btn
+          wait 5s
+        else
+          wait 200ms
+        end
+      end
+    end
+
+    on click
+      toggle .slideshow-running on me
+      if I match .slideshow-running then
+        add .hidden to .play-icon in me
+        remove .hidden from .pause-icon in me
+      else
+        remove .hidden from .play-icon in me
+        add .hidden to .pause-icon in me
+      end
+    end
+  end
+
+  behavior ActualSizeButton
+    on click
+      toggle .actual-size-mode on body
+      if body matches .actual-size-mode
+        set slots to #lightbox-images.querySelectorAll('img.lightbox-slot')
+        set visibleImg to null
+        for s in slots
+          if s does not match .hidden set visibleImg to s end
+        end
+        if visibleImg
+          get visibleImg.src
+          set #actual-size-image.src to it
+        end
+        add .hidden to #lightbox_modal
+        remove .hidden from #actual-size_modal
+        call disableFooterButtons()
+        remove @disabled from me
+      else
+        call enableFooterButtons()
+        add .hidden to #actual-size_modal
+        remove .hidden from #lightbox_modal
+      end
+    end
+  end
+</script>

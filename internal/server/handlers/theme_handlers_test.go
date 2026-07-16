@@ -8,14 +8,37 @@ import (
 	"testing"
 
 	"github.com/lbe/sfpg-go/internal/server/config"
+	"github.com/lbe/sfpg-go/internal/testutil"
 )
+
+// mockThemeSessionManager satisfies the SessionManager interface for theme handler tests.
+type mockThemeSessionManager struct {
+	validCSRF bool
+}
+
+func (m *mockThemeSessionManager) IsAuthenticated(w http.ResponseWriter, r *http.Request) bool {
+	return false
+}
+
+func (m *mockThemeSessionManager) ValidateCSRFToken(r *http.Request) bool {
+	return m.validCSRF
+}
+
+func (m *mockThemeSessionManager) EnsureCSRFToken(w http.ResponseWriter, r *http.Request) string {
+	return "mock-csrf-token"
+}
+
+// testThemeHandlers is a test helper that creates a ThemeHandlers from narrow fakes.
+func testThemeHandlers(sm *mockThemeSessionManager, cfgOps *mockConfigOps, helper *mockTemplateHelpers) *ThemeHandlers {
+	return NewThemeHandlers(sm, cfgOps.GetConfig, helper.AddCommonTemplateData, helper.ServerError)
+}
 
 // TestNewThemeHandlers verifies the constructor properly sets all dependencies
 func TestNewThemeHandlers(t *testing.T) {
-	deps := &mockServerDeps{
-		Cfg: config.DefaultConfig(),
-	}
-	handlers := NewThemeHandlers(deps)
+	sm := &mockThemeSessionManager{validCSRF: true}
+	cfgOps := &mockConfigOps{Cfg: config.DefaultConfig()}
+	helper := &mockTemplateHelpers{}
+	handlers := testThemeHandlers(sm, cfgOps, helper)
 
 	if handlers == nil {
 		t.Fatal("NewThemeHandlers returned nil")
@@ -29,11 +52,9 @@ func TestThemeHandlers_GetEffectiveTheme(t *testing.T) {
 	defaultConfig.Themes = []string{"dark", "light", "cupcake"}
 	defaultConfig.CurrentTheme = "dark"
 
-	getConfig := func() *config.Config {
-		return defaultConfig
-	}
-
-	handlers := NewThemeHandlers(&mockServerDeps{Cfg: getConfig()})
+	cfgOps := &mockConfigOps{Cfg: defaultConfig}
+	helper := &mockTemplateHelpers{}
+	handlers := testThemeHandlers(&mockThemeSessionManager{validCSRF: true}, cfgOps, helper)
 
 	tests := []struct {
 		name          string
@@ -86,11 +107,9 @@ func TestThemeHandlers_GetEffectiveTheme(t *testing.T) {
 
 // TestThemeHandlers_GetEffectiveTheme_NilConfig verifies fallback when config is nil
 func TestThemeHandlers_GetEffectiveTheme_NilConfig(t *testing.T) {
-	getConfig := func() *config.Config {
-		return nil
-	}
-
-	handlers := NewThemeHandlers(&mockServerDeps{Cfg: getConfig()})
+	cfgOps := &mockConfigOps{Cfg: nil}
+	helper := &mockTemplateHelpers{}
+	handlers := testThemeHandlers(&mockThemeSessionManager{validCSRF: true}, cfgOps, helper)
 
 	req := httptest.NewRequest("GET", "/", nil)
 	got := handlers.GetEffectiveTheme(req)
@@ -106,11 +125,9 @@ func TestThemeHandlers_GetEffectiveTheme_EmptyThemes(t *testing.T) {
 	cfg.Themes = []string{} // Empty themes list
 	cfg.CurrentTheme = "light"
 
-	getConfig := func() *config.Config {
-		return cfg
-	}
-
-	handlers := NewThemeHandlers(&mockServerDeps{Cfg: getConfig()})
+	cfgOps := &mockConfigOps{Cfg: cfg}
+	helper := &mockTemplateHelpers{}
+	handlers := testThemeHandlers(&mockThemeSessionManager{validCSRF: true}, cfgOps, helper)
 
 	req := httptest.NewRequest("GET", "/", nil)
 	got := handlers.GetEffectiveTheme(req)
@@ -126,11 +143,9 @@ func TestThemeHandlers_ThemePostHandler(t *testing.T) {
 	defaultConfig := config.DefaultConfig()
 	defaultConfig.Themes = []string{"dark", "light", "cupcake"}
 
-	getConfig := func() *config.Config {
-		return defaultConfig
-	}
-
-	handlers := NewThemeHandlers(&mockServerDeps{Cfg: getConfig()})
+	cfgOps := &mockConfigOps{Cfg: defaultConfig}
+	helper := &mockTemplateHelpers{}
+	handlers := testThemeHandlers(&mockThemeSessionManager{validCSRF: true}, cfgOps, helper)
 
 	tests := []struct {
 		name           string
@@ -214,11 +229,9 @@ func TestThemeHandlers_ThemePostHandler_CookieAttributes(t *testing.T) {
 	defaultConfig := config.DefaultConfig()
 	defaultConfig.Themes = []string{"dark", "light"}
 
-	getConfig := func() *config.Config {
-		return defaultConfig
-	}
-
-	handlers := NewThemeHandlers(&mockServerDeps{Cfg: getConfig()})
+	cfgOps := &mockConfigOps{Cfg: defaultConfig}
+	helper := &mockTemplateHelpers{}
+	handlers := testThemeHandlers(&mockThemeSessionManager{validCSRF: true}, cfgOps, helper)
 
 	formData := url.Values{"theme": []string{"light"}}.Encode()
 	req := httptest.NewRequest("POST", "/theme", strings.NewReader(formData))
@@ -268,11 +281,9 @@ func TestThemeHandlers_ThemePostHandler_CookieAttributes(t *testing.T) {
 
 // TestThemeHandlers_ThemePostHandler_NilConfig verifies 500 when config is nil
 func TestThemeHandlers_ThemePostHandler_NilConfig(t *testing.T) {
-	getConfig := func() *config.Config {
-		return nil
-	}
-
-	handlers := NewThemeHandlers(&mockServerDeps{Cfg: getConfig()})
+	cfgOps := &mockConfigOps{Cfg: nil}
+	helper := &mockTemplateHelpers{}
+	handlers := testThemeHandlers(&mockThemeSessionManager{validCSRF: true}, cfgOps, helper)
 
 	formData := url.Values{"theme": []string{"light"}}.Encode()
 	req := httptest.NewRequest("POST", "/theme", strings.NewReader(formData))
@@ -289,11 +300,9 @@ func TestThemeHandlers_ThemePostHandler_NilConfig(t *testing.T) {
 // TestThemeHandlers_ThemePostHandler_InvalidForm verifies 400 on malformed form
 func TestThemeHandlers_ThemePostHandler_InvalidForm(t *testing.T) {
 	defaultConfig := config.DefaultConfig()
-	getConfig := func() *config.Config {
-		return defaultConfig
-	}
-
-	handlers := NewThemeHandlers(&mockServerDeps{Cfg: getConfig()})
+	cfgOps := &mockConfigOps{Cfg: defaultConfig}
+	helper := &mockTemplateHelpers{}
+	handlers := testThemeHandlers(&mockThemeSessionManager{validCSRF: true}, cfgOps, helper)
 
 	// Send invalid form data (wrong content type without proper encoding)
 	req := httptest.NewRequest("POST", "/theme", strings.NewReader("not-valid-form-data"))
@@ -311,11 +320,9 @@ func TestThemeHandlers_ThemePostHandler_InvalidForm(t *testing.T) {
 
 // TestThemeHandlers_ThemeModalHandler_NilConfig verifies 500 when config is nil
 func TestThemeHandlers_ThemeModalHandler_NilConfig(t *testing.T) {
-	getConfig := func() *config.Config {
-		return nil
-	}
-
-	handlers := NewThemeHandlers(&mockServerDeps{Cfg: getConfig()})
+	cfgOps := &mockConfigOps{Cfg: nil}
+	helper := &mockTemplateHelpers{}
+	handlers := testThemeHandlers(&mockThemeSessionManager{validCSRF: true}, cfgOps, helper)
 
 	req := httptest.NewRequest("GET", "/theme/modal", nil)
 	rec := httptest.NewRecorder()
@@ -331,18 +338,16 @@ func TestThemeHandlers_ThemeModalHandler_NilConfig(t *testing.T) {
 func TestThemeHandlers_ThemeModalHandler_RendererError(t *testing.T) {
 	defaultConfig := config.DefaultConfig()
 	defaultConfig.Themes = []string{"dark", "light"}
-	getConfig := func() *config.Config {
-		return defaultConfig
-	}
-
-	handlers := NewThemeHandlers(&mockServerDeps{Cfg: getConfig()})
+	cfgOps := &mockConfigOps{Cfg: defaultConfig}
+	helper := &mockTemplateHelpers{}
+	handlers := testThemeHandlers(&mockThemeSessionManager{validCSRF: true}, cfgOps, helper)
 
 	req := httptest.NewRequest("GET", "/theme/modal", nil)
 	rec := httptest.NewRecorder()
 
 	handlers.ThemeModalHandler(rec, req)
 
-	// ServerError is handled by mockServerDeps
+	// ServerError is handled by mockTemplateHelpers
 }
 
 // TestThemeHandlers_ThemeModalHandler_WithCookie verifies modal uses cookie theme when valid
@@ -351,11 +356,9 @@ func TestThemeHandlers_ThemeModalHandler_WithCookie(t *testing.T) {
 	defaultConfig.Themes = []string{"dark", "light", "cupcake"}
 	defaultConfig.CurrentTheme = "dark"
 
-	getConfig := func() *config.Config {
-		return defaultConfig
-	}
-
-	handlers := NewThemeHandlers(&mockServerDeps{Cfg: getConfig()})
+	cfgOps := &mockConfigOps{Cfg: defaultConfig}
+	helper := &mockTemplateHelpers{}
+	handlers := testThemeHandlers(&mockThemeSessionManager{validCSRF: true}, cfgOps, helper)
 
 	req := httptest.NewRequest("GET", "/theme/modal", nil)
 	req.AddCookie(&http.Cookie{
@@ -376,10 +379,17 @@ func TestThemeHandlers_ThemeModalHandler_WithCookie(t *testing.T) {
 		t.Errorf("Content-Type = %v, want 'text/html; charset=utf-8'", contentType)
 	}
 
-	// Verify response body contains theme data
-	body := rec.Body.String()
-	if !strings.Contains(body, "cupcake") {
-		t.Error("Response body should contain 'cupcake'")
+	// Verify the modal reflects the cookie theme
+	doc, err := testutil.ParseHTML(rec.Body)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	selected := testutil.FindElementByID(doc, "theme-selected-value")
+	if selected == nil {
+		t.Fatal("missing #theme-selected-value element")
+	}
+	if got := testutil.GetAttr(selected, "value"); got != "cupcake" {
+		t.Errorf("theme selected value = %q, want %q", got, "cupcake")
 	}
 }
 
@@ -389,11 +399,9 @@ func TestThemeHandlers_ThemeModalHandler_InvalidCookie(t *testing.T) {
 	defaultConfig.Themes = []string{"dark", "light"}
 	defaultConfig.CurrentTheme = "dark"
 
-	getConfig := func() *config.Config {
-		return defaultConfig
-	}
-
-	handlers := NewThemeHandlers(&mockServerDeps{Cfg: getConfig()})
+	cfgOps := &mockConfigOps{Cfg: defaultConfig}
+	helper := &mockTemplateHelpers{}
+	handlers := testThemeHandlers(&mockThemeSessionManager{validCSRF: true}, cfgOps, helper)
 
 	req := httptest.NewRequest("GET", "/theme/modal", nil)
 	req.AddCookie(&http.Cookie{
@@ -415,11 +423,9 @@ func TestThemeHandlers_ThemeModalHandler_NoCookie(t *testing.T) {
 	defaultConfig.Themes = []string{"dark", "light"}
 	defaultConfig.CurrentTheme = "light"
 
-	getConfig := func() *config.Config {
-		return defaultConfig
-	}
-
-	handlers := NewThemeHandlers(&mockServerDeps{Cfg: getConfig()})
+	cfgOps := &mockConfigOps{Cfg: defaultConfig}
+	helper := &mockTemplateHelpers{}
+	handlers := testThemeHandlers(&mockThemeSessionManager{validCSRF: true}, cfgOps, helper)
 
 	req := httptest.NewRequest("GET", "/theme/modal", nil)
 	rec := httptest.NewRecorder()
@@ -428,6 +434,42 @@ func TestThemeHandlers_ThemeModalHandler_NoCookie(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Errorf("Expected status %d, got %d", http.StatusOK, rec.Code)
+	}
+}
+
+// TestThemeHandlers_ThemePostHandler_CSRFFailure verifies 403 when CSRF token is invalid
+func TestThemeHandlers_ThemePostHandler_CSRFFailure(t *testing.T) {
+	defaultConfig := config.DefaultConfig()
+	defaultConfig.Themes = []string{"dark", "light"}
+
+	cfgOps := &mockConfigOps{Cfg: defaultConfig}
+	// Use mock with validCSRF=false to simulate CSRF failure
+	helper := &mockTemplateHelpers{}
+	handlers := testThemeHandlers(&mockThemeSessionManager{validCSRF: false}, cfgOps, helper)
+
+	formData := url.Values{"theme": []string{"light"}}.Encode()
+	req := httptest.NewRequest("POST", "/theme", strings.NewReader(formData))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+
+	handlers.ThemePostHandler(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("Expected status %d for CSRF failure, got %d", http.StatusForbidden, rec.Code)
+	}
+
+	// Verify no theme cookie is set on CSRF failure
+	cookies := rec.Result().Cookies()
+	for _, cookie := range cookies {
+		if cookie.Name == "theme" {
+			t.Error("Unexpected theme cookie set on CSRF failure response")
+		}
+	}
+
+	// Verify error message
+	body := strings.TrimSpace(rec.Body.String())
+	if body != "Forbidden - CSRF token invalid" {
+		t.Errorf("response body = %q, want %q", body, "Forbidden - CSRF token invalid")
 	}
 }
 

@@ -6,13 +6,12 @@ package dque
 //
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
-
-	"github.com/lbe/sfpg-go/internal/errors"
 )
 
 // item1 is the thing we'll be storing in the queue

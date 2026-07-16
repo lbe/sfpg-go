@@ -1,0 +1,12 @@
+<script type="text/hyperscript">
+  behavior DashboardPoller
+    on htmx:afterRequest
+      if event.detail.successful
+        js
+          timeString = new Date().toLocaleTimeString()
+        end
+        put timeString into #last-updated
+      end
+    end
+  end
+</script>

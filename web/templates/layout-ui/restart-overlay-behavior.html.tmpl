@@ -1,0 +1,25 @@
+<script type="text/hyperscript">
+  behavior RestartOverlay
+    on showRestartOverlay
+      set #restart-counter.textContent to '0'
+      set window.restartStartTime to Date.now()
+      remove .hidden from me
+      startRestartCounter()
+    end
+
+    on hideRestartOverlay
+      add .hidden to me
+      set window.restartStartTime to null
+    end
+  end
+
+  behavior RestartPoller
+    on htmx:afterRequest
+      if event.detail.successful
+        set window.restartStartTime to null
+        add .hidden to #restart-overlay
+        js window.location.reload() end
+      end
+    end
+  end
+</script>

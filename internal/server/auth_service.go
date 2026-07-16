@@ -20,21 +20,23 @@ import (
 	"github.com/lbe/sfpg-go/internal/server/session"
 )
 
-// AuthService owns session management, authentication, and CSRF.
-type AuthService struct {
+// SessionAuthFacade owns session management, authentication, and CSRF.
+type SessionAuthFacade struct {
 	sessionSecret  string
 	store          *sessions.CookieStore
 	sessionManager *session.Manager
 	authService    auth.AuthService
 }
 
-func NewAuthService(sessionSecret string) *AuthService {
-	return &AuthService{sessionSecret: sessionSecret}
+// NewSessionAuthFacade constructs a facade for session, auth, and CSRF operations.
+func NewSessionAuthFacade(sessionSecret string) *SessionAuthFacade {
+	return &SessionAuthFacade{sessionSecret: sessionSecret}
 }
 
 // ─── Session lifecycle ──────────────────────────────────────────────
 
-func (s *AuthService) EnsureSession(getOptionsConfig func() *session.OptionsConfig) {
+// EnsureSession initializes the cookie store and session manager if needed.
+func (s *SessionAuthFacade) EnsureSession(getOptionsConfig func() *session.OptionsConfig) {
 	if s.store == nil {
 		s.store = sessions.NewCookieStore([]byte(s.sessionSecret))
 		opts := session.GetSessionOptions(getOptionsConfig())
@@ -46,20 +48,23 @@ func (s *AuthService) EnsureSession(getOptionsConfig func() *session.OptionsConf
 	}
 }
 
-func (s *AuthService) IsAuthenticated(w http.ResponseWriter, r *http.Request) bool {
+// IsAuthenticated reports whether the request has a valid authenticated session.
+func (s *SessionAuthFacade) IsAuthenticated(w http.ResponseWriter, r *http.Request) bool {
 	return session.IsAuthenticated(s.store, w, r)
 }
 
 // ─── CSRF ───────────────────────────────────────────────────────────
 
-func (s *AuthService) EnsureCSRFToken(w http.ResponseWriter, r *http.Request) string {
+// EnsureCSRFToken returns a CSRF token for the current session, creating one if needed.
+func (s *SessionAuthFacade) EnsureCSRFToken(w http.ResponseWriter, r *http.Request) string {
 	if s.sessionManager != nil {
 		return s.sessionManager.EnsureCSRFToken(w, r)
 	}
 	return session.EnsureCsrfToken(s.store, w, r)
 }
 
-func (s *AuthService) CSRFTokenForPage(w http.ResponseWriter, r *http.Request, authenticated bool) string {
+// CSRFTokenForPage returns the CSRF token to embed in rendered pages.
+func (s *SessionAuthFacade) CSRFTokenForPage(w http.ResponseWriter, r *http.Request, authenticated bool) string {
 	if authenticated {
 		return s.EnsureCSRFToken(w, r)
 	}
@@ -76,7 +81,8 @@ func (s *AuthService) CSRFTokenForPage(w http.ResponseWriter, r *http.Request, a
 
 // ─── Credential DB operations ───────────────────────────────────────
 
-func (s *AuthService) GetUser(ctx context.Context, username string, roPool, rwPool *dbconnpool.DbSQLConnPool) (*session.User, error) {
+// GetUser loads the stored admin credentials for the given username.
+func (s *SessionAuthFacade) GetUser(ctx context.Context, username string, roPool, rwPool *dbconnpool.DbSQLConnPool) (*session.User, error) {
 	user := &session.User{}
 	cpcRo, err := roPool.Get()
 	if err != nil {
@@ -86,10 +92,16 @@ func (s *AuthService) GetUser(ctx context.Context, username string, roPool, rwPo
 
 	storedUsername, err := cpcRo.Queries.GetConfigValueByKey(ctx, "user")
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, sql.ErrNoRows
+		}
 		return nil, fmt.Errorf("failed to get username: %w", err)
 	}
 	storedPasswordHash, err := cpcRo.Queries.GetConfigValueByKey(ctx, "password")
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, sql.ErrNoRows
+		}
 		return nil, fmt.Errorf("failed to get password hash: %w", err)
 	}
 	if storedUsername != username {
@@ -100,7 +112,8 @@ func (s *AuthService) GetUser(ctx context.Context, username string, roPool, rwPo
 	return user, nil
 }
 
-func (s *AuthService) CheckAccountLockout(ctx context.Context, username string, pool *dbconnpool.DbSQLConnPool) (bool, error) {
+// CheckAccountLockout reports whether the account is currently locked.
+func (s *SessionAuthFacade) CheckAccountLockout(ctx context.Context, username string, pool *dbconnpool.DbSQLConnPool) (bool, error) {
 	cpcRw, err := pool.Get()
 	if err != nil {
 		return false, err
@@ -127,8 +140,9 @@ func (s *AuthService) CheckAccountLockout(ctx context.Context, username string, 
 	return security.IsLocked(attempt.LockedUntil, now), nil
 }
 
-func (s *AuthService) RecordFailedLoginAttempt(ctx context.Context, username string,
-	pool *dbconnpool.DbSQLConnPool, lockoutDuration int64,
+// RecordFailedLoginAttempt increments failed attempts and locks the account when the threshold is reached.
+func (s *SessionAuthFacade) RecordFailedLoginAttempt(ctx context.Context, username string,
+	pool *dbconnpool.DbSQLConnPool, lockoutDuration int64, lockoutThreshold int64,
 	sched *scheduler.Scheduler,
 	unlockFn func(ctx context.Context, username string) error,
 ) error {
@@ -147,7 +161,7 @@ func (s *AuthService) RecordFailedLoginAttempt(ctx context.Context, username str
 	if err == nil {
 		failedAttempts = security.IncrementFailedAttempts(attempt.FailedAttempts)
 	}
-	lockedUntil := security.CalculateLockout(failedAttempts, now, lockoutDuration)
+	lockedUntil := security.CalculateLockout(failedAttempts, now, lockoutDuration, lockoutThreshold)
 
 	err = cpcRw.Queries.UpsertLoginAttempt(ctx, gallerydb.UpsertLoginAttemptParams{
 		Username: username, FailedAttempts: failedAttempts,
@@ -169,7 +183,8 @@ func (s *AuthService) RecordFailedLoginAttempt(ctx context.Context, username str
 	return nil
 }
 
-func (s *AuthService) ClearLoginAttempts(ctx context.Context, username string, pool *dbconnpool.DbSQLConnPool) error {
+// ClearLoginAttempts resets failed login attempts after a successful login.
+func (s *SessionAuthFacade) ClearLoginAttempts(ctx context.Context, username string, pool *dbconnpool.DbSQLConnPool) error {
 	cpcRw, err := pool.Get()
 	if err != nil {
 		return err
@@ -178,7 +193,8 @@ func (s *AuthService) ClearLoginAttempts(ctx context.Context, username string, p
 	return cpcRw.Queries.ClearLoginAttempts(ctx, username)
 }
 
-func (s *AuthService) UnlockAccountFromTask(ctx context.Context, username string, pool *dbconnpool.DbSQLConnPool) error {
+// UnlockAccountFromTask clears a scheduled lockout for the given username.
+func (s *SessionAuthFacade) UnlockAccountFromTask(ctx context.Context, username string, pool *dbconnpool.DbSQLConnPool) error {
 	cpcRw, err := pool.Get()
 	if err != nil {
 		return err
@@ -187,7 +203,8 @@ func (s *AuthService) UnlockAccountFromTask(ctx context.Context, username string
 	return cpcRw.Queries.UnlockAccount(ctx, username)
 }
 
-func (s *AuthService) GetAdminUsername(ctx context.Context, pool *dbconnpool.DbSQLConnPool) (string, error) {
+// GetAdminUsername returns the configured admin username from the database.
+func (s *SessionAuthFacade) GetAdminUsername(ctx context.Context, pool *dbconnpool.DbSQLConnPool) (string, error) {
 	cpcRo, err := pool.Get()
 	if err != nil {
 		return "", err
@@ -198,7 +215,8 @@ func (s *AuthService) GetAdminUsername(ctx context.Context, pool *dbconnpool.DbS
 
 // ─── Theme ───────────────────────────────────────────────────────────
 
-func (s *AuthService) GetEffectiveTheme(r *http.Request, getThemes func() []string, defaultTheme string) string {
+// GetEffectiveTheme resolves the active theme from cookie or configured default.
+func (s *SessionAuthFacade) GetEffectiveTheme(r *http.Request, getThemes func() []string, defaultTheme string) string {
 	if cookie, err := r.Cookie("theme"); err == nil {
 		themes := getThemes()
 		if slices.Contains(themes, cookie.Value) {

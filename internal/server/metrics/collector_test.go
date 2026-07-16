@@ -68,9 +68,10 @@ func (m *mockCacheBatchLoad) GetBatchLoadSnapshot() cachebatch.Metrics {
 
 // mockHTTPCache is a mock implementation of HTTPCacheSource for testing.
 type mockHTTPCache struct {
-	enabled   bool
-	sizeBytes int64
-	config    HTTPCacheConfig
+	enabled      bool
+	sizeBytes    int64
+	maxEntrySize int64
+	maxTotalSize int64
 }
 
 func (m *mockHTTPCache) IsEnabled() bool {
@@ -81,8 +82,12 @@ func (m *mockHTTPCache) GetSizeBytes() int64 {
 	return m.sizeBytes
 }
 
-func (m *mockHTTPCache) GetConfig() HTTPCacheConfig {
-	return m.config
+func (m *mockHTTPCache) MaxEntrySize() int64 {
+	return m.maxEntrySize
+}
+
+func (m *mockHTTPCache) MaxTotalSize() int64 {
+	return m.maxTotalSize
 }
 
 func (m *mockHTTPCache) GetEntryCount() int64 {
@@ -251,6 +256,8 @@ func TestCollector_Collect(t *testing.T) {
 			IsClosed:      false,
 			TotalFlushed:  1000,
 			TotalErrors:   5,
+			DiskBytes:     4096,
+			MaxDiskBytes:  10240,
 		},
 	}
 	c.SetWriteBatcher(wb)
@@ -295,12 +302,10 @@ func TestCollector_Collect(t *testing.T) {
 	c.SetFileProcessor(fp)
 
 	hc := &mockHTTPCache{
-		enabled:   true,
-		sizeBytes: 1024 * 1024,
-		config: HTTPCacheConfig{
-			MaxEntrySize: 1024 * 1024,
-			MaxTotalSize: 100 * 1024 * 1024,
-		},
+		enabled:      true,
+		sizeBytes:    1024 * 1024,
+		maxEntrySize: 1024 * 1024,
+		maxTotalSize: 100 * 1024 * 1024,
 	}
 	c.SetHTTPCache(hc)
 
@@ -323,6 +328,12 @@ func TestCollector_Collect(t *testing.T) {
 	}
 	if snapshot.WriteBatcher.ChannelSize != 100 {
 		t.Errorf("WriteBatcher.ChannelSize = %d, want 100", snapshot.WriteBatcher.ChannelSize)
+	}
+	if snapshot.WriteBatcher.DiskUsageBytes != 4096 {
+		t.Errorf("WriteBatcher.DiskUsageBytes = %d, want 4096", snapshot.WriteBatcher.DiskUsageBytes)
+	}
+	if snapshot.WriteBatcher.DiskQuotaBytes != 10240 {
+		t.Errorf("WriteBatcher.DiskQuotaBytes = %d, want 10240", snapshot.WriteBatcher.DiskQuotaBytes)
 	}
 
 	// Verify WorkerPool metrics

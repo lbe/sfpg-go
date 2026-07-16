@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -1159,6 +1160,99 @@ func TestThumbsDBAttachPragmas(t *testing.T) {
 	if cacheSize != 10240 {
 		t.Errorf("thumbs cache_size = %d, want %d", cacheSize, 10240)
 	}
+}
+
+func assertThumbsTableVisible(t *testing.T, ctx context.Context, conn *sql.Conn) {
+	t.Helper()
+	var name string
+	err := conn.QueryRowContext(ctx,
+		`SELECT name FROM thumbs.sqlite_master WHERE type='table' AND name='thumbnail_blobs'`,
+	).Scan(&name)
+	if err != nil {
+		t.Fatalf("thumbs.thumbnail_blobs not visible: %v", err)
+	}
+	if name != "thumbnail_blobs" {
+		t.Errorf("expected thumbnail_blobs, got %q", name)
+	}
+}
+
+func TestIsThumbsDBAttached(t *testing.T) {
+	dbPath, thumbsDBPath, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	db, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	defer db.Close()
+
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatalf("db.Conn: %v", err)
+	}
+	defer conn.Close()
+
+	attached, err := isThumbsDBAttached(conn, ctx)
+	if err != nil {
+		t.Fatalf("isThumbsDBAttached on fresh conn: %v", err)
+	}
+	if attached {
+		t.Fatal("expected fresh connection to have thumbs unattached")
+	}
+
+	attachSQL := fmt.Sprintf("ATTACH DATABASE 'file:%s' AS thumbs", filepath.ToSlash(thumbsDBPath))
+	if _, err = conn.ExecContext(ctx, attachSQL); err != nil {
+		t.Fatalf("attach thumbs: %v", err)
+	}
+
+	attached, err = isThumbsDBAttached(conn, ctx)
+	if err != nil {
+		t.Fatalf("isThumbsDBAttached after attach: %v", err)
+	}
+	if !attached {
+		t.Fatal("expected thumbs to be attached")
+	}
+}
+
+// TestNewCpConn_RecycledDriverConnThumbsAlreadyAttached verifies that newCpConn
+// skips ATTACH when pool.Conn() returns a recycled driver connection that still
+// has the thumbs schema attached (Monitor shrink / sql.DB reuse path).
+func TestNewCpConn_RecycledDriverConnThumbsAlreadyAttached(t *testing.T) {
+	dbPath, thumbsDBPath, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	pool, err := NewDbSQLConnPool(ctx, dbPath, Config{
+		DriverName:         "sqlite3",
+		MaxConnections:     4,
+		MinIdleConnections: 0,
+		MonitorInterval:    0,
+		QueriesFunc:        gallerydb.NewCustomQueries,
+		ThumbsDBPath:       thumbsDBPath,
+	})
+	if err != nil {
+		t.Fatalf("NewDbSQLConnPool: %v", err)
+	}
+	defer pool.Close()
+
+	cpc1, err := pool.newCpConn()
+	if err != nil {
+		t.Fatalf("first newCpConn: %v", err)
+	}
+	assertThumbsTableVisible(t, ctx, cpc1.Conn)
+
+	if err = cpc1.Close(); err != nil {
+		t.Fatalf("close first connection: %v", err)
+	}
+
+	cpc2, err := pool.newCpConn()
+	if err != nil {
+		t.Fatalf("second newCpConn after driver conn recycle: %v", err)
+	}
+	defer cpc2.Close()
+
+	assertThumbsTableVisible(t, ctx, cpc2.Conn)
 }
 
 func TestNeedsHealthCheck(t *testing.T) {

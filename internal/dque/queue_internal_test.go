@@ -112,3 +112,84 @@ func TestInitQueue_LoadFailureFlockCloseFails(t *testing.T) {
 		t.Fatalf("expected flock close error in joined error, got: %s", msg)
 	}
 }
+
+// TestDiskBytes_NormalSummation verifies that DiskBytes returns the sum of
+// all non-directory files in the queue directory. It uses the osReadDir seam
+// to control the entries returned so the result is fully deterministic.
+func TestDiskBytes_NormalSummation(t *testing.T) {
+	dir := t.TempDir()
+	q, err := New[item1]("test", dir, 10)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer q.Close()
+
+	orig := osReadDir
+	osReadDir = func(path string) ([]os.DirEntry, error) {
+		if path != q.fullPath {
+			return os.ReadDir(path)
+		}
+		// Create temp files with known sizes and return their DirEntry.
+		tmp := t.TempDir()
+		if err := os.WriteFile(filepath.Join(tmp, "seg1.dque"), make([]byte, 100), 0644); err != nil {
+			t.Fatalf("write seg1: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(tmp, "seg2.dque"), make([]byte, 200), 0644); err != nil {
+			t.Fatalf("write seg2: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(tmp, "seg3.dque"), make([]byte, 300), 0644); err != nil {
+			t.Fatalf("write seg3: %v", err)
+		}
+		// Subdirectory should be skipped by DiskBytes.
+		if err := os.Mkdir(filepath.Join(tmp, "subdir"), 0755); err != nil {
+			t.Fatalf("mkdir subdir: %v", err)
+		}
+		return os.ReadDir(tmp)
+	}
+	t.Cleanup(func() { osReadDir = orig })
+
+	bytes := q.DiskBytes()
+	if bytes != 600 {
+		t.Errorf("expected DiskBytes = 600 (100+200+300, subdir skipped), got %d", bytes)
+	}
+}
+
+// TestDiskBytes_Closed verifies that DiskBytes returns 0 when the queue is closed.
+func TestDiskBytes_Closed(t *testing.T) {
+	dir := t.TempDir()
+	q, err := New[item1]("test", dir, 10)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	if err := q.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	bytes := q.DiskBytes()
+	if bytes != 0 {
+		t.Errorf("expected DiskBytes = 0 for closed queue, got %d", bytes)
+	}
+}
+
+// TestDiskBytes_ReadDirError verifies that DiskBytes returns 0 when osReadDir
+// fails (filesystem error).
+func TestDiskBytes_ReadDirError(t *testing.T) {
+	dir := t.TempDir()
+	q, err := New[item1]("test", dir, 10)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer q.Close()
+
+	orig := osReadDir
+	osReadDir = func(string) ([]os.DirEntry, error) {
+		return nil, errors.New("read dir denied")
+	}
+	t.Cleanup(func() { osReadDir = orig })
+
+	bytes := q.DiskBytes()
+	if bytes != 0 {
+		t.Errorf("expected DiskBytes = 0 on readdir error, got %d", bytes)
+	}
+}

@@ -1,0 +1,21 @@
+<script type="text/hyperscript">
+  behavior ActualSizeModal
+    on keydown
+      if event.key is 'Escape'
+        remove .actual-size-mode from body
+        call enableFooterButtons()
+        add .hidden to me
+        remove .hidden from #lightbox_modal
+      end
+    end
+  end
+
+  behavior ActualSizeImage
+    on click
+      remove .actual-size-mode from body
+      call enableFooterButtons()
+      add .hidden to #actual-size_modal
+      remove .hidden from #lightbox_modal
+    end
+  end
+</script>

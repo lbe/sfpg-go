@@ -1,0 +1,23 @@
+<!-- Info Box Wrapper: Hidden by default, visible only in gallery context -->
+<div
+  id="box_info_wrapper"
+  class="relative mb-[7px] ml-[7px] mt-[7px] hidden h-[calc(100vh-72px-14px)] w-[236px] flex-shrink-0"
+  _="install InfoBoxWrapper"
+>
+  <!-- The target for the swap -->
+  <div
+    id="box_info"
+    class="h-full w-full overflow-y-auto rounded-[6px] border border-base-300 bg-base-200 shadow-md"
+    _="install InfoBoxMirror"
+  >
+    <!-- Content loaded here -->
+  </div>
+
+  <!-- The indicator, sibling to the target -->
+  <div
+    id="info_box_spinner"
+    class="htmx-indicator invisible absolute inset-0 z-10 flex items-center justify-center rounded-md [&.htmx-request]:visible"
+  >
+    <span class="loading loading-spinner loading-md"></span>
+  </div>
+</div>

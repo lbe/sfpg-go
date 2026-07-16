@@ -1,0 +1,318 @@
+{{ define "config-performance-tab" }}
+  <fieldset
+    class="fieldset mb-6 rounded-lg border border-base-300 bg-base-200/30 p-4"
+  >
+    <legend class="fieldset-legend text-base font-semibold">Cache</legend>
+    <div class="form-control mb-4">
+      <label class="label cursor-pointer justify-start gap-4">
+        <input
+          type="checkbox"
+          name="enable_http_cache"
+          data-requires-restart="true"
+          class="checkbox-primary checkbox"
+          {{ if and .Config .Config.EnableHTTPCache }}checked{{ end }}
+        />
+        <span class="label-text font-semibold">HTTP Cache Enabled</span>
+      </label>
+      <label class="label">
+        <span class="label-text-alt"
+          >Enable SQLite-backed HTTP response caching. Restart required.</span
+        >
+      </label>
+    </div>
+
+    <div class="form-control mb-4">
+      <label class="label">
+        <span class="label-text font-semibold">Cache Max Size</span>
+      </label>
+      <input
+        type="number"
+        name="cache_max_size"
+        data-requires-restart="true"
+        placeholder="524288000"
+        class="input input-bordered w-48"
+        min="0"
+        value="{{ if .Config }}{{ .Config.CacheMaxSize }}{{ end }}"
+      />
+      <label class="label">
+        <span class="label-text-alt"
+          >Maximum cache size in bytes (e.g., 524288000 = 500MB). Restart
+          required.</span
+        >
+      </label>
+    </div>
+
+    <div class="form-control mb-4">
+      <label class="label">
+        <span class="label-text font-semibold">Cache Max Entry Size</span>
+      </label>
+      <input
+        type="number"
+        name="cache_max_entry_size"
+        data-requires-restart="true"
+        placeholder="10485760"
+        class="input input-bordered w-48"
+        min="0"
+        value="{{ if .Config }}{{ .Config.CacheMaxEntrySize }}{{ end }}"
+      />
+      <label class="label">
+        <span class="label-text-alt"
+          >Maximum size per cache entry in bytes (e.g., 10485760 = 10MB).
+          Restart required.</span
+        >
+      </label>
+    </div>
+
+    <div class="form-control mb-4">
+      <label class="label">
+        <span class="label-text font-semibold">Cache Max Time</span>
+      </label>
+      <input
+        type="text"
+        name="cache_max_time"
+        data-requires-restart="true"
+        placeholder="720h"
+        class="input input-bordered w-32"
+        value="{{ if .Config }}{{ .Config.CacheMaxTime }}{{ end }}"
+      />
+      <label class="label">
+        <span class="label-text-alt">
+          {{ if index .HelpText "cache_max_time" }}
+            {{ index .HelpText "cache_max_time" }}
+            {{ if index .ExampleValue "cache_max_time" }}
+              (Examples: {{ index .ExampleValue "cache_max_time" }})
+            {{ end }}
+          {{ else if index .ExampleValue "cache_max_time" }}
+            Examples:
+            {{ index .ExampleValue "cache_max_time" }}
+          {{ else }}
+            Cache TTL as duration (e.g., 720h = 30 days, 5m = 5 minutes).
+            Restart required.
+          {{ end }}
+        </span>
+      </label>
+    </div>
+
+    <div class="form-control mb-4">
+      <label class="label">
+        <span class="label-text font-semibold">Cache Cleanup Interval</span>
+      </label>
+      <input
+        type="text"
+        name="cache_cleanup_interval"
+        data-requires-restart="true"
+        placeholder="5m"
+        class="input input-bordered w-32"
+        value="{{ if .Config }}{{ .Config.CacheCleanupInterval }}{{ end }}"
+      />
+      <label class="label">
+        <span class="label-text-alt"
+          >How often to clean expired cache entries (e.g., 5m = 5 minutes).
+          Restart required.</span
+        >
+      </label>
+    </div>
+  </fieldset>
+
+  <fieldset
+    class="fieldset mb-6 rounded-lg border border-base-300 bg-base-200/30 p-4"
+  >
+    <legend class="fieldset-legend text-base font-semibold">DB Pool</legend>
+    <div class="form-control mb-4">
+      <label class="label">
+        <span class="label-text font-semibold">DB Max Pool Size</span>
+      </label>
+      <input
+        type="number"
+        name="db_max_pool_size"
+        data-requires-restart="true"
+        placeholder="100"
+        class="input input-bordered w-24"
+        min="1"
+        value="{{ if .Config }}{{ .Config.DBMaxPoolSize }}{{ end }}"
+      />
+      <label class="label">
+        <span class="label-text-alt"
+          >Maximum database connections in pool. Restart required.</span
+        >
+      </label>
+    </div>
+
+    <div class="form-control mb-4">
+      <label class="label">
+        <span class="label-text font-semibold">DB Min Idle Connections</span>
+      </label>
+      <input
+        type="number"
+        name="db_min_idle_connections"
+        data-requires-restart="true"
+        placeholder="10"
+        class="input input-bordered w-24"
+        min="0"
+        value="{{ if .Config }}{{ .Config.DBMinIdleConnections }}{{ end }}"
+      />
+      <label class="label">
+        <span class="label-text-alt"
+          >Minimum idle connections to maintain. Restart required.</span
+        >
+      </label>
+    </div>
+
+    <div class="form-control mb-4">
+      <label class="label">
+        <span class="label-text font-semibold">DB Optimize Interval</span>
+      </label>
+      <input
+        type="text"
+        name="db_optimize_interval"
+        data-requires-restart="true"
+        placeholder="1h"
+        class="input input-bordered w-32"
+        value="{{ if .Config }}{{ .Config.DBOptimizeInterval }}{{ end }}"
+      />
+      <label class="label">
+        <span class="label-text-alt"
+          >How often to run SQLite OPTIMIZE (e.g., 1h = 1 hour). Restart
+          required.</span
+        >
+      </label>
+    </div>
+
+    <div class="form-control mb-4">
+      <label class="label">
+        <span class="label-text font-semibold">DB Pool Monitor Interval</span>
+      </label>
+      <input
+        type="text"
+        name="db_pool_monitor_interval"
+        data-requires-restart="true"
+        placeholder="1m"
+        class="input input-bordered w-32"
+        value="{{ if .Config }}{{ .Config.DBPoolMonitorInterval }}{{ end }}"
+      />
+      <label class="label">
+        <span class="label-text-alt"
+          >How often the pool monitor runs to grow/shrink connections (e.g., 1m
+          = 1 minute). Restart required.</span
+        >
+      </label>
+    </div>
+  </fieldset>
+
+  <fieldset
+    class="fieldset mb-6 rounded-lg border border-base-300 bg-base-200/30 p-4"
+  >
+    <legend class="fieldset-legend text-base font-semibold">Worker Pool</legend>
+    <div class="form-control mb-4">
+      <label class="label">
+        <span class="label-text font-semibold">Worker Pool Max</span>
+      </label>
+      <input
+        type="number"
+        name="worker_pool_max"
+        data-requires-restart="true"
+        placeholder="0"
+        class="input input-bordered w-24"
+        min="0"
+        value="{{ if .Config }}{{ .Config.WorkerPoolMax }}{{ end }}"
+      />
+      <label class="label">
+        <span class="label-text-alt"
+          >Maximum worker threads (0 = auto-calculate based on CPU cores).
+          Restart required.</span
+        >
+      </label>
+    </div>
+
+    <div class="form-control mb-4">
+      <label class="label">
+        <span class="label-text font-semibold">Worker Pool Min Idle</span>
+      </label>
+      <input
+        type="number"
+        name="worker_pool_min_idle"
+        data-requires-restart="true"
+        placeholder="0"
+        class="input input-bordered w-24"
+        min="0"
+        value="{{ if .Config }}{{ .Config.WorkerPoolMinIdle }}{{ end }}"
+      />
+      <label class="label">
+        <span class="label-text-alt"
+          >Minimum idle worker threads (0 = auto-calculate). Restart
+          required.</span
+        >
+      </label>
+    </div>
+
+    <div class="form-control mb-4">
+      <label class="label">
+        <span class="label-text font-semibold">Worker Pool Max Idle Time</span>
+      </label>
+      <input
+        type="text"
+        name="worker_pool_max_idle_time"
+        data-requires-restart="true"
+        placeholder="10s"
+        class="input input-bordered w-32"
+        value="{{ if .Config }}{{ .Config.WorkerPoolMaxIdleTime }}{{ end }}"
+      />
+      <label class="label">
+        <span class="label-text-alt"
+          >Time before idle workers are terminated (e.g., 10s = 10 seconds).
+          Restart required.</span
+        >
+      </label>
+    </div>
+  </fieldset>
+
+  <fieldset
+    class="fieldset mb-6 rounded-lg border border-base-300 bg-base-200/30 p-4"
+  >
+    <legend class="fieldset-legend text-base font-semibold">Queue</legend>
+    <div class="form-control mb-4">
+      <label class="label">
+        <span class="label-text font-semibold">Queue Size</span>
+      </label>
+      <input
+        type="number"
+        name="queue_size"
+        data-requires-restart="true"
+        placeholder="10000"
+        class="input input-bordered w-32"
+        min="1"
+        value="{{ if .Config }}{{ .Config.QueueSize }}{{ end }}"
+      />
+      <label class="label">
+        <span class="label-text-alt"
+          >Maximum size of the work queue. Restart required.</span
+        >
+      </label>
+    </div>
+  </fieldset>
+
+  <fieldset
+    class="fieldset mb-6 rounded-lg border border-base-300 bg-base-200/30 p-4"
+  >
+    <legend class="fieldset-legend text-base font-semibold">
+      Cache Preload
+    </legend>
+    <div class="form-control mb-4">
+      <label class="label cursor-pointer justify-start gap-4">
+        <input
+          type="checkbox"
+          name="enable_cache_preload"
+          class="checkbox-primary checkbox"
+          {{ if and .Config .Config.EnableCachePreload }}checked{{ end }}
+        />
+        <span class="label-text font-semibold">Enable Cache Preload</span>
+      </label>
+      <label class="label">
+        <span class="label-text-alt"
+          >Pre-load HTTP cache entries when folders are opened for faster
+          navigation.</span
+        >
+      </label>
+    </div>
+  </fieldset>
+{{ end }}

@@ -6,15 +6,16 @@ import (
 	"net/http"
 
 	"github.com/lbe/sfpg-go/internal/server/auth"
+	"github.com/lbe/sfpg-go/internal/server/security"
 	"github.com/lbe/sfpg-go/internal/server/session"
 	"github.com/lbe/sfpg-go/internal/server/ui"
 )
 
 // AuthHandlers holds dependencies for authentication handlers.
-// It has minimal dependencies compared to the main Handlers struct.
 type AuthHandlers struct {
 	AuthService    auth.AuthService
 	SessionManager session.SessionManager
+	rateLimiter    *security.IPRateLimiter
 }
 
 // NewAuthHandlers creates a new AuthHandlers with the given dependencies.
@@ -25,31 +26,46 @@ func NewAuthHandlers(authService auth.AuthService, sessionManager session.Sessio
 	}
 }
 
+// SetRateLimiter sets an optional per-IP rate limiter for login requests.
+// If set, the limiter is checked before processing each login attempt.
+func (h *AuthHandlers) SetRateLimiter(rl *security.IPRateLimiter) {
+	h.rateLimiter = rl
+}
+
+// SyncLoginRateLimitMax applies a new per-IP login limit at runtime (config
+// apply / hot reload). It always SetMax + Clear on the same limiter instance
+// so a config save starts a fresh window; a max <= 0 means unlimited.
+func (h *AuthHandlers) SyncLoginRateLimitMax(max int) {
+	if h.rateLimiter == nil {
+		h.rateLimiter = security.NewIPRateLimiter(max, security.DefaultRateLimitWindow)
+		return
+	}
+	h.rateLimiter.SetMax(max)
+	h.rateLimiter.Clear()
+}
+
 // Login handles POST /login, authenticating users against the database.
 // On successful authentication, it sets a session cookie and sets HX-Trigger: auth-changed
 // to trigger the hamburger menu refresh via /hamburger-menu (HTTP 200).
 // On failed authentication, it renders the login form with an appropriate error message
 // and returns HTTP 200.
 func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
-	// Validate CSRF token
-	if !h.SessionManager.ValidateCSRFToken(r) {
-		// Check if this is a new session without CSRF token (allowed)
-		sess, gsErr := h.SessionManager.GetSession(w, r)
-		hasCsrfToken := false
-		if gsErr == nil && sess != nil {
-			if token, ok := sess.Values["csrf_token"].(string); ok && token != "" {
-				hasCsrfToken = true
-			}
-		}
-		isNewSession := sess == nil || sess.IsNew
-
-		if isNewSession || !hasCsrfToken {
-			slog.Info("CSRF validation failed but session is new/invalid or missing token - allowing login", "remote_addr", r.RemoteAddr, "is_new", isNewSession, "has_csrf_token", hasCsrfToken)
-		} else {
-			slog.Warn("CSRF validation failed for login attempt", "remote_addr", r.RemoteAddr)
-			http.Error(w, "Forbidden - CSRF token invalid", http.StatusForbidden)
+	// Per-IP rate limit runs before CSRF validation so rejected attempts still
+	// count toward the cap (see security.IPRateLimiter).
+	if h.rateLimiter != nil {
+		ip := security.RateLimitFromRequestKey(r.RemoteAddr)
+		if !h.rateLimiter.Allow(ip) {
+			slog.Warn("IP rate limit exceeded for login", "remote_addr", r.RemoteAddr)
+			http.Error(w, "Too many login attempts. Please try again later.", http.StatusTooManyRequests)
 			return
 		}
+	}
+
+	// Validate CSRF token
+	if !h.SessionManager.ValidateCSRFToken(r) {
+		slog.Warn("CSRF validation failed for login", "remote_addr", r.RemoteAddr)
+		http.Error(w, "Forbidden - CSRF token invalid", http.StatusForbidden)
+		return
 	}
 
 	username := r.FormValue("username")
@@ -57,40 +73,20 @@ func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	// Check lockout first
-	locked, err := h.AuthService.CheckLockout(ctx, username)
+	_, err := h.AuthService.Authenticate(ctx, username, password)
 	if err != nil {
-		slog.Error("failed to check account lockout", "username", username, "err", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-	if locked {
-		if rtErr := ui.RenderTemplate(w, "login-form.html.tmpl", map[string]any{
-			"ErrorMessage": "Account locked. Please try again later.",
-			"Username":     username,
-			"CSRFToken":    h.SessionManager.EnsureCSRFToken(w, r),
-		}); rtErr != nil {
-			slog.Error("failed to render login form", "err", rtErr)
-		}
-		return
-	}
-
-	// Authenticate via AuthService
-	_, err = h.AuthService.Authenticate(ctx, username, password)
-	if err != nil {
-		if errors.Is(err, auth.ErrInvalidCredentials) {
-			if rtErr := ui.RenderTemplate(w, "login-form.html.tmpl", map[string]any{
-				"ErrorMessage": "Invalid credentials",
-				"Username":     username,
-				"CSRFToken":    h.SessionManager.EnsureCSRFToken(w, r),
-			}); rtErr != nil {
-				slog.Error("failed to render login form", "err", rtErr)
-			}
-		} else {
-			slog.Error("authentication error", "err", err)
+		switch {
+		case errors.Is(err, auth.ErrAccountLocked):
+			h.renderLoginForm(w, r, username, "Account locked. Please try again later.")
+			return
+		case errors.Is(err, auth.ErrInvalidCredentials):
+			h.renderLoginForm(w, r, username, "Invalid credentials")
+			return
+		default:
+			slog.Error("failed to authenticate user", "username", username, "err", err)
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
 		}
-		return
 	}
 
 	// Set authenticated status via SessionManager
@@ -102,6 +98,17 @@ func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("HX-Trigger", "auth-changed")
 	w.WriteHeader(http.StatusOK)
+}
+
+// renderLoginForm renders the login form with the supplied error message.
+func (h *AuthHandlers) renderLoginForm(w http.ResponseWriter, r *http.Request, username, errorMessage string) {
+	if err := ui.RenderTemplate(w, "login-form.html.tmpl", map[string]any{
+		"ErrorMessage": errorMessage,
+		"Username":     username,
+		"CSRFToken":    h.SessionManager.EnsureCSRFToken(w, r),
+	}); err != nil {
+		slog.Error("failed to render login form", "err", err)
+	}
 }
 
 // LoginFormHandler handles GET /login-form and returns the login form HTML with a

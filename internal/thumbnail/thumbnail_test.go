@@ -436,13 +436,6 @@ func BenchmarkGenerateThumbnailAndHashes(b *testing.B) {
 // }
 
 func TestThumbnailPools(t *testing.T) {
-	t.Run("ImagePhash64", func(t *testing.T) {
-		p := thumbnail.GetImagePhash64()
-		if p == nil {
-			t.Fatal("expected a pointer to a phash, but got nil")
-		}
-		thumbnail.PutImagePhash64(p)
-	})
 	t.Run("NullString", func(t *testing.T) {
 		ns := thumbnail.GetNullString()
 		if ns == nil {

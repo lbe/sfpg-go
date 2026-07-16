@@ -1,0 +1,170 @@
+{{ define "config-session-tab" }}
+  <div class="form-control mb-4">
+    <label class="label">
+      <span class="label-text font-semibold">Session Max Age</span>
+    </label>
+    <input
+      type="number"
+      name="session_max_age"
+      data-requires-restart="true"
+      placeholder="604800"
+      class="input input-bordered w-32"
+      min="1"
+      value="{{ if .Config }}{{ .Config.SessionMaxAge }}{{ end }}"
+    />
+    <label class="label">
+      <span class="label-text-alt"
+        >Session lifetime in seconds (e.g., 604800 = 7 days). Restart
+        required.</span
+      >
+    </label>
+  </div>
+
+  <div class="form-control mb-4">
+    <label class="label">
+      <span class="label-text font-semibold">Session HTTP Only</span>
+    </label>
+    <label class="label cursor-pointer justify-start gap-4">
+      <input
+        type="checkbox"
+        name="session_http_only"
+        data-requires-restart="true"
+        class="checkbox-primary checkbox"
+        {{ if and .Config .Config.SessionHttpOnly }}checked{{ end }}
+      />
+      <span class="label-text"
+        >Prevent JavaScript access to session cookies</span
+      >
+    </label>
+    <label class="label">
+      <span class="label-text-alt"
+        >Protects against XSS attacks by preventing client-side scripts from
+        accessing session cookies. Recommended for security. Restart
+        required.</span
+      >
+    </label>
+  </div>
+
+  <div class="form-control mb-4">
+    <label class="label">
+      <span class="label-text font-semibold">Session Secure</span>
+    </label>
+    <label class="label cursor-pointer justify-start gap-4">
+      <input
+        type="checkbox"
+        name="session_secure"
+        data-requires-restart="true"
+        class="checkbox-primary checkbox"
+        {{ if and .Config .Config.SessionSecure }}checked{{ end }}
+      />
+      <span class="label-text">Only send cookies over HTTPS</span>
+    </label>
+    <label class="label">
+      <span class="label-text-alt"
+        >Ensures session cookies are only transmitted over encrypted HTTPS
+        connections. Required for production deployments. Restart
+        required.</span
+      >
+    </label>
+  </div>
+
+  <div class="form-control mb-4">
+    <label class="label">
+      <span class="label-text font-semibold">Session Same Site</span>
+    </label>
+    <select
+      name="session_same_site"
+      data-requires-restart="true"
+      class="select select-bordered w-32"
+    >
+      <option
+        value="Lax"
+        {{ if and .Config (eq .Config.SessionSameSite "Lax") }}selected{{ end }}
+      >
+        Lax
+      </option>
+      <option
+        value="Strict"
+        {{ if and .Config (eq .Config.SessionSameSite "Strict") }}
+          selected
+        {{ end }}
+      >
+        Strict
+      </option>
+      <option
+        value="None"
+        {{ if and .Config (eq .Config.SessionSameSite "None") }}
+          selected
+        {{ end }}
+      >
+        None
+      </option>
+    </select>
+    <label class="label">
+      <span class="label-text-alt"
+        >CSRF protection level (Lax recommended). Restart required.</span
+      >
+    </label>
+  </div>
+
+  <h3 class="mb-4 font-semibold">Login security</h3>
+
+  <div class="form-control mb-4">
+    <label class="label">
+      <span class="label-text font-semibold">Login Rate Limit (per IP)</span>
+    </label>
+    <input
+      type="number"
+      name="login_rate_limit_per_ip"
+      class="input input-bordered w-32"
+      min="0"
+      value="{{ if .Config }}{{ .Config.LoginRateLimitPerIP }}{{ end }}"
+    />
+    <label class="label">
+      <span class="label-text-alt"
+        >Maximum POST /login attempts per client IP per 60 seconds. 0 disables
+        IP rate limiting. Uses the direct connection address (not
+        X-Forwarded-For). Changes apply immediately without restart.</span
+      >
+    </label>
+  </div>
+
+  <div class="form-control mb-4">
+    <label class="label">
+      <span class="label-text font-semibold">Lockout Threshold</span>
+    </label>
+    <input
+      type="number"
+      name="lockout_threshold"
+      class="input input-bordered w-32"
+      min="1"
+      value="{{ if .Config }}{{ .Config.LockoutThreshold }}{{ end }}"
+    />
+    <label class="label">
+      <span class="label-text-alt"
+        >Number of failed login attempts for an account before lockout. Minimum
+        1. Cannot be disabled. Changes apply immediately without restart.</span
+      >
+    </label>
+  </div>
+
+  <div class="form-control mb-4">
+    <label class="label">
+      <span class="label-text font-semibold">Lockout Duration (seconds)</span>
+    </label>
+    <input
+      type="number"
+      name="lockout_duration"
+      class="input input-bordered w-32"
+      min="0"
+      value="{{ if .Config }}{{ .Config.LockoutDuration }}{{ end }}"
+    />
+    <label class="label">
+      <span class="label-text-alt"
+        >How long a locked account remains locked, in seconds. 0 uses the
+        default (3600 seconds / 1 hour). Changes apply immediately without
+        restart.</span
+      >
+    </label>
+  </div>
+{{ end }}

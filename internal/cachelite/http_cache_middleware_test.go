@@ -721,6 +721,131 @@ func TestIfNoneMatchReturns304(t *testing.T) {
 	}
 }
 
+// TestSkipSetCookie_ResponseNotCached verifies that responses with Set-Cookie
+// are never cached, even when they would otherwise be eligible.
+func TestSkipSetCookie_ResponseNotCached(t *testing.T) {
+	db := createTestDBPool(t)
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Header().Set("Cache-Control", "public, max-age=3600")
+		w.Header().Set("Set-Cookie", "session=abc123; Path=/; HttpOnly; Secure")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("sensitive content with cookie"))
+	})
+
+	cfg := defaultConfig()
+
+	cacheMW := createTestMiddlewareWithSubmit(t, db, cfg)
+	mw := cacheMW.Middleware(handler)
+
+	// First request: should be MISS (no cached entry), but should NOT store the result
+	// because Set-Cookie is present.
+	req1 := httptest.NewRequest("GET", "/test", nil)
+	w1 := httptest.NewRecorder()
+	mw.ServeHTTP(w1, req1)
+
+	if w1.Code != http.StatusOK {
+		t.Errorf("first request status = %d, want 200", w1.Code)
+	}
+	if w1.Header().Get("X-Cache") != "MISS" {
+		t.Errorf("first request X-Cache = %q, want MISS", w1.Header().Get("X-Cache"))
+	}
+
+	// Verify the Set-Cookie header is passed through to the client
+	if w1.Header().Get("Set-Cookie") == "" {
+		t.Error("expected Set-Cookie header to be passed through")
+	}
+
+	// Second request: should also MISS because the previous response was not cached
+	req2 := httptest.NewRequest("GET", "/test", nil)
+	w2 := httptest.NewRecorder()
+	mw.ServeHTTP(w2, req2)
+
+	if w2.Code != http.StatusOK {
+		t.Errorf("second request status = %d, want 200", w2.Code)
+	}
+	if w2.Header().Get("X-Cache") != "MISS" {
+		t.Errorf("second request X-Cache = %q, want MISS (response with Set-Cookie should not be cached)", w2.Header().Get("X-Cache"))
+	}
+
+	// Verify no cache entry was stored
+	params := cachelite.CacheKeyParams{
+		Method: "GET",
+		Path:   "/test",
+		HTMX: cachelite.HTMXParams{
+			Request: "false",
+			Target:  "",
+		},
+		Theme:    "dark",
+		Encoding: "identity",
+	}
+	key := cachelite.NewCacheKey(params)
+	entry, _ := cachelite.GetCacheEntry(context.Background(), db, key)
+	if entry != nil {
+		t.Fatalf("expected no cache entry for response with Set-Cookie, but entry found with key=%s", entry.Key)
+	}
+}
+
+// TestSkipSetCookie_NotCachedEvenWithNoStoreException verifies that even the
+// no-store server-cache exception does not apply when Set-Cookie is present.
+func TestSkipSetCookie_NotCachedEvenWithNoStoreException(t *testing.T) {
+	db := createTestDBPool(t)
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Set-Cookie", "session=xyz; Path=/")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("content with no-store and cookie"))
+	})
+
+	cfg := defaultConfig()
+
+	cacheMW := createTestMiddlewareWithSubmit(t, db, cfg)
+	mw := cacheMW.Middleware(handler)
+
+	// First request: should be MISS
+	req1 := httptest.NewRequest("GET", "/test", nil)
+	w1 := httptest.NewRecorder()
+	mw.ServeHTTP(w1, req1)
+
+	if w1.Header().Get("X-Cache") != "MISS" {
+		t.Errorf("first request X-Cache = %q, want MISS", w1.Header().Get("X-Cache"))
+	}
+
+	// Verify the Set-Cookie header is passed through
+	if w1.Header().Get("Set-Cookie") == "" {
+		t.Error("expected Set-Cookie header to be passed through")
+	}
+
+	// Second request: should also be MISS because response was not cached
+	req2 := httptest.NewRequest("GET", "/test", nil)
+	w2 := httptest.NewRecorder()
+	mw.ServeHTTP(w2, req2)
+
+	if w2.Header().Get("X-Cache") != "MISS" {
+		t.Errorf("second request X-Cache = %q, want MISS (no-store+Set-Cookie should not be cached)", w2.Header().Get("X-Cache"))
+	}
+
+	// Verify no cache entry was stored
+	params := cachelite.CacheKeyParams{
+		Method: "GET",
+		Path:   "/test",
+		HTMX: cachelite.HTMXParams{
+			Request: "false",
+			Target:  "",
+		},
+		Theme:    "dark",
+		Encoding: "identity",
+	}
+	key := cachelite.NewCacheKey(params)
+	entry, _ := cachelite.GetCacheEntry(context.Background(), db, key)
+	if entry != nil {
+		t.Fatalf("expected no cache entry for no-store+Set-Cookie response, but entry found with key=%s", entry.Key)
+	}
+}
+
 // TestBypassOnClientNoCache ensures client no-cache header skips cache and storage.
 func TestBypassOnClientNoCache(t *testing.T) {
 	db := createTestDBPool(t)

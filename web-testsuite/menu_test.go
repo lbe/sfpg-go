@@ -9,6 +9,9 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/lbe/sfpg-go/internal/testutil"
+	"golang.org/x/net/html"
 )
 
 // =========================================================================
@@ -22,6 +25,42 @@ import (
 // a browser session. The menu state is checked via the /hamburger-menu
 // endpoint which returns only <li> elements.
 // =========================================================================
+
+// menuItemByLabel returns the first menu element with the given aria-label.
+func menuItemByLabel(doc *html.Node, label string) *html.Node {
+	return testutil.FindElement(doc, func(n *html.Node) bool {
+		return n.Type == html.ElementNode && testutil.GetAttr(n, "aria-label") == label
+	})
+}
+
+// assertMenuItem fails the test if the menu does not contain an element with
+// the given aria-label.
+func assertMenuItem(t *testing.T, doc *html.Node, label string) {
+	t.Helper()
+	if menuItemByLabel(doc, label) == nil {
+		t.Errorf("expected menu to contain item with aria-label=%q", label)
+	}
+}
+
+// assertNoMenuItem fails the test if the menu contains an element with the
+// given aria-label.
+func assertNoMenuItem(t *testing.T, doc *html.Node, label string) {
+	t.Helper()
+	if menuItemByLabel(doc, label) != nil {
+		t.Errorf("expected menu NOT to contain item with aria-label=%q", label)
+	}
+}
+
+// parseMenuResponse parses the response body from /hamburger-menu into an
+// html.Node for structural assertions.
+func parseMenuResponse(t *testing.T, resp *http.Response) *html.Node {
+	t.Helper()
+	doc, err := testutil.ParseHTML(resp.Body)
+	if err != nil {
+		t.Fatalf("failed to parse menu HTML: %v", err)
+	}
+	return doc
+}
 
 // TestMenu_Unauthenticated_ShowsLogin verifies that unauthenticated users
 // see "Login" and DO NOT see "Dashboard" in the menu.
@@ -38,15 +77,9 @@ func TestMenu_Unauthenticated_ShowsLogin(t *testing.T) {
 	menuResp := doHamburgerMenu(t, client)
 	defer menuResp.Body.Close()
 
-	// Avoid using strings.Contains on raw HTML — parse structurally
-	menuHTML := readBody(t, menuResp.Body)
-
-	if strings.Contains(menuHTML, "Dashboard") {
-		t.Error("unauthenticated menu should NOT contain 'Dashboard'")
-	}
-	if !strings.Contains(menuHTML, "Login") {
-		t.Error("unauthenticated menu should contain 'Login'")
-	}
+	doc := parseMenuResponse(t, menuResp)
+	assertNoMenuItem(t, doc, "Dashboard")
+	assertMenuItem(t, doc, "Login")
 }
 
 // TestMenu_Authenticated_ShowsDashboard verifies that after login,
@@ -58,14 +91,9 @@ func TestMenu_Authenticated_ShowsDashboard(t *testing.T) {
 	menuResp := doHamburgerMenu(t, client)
 	defer menuResp.Body.Close()
 
-	menuHTML := readBody(t, menuResp.Body)
-
-	if !strings.Contains(menuHTML, "Dashboard") {
-		t.Error("authenticated menu should contain 'Dashboard'")
-	}
-	if strings.Contains(menuHTML, "Login") {
-		t.Error("authenticated menu should NOT contain 'Login'")
-	}
+	doc := parseMenuResponse(t, menuResp)
+	assertMenuItem(t, doc, "Dashboard")
+	assertNoMenuItem(t, doc, "Login")
 }
 
 // TestMenu_ShowsCorrectState_AfterMultipleRequests verifies that the
@@ -91,13 +119,9 @@ func TestMenu_ShowsCorrectState_AfterMultipleRequests(t *testing.T) {
 	menuResp := doHamburgerMenu(t, client)
 	defer menuResp.Body.Close()
 
-	menuHTML := readBody(t, menuResp.Body)
-	if !strings.Contains(menuHTML, "Dashboard") {
-		t.Error("after multiple requests, authenticated menu should contain 'Dashboard'")
-	}
-	if strings.Contains(menuHTML, "Login") {
-		t.Error("after multiple requests, authenticated menu should NOT contain 'Login'")
-	}
+	doc := parseMenuResponse(t, menuResp)
+	assertMenuItem(t, doc, "Dashboard")
+	assertNoMenuItem(t, doc, "Login")
 }
 
 // TestMenu_SessionSurvives_ConfigModalAccess verifies that opening and
@@ -120,10 +144,8 @@ func TestMenu_SessionSurvives_ConfigModalAccess(t *testing.T) {
 	menuResp := doHamburgerMenu(t, client)
 	defer menuResp.Body.Close()
 
-	menuHTML := readBody(t, menuResp.Body)
-	if !strings.Contains(menuHTML, "Dashboard") {
-		t.Error("after config modal access, menu should contain 'Dashboard'")
-	}
+	doc := parseMenuResponse(t, menuResp)
+	assertMenuItem(t, doc, "Dashboard")
 }
 
 // TestMenu_SessionSurvives_DashboardNavigation verifies that a full page
@@ -146,10 +168,8 @@ func TestMenu_SessionSurvives_DashboardNavigation(t *testing.T) {
 	menuResp := doHamburgerMenu(t, client)
 	defer menuResp.Body.Close()
 
-	menuHTML := readBody(t, menuResp.Body)
-	if !strings.Contains(menuHTML, "Dashboard") {
-		t.Error("after dashboard navigation, menu should contain 'Dashboard'")
-	}
+	doc := parseMenuResponse(t, menuResp)
+	assertMenuItem(t, doc, "Dashboard")
 }
 
 // TestMenu_SimulatesBackNavigation verifies that after the full user flow
@@ -231,13 +251,9 @@ func TestMenu_SimulatesBackNavigation(t *testing.T) {
 	menuResp := doHamburgerMenu(t, client)
 	defer menuResp.Body.Close()
 
-	menuHTML := readBody(t, menuResp.Body)
-	if !strings.Contains(menuHTML, "Dashboard") {
-		t.Error("after back-navigation flow, menu should contain 'Dashboard'")
-	}
-	if strings.Contains(menuHTML, "Login") {
-		t.Error("after back-navigation flow, menu should NOT contain 'Login'")
-	}
+	doc := parseMenuResponse(t, menuResp)
+	assertMenuItem(t, doc, "Dashboard")
+	assertNoMenuItem(t, doc, "Login")
 }
 
 // TestMenu_SessionSurvives_DashboardPollingThenRecheck verifies that
@@ -260,10 +276,8 @@ func TestMenu_SessionSurvives_DashboardPollingThenRecheck(t *testing.T) {
 	menuResp := doHamburgerMenu(t, client)
 	defer menuResp.Body.Close()
 
-	menuHTML := readBody(t, menuResp.Body)
-	if !strings.Contains(menuHTML, "Dashboard") {
-		t.Error("after dashboard polling, menu should contain 'Dashboard'")
-	}
+	doc := parseMenuResponse(t, menuResp)
+	assertMenuItem(t, doc, "Dashboard")
 }
 
 // TestMenu_LoginLogout_Cycle verifies that the menu correctly toggles
@@ -273,36 +287,28 @@ func TestMenu_LoginLogout_Cycle(t *testing.T) {
 
 	// Before login: should show Login
 	menuResp := doHamburgerMenu(t, client)
-	menuHTML := readBody(t, menuResp.Body)
+	doc := parseMenuResponse(t, menuResp)
+	assertMenuItem(t, doc, "Login")
 	menuResp.Body.Close()
-	if !strings.Contains(menuHTML, "Login") {
-		t.Error("before login, menu should contain 'Login'")
-	}
 
 	// Login
 	login(t, client)
 
 	// After login: should show Dashboard
 	menuResp = doHamburgerMenu(t, client)
-	menuHTML = readBody(t, menuResp.Body)
+	doc = parseMenuResponse(t, menuResp)
+	assertMenuItem(t, doc, "Dashboard")
 	menuResp.Body.Close()
-	if !strings.Contains(menuHTML, "Dashboard") {
-		t.Error("after login, menu should contain 'Dashboard'")
-	}
 
 	// Logout
 	logout(t, client)
 
 	// After logout: should show Login again
 	menuResp = doHamburgerMenu(t, client)
-	menuHTML = readBody(t, menuResp.Body)
+	doc = parseMenuResponse(t, menuResp)
+	assertMenuItem(t, doc, "Login")
+	assertNoMenuItem(t, doc, "Dashboard")
 	menuResp.Body.Close()
-	if !strings.Contains(menuHTML, "Login") {
-		t.Error("after logout, menu should contain 'Login'")
-	}
-	if strings.Contains(menuHTML, "Dashboard") {
-		t.Error("after logout, menu should NOT contain 'Dashboard'")
-	}
 }
 
 // TestMenu_ETagVersionParam verifies that menu links include the
@@ -314,14 +320,19 @@ func TestMenu_ETagVersionParam(t *testing.T) {
 	menuResp := doHamburgerMenu(t, client)
 	defer menuResp.Body.Close()
 
-	menuHTML := readBody(t, menuResp.Body)
+	doc := parseMenuResponse(t, menuResp)
+	dash := menuItemByLabel(doc, "Dashboard")
+	if dash == nil {
+		t.Fatal("missing Dashboard menu item")
+	}
 
-	// Dashboard link should have a ?v=... parameter
-	if strings.Contains(menuHTML, `/dashboard?v=`) {
-		// Good — has cache-busting parameter
-	} else if strings.Contains(menuHTML, `/dashboard`) {
-		// Dashboard link exists but without ?v= parameter
-		t.Error("Dashboard link should contain ?v= cache version parameter")
+	href := testutil.GetAttr(dash, "href")
+	u, err := url.Parse(href)
+	if err != nil {
+		t.Fatalf("could not parse Dashboard href %q: %v", href, err)
+	}
+	if u.Query().Get("v") == "" {
+		t.Errorf("expected Dashboard link href %q to contain ?v= cache version parameter", href)
 	}
 }
 
@@ -334,17 +345,10 @@ func TestMenu_ServerManagement_Items(t *testing.T) {
 	menuResp := doHamburgerMenu(t, client)
 	defer menuResp.Body.Close()
 
-	menuHTML := readBody(t, menuResp.Body)
-
-	if !strings.Contains(menuHTML, "Run Discovery") {
-		t.Error("authenticated menu should contain 'Run Discovery'")
-	}
-	if !strings.Contains(menuHTML, "Run Cache Batch Load") {
-		t.Error("authenticated menu should contain 'Run Cache Batch Load'")
-	}
-	if !strings.Contains(menuHTML, "Configuration") {
-		t.Error("authenticated menu should contain 'Configuration'")
-	}
+	doc := parseMenuResponse(t, menuResp)
+	assertMenuItem(t, doc, "Run Discovery")
+	assertMenuItem(t, doc, "Run Cache Batch Load")
+	assertMenuItem(t, doc, "Configuration")
 }
 
 // TestMenu_Logout_ClearsSession verifies that the session cookie is
@@ -355,22 +359,20 @@ func TestMenu_Logout_ClearsSession(t *testing.T) {
 
 	// Verify authenticated first
 	menuResp := doHamburgerMenu(t, client)
-	menuHTML := readBody(t, menuResp.Body)
-	menuResp.Body.Close()
-	if !strings.Contains(menuHTML, "Dashboard") {
-		t.Fatal("precondition: login failed, menu should contain 'Dashboard'")
+	doc := parseMenuResponse(t, menuResp)
+	if menuItemByLabel(doc, "Dashboard") == nil {
+		t.Fatal("precondition: login failed, menu should contain Dashboard")
 	}
+	menuResp.Body.Close()
 
 	// Logout
 	logout(t, client)
 
 	// Verify unauthenticated
 	menuResp = doHamburgerMenu(t, client)
-	menuHTML = readBody(t, menuResp.Body)
+	doc = parseMenuResponse(t, menuResp)
+	assertMenuItem(t, doc, "Login")
 	menuResp.Body.Close()
-	if !strings.Contains(menuHTML, "Login") {
-		t.Error("after logout, menu should contain 'Login'")
-	}
 
 	// Verify that accessing protected routes returns 401
 	dashResp, err := client.Get(serverURL + "/dashboard")
@@ -441,60 +443,6 @@ func logout(t *testing.T, client *http.Client) {
 	}
 }
 
-// loginWithCSRF performs a full login flow including CSRF token extraction
-// from the gallery page. Returns the CSRF token used for verification.
-func loginWithCSRF(t *testing.T, client *http.Client) string {
-	t.Helper()
-
-	// Step 1: GET gallery page to establish session and extract CSRF token
-	resp, err := client.Get(serverURL + "/gallery/1")
-	if err != nil {
-		t.Fatalf("GET /gallery/1 failed: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("GET /gallery/1 expected 200, got %d", resp.StatusCode)
-	}
-
-	csrfToken := extractCSRFFromBody(t, resp.Body)
-	if csrfToken == "" {
-		t.Fatal("could not extract CSRF token from /gallery/1")
-	}
-
-	// Step 2: POST login with CSRF token
-	form := url.Values{
-		"username":   {"admin"},
-		"password":   {"admin"},
-		"csrf_token": {csrfToken},
-	}
-	loginResp := doRequest(t, client, "POST", "/login", form, false)
-	defer loginResp.Body.Close()
-
-	if loginResp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(loginResp.Body)
-		t.Fatalf("POST /login expected 200, got %d. Body: %s", loginResp.StatusCode, string(body))
-	}
-
-	// Step 3: Verify HX-Trigger header
-	if loginResp.Header.Get("Hx-Trigger") != "auth-changed" {
-		t.Fatalf("POST /login expected Hx-Trigger: auth-changed, got %q",
-			loginResp.Header.Get("Hx-Trigger"))
-	}
-
-	return csrfToken
-}
-
-// readBody reads the full body from a reader and returns it as a string.
-func readBody(t *testing.T, r io.Reader) string {
-	t.Helper()
-	body, err := io.ReadAll(r)
-	if err != nil {
-		t.Fatalf("failed to read response body: %v", err)
-	}
-	return string(body)
-}
-
 // =========================================================================
 // Section-based Tests (for formatted report output)
 // =========================================================================
@@ -516,11 +464,11 @@ func TestMenuFunctionalityReport(t *testing.T) {
 			status = "FAIL"
 			note = fmt.Sprintf("expected 200, got %d", resp.StatusCode)
 		} else {
-			body := readBody(t, resp.Body)
-			if strings.Contains(body, "Dashboard") {
+			doc := parseMenuResponse(t, resp)
+			if menuItemByLabel(doc, "Dashboard") != nil {
 				status = "FAIL"
 				note = "menu shows Dashboard for unauthenticated"
-			} else if !strings.Contains(body, "Login") {
+			} else if menuItemByLabel(doc, "Login") == nil {
 				status = "FAIL"
 				note = "menu missing Login for unauthenticated"
 			}
@@ -546,12 +494,12 @@ func TestMenuFunctionalityReport(t *testing.T) {
 			status = "FAIL"
 			note = fmt.Sprintf("expected 200, got %d", resp.StatusCode)
 		} else {
-			body := readBody(t, resp.Body)
-			if !strings.Contains(body, "Dashboard") {
+			doc := parseMenuResponse(t, resp)
+			if menuItemByLabel(doc, "Dashboard") == nil {
 				status = "FAIL"
 				note = "menu missing Dashboard for authenticated"
 			}
-			if strings.Contains(body, "Login") {
+			if menuItemByLabel(doc, "Login") != nil {
 				status = "FAIL"
 				note = "menu shows Login for authenticated"
 			}
@@ -577,8 +525,8 @@ func TestMenuFunctionalityReport(t *testing.T) {
 			status = "FAIL"
 			note = fmt.Sprintf("expected 200, got %d", resp.StatusCode)
 		} else {
-			body := readBody(t, resp.Body)
-			if strings.Contains(body, "Login") {
+			doc := parseMenuResponse(t, resp)
+			if menuItemByLabel(doc, "Login") != nil {
 				status = "FAIL"
 				note = "menu shows Login after successful login"
 			}
@@ -613,8 +561,8 @@ func TestMenuFunctionalityReport(t *testing.T) {
 			status = "FAIL"
 			note = fmt.Sprintf("expected 200, got %d", resp.StatusCode)
 		} else {
-			body := readBody(t, resp.Body)
-			if strings.Contains(body, "Login") {
+			doc := parseMenuResponse(t, resp)
+			if menuItemByLabel(doc, "Login") != nil {
 				status = "FAIL"
 				note = "menu shows Login after dashboard navigation"
 			}
@@ -650,8 +598,8 @@ func TestMenuFunctionalityReport(t *testing.T) {
 			status = "FAIL"
 			note = fmt.Sprintf("expected 200, got %d", resp.StatusCode)
 		} else {
-			body := readBody(t, resp.Body)
-			if strings.Contains(body, "Login") {
+			doc := parseMenuResponse(t, resp)
+			if menuItemByLabel(doc, "Login") != nil {
 				status = "FAIL"
 				note = "menu shows Login after dashboard polling"
 			}
@@ -668,12 +616,13 @@ func TestMenuFunctionalityReport(t *testing.T) {
 
 		// Check menu: should show Dashboard
 		menuResp := doHamburgerMenu(t, client)
-		menuHTML := readBody(t, menuResp.Body)
-		menuResp.Body.Close()
-		if strings.Contains(menuHTML, "Login") {
+		doc := parseMenuResponse(t, menuResp)
+		if menuItemByLabel(doc, "Login") != nil {
+			menuResp.Body.Close()
 			reportResult(t, 65, "/hamburger-menu", "GET", "Yes", 200, 200, "FAIL", "menu shows Login after login")
 			return
 		}
+		menuResp.Body.Close()
 
 		// Logout
 		logoutResp := doRequest(t, client, "POST", "/logout", url.Values{"csrf_token": {csrfTokenFromConfig(t, client)}}, false)
@@ -689,12 +638,13 @@ func TestMenuFunctionalityReport(t *testing.T) {
 			reportResult(t, 65, "/hamburger-menu", "GET", "No", 200, 0, "FAIL", fmt.Sprintf("request failed: %v", err))
 			return
 		}
-		menuHTML2 := readBody(t, menuResp2.Body)
-		menuResp2.Body.Close()
-		if !strings.Contains(menuHTML2, "Login") {
+		doc2 := parseMenuResponse(t, menuResp2)
+		if menuItemByLabel(doc2, "Login") == nil {
+			menuResp2.Body.Close()
 			reportResult(t, 65, "/hamburger-menu", "GET", "No", 200, 200, "FAIL", "menu missing Login after logout")
 			return
 		}
+		menuResp2.Body.Close()
 
 		// Re-login
 		login(t, client)
@@ -705,15 +655,15 @@ func TestMenuFunctionalityReport(t *testing.T) {
 			reportResult(t, 65, "/hamburger-menu", "GET", "Yes", 200, 0, "FAIL", fmt.Sprintf("request failed: %v", err))
 			return
 		}
-		menuHTML3 := readBody(t, menuResp3.Body)
-		menuResp3.Body.Close()
+		doc3 := parseMenuResponse(t, menuResp3)
 
 		status := "PASS"
 		note := "login-logout-relogin cycle OK"
-		if strings.Contains(menuHTML3, "Login") {
+		if menuItemByLabel(doc3, "Login") != nil {
 			status = "FAIL"
 			note = "menu shows Login after re-login"
 		}
+		menuResp3.Body.Close()
 		reportResult(t, 65, "/hamburger-menu", "GET", "Yes", 200, 200, status, note)
 	})
 }

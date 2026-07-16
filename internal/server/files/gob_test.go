@@ -20,10 +20,12 @@ func TestFile_GobRoundTrip(t *testing.T) {
 			Thumbnail: thumb,
 			Exif:      gallerydb.UpsertExifParams{CameraMake: sql.NullString{String: "make", Valid: true}},
 			Itpc:      gallerydb.UpsertIPTCParams{Title: sql.NullString{String: "title", Valid: true}},
-			XmpProp: gallerydb.UpsertXMPPropertyParams{
-				Namespace: "ns",
-				Property:  "prop",
-				Value:     sql.NullString{String: "value", Valid: true},
+			XmpProps: []gallerydb.UpsertXMPPropertyParams{
+				{
+					Namespace: "ns",
+					Property:  "prop",
+					Value:     sql.NullString{String: "value", Valid: true},
+				},
 			},
 			XmpRaw:              gallerydb.UpsertXMPRawParams{RawXml: sql.NullString{String: "<xmp/>", Valid: true}},
 			HasValidJpegMarkers: true,
@@ -52,12 +54,15 @@ func TestFile_GobRoundTrip(t *testing.T) {
 			decoded.File.Filename != original.File.Filename ||
 			decoded.Exif.CameraMake.String != original.Exif.CameraMake.String ||
 			decoded.Itpc.Title.String != original.Itpc.Title.String ||
-			decoded.XmpProp.Namespace != original.XmpProp.Namespace ||
-			decoded.XmpProp.Property != original.XmpProp.Property ||
-			decoded.XmpProp.Value.String != original.XmpProp.Value.String ||
 			decoded.XmpRaw.RawXml.String != original.XmpRaw.RawXml.String ||
 			decoded.HasValidJpegMarkers != original.HasValidJpegMarkers {
 			t.Errorf("decoded File mismatch: got %+v, want %+v", decoded, original)
+		}
+		if len(decoded.XmpProps) != 1 ||
+			decoded.XmpProps[0].Namespace != original.XmpProps[0].Namespace ||
+			decoded.XmpProps[0].Property != original.XmpProps[0].Property ||
+			decoded.XmpProps[0].Value.String != original.XmpProps[0].Value.String {
+			t.Errorf("decoded XmpProps mismatch: got %+v, want %+v", decoded.XmpProps, original.XmpProps)
 		}
 		if decoded.Thumbnail == nil {
 			t.Fatal("expected decoded thumbnail to be non-nil")

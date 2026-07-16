@@ -1,0 +1,106 @@
+<script type="text/hyperscript">
+  behavior BodyKeyHandler
+    init
+      -- Hide info-box on dashboard (no sidebar needed there)
+      if #dashboard-container exists
+        add .hidden to #box_info_wrapper
+      else
+        -- Restore info box state from sessionStorage on gallery/lightbox pages
+        if sessionStorage.getItem('infobox-visible') === 'true'
+          add .info-pinned to me
+          remove .hidden from #box_info_wrapper
+          wait 20ms
+          get #box_info.children.length
+          if it is 0
+            send loadfirstinfo to #initial-info-loader
+          end
+        end
+      end
+    end
+
+    on keydown(key) from window
+      -- Skip handler if typing in input/textarea fields
+      if event.target.tagName is in ['INPUT', 'TEXTAREA']
+        exit
+      end
+
+      -- 1. LOGIN/LOGOUT/ABOUT MODALS - only handle Escape
+      if #login_modal.checked or #logout_modal.checked or #about_modal.checked
+        if key is 'Escape'
+          if #login_modal.checked set #login_modal.checked to false end
+          if #logout_modal.checked set #logout_modal.checked to false end
+          if #about_modal.checked set #about_modal.checked to false end
+          halt the event
+        end
+        exit
+      end
+
+      -- 1a. CONFIG MODAL - only handle Escape (same as Cancel button)
+      if #config_modal.checked
+        if key is 'Escape'
+          set cancelBtn to #config-cancel-btn
+          if cancelBtn
+            call cancelBtn.click()
+          end
+          halt the event
+        end
+        exit
+      end
+
+      -- 2. ACTUAL SIZE MODAL
+      if #actual-size_modal does not match .hidden
+        if key is 'Escape'
+          halt the event
+          click() on #actual-size-image
+        end
+        halt the event
+      end
+
+      -- 3. LIGHTBOX MODAL
+      if #lightbox_modal does not match .hidden
+        if key is 'Escape' or key is 'q'
+           trigger closeModal on #lightbox_modal
+        end
+
+        if key is in ['ArrowLeft', 'ArrowUp', 'h', 'j', 'PageUp']
+           if not #lightbox-prev-btn.disabled click() on #lightbox-prev-btn end
+        end
+
+        if key is in ['ArrowRight', 'ArrowDown', 'k', 'l', 'PageDown']
+           if not #lightbox-next-btn.disabled click() on #lightbox-next-btn end
+        end
+
+        if key is 'i' click() on #info-btn end
+
+        if key is 'Home'
+           if not #lightbox-first-btn.disabled click() on #lightbox-first-btn end
+        end
+        if key is 'End'
+           if not #lightbox-last-btn.disabled click() on #lightbox-last-btn end
+        end
+
+      -- 4. GALLERY VIEW
+      else if #boxgallery exists
+        if key is 'Enter' or key is ' '
+           set firstLink to #boxgallery.querySelector('a[id^=lightbox-]')
+           if firstLink
+              halt the event
+              click() on firstLink
+           end
+        end
+
+        if key is in ['ArrowLeft', 'h', 'j']
+           halt the event
+           call history.back()
+        end
+
+        if key is in ['ArrowRight', 'k', 'l']
+           halt the event
+           call history.forward()
+        end
+
+        if key is 'i' click() on #info-btn end
+      end
+    end
+  end
+</script>

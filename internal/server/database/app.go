@@ -1,3 +1,4 @@
+// Package database wires SQLite connection pools and database lifecycle for the server.
 package database
 
 import (
@@ -28,6 +29,7 @@ import (
 var (
 	osMkdirAll               = os.MkdirAll
 	osOpenFile               = os.OpenFile
+	osChmod                  = os.Chmod
 	migrateDBFn              = migrateDB
 	migrateBlobsDBFn         = migrateBlobsDB
 	newDbSQLConnPool         = dbconnpool.NewDbSQLConnPool
@@ -99,11 +101,16 @@ func Setup(ctx context.Context, rootDir string, cfg *config.Config) (DatabasePat
 
 func migrateDB(dbPath string) error {
 	// Open a temporary connection to ensure file exists
-	db, err := osOpenFile(dbPath, os.O_RDWR|os.O_CREATE, 0o666)
+	db, err := osOpenFile(dbPath, os.O_RDWR|os.O_CREATE, 0o664)
 	if err != nil {
 		return fmt.Errorf("failed to open database file: %w", err)
 	}
 	db.Close() // Ignore close error on empty file
+
+	// Guarantee the required mode; os.OpenFile is subject to the process umask.
+	if err = osChmod(dbPath, 0o664); err != nil {
+		return fmt.Errorf("failed to set database file permissions: %w", err)
+	}
 
 	dbConn, err := sql.Open("sqlite3", dbPath)
 	if err != nil {
@@ -129,11 +136,16 @@ func migrateDB(dbPath string) error {
 }
 
 func migrateBlobsDB(dbPath string) error {
-	db, err := osOpenFile(dbPath, os.O_RDWR|os.O_CREATE, 0o666)
+	db, err := osOpenFile(dbPath, os.O_RDWR|os.O_CREATE, 0o664)
 	if err != nil {
 		return fmt.Errorf("failed to open thumbs database file: %w", err)
 	}
 	db.Close()
+
+	// Guarantee the required mode; os.OpenFile is subject to the process umask.
+	if err = osChmod(dbPath, 0o664); err != nil {
+		return fmt.Errorf("failed to set thumbs database file permissions: %w", err)
+	}
 
 	m, err := migrations.NewThumbsMigrator(dbPath)
 	if err != nil {

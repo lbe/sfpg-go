@@ -8,6 +8,7 @@ import (
 	"image"
 	"image/png"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -848,6 +849,73 @@ func TestExtractExifData_NoExifStub(t *testing.T) {
 	}
 	if file.Exif.CameraMake.Valid {
 		t.Errorf("expected CameraMake invalid on ErrNoExif, got %v", file.Exif.CameraMake)
+	}
+}
+
+func TestExtractExifData_XMPGPSFallback(t *testing.T) {
+	xmpBytes, err := os.ReadFile(filepath.Join("..", "..", "imagemeta", "xmp", "test", "1.xmp"))
+	if err != nil {
+		t.Fatalf("read xmp fixture: %v", err)
+	}
+
+	orig := metadataDecodeWithXMP
+	metadataDecodeWithXMP = func(r io.ReadSeeker) (exif2.Exif, []byte, error) {
+		// EXIF present but no GPS (Make set so we know decode ran)
+		return exif2.Exif{Make: "stub"}, xmpBytes, nil
+	}
+	defer func() { metadataDecodeWithXMP = orig }()
+
+	td := t.TempDir()
+	fn := filepath.Join(td, "xmpgps.jpg")
+	if err = os.WriteFile(fn, []byte{0xFF, 0xD8, 0xFF, 0xD9}, 0o644); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+	ff, err := os.Open(fn)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer ff.Close()
+
+	f := &File{Path: fn, File: gallerydb.File{Filename: filepath.Base(fn)}}
+	if extErr := ExtractExifData(f, ff); extErr != nil {
+		t.Fatalf("ExtractExifData: %v", extErr)
+	}
+
+	if !f.Exif.Latitude.Valid || !f.Exif.Longitude.Valid {
+		t.Fatal("expected valid GPS from XMP fallback")
+	}
+	const wantLat = 11.952186666666666
+	const wantLon = 120.19288333333333
+	if math.Abs(f.Exif.Latitude.Float64-wantLat) > 1e-4 {
+		t.Errorf("latitude = %v, want ≈ %v", f.Exif.Latitude.Float64, wantLat)
+	}
+	if math.Abs(f.Exif.Longitude.Float64-wantLon) > 1e-4 {
+		t.Errorf("longitude = %v, want ≈ %v", f.Exif.Longitude.Float64, wantLon)
+	}
+
+	if !f.XmpRaw.RawXml.Valid {
+		t.Fatal("expected XmpRaw populated")
+	}
+	if len(f.XmpProps) != 2 {
+		t.Fatalf("expected 2 XmpProps, got %d", len(f.XmpProps))
+	}
+	wantLatStr := "11,57.1312N"
+	wantLonStr := "120,11.573E"
+	// order is lat then lon from populateFileXMPFromRaw — check by Property name
+	for _, p := range f.XmpProps {
+		if p.Namespace != "exif" {
+			t.Errorf("unexpected namespace %q", p.Namespace)
+		}
+		if p.Property == "GPSLatitude" {
+			if !p.Value.Valid || p.Value.String != wantLatStr {
+				t.Errorf("GPSLatitude raw = %q, want %q", p.Value.String, wantLatStr)
+			}
+		}
+		if p.Property == "GPSLongitude" {
+			if !p.Value.Valid || p.Value.String != wantLonStr {
+				t.Errorf("GPSLongitude raw = %q, want %q", p.Value.String, wantLonStr)
+			}
+		}
 	}
 }
 

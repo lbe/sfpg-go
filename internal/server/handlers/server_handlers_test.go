@@ -8,11 +8,11 @@ import (
 	"testing"
 
 	"github.com/gorilla/sessions"
-	"golang.org/x/net/html"
 
 	"github.com/lbe/sfpg-go/internal/server/interfaces"
 	"github.com/lbe/sfpg-go/internal/server/session"
 	"github.com/lbe/sfpg-go/internal/server/ui"
+	"github.com/lbe/sfpg-go/internal/testutil"
 	"github.com/lbe/sfpg-go/web"
 )
 
@@ -41,7 +41,7 @@ func (m *mockSessionManagerAuthenticated) SaveSession(w http.ResponseWriter, r *
 	return nil
 }
 
-func (m *mockSessionManagerAuthenticated) IsAuthenticated(r *http.Request) bool {
+func (m *mockSessionManagerAuthenticated) IsAuthenticated(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
@@ -74,7 +74,7 @@ func (m *mockSessionManagerUnauthenticated) SaveSession(w http.ResponseWriter, r
 	return nil
 }
 
-func (m *mockSessionManagerUnauthenticated) IsAuthenticated(r *http.Request) bool {
+func (m *mockSessionManagerUnauthenticated) IsAuthenticated(w http.ResponseWriter, r *http.Request) bool {
 	return false
 }
 
@@ -107,7 +107,7 @@ func (m *mockSessionManagerWithCSRF) SaveSession(w http.ResponseWriter, r *http.
 	return nil
 }
 
-func (m *mockSessionManagerWithCSRF) IsAuthenticated(r *http.Request) bool {
+func (m *mockSessionManagerWithCSRF) IsAuthenticated(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
@@ -117,7 +117,9 @@ func (m *mockSessionManagerWithCSRF) SetAuthenticated(w http.ResponseWriter, r *
 
 func TestNewServerHandlers(t *testing.T) {
 	sm := &mockSessionManagerAuthenticated{}
-	handlers := NewServerHandlers(sm, &mockServerDeps{})
+	serverCtl := &mockServerControl{}
+	helper := &mockTemplateHelpers{}
+	handlers := NewServerHandlers(sm, serverCtl, helper.AddCommonTemplateData, helper.ServerError)
 
 	if handlers == nil {
 		t.Fatal("NewServerHandlers returned nil")
@@ -129,7 +131,9 @@ func TestNewServerHandlers(t *testing.T) {
 
 func TestServerShutdownPost_Unauthorized(t *testing.T) {
 	sm := &mockSessionManagerUnauthenticated{}
-	handlers := NewServerHandlers(sm, &mockServerDeps{})
+	serverCtl := &mockServerControl{}
+	helper := &mockTemplateHelpers{}
+	handlers := NewServerHandlers(sm, serverCtl, helper.AddCommonTemplateData, helper.ServerError)
 
 	req := httptest.NewRequest(http.MethodPost, "/server/shutdown", nil)
 	rr := httptest.NewRecorder()
@@ -148,7 +152,9 @@ func TestServerShutdownPost_CSRFFailed(t *testing.T) {
 	}
 
 	sm := &mockSessionManagerAuthenticated{}
-	handlers := NewServerHandlers(sm, &mockServerDeps{})
+	serverCtl := &mockServerControl{}
+	helper := &mockTemplateHelpers{}
+	handlers := NewServerHandlers(sm, serverCtl, helper.AddCommonTemplateData, helper.ServerError)
 
 	// Create POST request with CSRF token (but validation returns false)
 	req := httptest.NewRequest(http.MethodPost, "/server/shutdown", strings.NewReader("csrf_token=test-token"))
@@ -170,13 +176,11 @@ func TestServerShutdownPost_Authorized(t *testing.T) {
 
 	sm := &mockSessionManagerWithCSRF{}
 
-	deps := &mockServerDeps{
+	serverCtl := &mockServerControl{}
+	helper := &mockTemplateHelpers{
 		CSRFToken: "valid-csrf-token",
 	}
-	handlers := NewServerHandlers(
-		sm,
-		deps,
-	)
+	handlers := NewServerHandlers(sm, serverCtl, helper.AddCommonTemplateData, helper.ServerError)
 
 	// Create POST request with valid CSRF token
 	req := httptest.NewRequest(http.MethodPost, "/server/shutdown", strings.NewReader("csrf_token=valid-csrf-token"))
@@ -194,19 +198,28 @@ func TestServerShutdownPost_Authorized(t *testing.T) {
 		t.Errorf("expected Content-Type text/html, got %s", contentType)
 	}
 
-	doc, err := html.Parse(strings.NewReader(rr.Body.String()))
+	doc, err := testutil.ParseHTML(rr.Body)
 	if err != nil {
 		t.Fatalf("failed to parse HTML: %v", err)
 	}
-	msg := findTextContains(doc, "Shutting Down")
-	if msg == "" {
-		t.Error("response body should contain 'Shutting Down'")
+	page := testutil.FindElementByID(doc, "server-shutdown-page")
+	if page == nil {
+		t.Fatal("missing #server-shutdown-page element")
+	}
+	title := testutil.FindElementByTag(page, "h1")
+	if title == nil {
+		t.Fatal("missing h1 title inside #server-shutdown-page")
+	}
+	if got := strings.TrimSpace(testutil.GetTextContent(title)); got != "Shutting Down" {
+		t.Errorf("shutdown title = %q, want %q", got, "Shutting Down")
 	}
 }
 
 func TestServerDiscoveryPost_Unauthorized(t *testing.T) {
 	sm := &mockSessionManagerUnauthenticated{}
-	handlers := NewServerHandlers(sm, &mockServerDeps{})
+	serverCtl := &mockServerControl{}
+	helper := &mockTemplateHelpers{}
+	handlers := NewServerHandlers(sm, serverCtl, helper.AddCommonTemplateData, helper.ServerError)
 
 	req := httptest.NewRequest(http.MethodPost, "/server/discovery", nil)
 	rr := httptest.NewRecorder()
@@ -225,7 +238,9 @@ func TestServerDiscoveryPost_CSRFFailed(t *testing.T) {
 	}
 
 	sm := &mockSessionManagerAuthenticated{}
-	handlers := NewServerHandlers(sm, &mockServerDeps{})
+	serverCtl := &mockServerControl{}
+	helper := &mockTemplateHelpers{}
+	handlers := NewServerHandlers(sm, serverCtl, helper.AddCommonTemplateData, helper.ServerError)
 
 	// Create POST request with CSRF token (but validation returns false)
 	req := httptest.NewRequest(http.MethodPost, "/server/discovery", strings.NewReader("csrf_token=test-token"))
@@ -247,13 +262,11 @@ func TestServerDiscoveryPost_Authorized(t *testing.T) {
 
 	sm := &mockSessionManagerWithCSRF{}
 
-	deps := &mockServerDeps{
+	serverCtl := &mockServerControl{}
+	helper := &mockTemplateHelpers{
 		CSRFToken: "valid-csrf-token",
 	}
-	handlers := NewServerHandlers(
-		sm,
-		deps,
-	)
+	handlers := NewServerHandlers(sm, serverCtl, helper.AddCommonTemplateData, helper.ServerError)
 
 	// Create POST request with valid CSRF token
 	req := httptest.NewRequest(http.MethodPost, "/server/discovery", strings.NewReader("csrf_token=valid-csrf-token"))
@@ -271,21 +284,25 @@ func TestServerDiscoveryPost_Authorized(t *testing.T) {
 		t.Errorf("expected Content-Type text/html, got %s", contentType)
 	}
 
-	doc, err := html.Parse(strings.NewReader(rr.Body.String()))
+	doc, err := testutil.ParseHTML(rr.Body)
 	if err != nil {
 		t.Fatalf("failed to parse HTML: %v", err)
 	}
 
-	// Check for discovery message in body
-	hasDiscovery := findTextContains(doc, "discovery")
-	hasStarted := findTextContains(doc, "started")
-
-	if hasDiscovery == "" || hasStarted == "" {
-		t.Error("response body should contain discovery and started message")
+	toast := testutil.FindElementByID(doc, "discovery-started-toast")
+	if toast == nil {
+		t.Fatal("missing #discovery-started-toast element")
+	}
+	msg := testutil.FindElementByTag(toast, "span")
+	if msg == nil {
+		t.Fatal("missing message span inside #discovery-started-toast")
+	}
+	if got := strings.TrimSpace(testutil.GetTextContent(msg)); got != "File discovery started" {
+		t.Errorf("discovery message = %q, want %q", got, "File discovery started")
 	}
 
 	// Discovery should be called
-	// Discovery handled by deps (mockServerDeps.TriggerDiscovery is a no-op)
+	// Discovery handled by serverControl (mockServerControl.TriggerDiscovery is a no-op)
 }
 
 func TestServerDiscoveryPost_NoCommonData(t *testing.T) {
@@ -293,10 +310,9 @@ func TestServerDiscoveryPost_NoCommonData(t *testing.T) {
 	// With CSRF validation, we still need a valid CSRF token to proceed
 	sm := &mockSessionManagerWithCSRF{}
 
-	handlers := NewServerHandlers(
-		sm,
-		&mockServerDeps{},
-	)
+	serverCtl := &mockServerControl{}
+	helper := &mockTemplateHelpers{}
+	handlers := NewServerHandlers(sm, serverCtl, helper.AddCommonTemplateData, helper.ServerError)
 
 	// Create POST request with valid CSRF token
 	req := httptest.NewRequest(http.MethodPost, "/server/discovery", strings.NewReader("csrf_token=valid-csrf-token"))
@@ -310,12 +326,14 @@ func TestServerDiscoveryPost_NoCommonData(t *testing.T) {
 	}
 
 	// Discovery is called asynchronously
-	// Discovery handled by deps (mockServerDeps.TriggerDiscovery is a no-op)
+	// Discovery handled by serverControl (mockServerControl.TriggerDiscovery is a no-op)
 }
 
 func TestServerCacheBatchLoadPost_Unauthorized(t *testing.T) {
 	sm := &mockSessionManagerUnauthenticated{}
-	handlers := NewServerHandlers(sm, &mockServerDeps{})
+	serverCtl := &mockServerControl{}
+	helper := &mockTemplateHelpers{}
+	handlers := NewServerHandlers(sm, serverCtl, helper.AddCommonTemplateData, helper.ServerError)
 
 	req := httptest.NewRequest(http.MethodPost, "/server/cache-batch-load", nil)
 	rr := httptest.NewRecorder()
@@ -333,7 +351,9 @@ func TestServerCacheBatchLoadPost_CSRFFailed(t *testing.T) {
 	}
 
 	sm := &mockSessionManagerAuthenticated{}
-	handlers := NewServerHandlers(sm, &mockServerDeps{})
+	serverCtl := &mockServerControl{}
+	helper := &mockTemplateHelpers{}
+	handlers := NewServerHandlers(sm, serverCtl, helper.AddCommonTemplateData, helper.ServerError)
 
 	// Create POST request with CSRF token (but validation returns false)
 	req := httptest.NewRequest(http.MethodPost, "/server/cache-batch-load", strings.NewReader("csrf_token=test-token"))
@@ -353,14 +373,16 @@ func TestServerCacheBatchLoadPost_BlockedWhenDiscoveryActive(t *testing.T) {
 	}
 
 	sm := &mockSessionManagerWithCSRF{}
-	deps := &mockServerDeps{
-		CSRFToken: "valid-csrf-token",
+	serverCtl := &mockServerControl{
 		BatchLoad: interfaces.StartCacheBatchLoadResult{
 			Blocked: true,
 			Message: "Cache batch load blocked: discovery active",
 		},
 	}
-	handlers := NewServerHandlers(sm, deps)
+	helper := &mockTemplateHelpers{
+		CSRFToken: "valid-csrf-token",
+	}
+	handlers := NewServerHandlers(sm, serverCtl, helper.AddCommonTemplateData, helper.ServerError)
 
 	// Create POST request with valid CSRF token
 	req := httptest.NewRequest(http.MethodPost, "/server/cache-batch-load", strings.NewReader("csrf_token=valid-csrf-token"))
@@ -373,13 +395,20 @@ func TestServerCacheBatchLoadPost_BlockedWhenDiscoveryActive(t *testing.T) {
 		t.Errorf("expected status %d, got %d", http.StatusConflict, rr.Code)
 	}
 
-	doc, err := html.Parse(strings.NewReader(rr.Body.String()))
+	doc, err := testutil.ParseHTML(rr.Body)
 	if err != nil {
 		t.Fatalf("Failed to parse HTML: %v", err)
 	}
-	msg := findTextContains(doc, "discovery active")
-	if msg == "" {
-		t.Error("expected response body to contain 'discovery active'")
+	toast := testutil.FindElementByID(doc, "cache-batch-load-toast")
+	if toast == nil {
+		t.Fatal("missing #cache-batch-load-toast element")
+	}
+	msg := testutil.FindElementByTag(toast, "span")
+	if msg == nil {
+		t.Fatal("missing message span inside #cache-batch-load-toast")
+	}
+	if got := strings.TrimSpace(testutil.GetTextContent(msg)); got != "Cache batch load blocked: discovery active" {
+		t.Errorf("cache batch load message = %q, want %q", got, "Cache batch load blocked: discovery active")
 	}
 }
 
@@ -389,14 +418,16 @@ func TestServerCacheBatchLoadPost_StartsRunWhenIdle(t *testing.T) {
 	}
 
 	sm := &mockSessionManagerWithCSRF{}
-	deps := &mockServerDeps{
-		CSRFToken: "valid-csrf-token",
+	serverCtl := &mockServerControl{
 		BatchLoad: interfaces.StartCacheBatchLoadResult{
 			Blocked: false,
 			Message: "Cache batch load started",
 		},
 	}
-	handlers := NewServerHandlers(sm, deps)
+	helper := &mockTemplateHelpers{
+		CSRFToken: "valid-csrf-token",
+	}
+	handlers := NewServerHandlers(sm, serverCtl, helper.AddCommonTemplateData, helper.ServerError)
 
 	// Create POST request with valid CSRF token
 	req := httptest.NewRequest(http.MethodPost, "/server/cache-batch-load", strings.NewReader("csrf_token=valid-csrf-token"))
@@ -409,13 +440,20 @@ func TestServerCacheBatchLoadPost_StartsRunWhenIdle(t *testing.T) {
 		t.Errorf("expected status %d, got %d", http.StatusOK, rr.Code)
 	}
 
-	doc, err := html.Parse(strings.NewReader(rr.Body.String()))
+	doc, err := testutil.ParseHTML(rr.Body)
 	if err != nil {
 		t.Fatalf("Failed to parse HTML: %v", err)
 	}
-	msg := findTextContains(doc, "Cache batch load started")
-	if msg == "" {
-		t.Error("expected response body to contain 'Cache batch load started'")
+	toast := testutil.FindElementByID(doc, "cache-batch-load-toast")
+	if toast == nil {
+		t.Fatal("missing #cache-batch-load-toast element")
+	}
+	msg := testutil.FindElementByTag(toast, "span")
+	if msg == nil {
+		t.Fatal("missing message span inside #cache-batch-load-toast")
+	}
+	if got := strings.TrimSpace(testutil.GetTextContent(msg)); got != "Cache batch load started" {
+		t.Errorf("cache batch load message = %q, want %q", got, "Cache batch load started")
 	}
 }
 
@@ -425,11 +463,13 @@ func TestServerCacheBatchLoadPost_StartError(t *testing.T) {
 	}
 
 	sm := &mockSessionManagerWithCSRF{}
-	deps := &mockServerDeps{
-		CSRFToken: "valid-csrf-token",
-		BatchErr:  errors.New("batch load failed"),
+	serverCtl := &mockServerControl{
+		BatchErr: errors.New("batch load failed"),
 	}
-	handlers := NewServerHandlers(sm, deps)
+	helper := &mockTemplateHelpers{
+		CSRFToken: "valid-csrf-token",
+	}
+	handlers := NewServerHandlers(sm, serverCtl, helper.AddCommonTemplateData, helper.ServerError)
 
 	req := httptest.NewRequest(http.MethodPost, "/server/cache-batch-load", strings.NewReader("csrf_token=valid-csrf-token"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -444,17 +484,4 @@ func TestServerCacheBatchLoadPost_StartError(t *testing.T) {
 	if body != "Internal Server Error" {
 		t.Errorf("expected %q, got %q", "Internal Server Error", body)
 	}
-}
-
-// findTextContains searches the HTML tree for a text node containing s.
-func findTextContains(n *html.Node, s string) string {
-	if n.Type == html.TextNode && strings.Contains(n.Data, s) {
-		return n.Data
-	}
-	for c := n.FirstChild; c != nil; c = c.NextSibling {
-		if found := findTextContains(c, s); found != "" {
-			return found
-		}
-	}
-	return ""
 }

@@ -1,0 +1,116 @@
+{{ define "config-logging-tab" }}
+  <div class="form-control mb-4">
+    <label class="label">
+      <span class="label-text font-semibold">Log Directory</span>
+    </label>
+    <input
+      type="text"
+      name="log_directory"
+      data-requires-restart="true"
+      placeholder="/path/to/logs"
+      class="input input-bordered w-96"
+      value="{{ if .Config }}{{ .Config.LogDirectory }}{{ end }}"
+    />
+    <label class="label">
+      <span class="label-text-alt"
+        >Directory path for log files. Restart required.</span
+      >
+    </label>
+  </div>
+
+  <div class="form-control mb-4">
+    <label class="label">
+      <span class="label-text font-semibold">Log Level</span>
+    </label>
+    <select
+      name="log_level"
+      data-requires-restart="true"
+      class="select select-bordered w-32"
+    >
+      <option
+        value="debug"
+        {{ if and .Config (eq .Config.LogLevel "debug") }}selected{{ end }}
+      >
+        Debug
+      </option>
+      <option
+        value="info"
+        {{ if and .Config (eq .Config.LogLevel "info") }}selected{{ end }}
+      >
+        Info
+      </option>
+      <option
+        value="warn"
+        {{ if and .Config (eq .Config.LogLevel "warn") }}selected{{ end }}
+      >
+        Warn
+      </option>
+      <option
+        value="error"
+        {{ if and .Config (eq .Config.LogLevel "error") }}selected{{ end }}
+      >
+        Error
+      </option>
+    </select>
+    <label class="label">
+      <span class="label-text-alt"
+        >Minimum log level to record. Restart required.</span
+      >
+    </label>
+  </div>
+
+  <div class="form-control mb-4">
+    <label class="label">
+      <span class="label-text font-semibold">Log Rollover</span>
+    </label>
+    <select
+      name="log_rollover"
+      data-requires-restart="true"
+      class="select select-bordered w-32"
+    >
+      <option
+        value="daily"
+        {{ if and .Config (eq .Config.LogRollover "daily") }}selected{{ end }}
+      >
+        Daily
+      </option>
+      <option
+        value="weekly"
+        {{ if and .Config (eq .Config.LogRollover "weekly") }}selected{{ end }}
+      >
+        Weekly
+      </option>
+      <option
+        value="monthly"
+        {{ if and .Config (eq .Config.LogRollover "monthly") }}selected{{ end }}
+      >
+        Monthly
+      </option>
+    </select>
+    <label class="label">
+      <span class="label-text-alt"
+        >How often to rotate log files. Restart required.</span
+      >
+    </label>
+  </div>
+
+  <div class="form-control mb-4">
+    <label class="label">
+      <span class="label-text font-semibold">Log Retention Count</span>
+    </label>
+    <input
+      type="number"
+      name="log_retention_count"
+      data-requires-restart="true"
+      placeholder="7"
+      class="input input-bordered w-24"
+      min="1"
+      value="{{ if .Config }}{{ .Config.LogRetentionCount }}{{ end }}"
+    />
+    <label class="label">
+      <span class="label-text-alt"
+        >Number of rotated log files to keep. Restart required.</span
+      >
+    </label>
+  </div>
+{{ end }}

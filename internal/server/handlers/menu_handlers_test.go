@@ -3,11 +3,12 @@ package handlers
 import (
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/lbe/sfpg-go/internal/server/ui"
+	"github.com/lbe/sfpg-go/internal/testutil"
 	"github.com/lbe/sfpg-go/web"
+	"golang.org/x/net/html"
 )
 
 func TestMenuHandlers_HamburgerMenu_Unauthenticated(t *testing.T) {
@@ -16,7 +17,8 @@ func TestMenuHandlers_HamburgerMenu_Unauthenticated(t *testing.T) {
 	}
 
 	sm := &mockMenuSessionManager{authenticated: false}
-	menuHandlers := NewMenuHandlers(sm, &mockServerDeps{})
+	helper := &mockTemplateHelpers{}
+	menuHandlers := NewMenuHandlers(sm, helper.ServerError)
 
 	req := httptest.NewRequest(http.MethodGet, "/hamburger-menu", nil)
 	w := httptest.NewRecorder()
@@ -39,11 +41,18 @@ func TestMenuHandlers_HamburgerMenu_Unauthenticated(t *testing.T) {
 		t.Errorf("expected Content-Type: text/html; charset=utf-8, got %q", contentType)
 	}
 
-	body := w.Body.String()
-	if !strings.Contains(body, "Login") {
+	doc, err := testutil.ParseHTML(w.Body)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	if testutil.FindElement(doc, func(n *html.Node) bool {
+		return n.Type == html.ElementNode && testutil.GetAttr(n, "aria-label") == "Login"
+	}) == nil {
 		t.Error("expected unauthenticated menu to contain 'Login'")
 	}
-	if strings.Contains(body, "Dashboard") {
+	if testutil.FindElement(doc, func(n *html.Node) bool {
+		return n.Type == html.ElementNode && testutil.GetAttr(n, "aria-label") == "Dashboard"
+	}) != nil {
 		t.Error("expected unauthenticated menu to NOT contain 'Dashboard'")
 	}
 }
@@ -54,7 +63,8 @@ func TestMenuHandlers_HamburgerMenu_Authenticated(t *testing.T) {
 	}
 
 	sm := &mockMenuSessionManager{authenticated: true}
-	menuHandlers := NewMenuHandlers(sm, &mockServerDeps{})
+	helper := &mockTemplateHelpers{}
+	menuHandlers := NewMenuHandlers(sm, helper.ServerError)
 
 	req := httptest.NewRequest(http.MethodGet, "/hamburger-menu", nil)
 	w := httptest.NewRecorder()
@@ -77,11 +87,18 @@ func TestMenuHandlers_HamburgerMenu_Authenticated(t *testing.T) {
 		t.Errorf("expected Content-Type: text/html; charset=utf-8, got %q", contentType)
 	}
 
-	body := w.Body.String()
-	if !strings.Contains(body, "Dashboard") {
+	doc, err := testutil.ParseHTML(w.Body)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	if testutil.FindElement(doc, func(n *html.Node) bool {
+		return n.Type == html.ElementNode && testutil.GetAttr(n, "aria-label") == "Dashboard"
+	}) == nil {
 		t.Error("expected authenticated menu to contain 'Dashboard'")
 	}
-	if strings.Contains(body, "Login") {
+	if testutil.FindElement(doc, func(n *html.Node) bool {
+		return n.Type == html.ElementNode && testutil.GetAttr(n, "aria-label") == "Login"
+	}) != nil {
 		t.Error("expected authenticated menu to NOT contain 'Login'")
 	}
 }
@@ -92,12 +109,13 @@ func TestMenuHandlers_HamburgerMenu_RenderError(t *testing.T) {
 	}
 
 	sm := &mockMenuSessionManager{authenticated: false}
-	menuHandlers := NewMenuHandlers(sm, &mockServerDeps{})
+	helper := &mockTemplateHelpers{}
+	menuHandlers := NewMenuHandlers(sm, helper.ServerError)
 
 	req := httptest.NewRequest(http.MethodGet, "/hamburger-menu", nil)
 	// errorResponseWriter fails on Write, forcing RenderTemplate to return error
 	w := &errorResponseWriter{}
-	// Render failure invokes h.deps.ServerError which writes to the response.
+	// Render failure invokes h.ServerError which writes to the response.
 	// With errorResponseWriter, Write may return an error that is logged but
 	// does not cause a test failure. Just verify no panic occurs.
 	menuHandlers.HamburgerMenu(w, req)
@@ -108,7 +126,7 @@ type mockMenuSessionManager struct {
 	authenticated bool
 }
 
-func (m *mockMenuSessionManager) IsAuthenticated(r *http.Request) bool {
+func (m *mockMenuSessionManager) IsAuthenticated(w http.ResponseWriter, r *http.Request) bool {
 	return m.authenticated
 }
 

@@ -23,7 +23,7 @@ type DashboardHandlers struct {
 // SessionManager interface for session management.
 // Embedded from session.SessionManager to provide CSRF validation capability.
 type SessionManager interface {
-	IsAuthenticated(r *http.Request) bool
+	IsAuthenticated(w http.ResponseWriter, r *http.Request) bool
 	ValidateCSRFToken(r *http.Request) bool
 	EnsureCSRFToken(w http.ResponseWriter, r *http.Request) string
 }
@@ -51,7 +51,7 @@ func NewDashboardHandlers(
 // DashboardGet handles GET /dashboard requests, rendering the dashboard page.
 // Requires authentication. Supports HTMX partial updates when HX-Request header is present.
 func (h *DashboardHandlers) DashboardGet(w http.ResponseWriter, r *http.Request) {
-	if !h.sessionManager.IsAuthenticated(r) {
+	if !h.sessionManager.IsAuthenticated(w, r) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -97,7 +97,7 @@ func (h *DashboardHandlers) DashboardGet(w http.ResponseWriter, r *http.Request)
 // Requires authentication. Intended for programmatic consumers such as the test
 // global setup and external monitoring scripts.
 func (h *DashboardHandlers) MetricsJSON(w http.ResponseWriter, r *http.Request) {
-	if !h.sessionManager.IsAuthenticated(r) {
+	if !h.sessionManager.IsAuthenticated(w, r) {
 		http.Error(w, `{"error":"Unauthorized"}`, http.StatusUnauthorized)
 		return
 	}

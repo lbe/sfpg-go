@@ -14,6 +14,7 @@ import (
 
 	"github.com/lbe/sfpg-go/internal/gallerydb"
 	"github.com/lbe/sfpg-go/internal/queue"
+	"github.com/lbe/sfpg-go/internal/server/metrics"
 	"github.com/lbe/sfpg-go/internal/workerpool"
 )
 
@@ -383,6 +384,41 @@ func TestRunPoolWorkerWithProcessor_Stats(t *testing.T) {
 		poolFunc := NewPoolFuncWithProcessor(fp, q, "/tmp/Images", testRemovePrefix, nil)
 		if err := poolFunc(ctx, pool, nil, nil, q.Len, 1); err != nil {
 			t.Fatalf("expected nil error on closed queue, got %v", err)
+		}
+	})
+}
+
+func TestProcessingStats_GetStats(t *testing.T) {
+	t.Run("returns stats from underlying processing stats", func(t *testing.T) {
+		stats := &ProcessingStats{}
+		stats.TotalFound.Store(100)
+		stats.AlreadyExisting.Store(50)
+		stats.NewlyInserted.Store(30)
+		stats.SkippedInvalid.Store(10)
+		stats.InFlight.Store(5)
+
+		got := stats.GetStats()
+
+		want := metrics.FileProcessingMetrics{
+			TotalFound:      100,
+			AlreadyExisting: 50,
+			NewlyInserted:   30,
+			SkippedInvalid:  10,
+			InFlight:        5,
+		}
+		if got != want {
+			t.Errorf("GetStats() = %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("returns zeros for empty stats", func(t *testing.T) {
+		stats := &ProcessingStats{}
+
+		got := stats.GetStats()
+
+		want := metrics.FileProcessingMetrics{}
+		if got != want {
+			t.Errorf("GetStats() = %+v, want %+v", got, want)
 		}
 	})
 }

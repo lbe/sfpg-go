@@ -14,13 +14,13 @@ func (h *GalleryHandlers) LightboxByID(w http.ResponseWriter, r *http.Request) {
 	idStr := r.PathValue("id")
 	fileID, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		h.deps.ServerError(w, r, fmt.Errorf("invalid file id: %s", idStr))
+		h.ServerError(w, r, fmt.Errorf("invalid file id: %s", idStr))
 		return
 	}
 
 	qh, _, put, err := h.getQueries()
 	if err != nil {
-		h.deps.ServerError(w, r, err)
+		h.ServerError(w, r, err)
 		return
 	}
 	defer put()
@@ -30,7 +30,7 @@ func (h *GalleryHandlers) LightboxByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	etagVersion := h.deps.GetETagVersion()
+	etagVersion := h.galleryOps.GetETagVersion()
 	etag := fmt.Sprintf("\"%s-%d\"", etagVersion, fileID)
 	h.setCacheHeaders(w, etag)
 	// Do NOT set HX-Push-URL for lightbox: opening the lightbox should not create a history
@@ -38,7 +38,7 @@ func (h *GalleryHandlers) LightboxByID(w http.ResponseWriter, r *http.Request) {
 
 	images, err := qh.GetFileViewsByFolderIDOrderByFileName(h.Ctx, file.FolderID)
 	if err != nil {
-		h.deps.ServerError(w, r, err)
+		h.ServerError(w, r, err)
 		return
 	}
 
@@ -56,19 +56,19 @@ func (h *GalleryHandlers) LightboxByID(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if currentIndex == -1 {
-		h.deps.ServerError(w, r, fmt.Errorf("could not find file in folder view"))
+		h.ServerError(w, r, fmt.Errorf("could not find file in folder view"))
 		return
 	}
 
 	folder, err := qh.GetFolderViewByID(h.Ctx, file.FolderID.Int64)
 	if err != nil {
-		h.deps.ServerError(w, r, err)
+		h.ServerError(w, r, err)
 		return
 	}
 
 	breadcrumbs, err := h.generateBreadcrumbsByID(file.FolderID.Int64)
 	if err != nil {
-		h.deps.ServerError(w, r, err)
+		h.ServerError(w, r, err)
 		return
 	}
 
@@ -102,6 +102,6 @@ func (h *GalleryHandlers) LightboxByID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := ui.RenderTemplate(w, "lightbox-content.html.tmpl", data); err != nil {
-		h.deps.ServerError(w, r, err)
+		h.ServerError(w, r, err)
 	}
 }

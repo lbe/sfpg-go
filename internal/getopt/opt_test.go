@@ -31,10 +31,13 @@ func resetFlags() {
 	os.Args = []string{"cmd"}
 }
 
+// validTestSecret is a 32+ byte session secret for tests that don't test secret validation itself.
+const validTestSecret = "test-secret-with-at-least-32-bytes-long!!"
+
 func TestParse_NegativeDelayCoerced(t *testing.T) {
 	resetEnv()
 	resetFlags()
-	os.Setenv("SEPG_SESSION_SECRET", "test-secret")
+	os.Setenv("SEPG_SESSION_SECRET", validTestSecret)
 	os.Args = []string{"cmd", "-debug-delay-ms=-10"}
 	opt := Parse()
 	if opt.DebugDelayMS.Int != 0 {
@@ -45,7 +48,7 @@ func TestParse_NegativeDelayCoerced(t *testing.T) {
 func TestParse_CompressionDefault(t *testing.T) {
 	resetEnv()
 	resetFlags()
-	os.Setenv("SEPG_SESSION_SECRET", "test-secret")
+	os.Setenv("SEPG_SESSION_SECRET", validTestSecret)
 	opt := Parse()
 	// No defaults - should be zero value (false) and not set
 	if opt.EnableCompression.Bool != false {
@@ -59,7 +62,7 @@ func TestParse_CompressionDefault(t *testing.T) {
 func TestParse_CompressionEnvVar(t *testing.T) {
 	resetEnv()
 	resetFlags()
-	os.Setenv("SEPG_SESSION_SECRET", "test-secret")
+	os.Setenv("SEPG_SESSION_SECRET", validTestSecret)
 	os.Setenv("SFG_COMPRESSION", "false")
 	opt := Parse()
 	if opt.EnableCompression.Bool != false {
@@ -70,7 +73,7 @@ func TestParse_CompressionEnvVar(t *testing.T) {
 func TestParse_CompressionFlag(t *testing.T) {
 	resetEnv()
 	resetFlags()
-	os.Setenv("SEPG_SESSION_SECRET", "test-secret")
+	os.Setenv("SEPG_SESSION_SECRET", validTestSecret)
 	os.Args = []string{"cmd", "-compression=false"}
 	opt := Parse()
 	if opt.EnableCompression.Bool != false {
@@ -81,7 +84,7 @@ func TestParse_CompressionFlag(t *testing.T) {
 func TestParse_HTTPCacheDefault(t *testing.T) {
 	resetEnv()
 	resetFlags()
-	os.Setenv("SEPG_SESSION_SECRET", "test-secret")
+	os.Setenv("SEPG_SESSION_SECRET", validTestSecret)
 	opt := Parse()
 	// No defaults - should be zero value (false) and not set
 	if opt.EnableHTTPCache.Bool != false {
@@ -95,7 +98,7 @@ func TestParse_HTTPCacheDefault(t *testing.T) {
 func TestParse_HTTPCacheEnvVar(t *testing.T) {
 	resetEnv()
 	resetFlags()
-	os.Setenv("SEPG_SESSION_SECRET", "test-secret")
+	os.Setenv("SEPG_SESSION_SECRET", validTestSecret)
 	os.Setenv("SFG_HTTP_CACHE", "false")
 	opt := Parse()
 	if opt.EnableHTTPCache.Bool != false {
@@ -106,7 +109,7 @@ func TestParse_HTTPCacheEnvVar(t *testing.T) {
 func TestParse_HTTPCacheFlag(t *testing.T) {
 	resetEnv()
 	resetFlags()
-	os.Setenv("SEPG_SESSION_SECRET", "test-secret")
+	os.Setenv("SEPG_SESSION_SECRET", validTestSecret)
 	os.Args = []string{"cmd", "-http-cache=false"}
 	opt := Parse()
 	if opt.EnableHTTPCache.Bool != false {
@@ -117,7 +120,7 @@ func TestParse_HTTPCacheFlag(t *testing.T) {
 func TestParse_CachePreloadFlag(t *testing.T) {
 	resetEnv()
 	resetFlags()
-	os.Setenv("SEPG_SESSION_SECRET", "test-secret")
+	os.Setenv("SEPG_SESSION_SECRET", validTestSecret)
 	os.Args = []string{"cmd", "-cache-preload=true"}
 	opt := Parse()
 	if !opt.EnableCachePreload.IsSet {
@@ -131,7 +134,7 @@ func TestParse_CachePreloadFlag(t *testing.T) {
 func TestParse_CachePreloadEnvVar(t *testing.T) {
 	resetEnv()
 	resetFlags()
-	os.Setenv("SEPG_SESSION_SECRET", "test-secret")
+	os.Setenv("SEPG_SESSION_SECRET", validTestSecret)
 	os.Setenv("SFG_CACHE_PRELOAD", "false")
 	opt := Parse()
 	if !opt.EnableCachePreload.IsSet {
@@ -145,7 +148,7 @@ func TestParse_CachePreloadEnvVar(t *testing.T) {
 func TestParse_CacheBatchLoadFlag(t *testing.T) {
 	resetEnv()
 	resetFlags()
-	os.Setenv("SEPG_SESSION_SECRET", "test-secret")
+	os.Setenv("SEPG_SESSION_SECRET", validTestSecret)
 	os.Args = []string{"cmd", "-cache-batch-load"}
 	opt := Parse()
 	if !opt.CacheBatchLoad.IsSet {
@@ -170,7 +173,7 @@ func TestParse_UnlockAccountFlag(t *testing.T) {
 func TestParse_UnlockAccountFlag_Empty(t *testing.T) {
 	resetEnv()
 	resetFlags()
-	os.Setenv("SEPG_SESSION_SECRET", "test-secret")
+	os.Setenv("SEPG_SESSION_SECRET", validTestSecret)
 	os.Args = []string{"cmd"}
 	opt := Parse()
 	if opt.UnlockAccount.String != "" {
@@ -312,7 +315,7 @@ func TestValidateOpt_ValidPort(t *testing.T) {
 			opt := Opt{
 				Port:          OptInt{Int: p, IsSet: true},
 				DebugDelayMS:  OptInt{Int: 0, IsSet: true},
-				SessionSecret: OptString{String: "test-secret", IsSet: true},
+				SessionSecret: OptString{String: validTestSecret, IsSet: true},
 			}
 			if err := validateOpt(&opt); err != nil {
 				t.Fatalf("expected valid port %d, got error: %v", p, err)
@@ -326,7 +329,7 @@ func TestValidateOpt_InvalidPort_TooLow(t *testing.T) {
 
 	opt := Opt{
 		Port:          OptInt{Int: 0, IsSet: true},
-		SessionSecret: OptString{String: "test-secret", IsSet: true},
+		SessionSecret: OptString{String: validTestSecret, IsSet: true},
 	}
 	err := validateOpt(&opt)
 
@@ -341,7 +344,7 @@ func TestValidateOpt_InvalidPort_TooLow(t *testing.T) {
 func TestParse_IncrementETag(t *testing.T) {
 	resetEnv()
 	resetFlags()
-	os.Setenv("SEPG_SESSION_SECRET", "test-secret")
+	os.Setenv("SEPG_SESSION_SECRET", validTestSecret)
 
 	tests := []struct {
 		name     string
@@ -390,7 +393,7 @@ func TestValidateOpt_InvalidPort_TooHigh(t *testing.T) {
 
 	opt := Opt{
 		Port:          OptInt{Int: 65536, IsSet: true},
-		SessionSecret: OptString{String: "test-secret", IsSet: true},
+		SessionSecret: OptString{String: validTestSecret, IsSet: true},
 	}
 	err := validateOpt(&opt)
 
@@ -405,7 +408,7 @@ func TestValidateOpt_NegativeDebugDelay(t *testing.T) {
 	opt := Opt{
 		Port:          OptInt{Int: 8080, IsSet: true},
 		DebugDelayMS:  OptInt{Int: -100, IsSet: true},
-		SessionSecret: OptString{String: "test-secret", IsSet: true},
+		SessionSecret: OptString{String: validTestSecret, IsSet: true},
 	}
 	err := validateOpt(&opt)
 	if err != nil {
@@ -414,6 +417,67 @@ func TestValidateOpt_NegativeDebugDelay(t *testing.T) {
 	if opt.DebugDelayMS.Int != 0 {
 		t.Errorf("expected delay clamped to 0, got %d", opt.DebugDelayMS.Int)
 	}
+}
+
+func TestValidateOpt_WeakSessionSecret_TooShort(t *testing.T) {
+	t.Parallel()
+
+	opt := Opt{
+		Port:          OptInt{Int: 8080, IsSet: true},
+		SessionSecret: OptString{String: "too-short", IsSet: true},
+	}
+	err := validateOpt(&opt)
+	if err == nil {
+		t.Fatal("expected error for session secret shorter than 32 bytes, got nil")
+	}
+	if !strings.Contains(err.Error(), "at least 32 bytes") {
+		t.Errorf("expected error to mention 'at least 32 bytes', got: %v", err)
+	}
+}
+
+func TestValidateOpt_WeakSessionSecret_Exact32(t *testing.T) {
+	t.Parallel()
+
+	// Exactly 32 bytes
+	secret := "abcdefghijklmnopqrstuvwxyz123456"
+	if len(secret) != 32 {
+		t.Fatalf("expected test secret to be exactly 32 bytes, got %d", len(secret))
+	}
+
+	opt := Opt{
+		Port:          OptInt{Int: 8080, IsSet: true},
+		SessionSecret: OptString{String: secret, IsSet: true},
+	}
+	err := validateOpt(&opt)
+	if err != nil {
+		t.Errorf("expected no error for 32-byte secret, got: %v", err)
+	}
+}
+
+func TestParse_SessionSecret_WeakSecretTriggersError(t *testing.T) {
+	resetEnv()
+	resetFlags()
+	os.Setenv("SEPG_SESSION_SECRET", "short")
+
+	oldExit := getUsageExit()
+	defer setUsageExit(oldExit)
+
+	var exitMsg string
+	setUsageExit(func(msg string) {
+		exitMsg = msg
+		panic(msg)
+	})
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected usageExit panic for weak session secret")
+		}
+		if !strings.Contains(exitMsg, "at least 32 bytes") {
+			t.Fatalf("expected error message about minimum length, got: %s", exitMsg)
+		}
+	}()
+
+	Parse()
 }
 
 // Phase 3.2: applyEnvVars tests
@@ -518,7 +582,7 @@ func TestParse_Precedence_CLIOverridesEnv(t *testing.T) {
 	resetFlags()
 
 	// Env variable
-	t.Setenv("SEPG_SESSION_SECRET", "test-secret-precedence")
+	t.Setenv("SEPG_SESSION_SECRET", "test-secret-precedence-with-at-least-32-bytes")
 	t.Setenv("SFG_PORT", "8084")
 
 	// CLI override
@@ -535,10 +599,10 @@ func TestParse_Precedence_CLIOverridesEnv(t *testing.T) {
 func TestParse_SessionSecret_FromEnv(t *testing.T) {
 	resetEnv()
 	resetFlags()
-	os.Setenv("SEPG_SESSION_SECRET", "my-secret-key")
+	os.Setenv("SEPG_SESSION_SECRET", "my-secret-key-with-at-least-32-bytes-long!")
 	opt := Parse()
-	if opt.SessionSecret.String != "my-secret-key" {
-		t.Fatalf("expected session secret 'my-secret-key', got %q", opt.SessionSecret.String)
+	if opt.SessionSecret.String != "my-secret-key-with-at-least-32-bytes-long!" {
+		t.Fatalf("expected session secret %q, got %q", "my-secret-key-with-at-least-32-bytes-long!", opt.SessionSecret.String)
 	}
 }
 
@@ -613,7 +677,7 @@ func TestGetExecutableDir_ReturnsValidPath(t *testing.T) {
 func TestParse_SessionSecureEnvVar(t *testing.T) {
 	resetEnv()
 	resetFlags()
-	os.Setenv("SEPG_SESSION_SECRET", "test-secret")
+	os.Setenv("SEPG_SESSION_SECRET", validTestSecret)
 	os.Setenv("SEPG_SESSION_SECURE", "false")
 
 	opt := Parse()
@@ -630,7 +694,7 @@ func TestParse_SessionSecureEnvVar(t *testing.T) {
 func TestParse_SessionHttpOnlyEnvVar(t *testing.T) {
 	resetEnv()
 	resetFlags()
-	os.Setenv("SEPG_SESSION_SECRET", "test-secret")
+	os.Setenv("SEPG_SESSION_SECRET", validTestSecret)
 	os.Setenv("SEPG_SESSION_HTTPONLY", "false")
 
 	opt := Parse()
@@ -647,7 +711,7 @@ func TestParse_SessionHttpOnlyEnvVar(t *testing.T) {
 func TestParse_SessionMaxAgeEnvVar(t *testing.T) {
 	resetEnv()
 	resetFlags()
-	os.Setenv("SEPG_SESSION_SECRET", "test-secret")
+	os.Setenv("SEPG_SESSION_SECRET", validTestSecret)
 	os.Setenv("SEPG_SESSION_MAX_AGE", "3600")
 
 	opt := Parse()
@@ -660,11 +724,28 @@ func TestParse_SessionMaxAgeEnvVar(t *testing.T) {
 	}
 }
 
+// TestParse_LoginRateLimitPerIPEnvVar verifies SEPG_LOGIN_RATE_LIMIT_PER_IP environment variable is parsed
+func TestParse_LoginRateLimitPerIPEnvVar(t *testing.T) {
+	resetEnv()
+	resetFlags()
+	os.Setenv("SEPG_SESSION_SECRET", validTestSecret)
+	os.Setenv("SEPG_LOGIN_RATE_LIMIT_PER_IP", "5")
+
+	opt := Parse()
+
+	if !opt.LoginRateLimitPerIP.IsSet {
+		t.Error("expected LoginRateLimitPerIP.IsSet=true when SEPG_LOGIN_RATE_LIMIT_PER_IP is set")
+	}
+	if opt.LoginRateLimitPerIP.Int != 5 {
+		t.Errorf("expected LoginRateLimitPerIP.Int=5, got %d", opt.LoginRateLimitPerIP.Int)
+	}
+}
+
 // TestParse_SessionSameSiteEnvVar verifies SEPG_SESSION_SAMESITE environment variable is parsed
 func TestParse_SessionSameSiteEnvVar(t *testing.T) {
 	resetEnv()
 	resetFlags()
-	os.Setenv("SEPG_SESSION_SECRET", "test-secret")
+	os.Setenv("SEPG_SESSION_SECRET", validTestSecret)
 	os.Setenv("SEPG_SESSION_SAMESITE", "Strict")
 
 	opt := Parse()
@@ -681,15 +762,15 @@ func TestParse_SessionSameSiteEnvVar(t *testing.T) {
 func TestParseEnvOnly(t *testing.T) {
 	resetEnv()
 	t.Setenv("SFG_PORT", "7777")
-	t.Setenv("SEPG_SESSION_SECRET", "env-secret")
+	t.Setenv("SEPG_SESSION_SECRET", "env-secret-with-at-least-32-bytes-long!!")
 
 	opt := ParseEnvOnly()
 
 	if !opt.Port.IsSet || opt.Port.Int != 7777 {
 		t.Errorf("expected Port.IsSet=true and Port.Int=7777, got IsSet=%v Int=%d", opt.Port.IsSet, opt.Port.Int)
 	}
-	if !opt.SessionSecret.IsSet || opt.SessionSecret.String != "env-secret" {
-		t.Errorf("expected SessionSecret.IsSet=true and String=env-secret, got IsSet=%v String=%q", opt.SessionSecret.IsSet, opt.SessionSecret.String)
+	if !opt.SessionSecret.IsSet || opt.SessionSecret.String != "env-secret-with-at-least-32-bytes-long!!" {
+		t.Errorf("expected SessionSecret.IsSet=true and String=%q, got IsSet=%v String=%q", "env-secret-with-at-least-32-bytes-long!!", opt.SessionSecret.IsSet, opt.SessionSecret.String)
 	}
 	if opt.CacheBatchLoad.IsSet {
 		t.Error("expected CacheBatchLoad not set since CLI flags were not parsed")

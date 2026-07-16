@@ -13,9 +13,13 @@ import (
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 )
 
+// FS embeds main database SQL migration files.
+//
 //go:embed migrations/*.sql
 var FS embed.FS
 
+// ThumbsFS embeds thumbnail database SQL migration files.
+//
 //go:embed thumbs/*.sql
 var ThumbsFS embed.FS
 
@@ -38,8 +42,8 @@ func NewMigrator(dbPath string) (*migrate.Migrate, error) {
 
 	var dsn string
 	if dbPath == ":memory:" {
-		// golang-migrate requires special handling for in-memory databases
-		dsn = "sqlite://:memory:"
+		// Opaque URL form parses on Go 1.26.0+; sqlite://:memory: fails url.Parse there.
+		dsn = "sqlite::memory:"
 	} else {
 		dsn = "sqlite://" + filepath.ToSlash(dbPath)
 	}
@@ -61,7 +65,8 @@ func NewThumbsMigrator(dbPath string) (*migrate.Migrate, error) {
 
 	var dsn string
 	if dbPath == ":memory:" {
-		dsn = "sqlite://:memory:"
+		// Opaque URL form parses on Go 1.26.0+; sqlite://:memory: fails url.Parse there.
+		dsn = "sqlite::memory:"
 	} else {
 		dsn = "sqlite://" + filepath.ToSlash(dbPath)
 	}

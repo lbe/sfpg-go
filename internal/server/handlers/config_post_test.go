@@ -14,6 +14,7 @@ import (
 	"github.com/lbe/sfpg-go/internal/server/ui"
 	"github.com/lbe/sfpg-go/internal/testutil"
 	"github.com/lbe/sfpg-go/web"
+	"golang.org/x/net/html"
 )
 
 func TestConfigHandlers_ConfigPost_InvalidCSRF(t *testing.T) {
@@ -74,11 +75,10 @@ func TestConfigHandlers_ConfigPost_WithThemesInPayload(t *testing.T) {
 		t.Fatalf("parse HTML: %v", err)
 	}
 	errorMsg := testutil.FindElementByID(doc, "config-error-message")
-	if errorMsg != nil {
-		text := testutil.GetTextContent(errorMsg)
-		if strings.Contains(text, "themes") {
-			t.Errorf("validation error should not mention themes, got: %q", text)
-		}
+	if errorMsg != nil && testutil.FindElement(errorMsg, func(n *html.Node) bool {
+		return n.Data == "div" && testutil.GetAttr(n, "class") == "config-validation-error-entry"
+	}) != nil {
+		t.Errorf("unexpected config-error-message: %q", testutil.GetTextContent(errorMsg))
 	}
 
 	if savedCfg == nil {
@@ -148,7 +148,7 @@ func TestConfigHandlers_ConfigPost_ValidUpdate(t *testing.T) {
 	var updateConfigCalled bool
 	mockSvc := &mockConfigServiceForConfig{}
 	ch := setupTestConfigHandlers(t, mockSvc, &mockAuthServiceForConfig{})
-	_ = updateConfigCalled // removed: through deps
+	_ = updateConfigCalled
 	ch.SessionManager.(*mockSessionManagerAuth).authenticated = true
 
 	req := httptest.NewRequest(http.MethodPost, "/config", strings.NewReader("listener_port=8081"))
@@ -188,8 +188,11 @@ func TestConfigHandlers_ConfigPost_InvalidPort(t *testing.T) {
 	if errorMsg == nil {
 		t.Fatal("missing #config-error-message")
 	}
-	if got := testutil.GetTextContent(errorMsg); !strings.Contains(got, "listener_port") {
-		t.Errorf("expected listener_port error, got %q", got)
+	entry := testutil.FindElement(errorMsg, func(n *html.Node) bool {
+		return n.Data == "div" && testutil.GetAttr(n, "data-error-key") == "listener_port"
+	})
+	if entry == nil {
+		t.Errorf("expected listener_port validation error, got %q", testutil.GetTextContent(errorMsg))
 	}
 }
 
@@ -271,7 +274,7 @@ func TestConfigHandlers_ConfigPost_ParseFormError(t *testing.T) {
 	if errorMsg == nil {
 		t.Fatal("missing #config-error-message")
 	}
-	if got := testutil.GetTextContent(errorMsg); !strings.Contains(got, "Invalid form data") {
+	if got := strings.TrimSpace(testutil.GetTextContent(errorMsg)); got != "Invalid form data" {
 		t.Errorf("expected invalid form data message, got %q", got)
 	}
 }
@@ -337,9 +340,13 @@ func TestConfigHandlers_ConfigPost_CredentialValidationErrors(t *testing.T) {
 	if errorMsg == nil {
 		t.Fatal("missing #config-error-message")
 	}
-	text := testutil.GetTextContent(errorMsg)
-	if !strings.Contains(text, "admin_username") || !strings.Contains(text, "invalid") {
-		t.Errorf("expected validation error to be rendered, got %q", text)
+	entry := testutil.FindElement(errorMsg, func(n *html.Node) bool {
+		return n.Data == "div" && testutil.GetAttr(n, "data-error-key") == "admin_username"
+	})
+	if entry == nil {
+		t.Errorf("expected admin_username validation error, got %q", testutil.GetTextContent(errorMsg))
+	} else if got := testutil.GetAttr(entry, "data-error-message"); got != "invalid" {
+		t.Errorf("expected admin_username error message %q, got %q", "invalid", got)
 	}
 }
 
@@ -418,8 +425,7 @@ func TestConfigHandlers_ConfigPost_RestartFlagAndNotificationPath(t *testing.T) 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d", w.Code)
 	}
-	// SetRestartRequired handled by deps (applies through mockServerDeps)
-	// SetRestartRequired handled by deps
+	// SetRestartRequired handled by cfgOps (mockConfigOps)
 	if got := w.Header().Get("HX-Trigger"); got != "config-saved" {
 		t.Fatalf("expected HX-Trigger config-saved, got %q", got)
 	}
@@ -433,7 +439,11 @@ func TestConfigHandlers_ConfigPost_RestartFlagAndNotificationPath(t *testing.T) 
 	if success == nil {
 		t.Fatal("missing #config-success-message")
 	}
-	if got := testutil.GetTextContent(success); !strings.Contains(got, "Server restart required") {
+	successText := testutil.FindElementByTag(success, "span")
+	if successText == nil {
+		t.Fatal("missing success message text span")
+	}
+	if got := testutil.GetTextContent(successText); got != "Settings saved. Server restart required for changes to take effect." {
 		t.Fatalf("expected restart-required message in success alert, got %q", got)
 	}
 
@@ -495,8 +505,11 @@ func TestConfigHandlers_ConfigPost_InvalidRetentionCount(t *testing.T) {
 	if errorMsg == nil {
 		t.Fatal("missing #config-error-message")
 	}
-	if got := testutil.GetTextContent(errorMsg); !strings.Contains(got, "log_retention_count") {
-		t.Errorf("expected log_retention_count error, got %q", got)
+	entry := testutil.FindElement(errorMsg, func(n *html.Node) bool {
+		return n.Data == "div" && testutil.GetAttr(n, "data-error-key") == "log_retention_count"
+	})
+	if entry == nil {
+		t.Errorf("expected log_retention_count validation error, got %q", testutil.GetTextContent(errorMsg))
 	}
 }
 
@@ -615,8 +628,11 @@ func TestConfigPostRejectsInvalidImageDirectory(t *testing.T) {
 				if errorMsg == nil {
 					t.Fatal("missing #config-error-message for invalid image_directory")
 				}
-				if got := testutil.GetTextContent(errorMsg); !strings.Contains(got, "image_directory") {
-					t.Errorf("expected error mentioning image_directory, got %q", got)
+				entry := testutil.FindElement(errorMsg, func(n *html.Node) bool {
+					return n.Data == "div" && testutil.GetAttr(n, "data-error-key") == "image_directory"
+				})
+				if entry == nil {
+					t.Errorf("expected image_directory validation error, got %q", testutil.GetTextContent(errorMsg))
 				}
 			} else {
 				if !saveCalled {
@@ -682,5 +698,193 @@ func TestConfigHandlers_ConfigPost_ThemesDoNotRequireRestart(t *testing.T) {
 	// Should NOT have restart badge
 	if testutil.FindElementByID(doc, "config-restart-badge") != nil {
 		t.Error("themes change should NOT trigger restart, but #config-restart-badge was found")
+	}
+}
+
+func TestConfigHandlers_ConfigPost_CredentialUpdate_PassesOptions(t *testing.T) {
+	t.Parallel()
+
+	if err := ui.ParseTemplates(web.FS); err != nil {
+		t.Fatalf("ParseTemplates failed: %v", err)
+	}
+
+	var receivedOpts auth.CredentialUpdateOptions
+	mockAuthSvc := &mockAuthServiceForConfig{
+		updateCredentialsFunc: func(ctx context.Context, opts auth.CredentialUpdateOptions, store auth.CredentialStore) (*auth.CredentialUpdateResult, error) {
+			receivedOpts = opts
+			return &auth.CredentialUpdateResult{}, nil
+		},
+	}
+	mockSvc := &mockConfigServiceForConfig{
+		getConfigValueFun: func(ctx context.Context, key string) (string, error) {
+			if key == "user" {
+				return "admin", nil
+			}
+			return "", nil
+		},
+	}
+	ch := setupTestConfigHandlers(t, mockSvc, mockAuthSvc)
+	ch.SessionManager.(*mockSessionManagerAuth).authenticated = true
+
+	req := httptest.NewRequest(http.MethodPost, "/config",
+		strings.NewReader("admin_username=newuser&admin_current_password=currentpass&admin_new_password=NewPass1!&admin_confirm_password=NewPass1!"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+
+	ch.ConfigPost(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	// Verify the credential options were passed correctly
+	if receivedOpts.CurrentUsername != "admin" {
+		t.Errorf("CurrentUsername = %q, want %q", receivedOpts.CurrentUsername, "admin")
+	}
+	if receivedOpts.NewUsername != "newuser" {
+		t.Errorf("NewUsername = %q, want %q", receivedOpts.NewUsername, "newuser")
+	}
+	if receivedOpts.CurrentPassword != "currentpass" {
+		t.Errorf("CurrentPassword = %q, want %q", receivedOpts.CurrentPassword, "currentpass")
+	}
+	if receivedOpts.NewPassword != "NewPass1!" {
+		t.Errorf("NewPassword = %q, want %q", receivedOpts.NewPassword, "NewPass1!")
+	}
+	if receivedOpts.ConfirmPassword != "NewPass1!" {
+		t.Errorf("ConfirmPassword = %q, want %q", receivedOpts.ConfirmPassword, "NewPass1!")
+	}
+}
+
+// TestConfigHandlers_ConfigPost_WrongCurrentPassword verifies that submitting the config form with
+// an incorrect current password returns a validation error. This covers the handler-level test gap
+// documented in the deleted admin_credentials_test.go.
+func TestConfigHandlers_ConfigPost_WrongCurrentPassword(t *testing.T) {
+	if err := ui.ParseTemplates(web.FS); err != nil {
+		t.Fatalf("ParseTemplates failed: %v", err)
+	}
+
+	mockAuthSvc := &mockAuthServiceForConfig{
+		updateCredentialsFunc: func(ctx context.Context, opts auth.CredentialUpdateOptions, store auth.CredentialStore) (*auth.CredentialUpdateResult, error) {
+			return &auth.CredentialUpdateResult{
+				ValidationErrors: map[string]string{
+					"admin_current_password": "Current password is incorrect",
+				},
+			}, nil
+		},
+	}
+	ch := setupTestConfigHandlers(t, &mockConfigServiceForConfig{}, mockAuthSvc)
+	ch.SessionManager.(*mockSessionManagerAuth).authenticated = true
+
+	body := "admin_username=admin&admin_current_password=wrongpassword&admin_new_password=NewPass1!&admin_confirm_password=NewPass1!&csrf_token=valid"
+	req := httptest.NewRequest(http.MethodPost, "/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+
+	ch.ConfigPost(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200 (HTMX error response), got %d", w.Code)
+	}
+
+	doc, err := testutil.ParseHTML(w.Body)
+	if err != nil {
+		t.Fatalf("Failed to parse HTML response: %v", err)
+	}
+
+	// Find error message element
+	errorMsg := testutil.FindElementByID(doc, "config-error-message")
+	if errorMsg == nil {
+		t.Error("Expected error message element with id='config-error-message'")
+	} else {
+		entry := testutil.FindElement(errorMsg, func(n *html.Node) bool {
+			return n.Data == "div" && testutil.GetAttr(n, "data-error-key") == "admin_current_password"
+		})
+		if entry == nil {
+			t.Errorf("Expected admin_current_password validation error, got: %s", testutil.GetTextContent(errorMsg))
+		} else if got := testutil.GetAttr(entry, "data-error-message"); got != "Current password is incorrect" {
+			t.Errorf("Expected admin_current_password error message %q, got %q", "Current password is incorrect", got)
+		}
+	}
+}
+
+func TestConfigHandlers_ConfigPost_NonCredentialFieldsSucceed(t *testing.T) {
+	t.Parallel()
+
+	if err := ui.ParseTemplates(web.FS); err != nil {
+		t.Fatalf("ParseTemplates failed: %v", err)
+	}
+
+	mockAuthSvc := &mockAuthServiceForConfig{}
+	mockSvc := &mockConfigServiceForConfig{
+		getConfigValueFun: func(ctx context.Context, key string) (string, error) {
+			return "admin", nil
+		},
+	}
+	ch := setupTestConfigHandlers(t, mockSvc, mockAuthSvc)
+	ch.SessionManager.(*mockSessionManagerAuth).authenticated = true
+
+	// Submit only non-credential config fields
+	req := httptest.NewRequest(http.MethodPost, "/config",
+		strings.NewReader("site_name=TestSite"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+
+	ch.ConfigPost(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	doc, err := testutil.ParseHTML(w.Body)
+	if err != nil {
+		t.Fatalf("parse HTML: %v", err)
+	}
+	// Should succeed (no password error)
+	if testutil.FindElementByID(doc, "config-success-message") == nil {
+		t.Fatal("expected #config-success-message when only non-credential fields are submitted")
+	}
+}
+
+// TestConfigHandlers_ConfigPost_LoginSecurityFields verifies posting the three
+// login security fields updates them on the saved config.
+func TestConfigHandlers_ConfigPost_LoginSecurityFields(t *testing.T) {
+	if err := ui.ParseTemplates(web.FS); err != nil {
+		t.Fatalf("ParseTemplates failed: %v", err)
+	}
+
+	var saved *config.Config
+	mockSvc := &mockConfigServiceForConfig{
+		loadFunc: func(ctx context.Context) (*config.Config, error) {
+			return config.DefaultConfig(), nil
+		},
+		saveFunc: func(ctx context.Context, cfg *config.Config) error {
+			saved = cfg
+			return nil
+		},
+	}
+	ch := setupTestConfigHandlers(t, mockSvc, &mockAuthServiceForConfig{})
+	ch.SessionManager.(*mockSessionManagerAuth).authenticated = true
+
+	req := httptest.NewRequest(http.MethodPost, "/config",
+		strings.NewReader("login_rate_limit_per_ip=3&lockout_threshold=5&lockout_duration=900"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+
+	ch.ConfigPost(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d", w.Code)
+	}
+	if saved == nil {
+		t.Fatal("expected config to be saved")
+	}
+	if saved.LoginRateLimitPerIP != 3 {
+		t.Errorf("expected LoginRateLimitPerIP=3, got %d", saved.LoginRateLimitPerIP)
+	}
+	if saved.LockoutThreshold != 5 {
+		t.Errorf("expected LockoutThreshold=5, got %d", saved.LockoutThreshold)
+	}
+	if saved.LockoutDuration != 900 {
+		t.Errorf("expected LockoutDuration=900, got %d", saved.LockoutDuration)
 	}
 }

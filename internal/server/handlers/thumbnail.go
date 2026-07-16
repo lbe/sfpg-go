@@ -14,13 +14,13 @@ func (h *GalleryHandlers) ThumbnailByID(w http.ResponseWriter, r *http.Request) 
 	idStr := r.PathValue("id")
 	fileID, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		h.deps.ServerError(w, r, fmt.Errorf("invalid file id for thumbnail: %s", idStr))
+		h.ServerError(w, r, fmt.Errorf("invalid file id for thumbnail: %s", idStr))
 		return
 	}
 
 	qh, _, put, err := h.getQueries()
 	if err != nil {
-		h.deps.ServerError(w, r, err)
+		h.ServerError(w, r, err)
 		return
 	}
 	defer put()
@@ -31,7 +31,7 @@ func (h *GalleryHandlers) ThumbnailByID(w http.ResponseWriter, r *http.Request) 
 			h.NoThumbnail(w)
 			return
 		}
-		h.deps.ServerError(w, r, err)
+		h.ServerError(w, r, err)
 		return
 	}
 
@@ -41,11 +41,11 @@ func (h *GalleryHandlers) ThumbnailByID(w http.ResponseWriter, r *http.Request) 
 			h.NoThumbnail(w)
 			return
 		}
-		h.deps.ServerError(w, r, err)
+		h.ServerError(w, r, err)
 		return
 	}
 
-	etag := fmt.Sprintf("\"%s-%d\"", h.deps.GetETagVersion(), fileID)
+	etag := fmt.Sprintf("\"%s-%d\"", h.galleryOps.GetETagVersion(), fileID)
 	w.Header().Set("ETag", etag)
 	w.Header().Set("Content-Type", "image/jpeg")
 	if _, err := w.Write(thumb); err != nil {
@@ -58,13 +58,13 @@ func (h *GalleryHandlers) FolderThumbnailByID(w http.ResponseWriter, r *http.Req
 	idStr := r.PathValue("id")
 	folderID, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		h.deps.ServerError(w, r, fmt.Errorf("invalid folder id: %s", idStr))
+		h.ServerError(w, r, fmt.Errorf("invalid folder id: %s", idStr))
 		return
 	}
 
 	qh, _, put, err := h.getQueries()
 	if err != nil {
-		h.deps.ServerError(w, r, err)
+		h.ServerError(w, r, err)
 		return
 	}
 	defer put()
@@ -75,7 +75,7 @@ func (h *GalleryHandlers) FolderThumbnailByID(w http.ResponseWriter, r *http.Req
 			h.NoThumbnail(w)
 			return
 		}
-		h.deps.ServerError(w, r, err)
+		h.ServerError(w, r, err)
 		return
 	}
 
@@ -90,7 +90,7 @@ func (h *GalleryHandlers) FolderThumbnailByID(w http.ResponseWriter, r *http.Req
 			h.NoThumbnail(w)
 			return
 		}
-		h.deps.ServerError(w, r, err)
+		h.ServerError(w, r, err)
 		return
 	}
 
@@ -100,7 +100,7 @@ func (h *GalleryHandlers) FolderThumbnailByID(w http.ResponseWriter, r *http.Req
 			h.NoThumbnail(w)
 			return
 		}
-		h.deps.ServerError(w, r, err)
+		h.ServerError(w, r, err)
 		return
 	}
 

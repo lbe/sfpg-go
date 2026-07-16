@@ -191,6 +191,82 @@ func TestAuthMiddleware_DebugDelay(t *testing.T) {
 	// but we verify the handler is called (delay doesn't block it)
 }
 
+// TestAuthMiddleware_HTMXCachePolicy verifies that the auth middleware's HTMX cache policy
+// sets Cache-Control: no-store and Vary: HX-Request / HX-Target on authenticated responses.
+// This is the behavior implemented by the withHTMXCachePolicy wrapper in server.go's authMiddleware.
+func TestAuthMiddleware_HTMXCachePolicy(t *testing.T) {
+	store := sessions.NewCookieStore([]byte("test-secret"))
+	sessionManager := session.NewManager(store, func() *session.OptionsConfig { return nil })
+	config := &AuthConfig{}
+
+	// Create an authenticated session cookie
+	rrWithCookie := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	sess, _ := store.Get(req, session.SessionName)
+	sess.Values["authenticated"] = true
+	if err := sess.Save(req, rrWithCookie); err != nil {
+		t.Fatalf("Failed to save session: %v", err)
+	}
+	cookie := rrWithCookie.Header().Get("Set-Cookie")
+
+	dummyHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	authFunc := AuthMiddleware(store, sessionManager, config)
+
+	// Wrap with the same HTMX cache policy pattern used in server.go's authMiddleware:
+	//   - HTMX requests get Cache-Control: no-cache, no-store, must-revalidate + Pragma + Expires + Vary
+	//   - Non-HTMX requests still get Vary: HX-Request + Vary: HX-Target
+	withHTMXCachePolicy := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("HX-Request") == "true" {
+				w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+				w.Header().Set("Pragma", "no-cache")
+				w.Header().Set("Expires", "0")
+			}
+			w.Header().Add("Vary", "HX-Request")
+			w.Header().Add("Vary", "HX-Target")
+			next.ServeHTTP(w, r)
+		})
+	}
+
+	wrappedHandler := withHTMXCachePolicy(authFunc(dummyHandler))
+
+	t.Run("HTMX request gets no-cache and Vary", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/config", nil)
+		req.Header.Set("Cookie", cookie)
+		req.Header.Set("HX-Request", "true")
+		rr := httptest.NewRecorder()
+		wrappedHandler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rr.Code)
+		}
+		cc := rr.Header().Get("Cache-Control")
+		if cc == "" || !strings.Contains(cc, "no-store") {
+			t.Errorf("HTMX response must have Cache-Control containing no-store, got %q", cc)
+		}
+		vary := strings.Join(rr.Header().Values("Vary"), ", ")
+		if !strings.Contains(vary, "HX-Request") || !strings.Contains(vary, "HX-Target") {
+			t.Errorf("HTMX response must Vary on HX-Request and HX-Target, got Vary: %q", vary)
+		}
+	})
+
+	t.Run("non-HTMX request gets Vary", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/config", nil)
+		req.Header.Set("Cookie", cookie)
+		rr := httptest.NewRecorder()
+		wrappedHandler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rr.Code)
+		}
+		vary := strings.Join(rr.Header().Values("Vary"), ", ")
+		if !strings.Contains(vary, "HX-Request") || !strings.Contains(vary, "HX-Target") {
+			t.Errorf("response must Vary on HX-Request and HX-Target, got Vary: %q", vary)
+		}
+	})
+}
+
 func TestAuthMiddleware_NilConfig(t *testing.T) {
 	store := sessions.NewCookieStore([]byte("test-secret"))
 	sessionManager := session.NewManager(store, func() *session.OptionsConfig { return nil })
@@ -1379,6 +1455,202 @@ func TestCSRFProtection_RejectsMismatchedPort(t *testing.T) {
 	}
 }
 
+func TestCSRFProtection_RejectsUnsafeMethodWithoutOriginOrReferer(t *testing.T) {
+	handlerCalled := false
+	dummyHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handlerCalled = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	mw := CSRFProtection(dummyHandler)
+
+	req := httptest.NewRequest("POST", "/test", nil)
+	rr := httptest.NewRecorder()
+
+	mw.ServeHTTP(rr, req)
+
+	if handlerCalled {
+		t.Error("handler should not be called when both Origin and Referer are missing")
+	}
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("expected 403 Forbidden, got %d", rr.Code)
+	}
+}
+
+func TestCSRFProtection_AllowsSameOriginRefererHTTP(t *testing.T) {
+	handlerCalled := false
+	dummyHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handlerCalled = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	mw := CSRFProtection(dummyHandler)
+
+	req := httptest.NewRequest("POST", "/test", nil)
+	req.Host = "example.com"
+	req.Header.Set("Referer", "http://example.com/some-page")
+	rr := httptest.NewRecorder()
+
+	mw.ServeHTTP(rr, req)
+
+	if !handlerCalled {
+		t.Error("handler should be called for same-origin Referer (http)")
+	}
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected 200 OK, got %d", rr.Code)
+	}
+}
+
+func TestCSRFProtection_AllowsSameOriginRefererHTTPS(t *testing.T) {
+	handlerCalled := false
+	dummyHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handlerCalled = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	mw := CSRFProtection(dummyHandler)
+
+	req := httptest.NewRequest("POST", "/test", nil)
+	req.Host = "example.com"
+	req.Header.Set("Referer", "https://example.com/other-path")
+	rr := httptest.NewRecorder()
+
+	mw.ServeHTTP(rr, req)
+
+	if !handlerCalled {
+		t.Error("handler should be called for same-origin Referer (https)")
+	}
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected 200 OK, got %d", rr.Code)
+	}
+}
+
+func TestCSRFProtection_RejectsCrossOriginReferer(t *testing.T) {
+	handlerCalled := false
+	dummyHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handlerCalled = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	mw := CSRFProtection(dummyHandler)
+
+	req := httptest.NewRequest("POST", "/test", nil)
+	req.Host = "example.com"
+	req.Header.Set("Referer", "https://evil.com/attack")
+	rr := httptest.NewRecorder()
+
+	mw.ServeHTTP(rr, req)
+
+	if handlerCalled {
+		t.Error("handler should not be called for cross-origin Referer")
+	}
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("expected 403 Forbidden, got %d", rr.Code)
+	}
+}
+
+func TestCSRFProtection_AllowsSameOriginRefererWithPort(t *testing.T) {
+	handlerCalled := false
+	dummyHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handlerCalled = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	mw := CSRFProtection(dummyHandler)
+
+	req := httptest.NewRequest("POST", "/test", nil)
+	req.Host = "example.com:8080"
+	req.Header.Set("Referer", "http://example.com:8080/gallery/1")
+	rr := httptest.NewRecorder()
+
+	mw.ServeHTTP(rr, req)
+
+	if !handlerCalled {
+		t.Error("handler should be called for same-origin Referer with port")
+	}
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected 200 OK, got %d", rr.Code)
+	}
+}
+
+func TestCSRFProtection_RejectsRefererMismatchedPort(t *testing.T) {
+	handlerCalled := false
+	dummyHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handlerCalled = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	mw := CSRFProtection(dummyHandler)
+
+	req := httptest.NewRequest("POST", "/test", nil)
+	req.Host = "example.com:8080"
+	req.Header.Set("Referer", "http://example.com:9090/page")
+	rr := httptest.NewRecorder()
+
+	mw.ServeHTTP(rr, req)
+
+	if handlerCalled {
+		t.Error("handler should not be called when Referer port doesn't match")
+	}
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("expected 403 Forbidden, got %d", rr.Code)
+	}
+}
+
+func TestCSRFProtection_OriginTakesPrecedenceOverReferer(t *testing.T) {
+	// When both Origin and Referer are present, Origin should be authoritative.
+	// This prevents an attacker from manipulating Referer while Origin correctly identifies the request origin.
+	handlerCalled := false
+	dummyHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handlerCalled = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	mw := CSRFProtection(dummyHandler)
+
+	req := httptest.NewRequest("POST", "/test", nil)
+	req.Host = "example.com"
+	req.Header.Set("Origin", "http://example.com")
+	req.Header.Set("Referer", "https://evil.com/attack")
+	rr := httptest.NewRecorder()
+
+	mw.ServeHTTP(rr, req)
+
+	if !handlerCalled {
+		t.Error("handler should be called when Origin matches even if Referer is cross-origin")
+	}
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected 200 OK, got %d", rr.Code)
+	}
+}
+
+func TestCSRFProtection_CrossOriginOriginWithSameOriginReferer(t *testing.T) {
+	// When Origin is present but cross-origin, the request must be rejected
+	// even if Referer is same-origin. Origin is authoritative.
+	handlerCalled := false
+	dummyHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handlerCalled = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	mw := CSRFProtection(dummyHandler)
+
+	req := httptest.NewRequest("POST", "/test", nil)
+	req.Host = "example.com"
+	req.Header.Set("Origin", "http://evil.com")
+	req.Header.Set("Referer", "http://example.com/some-page")
+	rr := httptest.NewRecorder()
+
+	mw.ServeHTTP(rr, req)
+
+	if handlerCalled {
+		t.Error("handler should not be called when Origin is cross-origin even if Referer is same-origin")
+	}
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("expected 403 Forbidden, got %d", rr.Code)
+	}
+}
+
 // ============================================================================
 // Logging Middleware Tests
 // ============================================================================
@@ -1393,7 +1665,7 @@ func TestLoggingMiddleware_LogsEveryRequestAndResponse(t *testing.T) {
 		w.Write([]byte("ok"))
 	})
 
-	wrapped := LoggingMiddleware(handler)
+	wrapped := NewLoggingMiddleware(nil)(handler)
 	req := httptest.NewRequest("GET", "/test", nil)
 	rec := httptest.NewRecorder()
 
@@ -1420,7 +1692,7 @@ func TestLoggingMiddleware_SanitizesSensitiveHeaders(t *testing.T) {
 		w.WriteHeader(200)
 	})
 
-	wrapped := LoggingMiddleware(handler)
+	wrapped := NewLoggingMiddleware(nil)(handler)
 	req := httptest.NewRequest("GET", "/test", nil)
 	req.Header.Set("Cookie", "session-name=secret-session-token")
 	req.Header.Set("Authorization", "Bearer secret-token")
@@ -1445,6 +1717,224 @@ func TestLoggingMiddleware_SanitizesSensitiveHeaders(t *testing.T) {
 	if !strings.Contains(logStr, "test-agent") {
 		t.Error("Non-sensitive headers should still appear in logs")
 	}
+}
+
+// ============================================================================
+// Edge Cases and Additional Middleware Tests
+// (Recovered from server_compress_test.go)
+// ============================================================================
+
+// TestCompressWriterEdgeCases tests edge cases in compress writer
+func TestCompressWriterEdgeCases(t *testing.T) {
+	t.Run("WriteHeader called multiple times", func(t *testing.T) {
+		handler := CompressMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			w.WriteHeader(http.StatusInternalServerError) // Should be ignored
+			w.Write([]byte(strings.Repeat("test ", 200)))
+		}))
+
+		req := httptest.NewRequest("GET", "/test.html", nil)
+		req.Header.Set("Accept-Encoding", "gzip")
+		rr := httptest.NewRecorder()
+
+		handler.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d", rr.Code)
+		}
+	})
+
+	t.Run("Empty response body", func(t *testing.T) {
+		handler := CompressMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusOK)
+			// No body
+		}))
+
+		req := httptest.NewRequest("GET", "/test.html", nil)
+		req.Header.Set("Accept-Encoding", "gzip")
+		rr := httptest.NewRecorder()
+
+		handler.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d", rr.Code)
+		}
+	})
+
+	t.Run("Non-200 status code", func(t *testing.T) {
+		handler := CompressMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte(strings.Repeat("error ", 200)))
+		}))
+
+		req := httptest.NewRequest("GET", "/test.html", nil)
+		req.Header.Set("Accept-Encoding", "gzip")
+		rr := httptest.NewRecorder()
+
+		handler.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusNotFound {
+			t.Errorf("Expected status 404, got %d", rr.Code)
+		}
+		// Should not compress non-200 responses
+		if rr.Header().Get("Content-Encoding") != "" {
+			t.Error("Should not compress non-200 responses")
+		}
+	})
+}
+
+// TestConditionalResponseWriterEdgeCases tests edge cases in conditional writer
+func TestConditionalResponseWriterEdgeCases(t *testing.T) {
+	t.Run("HEAD request", func(t *testing.T) {
+		handler := ConditionalMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("ETag", `"test"`)
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("body content"))
+		}))
+
+		req := httptest.NewRequest("HEAD", "/test", nil)
+		rr := httptest.NewRecorder()
+
+		handler.ServeHTTP(rr, req)
+
+		if rr.Body.Len() != 0 {
+			t.Error("HEAD request should not include body")
+		}
+	})
+
+	t.Run("Write without explicit WriteHeader", func(t *testing.T) {
+		handler := ConditionalMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("ETag", `"test"`)
+			w.Write([]byte("body"))
+		}))
+
+		req := httptest.NewRequest("GET", "/test", nil)
+		rr := httptest.NewRecorder()
+
+		handler.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d", rr.Code)
+		}
+	})
+
+	t.Run("Multiple writes", func(t *testing.T) {
+		handler := ConditionalMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("ETag", `"test"`)
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("part1"))
+			w.Write([]byte("part2"))
+			w.Write([]byte("part3"))
+		}))
+
+		req := httptest.NewRequest("GET", "/test", nil)
+		rr := httptest.NewRecorder()
+
+		handler.ServeHTTP(rr, req)
+
+		expected := "part1part2part3"
+		if rr.Body.String() != expected {
+			t.Errorf("Expected body %q, got %q", expected, rr.Body.String())
+		}
+	})
+}
+
+// TestCompressMiddleware_AdditionalCases tests additional compression scenarios
+func TestCompressMiddleware_AdditionalCases(t *testing.T) {
+	t.Run("large response with gzip", func(t *testing.T) {
+		handler := CompressMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusOK)
+			// Write large content to trigger compression
+			for range 1000 {
+				w.Write([]byte("This is test content that should be compressed. "))
+			}
+		}))
+
+		req := httptest.NewRequest("GET", "/test.html", nil)
+		req.Header.Set("Accept-Encoding", "gzip")
+		rr := httptest.NewRecorder()
+
+		handler.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d", rr.Code)
+		}
+
+		contentEncoding := rr.Header().Get("Content-Encoding")
+		if contentEncoding != "gzip" {
+			t.Errorf("Expected Content-Encoding gzip, got %s", contentEncoding)
+		}
+	})
+
+	t.Run("large response with brotli", func(t *testing.T) {
+		handler := CompressMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusOK)
+			// Write large content
+			for range 1000 {
+				w.Write([]byte("This is test content that should be compressed with brotli. "))
+			}
+		}))
+
+		req := httptest.NewRequest("GET", "/test.html", nil)
+		req.Header.Set("Accept-Encoding", "br")
+		rr := httptest.NewRecorder()
+
+		handler.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d", rr.Code)
+		}
+
+		contentEncoding := rr.Header().Get("Content-Encoding")
+		if contentEncoding != "br" {
+			t.Errorf("Expected Content-Encoding br, got %s", contentEncoding)
+		}
+	})
+}
+
+// TestConditionalMiddleware_AdditionalCases tests more conditional scenarios
+func TestConditionalMiddleware_AdditionalCases(t *testing.T) {
+	t.Run("If-None-Match with weak ETag", func(t *testing.T) {
+		handler := ConditionalMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("ETag", `W/"weak-etag"`)
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("content"))
+		}))
+
+		req := httptest.NewRequest("GET", "/test", nil)
+		req.Header.Set("If-None-Match", `W/"weak-etag"`)
+		rr := httptest.NewRecorder()
+
+		handler.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusNotModified {
+			t.Errorf("Expected status 304, got %d", rr.Code)
+		}
+	})
+
+	t.Run("If-Modified-Since with future date", func(t *testing.T) {
+		handler := ConditionalMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			pastTime := time.Now().Add(-1 * time.Hour)
+			w.Header().Set("Last-Modified", pastTime.UTC().Format(http.TimeFormat))
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("content"))
+		}))
+
+		futureTime := time.Now().Add(1 * time.Hour)
+		req := httptest.NewRequest("GET", "/test", nil)
+		req.Header.Set("If-Modified-Since", futureTime.UTC().Format(http.TimeFormat))
+		rr := httptest.NewRecorder()
+
+		handler.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusNotModified {
+			t.Errorf("Expected status 304, got %d", rr.Code)
+		}
+	})
 }
 
 func TestNewLoggingMiddleware_WithCustomLogger(t *testing.T) {

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/lbe/sfpg-go/internal/testutil"
 )
 
 // =========================================================================
@@ -52,7 +54,7 @@ func TestAuthRoutes_NoAuth(t *testing.T) {
 		{num: 47, name: "server-restart", method: "POST", path: "/server/restart", expCode: http.StatusUnauthorized},
 
 		// Debug
-		{num: 49, name: "pprof", method: "GET", path: "/debug/pprof/", expCode: http.StatusUnauthorized},
+		{num: 49, name: "pprof", method: "GET", path: "/debug/pprof/", expCode: http.StatusBadRequest},
 	}
 
 	for _, tt := range tests {
@@ -118,7 +120,8 @@ func TestAuthRoutes_Auth(t *testing.T) {
 			expCode: http.StatusOK},
 		{num: 31, name: "config-import-preview", method: "POST", path: "/config/import/preview",
 			bodyFn: func(t *testing.T, client *http.Client) url.Values {
-				return url.Values{"yaml": {"site_name: SmokeTest"}}
+				token := csrfTokenFromConfig(t, client)
+				return url.Values{"csrf_token": {token}, "yaml": {"site_name: SmokeTest"}}
 			}, expCode: http.StatusOK},
 		{num: 33, name: "config-import-commit", method: "POST", path: "/config/import/commit",
 			bodyFn: func(t *testing.T, client *http.Client) url.Values {
@@ -126,7 +129,10 @@ func TestAuthRoutes_Auth(t *testing.T) {
 				return url.Values{"csrf_token": {token}, "yaml": {"site_name: SmokeTest"}}
 			}, expCode: http.StatusOK},
 		{num: 35, name: "config-restore-preview", method: "POST", path: "/config/restore-last-known-good?action=preview",
-			// No CSRF needed; may return 400 if no prior config saved
+			bodyFn: func(t *testing.T, client *http.Client) url.Values {
+				token := csrfTokenFromConfig(t, client)
+				return url.Values{"csrf_token": {token}}
+			},
 			expCode: http.StatusOK, note: "may return 400 if no prior config saved (acceptable)"},
 
 		// Dashboard
@@ -148,7 +154,7 @@ func TestAuthRoutes_Auth(t *testing.T) {
 			}, expCode: http.StatusOK},
 
 		// Debug
-		{num: 50, name: "pprof", method: "GET", path: "/debug/pprof/", expCode: http.StatusOK},
+		{num: 50, name: "pprof", method: "GET", path: "/debug/pprof/", expCode: http.StatusBadRequest},
 	}
 
 	for _, tt := range tests {
@@ -223,17 +229,15 @@ func TestLogout(t *testing.T) {
 }
 
 // =========================================================================
-// Section 4: Dashboard Client Login Flow — 3 tests
+// Section 4: Dashboard Client Login Flow — 4 tests
 //
-// These tests replicate the exact HTTP flow used by the sfpg-go-dashboard
-// TUI client: POST /login with only username+password (NO csrf_token), then
-// GET /dashboard. The dashboard client lacks CSRF token extraction, so it
-// relies on the server allowing login without CSRF for sessions that have
-// no stored token.
+// These tests exercise the sfpg-go-dashboard TUI client login flows.
+// Since WP-8 (login CSRF always required), login without CSRF returns 403.
+// The dashboard client has been updated to fetch CSRF from /login-form.
 // =========================================================================
 
 func TestDashboardClientLoginFlow(t *testing.T) {
-	// #52: Login without CSRF from a fresh client (no prior requests)
+	// #52: Login without CSRF from a fresh client — must return 403 after WP-8
 	t.Run("#52-login-nocsrf-fresh", func(t *testing.T) {
 		client := newClient()
 
@@ -244,22 +248,17 @@ func TestDashboardClientLoginFlow(t *testing.T) {
 		resp := doRequest(t, client, "POST", "/login", form, false)
 		defer resp.Body.Close()
 
-		expected := http.StatusOK
+		expected := http.StatusForbidden
 		status := "PASS"
 		note := "OK"
 		if resp.StatusCode != expected {
 			status = "FAIL"
-			note = fmt.Sprintf("expected %d, got %d", expected, resp.StatusCode)
-		} else if resp.Header.Get("Hx-Trigger") != "auth-changed" {
-			// Login succeeded (200) but missing HX-Trigger means auth failed
-			// and server returned login form with error
-			status = "FAIL"
-			note = "login returned 200 but missing HX-Trigger: auth-changed — credentials likely rejected"
+			note = fmt.Sprintf("expected %d, got %d — CSRF required after WP-8", expected, resp.StatusCode)
 		}
 		reportResult(t, 52, "/login", "POST", "No", expected, resp.StatusCode, status, note)
 	})
 
-	// #53: Login without CSRF after a prior request that created a session
+	// #53: Login without CSRF after a prior request — must return 403 after WP-8
 	t.Run("#53-login-nocsrf-existing-session", func(t *testing.T) {
 		client := newClient()
 
@@ -270,8 +269,7 @@ func TestDashboardClientLoginFlow(t *testing.T) {
 		}
 		gResp.Body.Close()
 
-		// Now login without CSRF — server should still allow this because
-		// gallery page doesn't persist CSRF token for unauthenticated sessions
+		// Now login without CSRF — must fail since WP-8 requires CSRF always
 		form := url.Values{
 			"username": {"admin"},
 			"password": {"admin"},
@@ -279,34 +277,22 @@ func TestDashboardClientLoginFlow(t *testing.T) {
 		resp := doRequest(t, client, "POST", "/login", form, false)
 		defer resp.Body.Close()
 
-		expected := http.StatusOK
+		expected := http.StatusForbidden
 		status := "PASS"
 		note := "OK"
 		if resp.StatusCode != expected {
 			status = "FAIL"
-			note = fmt.Sprintf("expected %d, got %d", expected, resp.StatusCode)
-		} else if resp.Header.Get("Hx-Trigger") != "auth-changed" {
-			status = "FAIL"
-			note = "login returned 200 but missing HX-Trigger: auth-changed after prior session creation"
+			note = fmt.Sprintf("expected %d, got %d — CSRF required after WP-8", expected, resp.StatusCode)
 		}
 		reportResult(t, 53, "/login", "POST", "No", expected, resp.StatusCode, status, note)
 	})
 
-	// #54: Dashboard fetch after login without CSRF (end-to-end client flow)
-	t.Run("#54-dashboard-after-nocsrf-login", func(t *testing.T) {
+	// #54: Dashboard fetch after proper login (with CSRF) — end-to-end flow
+	t.Run("#54-dashboard-after-login", func(t *testing.T) {
 		client := newClient()
 
-		// Login without CSRF (like the dashboard client)
-		form := url.Values{
-			"username": {"admin"},
-			"password": {"admin"},
-		}
-		loginResp := doRequest(t, client, "POST", "/login", form, false)
-		loginResp.Body.Close()
-
-		if loginResp.StatusCode != http.StatusOK || loginResp.Header.Get("Hx-Trigger") != "auth-changed" {
-			t.Skip("SKIP: prerequisite login failed, skipping dashboard fetch test")
-		}
+		// Login with CSRF token (via the standard login helper)
+		login(t, client)
 
 		// Fetch dashboard with the session cookie from login
 		dashResp := doRequest(t, client, "GET", "/dashboard", nil, false)
@@ -339,8 +325,12 @@ func TestDashboardClientLoginFlow(t *testing.T) {
 		}
 
 		// Verify we got actual dashboard HTML
-		if !strings.Contains(html, "dashboard-container") {
-			t.Error("FetchDashboard() response missing dashboard-container element")
+		doc, err := testutil.ParseHTML(strings.NewReader(html))
+		if err != nil {
+			t.Fatalf("FetchDashboard() response parse error: %v", err)
+		}
+		if testutil.FindElementByID(doc, "dashboard-container") == nil {
+			t.Error("FetchDashboard() response missing #dashboard-container element")
 		}
 
 		reportResult(t, 55, "/dashboard", "GET", "Yes", http.StatusOK, http.StatusOK, "PASS", "dashboard client e2e login flow OK")
@@ -352,8 +342,10 @@ func TestDashboardClientLoginFlow(t *testing.T) {
 // =========================================================================
 // Section 5: Restart — runs serially, polls for recovery
 //
-// Triggers server restart, polls /gallery/1 every second for up to 15 seconds,
-// then verifies the server is fully responsive (login + authenticated endpoint).
+// RestartHandler returns 200 then shuts down asynchronously (~500ms delay).
+// Each subtest waits for the old process to stop accepting connections
+// (waitForServerDown), then for the new process to respond (waitForServer),
+// settles 2s, and verifies login plus an authenticated endpoint.
 // =========================================================================
 
 func TestRestart(t *testing.T) {
@@ -368,6 +360,11 @@ func TestRestart(t *testing.T) {
 
 		if resp.StatusCode != http.StatusOK {
 			reportResult(t, 37, "/config/restart", "POST", "Yes", http.StatusOK, resp.StatusCode, "FAIL", "restart POST failed")
+			return
+		}
+
+		if !waitForServerDown(t, 15*time.Second) {
+			reportResult(t, 37, "/config/restart", "POST", "Yes", http.StatusOK, 0, "FAIL", "server did not go down after restart")
 			return
 		}
 
@@ -412,6 +409,11 @@ func TestRestart(t *testing.T) {
 			return
 		}
 
+		if !waitForServerDown(t, 15*time.Second) {
+			reportResult(t, 48, "/server/restart", "POST", "Yes", http.StatusOK, 0, "FAIL", "server did not go down after restart")
+			return
+		}
+
 		if !waitForServer(t, 15*time.Second) {
 			reportResult(t, 48, "/server/restart", "POST", "Yes", http.StatusOK, 0, "FAIL", "server did not respond after restart")
 			return
@@ -432,4 +434,87 @@ func TestRestart(t *testing.T) {
 
 		reportResult(t, 48, "/server/restart", "POST", "Yes", http.StatusOK, http.StatusOK, "PASS", "server restarted and full functionality verified")
 	})
+}
+
+// TestLoginRateLimit_Returns429 verifies the configured per-IP login limit is
+// enforced against the live server: after saving login_rate_limit_per_ip=2
+// (which clears prior login history), the third login POST from this IP
+// returns 429. Afterwards the limit is restored to 0 — the suite invariant on
+// the shared dev server, enforced by TestMain — via the still-authenticated
+// admin client (never re-login after the burst, and never restore the
+// captured value: that would put the default of 10 back on dev air).
+func TestLoginRateLimit_Returns429(t *testing.T) {
+	client := newClient()
+	login(t, client)
+
+	values, token, err := parseConfigForm(t, client)
+	if err != nil {
+		t.Fatalf("failed to parse config form: %v", err)
+	}
+
+	// Register restore before mutating (mirrors #72-config-restore-site-name).
+	// Restores 0, not the captured value: limit=0 is the suite invariant on
+	// shared dev air (TestMain enforces it at package start), so this test
+	// must never put the default of 10 back.
+	defer func() {
+		restoreValues, restoreToken, err := parseConfigForm(t, client)
+		if err != nil {
+			t.Errorf("restore parse: %v", err)
+			return
+		}
+		restoreValues = cloneValues(restoreValues)
+		restoreValues.Set("login_rate_limit_per_ip", "0")
+		for _, key := range []string{"admin_current_password", "admin_new_password", "admin_confirm_password", "yaml"} {
+			restoreValues.Del(key)
+		}
+		restoreValues.Set("csrf_token", restoreToken)
+		resp := doRequest(t, client, http.MethodPost, "/config", restoreValues, false)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("restore POST /config: got %d", resp.StatusCode)
+		}
+	}()
+
+	submission := cloneValues(values)
+	submission.Set("login_rate_limit_per_ip", "2")
+	for _, key := range []string{"admin_current_password", "admin_new_password", "admin_confirm_password", "yaml"} {
+		submission.Del(key)
+	}
+	submission.Set("csrf_token", token)
+	resp := doRequest(t, client, http.MethodPost, "/config", submission, false)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST /config set limit=2: got %d", resp.StatusCode)
+	}
+	// Server-side SyncLoginRateLimitMax(2) cleared prior login history, so the
+	// login() above does not count toward the burst.
+
+	burstClient := newClient()
+	for attempt := 1; attempt <= 3; attempt++ {
+		resp, err := burstClient.Get(serverURL + "/login-form")
+		if err != nil {
+			t.Fatalf("attempt %d: GET /login-form: %v", attempt, err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			t.Fatalf("attempt %d: GET /login-form: got %d", attempt, resp.StatusCode)
+		}
+		token := extractCSRFFromBody(t, resp.Body)
+		resp.Body.Close()
+
+		loginResp := doRequest(t, burstClient, http.MethodPost, "/login", url.Values{
+			"username":   {"rate-limit-probe"}, // NOT admin — avoid lockout side effects
+			"password":   {"wrongpassword"},
+			"csrf_token": {token},
+		}, false)
+		if attempt <= 2 && loginResp.StatusCode == http.StatusTooManyRequests {
+			loginResp.Body.Close()
+			t.Fatalf("attempt %d: unexpected 429", attempt)
+		}
+		if attempt == 3 && loginResp.StatusCode != http.StatusTooManyRequests {
+			loginResp.Body.Close()
+			t.Fatalf("attempt %d: got %d, want 429", attempt, loginResp.StatusCode)
+		}
+		loginResp.Body.Close()
+	}
 }

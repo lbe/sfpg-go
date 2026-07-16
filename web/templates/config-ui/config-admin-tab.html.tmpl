@@ -1,0 +1,141 @@
+{{ define "config-admin-tab" }}
+  <div class="form-control mb-4">
+    <label class="label">
+      <span class="label-text font-semibold">Admin User ID</span>
+    </label>
+    <input
+      type="text"
+      name="admin_username"
+      placeholder="admin"
+      class="input input-bordered w-64"
+      value="{{ if .Username }}{{ .Username }}{{ end }}"
+      minlength="8"
+    />
+    <label class="label">
+      <span class="label-text-alt"
+        >Admin username (minimum 8 characters, alphanumeric, underscore, or
+        hyphen only)</span
+      >
+    </label>
+  </div>
+
+  <div class="form-control mb-4">
+    <label class="label">
+      <span class="label-text font-semibold">Current Password</span>
+    </label>
+    <div class="relative w-64">
+      <input
+        type="password"
+        name="admin_current_password"
+        placeholder="Enter current password"
+        class="input input-bordered w-full pr-10"
+        id="admin_current_password"
+      />
+      <button
+        type="button"
+        tabindex="-1"
+        class="btn btn-ghost btn-sm absolute right-2 top-1/2 h-auto min-h-0 -translate-y-1/2 p-1"
+        id="toggle_admin_current_password"
+        _="on click
+           set input to #admin_current_password
+           if input.type == 'password'
+             set input.type to 'text'
+             set my.innerHTML to '👁️'
+           else
+             set input.type to 'password'
+             set my.innerHTML to '👁️‍🗨️'
+           end"
+      >
+        👁️‍🗨️
+      </button>
+    </div>
+    <label class="label">
+      <span class="label-text-alt"
+        >Required to authorize any credential changes</span
+      >
+    </label>
+  </div>
+
+  <div class="form-control mb-4">
+    <label class="label">
+      <span class="label-text font-semibold">New Password</span>
+    </label>
+    <div class="relative w-64">
+      <input
+        type="password"
+        name="admin_new_password"
+        placeholder="Enter new password"
+        class="input input-bordered w-full pr-10"
+        id="admin_new_password"
+        minlength="8"
+      />
+      <button
+        type="button"
+        tabindex="-1"
+        class="btn btn-ghost btn-sm absolute right-2 top-1/2 h-auto min-h-0 -translate-y-1/2 p-1"
+        id="toggle_admin_new_password"
+        _="on click
+           set input to #admin_new_password
+           if input.type == 'password'
+             set input.type to 'text'
+             set my.innerHTML to '👁️'
+           else
+             set input.type to 'password'
+             set my.innerHTML to '👁️‍🗨️'
+           end"
+      >
+        👁️‍🗨️
+      </button>
+    </div>
+    <div
+      id="admin_new_password_error"
+      class="label-text-alt hidden text-error"
+    ></div>
+    <label class="label">
+      <span class="label-text-alt"
+        >Minimum 8 characters, must include: 1 uppercase, 1 lowercase, 1 number,
+        1 special character</span
+      >
+    </label>
+  </div>
+
+  <div class="form-control mb-4">
+    <label class="label">
+      <span class="label-text font-semibold">Confirm Password</span>
+    </label>
+    <div class="relative w-64">
+      <input
+        type="password"
+        name="admin_confirm_password"
+        placeholder="Confirm new password"
+        class="input input-bordered w-full pr-10"
+        id="admin_confirm_password"
+        minlength="8"
+      />
+      <button
+        type="button"
+        tabindex="-1"
+        class="btn btn-ghost btn-sm absolute right-2 top-1/2 h-auto min-h-0 -translate-y-1/2 p-1"
+        id="toggle_admin_confirm_password"
+        _="on click
+           set input to #admin_confirm_password
+           if input.type == 'password'
+             set input.type to 'text'
+             set my.innerHTML to '👁️'
+           else
+             set input.type to 'password'
+             set my.innerHTML to '👁️‍🗨️'
+           end"
+      >
+        👁️‍🗨️
+      </button>
+    </div>
+    <div
+      id="admin_confirm_password_error"
+      class="label-text-alt hidden text-error"
+    ></div>
+    <label class="label">
+      <span class="label-text-alt">Must match new password</span>
+    </label>
+  </div>
+{{ end }}

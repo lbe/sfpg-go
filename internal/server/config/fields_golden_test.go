@@ -48,7 +48,11 @@ func TestGoldenBaseline(t *testing.T) {
 		EnableCachePreload:                    false,
 		MaxHTTPCacheEntryInsertPerTransaction: 77,
 		LockoutDuration:                       7200,
+		LockoutThreshold:                      5,
+		LoginRateLimitPerIP:                   20,
 		RunFileDiscovery:                      false,
+		EnablePprof:                           true,
+		DiscoveryQueueMax:                     10000,
 	}
 
 	// zeroConfig is used for MergeDefaults / RecoverFromCorruption tests.
@@ -88,7 +92,11 @@ func TestGoldenBaseline(t *testing.T) {
 		EnableCachePreload:                    true,
 		MaxHTTPCacheEntryInsertPerTransaction: 33,
 		LockoutDuration:                       7777,
+		LockoutThreshold:                      99,
+		LoginRateLimitPerIP:                   50,
 		RunFileDiscovery:                      true,
+		EnablePprof:                           false,
+		DiscoveryQueueMax:                     50000,
 	}
 
 	t.Run("ToMap", func(t *testing.T) {
@@ -126,7 +134,11 @@ func TestGoldenBaseline(t *testing.T) {
 			"enable_cache_preload":      "false",
 			"max_http_cache_entry_insert_per_transaction": "77",
 			"lockout_duration":                            "7200",
+			"lockout_threshold":                           "5",
+			"login_rate_limit_per_ip":                     "20",
 			"run_file_discovery":                          "false",
+			"enable_pprof":                                "true",
+			"discovery_queue_max":                         "10000",
 		}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("ToMap mismatch")
@@ -188,7 +200,11 @@ func TestGoldenBaseline(t *testing.T) {
 			"enable-cache-preload":      false,
 			"max-http-cache-entry-insert-per-transaction": 77,
 			"lockout-duration":                            7200,
+			"lockout-threshold":                           5,
+			"login-rate-limit-per-ip":                     20,
 			"discover":                                    false,
+			"enable-pprof":                                true,
+			"discovery-queue-max":                         10000,
 		}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("ExportToYAML parsed mismatch")
@@ -217,10 +233,12 @@ func TestGoldenBaseline(t *testing.T) {
 			"cache-max-time", "compression", "current-theme",
 			"db-max-pool-size", "db-min-idle-connections", "db-optimize-interval",
 			"db-pool-monitor-interval", "discover", "enable-cache-preload",
+			"enable-pprof",
+			"discovery-queue-max",
 			"etag-version",
 			"http-cache", "image-directory", "listener-address", "listener-port",
 			"log-directory", "log-level", "log-retention-count", "log-rollover",
-			"lockout-duration", "max-http-cache-entry-insert-per-transaction", "queue-size",
+			"lockout-duration", "lockout-threshold", "login-rate-limit-per-ip", "max-http-cache-entry-insert-per-transaction", "queue-size",
 			"session-http-only", "session-max-age", "session-same-site",
 			"session-secure", "site-name", "themes", "worker-pool-max",
 			"worker-pool-max-idle-time", "worker-pool-min-idle",
@@ -234,17 +252,17 @@ func TestGoldenBaseline(t *testing.T) {
 	t.Run("restartRequiredKeys", func(t *testing.T) {
 		got := restartRequiredKeys(goldenConfig, otherConfig)
 		slices.Sort(got)
-		// 25 restart-required dbKeys from the design block.
+		// 26 restart-required dbKeys from the design block.
 		want := []string{
 			"cache_cleanup_interval", "cache_max_entry_size", "cache_max_size",
 			"cache_max_time", "db_max_pool_size", "db_min_idle_connections",
 			"db_optimize_interval", "db_pool_monitor_interval",
-			"enable_http_cache", "image_directory", "listener_address",
-			"listener_port", "log_directory", "log_level", "log_retention_count",
-			"log_rollover", "queue_size", "server_compression_enable",
-			"session_http_only", "session_max_age", "session_same_site",
-			"session_secure", "worker_pool_max", "worker_pool_max_idle_time",
-			"worker_pool_min_idle",
+			"enable_http_cache", "enable_pprof", "image_directory",
+			"listener_address", "listener_port", "log_directory", "log_level",
+			"log_retention_count", "log_rollover", "queue_size",
+			"server_compression_enable", "session_http_only", "session_max_age",
+			"session_same_site", "session_secure", "worker_pool_max",
+			"worker_pool_max_idle_time", "worker_pool_min_idle",
 		}
 		slices.Sort(want)
 		if !reflect.DeepEqual(got, want) {
@@ -338,6 +356,12 @@ func TestGoldenBaseline(t *testing.T) {
 		if zeroConfig.LockoutDuration != def.LockoutDuration {
 			t.Errorf("LockoutDuration = %d, want %d", zeroConfig.LockoutDuration, def.LockoutDuration)
 		}
+		if zeroConfig.LockoutThreshold != def.LockoutThreshold {
+			t.Errorf("LockoutThreshold = %d, want %d", zeroConfig.LockoutThreshold, def.LockoutThreshold)
+		}
+		if zeroConfig.LoginRateLimitPerIP != def.LoginRateLimitPerIP {
+			t.Errorf("LoginRateLimitPerIP = %d, want %d", zeroConfig.LoginRateLimitPerIP, def.LoginRateLimitPerIP)
+		}
 
 		// Bool fields must remain false (MergeDefaults should NOT overwrite explicit false).
 		if zeroConfig.SessionHttpOnly != false {
@@ -357,6 +381,12 @@ func TestGoldenBaseline(t *testing.T) {
 		}
 		if zeroConfig.RunFileDiscovery != false {
 			t.Errorf("RunFileDiscovery = %v, want false", zeroConfig.RunFileDiscovery)
+		}
+		if zeroConfig.EnablePprof != false {
+			t.Errorf("EnablePprof = %v, want false", zeroConfig.EnablePprof)
+		}
+		if zeroConfig.DiscoveryQueueMax != 0 {
+			t.Errorf("DiscoveryQueueMax = %d, want 0", zeroConfig.DiscoveryQueueMax)
 		}
 	})
 
@@ -462,8 +492,20 @@ func TestGoldenBaseline(t *testing.T) {
 		if zeroConfig.LockoutDuration != def.LockoutDuration {
 			t.Errorf("LockoutDuration = %d, want %d", zeroConfig.LockoutDuration, def.LockoutDuration)
 		}
+		if zeroConfig.LockoutThreshold != def.LockoutThreshold {
+			t.Errorf("LockoutThreshold = %d, want %d", zeroConfig.LockoutThreshold, def.LockoutThreshold)
+		}
+		if zeroConfig.LoginRateLimitPerIP != def.LoginRateLimitPerIP {
+			t.Errorf("LoginRateLimitPerIP = %d, want %d", zeroConfig.LoginRateLimitPerIP, def.LoginRateLimitPerIP)
+		}
 		if zeroConfig.RunFileDiscovery != def.RunFileDiscovery {
 			t.Errorf("RunFileDiscovery = %v, want %v", zeroConfig.RunFileDiscovery, def.RunFileDiscovery)
+		}
+		if zeroConfig.EnablePprof != def.EnablePprof {
+			t.Errorf("EnablePprof = %v, want %v", zeroConfig.EnablePprof, def.EnablePprof)
+		}
+		if zeroConfig.DiscoveryQueueMax != def.DiscoveryQueueMax {
+			t.Errorf("DiscoveryQueueMax = %d, want %d", zeroConfig.DiscoveryQueueMax, def.DiscoveryQueueMax)
 		}
 	})
 }

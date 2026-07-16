@@ -2,6 +2,7 @@ package files
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"golang.org/x/sync/errgroup"
 
@@ -58,7 +60,7 @@ func WalkImageDir(deps *WalkDeps) {
 
 	eg.Go(func() error {
 		for file := range resultsChan {
-			if err := deps.Q.Enqueue(file); err != nil {
+			if err := enqueueWithBackpressure(ctx, deps.Q, file); err != nil {
 				slog.Error("failed to enqueue file", "file", file, "err", err)
 				return fmt.Errorf("failed to enqueue file %q: %w", file, err)
 			}
@@ -84,4 +86,27 @@ func WalkImageDir(deps *WalkDeps) {
 	deps.QSendersActive.Add(-1)
 
 	slog.Info("walkImageDir for all images Ended")
+}
+
+// enqueueWithBackpressure enqueues a file path into the discovery queue with
+// backpressure. If the queue is full (ErrQueueFull), it polls with a short
+// delay until space becomes available or the context is cancelled.
+func enqueueWithBackpressure(ctx context.Context, q queue.Enqueuer[string], file string) error {
+	for {
+		err := q.Enqueue(file)
+		if err == nil {
+			return nil
+		}
+		if errors.Is(err, queue.ErrQueueFull) {
+			// Backpressure: wait for space, but check context cancellation.
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(100 * time.Millisecond):
+				continue
+			}
+		}
+		// Non-recoverable error (closed queue, etc.)
+		return err
+	}
 }

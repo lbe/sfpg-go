@@ -1,5 +1,6 @@
 //go:build e2eweb
 
+// Package web_testsuite provides end-to-end web tests against a live server.
 package web_testsuite
 
 import (
@@ -44,10 +45,10 @@ func TestMain(m *testing.M) {
 	// Step 2: Extract folder/file IDs from SQLite database
 	// Use -noheader to avoid timing info in output
 	if _, statErr := os.Stat(dbPath); statErr == nil {
-		if out, err := exec.Command("sqlite3", "-noheader", dbPath, "SELECT id FROM folders LIMIT 1").Output(); err == nil {
+		if out, cmdErr := exec.Command("sqlite3", "-noheader", dbPath, "SELECT id FROM folders LIMIT 1").Output(); cmdErr == nil {
 			folderID = strings.TrimSpace(strings.SplitN(string(out), "\n", 2)[0])
 		}
-		if out, err := exec.Command("sqlite3", "-noheader", dbPath, "SELECT id FROM files LIMIT 1").Output(); err == nil {
+		if out, cmdErr := exec.Command("sqlite3", "-noheader", dbPath, "SELECT id FROM files LIMIT 1").Output(); cmdErr == nil {
 			fileID = strings.TrimSpace(strings.SplitN(string(out), "\n", 2)[0])
 		}
 	}
@@ -58,7 +59,12 @@ func TestMain(m *testing.M) {
 		fmt.Printf("⚠️  DB at %s: no folder/file IDs found (ID-dependent tests will SKIP)\n", dbPath)
 	}
 
-	// Step 3: Snapshot config before tests (restore after)
+	// Step 3: Disable per-IP login rate limiting for this run, then snapshot
+	// config (restored in Step 5). The suite performs many admin logins from one
+	// IP; the default limit (10 per 60s) causes 429 mid-run. Running before
+	// snapshotConfig() captures limit=0 so restoreConfig() leaves shared dev air
+	// unlimited between runs (see ensureLoginRateLimitDisabled).
+	ensureLoginRateLimitDisabled()
 	snapshotConfig()
 
 	// Step 4: Run all tests — results are collected in-memory via report()
@@ -71,7 +77,7 @@ func TestMain(m *testing.M) {
 
 	// Step 6: Create report directory in module root's tmp/ and write final report
 	reportDir := filepath.Join(moduleRoot, "tmp")
-	if err := os.MkdirAll(reportDir, 0755); err != nil {
+	if mkdirErr := os.MkdirAll(reportDir, 0755); mkdirErr != nil {
 		reportDir = "." // fallback
 	}
 
@@ -81,9 +87,11 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stderr, "❌ Failed to create report file %s: %v\n", reportPath, err)
 		os.Exit(1)
 	}
-	defer f.Close()
 
 	writeReport(f, startTime, finishTime)
+	if closeErr := f.Close(); closeErr != nil {
+		fmt.Fprintf(os.Stderr, "❌ Failed to close report file %s: %v\n", reportPath, closeErr)
+	}
 
 	fmt.Printf("📝 Report file: %s\n", reportPath)
 	fmt.Printf("\n📊 Results: ✅ %d PASS | ❌ %d FAIL | ⏭️ %d SKIP\n", passCount, failCount, skipCount)
@@ -143,9 +151,10 @@ func reportResult(t *testing.T, num int, route, method, authState string, expect
 	}
 
 	icon := "✅"
-	if status == "FAIL" {
+	switch status {
+	case "FAIL":
 		icon = "❌"
-	} else if status == "SKIP" {
+	case "SKIP":
 		icon = "⏭️"
 	}
 	line := fmt.Sprintf("| %s | %s | %s | %d | %d | %s |\n",

@@ -64,7 +64,8 @@ func TestSessionManagerExpandedInterface(t *testing.T) {
 	// Test IsAuthenticated (not authenticated)
 	t.Run("IsAuthenticated_false", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/", nil)
-		authenticated := mgr.IsAuthenticated(req)
+		rec := httptest.NewRecorder()
+		authenticated := mgr.IsAuthenticated(rec, req)
 		if authenticated {
 			t.Error("IsAuthenticated() = true for unauthenticated request, want false")
 		}
@@ -94,7 +95,8 @@ func TestSessionManagerExpandedInterface(t *testing.T) {
 		}
 
 		// Verify authenticated
-		authenticated := mgr.IsAuthenticated(req2)
+		rec2check := httptest.NewRecorder()
+		authenticated := mgr.IsAuthenticated(rec2check, req2)
 		if !authenticated {
 			t.Error("IsAuthenticated() = false after SetAuthenticated(true), want true")
 		}
@@ -129,7 +131,8 @@ func TestSessionManagerExpandedInterface(t *testing.T) {
 		}
 
 		// Verify not authenticated
-		authenticated := mgr.IsAuthenticated(req3)
+		rec3check := httptest.NewRecorder()
+		authenticated := mgr.IsAuthenticated(rec3check, req3)
 		if authenticated {
 			t.Error("IsAuthenticated() = true after SetAuthenticated(false), want false")
 		}
@@ -256,11 +259,12 @@ func TestEnsureCsrfToken_InvalidCookie(t *testing.T) {
 
 func TestValidateCsrfToken_MissingValues(t *testing.T) {
 	store := sessions.NewCookieStore([]byte("test-secret"))
+	mgr := NewManager(store, func() *OptionsConfig { return &OptionsConfig{} })
 
 	// Missing session token
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("csrf_token=token"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	if ValidateCsrfToken(store, req) {
+	if mgr.ValidateCSRFToken(req) {
 		t.Error("expected validation to fail when session token is missing")
 	}
 
@@ -276,13 +280,14 @@ func TestValidateCsrfToken_MissingValues(t *testing.T) {
 	for _, c := range rec.Result().Cookies() {
 		reqMissingForm.AddCookie(c)
 	}
-	if ValidateCsrfToken(store, reqMissingForm) {
+	if mgr.ValidateCSRFToken(reqMissingForm) {
 		t.Error("expected validation to fail when form token is missing")
 	}
 }
 
 func TestValidateCsrfToken_Success(t *testing.T) {
 	store := sessions.NewCookieStore([]byte("test-secret"))
+	mgr := NewManager(store, func() *OptionsConfig { return &OptionsConfig{} })
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rec := httptest.NewRecorder()
@@ -298,7 +303,7 @@ func TestValidateCsrfToken_Success(t *testing.T) {
 		post.AddCookie(c)
 	}
 
-	if !ValidateCsrfToken(store, post) {
+	if !mgr.ValidateCSRFToken(post) {
 		t.Error("expected validation to succeed when tokens match")
 	}
 }
@@ -361,6 +366,7 @@ func TestManagerGetSession_InvalidCookie(t *testing.T) {
 
 func TestValidateCsrfToken_Mismatch(t *testing.T) {
 	store := sessions.NewCookieStore([]byte("test-secret"))
+	mgr := NewManager(store, func() *OptionsConfig { return &OptionsConfig{} })
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rec := httptest.NewRecorder()
@@ -376,7 +382,7 @@ func TestValidateCsrfToken_Mismatch(t *testing.T) {
 		post.AddCookie(c)
 	}
 
-	if ValidateCsrfToken(store, post) {
+	if mgr.ValidateCSRFToken(post) {
 		t.Error("expected validation to fail when tokens do not match")
 	}
 }
@@ -827,9 +833,21 @@ func TestManagerIsAuthenticated_InvalidCookie(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.AddCookie(&http.Cookie{Name: SessionName, Value: "bad"})
+	rec := httptest.NewRecorder()
 
-	if mgr.IsAuthenticated(req) {
+	if mgr.IsAuthenticated(rec, req) {
 		t.Error("IsAuthenticated() = true for invalid cookie, want false")
+	}
+
+	var cleared bool
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == SessionName && c.MaxAge == -1 && c.Value == "" {
+			cleared = true
+			break
+		}
+	}
+	if !cleared {
+		t.Error("expected invalid session cookie to be cleared")
 	}
 }
 
@@ -850,7 +868,8 @@ func TestManagerIsAuthenticated_ExplicitFalse(t *testing.T) {
 		req2.AddCookie(c)
 	}
 
-	if mgr.IsAuthenticated(req2) {
+	rec2 := httptest.NewRecorder()
+	if mgr.IsAuthenticated(rec2, req2) {
 		t.Error("IsAuthenticated() = true when authenticated=false, want false")
 	}
 }

@@ -19,6 +19,7 @@ type Dequeuer[T any] interface {
 type Enqueuer[T any] interface {
 	// Enqueue adds an item to the back of the queue.
 	// Returns ErrClosedQueue if closed.
+	// Returns ErrQueueFull if the queue has reached its maximum capacity.
 	Enqueue(item T) error
 
 	// Len returns the current number of items.

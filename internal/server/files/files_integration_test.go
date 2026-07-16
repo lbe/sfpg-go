@@ -627,3 +627,90 @@ func TestSubmitFileForWrite_Integration(t *testing.T) {
 		t.Errorf("expected submitted file path %s, got %s", file.Path, submitted.Path)
 	}
 }
+
+func TestWriteFileInTx_PersistsXMP(t *testing.T) {
+	_, rwPool, imagesDir, ctx := createTestPoolsAndDir(t)
+
+	// Path must be relative (same as other WriteFileInTx integration tests).
+	path := createTestImage(t, imagesDir, "xmp_persist.jpg")
+
+	cpcRw, err := rwPool.Get()
+	if err != nil {
+		t.Fatalf("rwPool.Get: %v", err)
+	}
+	defer rwPool.Put(cpcRw)
+
+	tx, err := cpcRw.Conn.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("BeginTx: %v", err)
+	}
+	defer tx.Rollback()
+
+	const rawXML = `<rdf:RDF xmlns:exif="http://ns.adobe.com/exif/1.0/">
+<exif:GPSLatitude>26,34.951N</exif:GPSLatitude>
+<exif:GPSLongitude>80,12.014W</exif:GPSLongitude>
+</rdf:RDF>`
+
+	f := &File{
+		Path:   path,
+		Exists: false,
+		File: gallerydb.File{
+			Mtime:     sql.NullInt64{Int64: 1700000000, Valid: true},
+			SizeBytes: sql.NullInt64{Int64: 1024, Valid: true},
+			MimeType:  sql.NullString{String: "image/jpeg", Valid: true},
+			Md5:       sql.NullString{String: "md5xmp", Valid: true},
+			Phash:     sql.NullInt64{Int64: 123, Valid: true},
+			Width:     sql.NullInt64{Int64: 100, Valid: true},
+			Height:    sql.NullInt64{Int64: 100, Valid: true},
+		},
+		XmpRaw: gallerydb.UpsertXMPRawParams{
+			RawXml: sql.NullString{String: rawXML, Valid: true},
+		},
+		XmpProps: []gallerydb.UpsertXMPPropertyParams{
+			{Namespace: "exif", Property: "GPSLatitude", Value: sql.NullString{String: "26,34.951N", Valid: true}},
+			{Namespace: "exif", Property: "GPSLongitude", Value: sql.NullString{String: "80,12.014W", Valid: true}},
+		},
+	}
+
+	qtx := cpcRw.Queries.WithTx(tx)
+	imp := &gallerylib.Importer{Q: qtx}
+	if err := WriteFileInTx(ctx, imp, f); err != nil {
+		t.Fatalf("WriteFileInTx: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+
+	fileID := f.File.ID
+	if fileID == 0 {
+		t.Fatal("file ID not set")
+	}
+
+	raw, err := cpcRw.Queries.GetXMPRaw(ctx, fileID)
+	if err != nil {
+		t.Fatalf("GetXMPRaw: %v", err)
+	}
+	if !raw.RawXml.Valid || raw.RawXml.String != rawXML {
+		t.Errorf("raw XML mismatch: got %q", raw.RawXml.String)
+	}
+
+	props, err := cpcRw.Queries.GetXMPPropertiesByFile(ctx, fileID)
+	if err != nil {
+		t.Fatalf("GetXMPPropertiesByFile: %v", err)
+	}
+	if len(props) != 2 {
+		t.Fatalf("expected 2 properties, got %d", len(props))
+	}
+	foundLat, foundLon := false, false
+	for _, p := range props {
+		if p.Namespace == "exif" && p.Property == "GPSLatitude" && p.Value.String == "26,34.951N" {
+			foundLat = true
+		}
+		if p.Namespace == "exif" && p.Property == "GPSLongitude" && p.Value.String == "80,12.014W" {
+			foundLon = true
+		}
+	}
+	if !foundLat || !foundLon {
+		t.Errorf("missing GPS properties: lat=%v lon=%v", foundLat, foundLon)
+	}
+}

@@ -49,6 +49,37 @@ func TestSetDirectories(t *testing.T) {
 	}
 }
 
+// TestSetup_DBFilePermissions verifies that Setup creates the main and thumbs
+// database files with mode 0664.
+func TestSetup_DBFilePermissions(t *testing.T) {
+	tempDir := t.TempDir()
+
+	ctx := context.Background()
+	cfg := config.DefaultConfig()
+	paths, dbRwPool, dbRoPool, err := Setup(ctx, tempDir, cfg)
+	if err != nil {
+		t.Fatalf("Setup failed: %v", err)
+	}
+	defer func() {
+		if dbRoPool != nil {
+			_ = dbRoPool.Close()
+		}
+		if dbRwPool != nil {
+			_ = dbRwPool.Close()
+		}
+	}()
+
+	for _, p := range []string{paths.Main, paths.Thumbs} {
+		info, err := os.Stat(p)
+		if err != nil {
+			t.Fatalf("failed to stat %q: %v", p, err)
+		}
+		if got := info.Mode().Perm(); got != 0o664 {
+			t.Errorf("expected %q mode 0o664, got 0o%o", p, got)
+		}
+	}
+}
+
 // TestMigrateDB verifies that migrateDB correctly applies database migrations.
 func TestMigrateDB(t *testing.T) {
 	tempDir := t.TempDir()
@@ -373,6 +404,22 @@ func TestMigrateDB_OpenFileFails(t *testing.T) {
 	}
 }
 
+func TestMigrateDB_ChmodFails(t *testing.T) {
+	orig := osChmod
+	osChmod = func(name string, mode os.FileMode) error {
+		return errors.New("chmod denied")
+	}
+	t.Cleanup(func() { osChmod = orig })
+
+	err := migrateDB(filepath.Join(t.TempDir(), "sfpg.db"))
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "failed to set database file permissions") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestMigrateDB_UpFails(t *testing.T) {
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "sfpg.db")
@@ -412,6 +459,22 @@ func TestMigrateBlobsDB_OpenFileFails(t *testing.T) {
 		t.Fatal("expected error")
 	}
 	if !strings.Contains(err.Error(), "failed to open thumbs database file") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestMigrateBlobsDB_ChmodFails(t *testing.T) {
+	orig := osChmod
+	osChmod = func(name string, mode os.FileMode) error {
+		return errors.New("chmod denied")
+	}
+	t.Cleanup(func() { osChmod = orig })
+
+	err := migrateBlobsDB(filepath.Join(t.TempDir(), "thumbs.db"))
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "failed to set thumbs database file permissions") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

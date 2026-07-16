@@ -2,7 +2,9 @@ package auth
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -148,6 +150,65 @@ func TestService_Authenticate(t *testing.T) {
 				t.Error("Authenticate() returned non-nil user, expected nil")
 			}
 		})
+	}
+}
+
+func TestService_Authenticate_SqlErrNoRows(t *testing.T) {
+	ctx := context.Background()
+	recordCalled := false
+
+	store := &mockUserStore{
+		checkAccountLockoutFunc: func(ctx context.Context, username string) (bool, error) {
+			return false, nil
+		},
+		getUserFunc: func(ctx context.Context, username string) (*session.User, error) {
+			return nil, sql.ErrNoRows
+		},
+		recordFailedAttemptFunc: func(ctx context.Context, username string) error {
+			recordCalled = true
+			return nil
+		},
+	}
+
+	svc := NewService(store)
+	user, err := svc.Authenticate(ctx, "nonexistent", "anypassword")
+
+	if !errors.Is(err, ErrInvalidCredentials) {
+		t.Errorf("Authenticate() error = %v, wantErr %v", err, ErrInvalidCredentials)
+	}
+	if user != nil {
+		t.Error("Authenticate() returned non-nil user, expected nil")
+	}
+	if !recordCalled {
+		t.Error("RecordFailedLoginAttempt was not called for sql.ErrNoRows")
+	}
+}
+
+func TestService_Authenticate_WrappedSqlErrNoRows(t *testing.T) {
+	ctx := context.Background()
+	recordCalled := false
+
+	store := &mockUserStore{
+		checkAccountLockoutFunc: func(ctx context.Context, username string) (bool, error) {
+			return false, nil
+		},
+		getUserFunc: func(ctx context.Context, username string) (*session.User, error) {
+			return nil, fmt.Errorf("db lookup failed: %w", sql.ErrNoRows)
+		},
+		recordFailedAttemptFunc: func(ctx context.Context, username string) error {
+			recordCalled = true
+			return nil
+		},
+	}
+
+	svc := NewService(store)
+	_, err := svc.Authenticate(ctx, "nonexistent", "anypassword")
+
+	if !errors.Is(err, ErrInvalidCredentials) {
+		t.Errorf("Authenticate() error = %v, wantErr %v", err, ErrInvalidCredentials)
+	}
+	if !recordCalled {
+		t.Error("RecordFailedLoginAttempt was not called for wrapped sql.ErrNoRows")
 	}
 }
 

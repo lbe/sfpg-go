@@ -1,0 +1,76 @@
+{{ define "dashboard-cache-batch-load" }}
+  <!-- Cache Batch Load -->
+  <div class="card border bg-base-200 shadow-sm">
+    <div class="card-body">
+      <div class="flex items-center justify-between">
+        <h3
+          id="card-cache-batch-load"
+          class="card-title flex items-center gap-2 text-base font-semibold"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            class="h-5 w-5"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+            />
+          </svg>
+          Cache Batch Load
+        </h3>
+        {{ if .Metrics.CacheBatchLoad.IsRunning }}
+          <span
+            id="batch-status"
+            class="badge badge-success badge-sm animate-pulse"
+            >Running</span
+          >
+        {{ else }}
+          <span id="batch-status" class="badge badge-ghost badge-sm">Idle</span>
+        {{ end }}
+      </div>
+      <div class="stats stats-vertical bg-base-100 shadow-sm">
+        <div class="stat">
+          <div class="stat-title text-xs">Progress</div>
+          <div id="batch-progress" class="stat-value text-base font-semibold">
+            {{ formatCount .Metrics.CacheBatchLoad.TargetsCompleted }} /
+            {{ formatCount .Metrics.CacheBatchLoad.TargetsScheduled }}
+          </div>
+          <div id="batch-total-desc" class="stat-desc text-xs">
+            {{ formatCount .Metrics.CacheBatchLoad.TargetsTotal }} total
+          </div>
+          <progress
+            class="progress progress-primary mt-2 w-full"
+            value="{{ cacheBatchLoadProgressPercent .Metrics.CacheBatchLoad }}"
+            max="100"
+          ></progress>
+        </div>
+      </div>
+      <div
+        class="stats stats-vertical bg-base-100 shadow-sm sm:stats-horizontal"
+      >
+        <div class="stat">
+          <div class="stat-title text-xs">Failed</div>
+          <div
+            id="batch-failed"
+            class="{{ if gt .Metrics.CacheBatchLoad.TargetsFailed 0 }}
+              text-error
+            {{ end }} stat-value text-base font-semibold"
+          >
+            {{ formatCount .Metrics.CacheBatchLoad.TargetsFailed }}
+          </div>
+        </div>
+        <div class="stat">
+          <div class="stat-title text-xs">Skipped</div>
+          <div id="batch-skipped" class="stat-value text-base font-semibold">
+            {{ formatCount .Metrics.CacheBatchLoad.TargetsSkipped }}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+{{ end }}

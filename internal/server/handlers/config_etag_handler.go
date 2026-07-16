@@ -56,13 +56,13 @@ func (h *ConfigETagHandler) ConfigIncrementETag(w http.ResponseWriter, r *http.R
 	}
 
 	// Update in-memory app state
-	h.deps.UpdateConfigWithPrecedence(cfg, nil)
+	h.cfgOps.UpdateConfigWithPrecedence(cfg, nil)
 
 	// Update UI-wide cache version
 	ui.SetCacheVersion(cfg.ETagVersion)
 
 	// Invalidate HTTP cache so stale responses with old cache-busting URLs are not served.
-	h.deps.InvalidateHTTPCache()
+	h.cfgOps.InvalidateHTTPCache()
 
 	slog.Info("etag version incremented and app config updated",
 		"new", cfg.ETagVersion)

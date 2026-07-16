@@ -17,6 +17,7 @@ import (
 	"github.com/lbe/sfpg-go/internal/server/config"
 	"github.com/lbe/sfpg-go/internal/server/session"
 	"github.com/lbe/sfpg-go/internal/server/ui"
+	"github.com/lbe/sfpg-go/internal/testutil"
 	"github.com/lbe/sfpg-go/web"
 )
 
@@ -96,7 +97,7 @@ func (m *mockSessionManagerAuthenticatedInvalidCSRF) SaveSession(w http.Response
 	return nil
 }
 
-func (m *mockSessionManagerAuthenticatedInvalidCSRF) IsAuthenticated(r *http.Request) bool {
+func (m *mockSessionManagerAuthenticatedInvalidCSRF) IsAuthenticated(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
@@ -191,7 +192,7 @@ func (w *flushTrackingResponseWriter) Flush() {
 // asynchronous process-restart callback.
 
 func TestConfigHandlers_disableConfigCaching(t *testing.T) {
-	h := NewConfigHandlers(nil, nil, nil, nil, nil, nil, ConfigTemplates{}, context.Background())
+	h := NewConfigHandlers(nil, nil, nil, nil, nil, nil, nil, nil, ConfigTemplates{}, context.Background())
 
 	rr := httptest.NewRecorder()
 
@@ -209,7 +210,7 @@ func TestConfigHandlers_disableConfigCaching(t *testing.T) {
 }
 
 func TestConfigHandlers_ConfigAuthMiddleware(t *testing.T) {
-	h := NewConfigHandlers(nil, nil, nil, nil, nil, nil, ConfigTemplates{}, context.Background())
+	h := NewConfigHandlers(nil, nil, nil, nil, nil, nil, nil, nil, ConfigTemplates{}, context.Background())
 
 	called := false
 	next := func(w http.ResponseWriter, r *http.Request) {
@@ -246,7 +247,7 @@ func TestConfigHandlers_executeConfigTemplate_ExecuteError(t *testing.T) {
 		t.Fatalf("failed to parse error template: %v", err)
 	}
 
-	h := NewConfigHandlers(nil, nil, nil, nil, nil, nil, ConfigTemplates{SaveSuccessAlert: tmpl}, context.Background())
+	h := NewConfigHandlers(nil, nil, nil, nil, nil, nil, nil, nil, ConfigTemplates{SaveSuccessAlert: tmpl}, context.Background())
 
 	rr := httptest.NewRecorder()
 	h.executeConfigTemplate(rr, h.Templates.SaveSuccessAlert, "error-template", nil)
@@ -254,7 +255,15 @@ func TestConfigHandlers_executeConfigTemplate_ExecuteError(t *testing.T) {
 	if rr.Code != http.StatusInternalServerError {
 		t.Errorf("expected status %d, got %d", http.StatusInternalServerError, rr.Code)
 	}
-	if body := rr.Body.String(); !strings.Contains(body, "Internal Server Error") {
-		t.Errorf("expected body to contain %q, got %q", "Internal Server Error", body)
+	doc, err := testutil.ParseHTML(rr.Body)
+	if err != nil {
+		t.Fatalf("failed to parse HTML: %v", err)
+	}
+	body := testutil.FindElementByTag(doc, "body")
+	if body == nil {
+		t.Fatal("missing body element")
+	}
+	if got := strings.TrimSpace(testutil.GetTextContent(body)); got != "Internal Server Error" {
+		t.Errorf("expected body text %q, got %q", "Internal Server Error", got)
 	}
 }

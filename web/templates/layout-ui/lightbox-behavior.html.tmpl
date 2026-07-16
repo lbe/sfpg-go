@@ -1,0 +1,85 @@
+<script type="text/hyperscript">
+  behavior LightboxModal
+    init
+      set window.lightboxSpinner to the innerHTML of #lightbox_content
+    end
+
+    on openModal
+      call resizeLightboxModal()
+      remove .hidden from me
+      remove .items-center from me
+      remove .justify-center from me
+      add .lightbox-open to body
+      remove @disabled from #lightbox-first-btn
+      remove @disabled from #lightbox-prev-btn
+      remove @disabled from #lightbox_close-btn
+      remove @disabled from #lightbox-next-btn
+      remove @disabled from #lightbox-last-btn
+      remove @disabled from #slideshow-btn
+      remove @disabled from #info-btn
+      remove @disabled from #lightbox-actual-size-btn
+      set window.galleryCountHTML to #image-count-display.innerHTML
+      -- Phase A perf: detach the large gallery DOM from the document
+      -- while the lightbox is open so per-step style recalc is O(1).
+      -- display:none was insufficient: hidden nodes still undergo style recalc.
+      -- Capture the node ref before detaching: getElementById cannot
+      -- find a detached node, so we must re-insert via this reference.
+      if #gallery-content exists
+        set window.galleryScrollTop to #gallery-content.scrollTop
+        set window.galleryContentNode to #gallery-content
+        set window.galleryContentParent to #gallery-content.parentElement
+        set window.galleryContentNext to #gallery-content.nextElementSibling
+        remove #gallery-content from window.galleryContentParent
+      end
+    end
+
+    on resizeMe
+      call resizeLightboxModal()
+    end
+
+    on closeModal
+      -- Phase A perf: reattach the gallery DOM removed on open.
+      -- Use the saved node ref (#gallery-content is detached, so the
+      -- #id lookup would return null and skip reattach).
+      if window.galleryContentNode exists
+        if window.galleryContentParent exists
+          if window.galleryContentNext exists
+            put window.galleryContentNode before window.galleryContentNext
+          else
+            put window.galleryContentNode at end of window.galleryContentParent
+          end
+        end
+        if window.galleryScrollTop exists
+          set window.galleryContentNode.scrollTop to window.galleryScrollTop
+        end
+        set window.galleryContentNode to null
+        set window.galleryScrollTop to null
+        set window.galleryContentParent to null
+        set window.galleryContentNext to null
+      end
+      set my.style.left to ''
+      remove .lightbox-open from body
+      set my.style.right to ''
+      remove .slideshow-running from #slideshow-btn
+      set #slideshow-btn.innerHTML to '<svg class="play-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg><svg class="pause-icon hidden" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>'
+      add .hidden to me
+      add .items-center to me
+      add .justify-center to me
+      set the innerHTML of #lightbox_content to window.lightboxSpinner
+      set #image-count-display.innerHTML to window.galleryCountHTML
+      add @disabled to #lightbox-first-btn
+      add @disabled to #lightbox-prev-btn
+      add @disabled to #lightbox_close-btn
+      add @disabled to #lightbox-next-btn
+      add @disabled to #lightbox-last-btn
+      add @disabled to #slideshow-btn
+      add @disabled to #lightbox-actual-size-btn
+    end
+  end
+
+  behavior LightboxOverlay
+    on click
+      trigger closeModal on #lightbox_modal
+    end
+  end
+</script>

@@ -4,24 +4,23 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/lbe/sfpg-go/internal/server/interfaces"
 	"github.com/lbe/sfpg-go/internal/server/ui"
 )
 
 // MenuHandlers holds dependencies for the hamburger menu endpoint.
 type MenuHandlers struct {
 	sessionManager SessionManager
-	deps           interfaces.ServerDeps
+	ServerError    func(w http.ResponseWriter, r *http.Request, err error)
 }
 
 // NewMenuHandlers creates a new MenuHandlers with the given dependencies.
 func NewMenuHandlers(
 	sessionManager SessionManager,
-	deps interfaces.ServerDeps,
+	serverError func(w http.ResponseWriter, r *http.Request, err error),
 ) *MenuHandlers {
 	return &MenuHandlers{
 		sessionManager: sessionManager,
-		deps:           deps,
+		ServerError:    serverError,
 	}
 }
 
@@ -33,7 +32,7 @@ func NewMenuHandlers(
 // only <li> elements (no <ul> wrapper) for use with HTMX innerHTML swap into
 // the persistent <ul id="hamburger-menu-items"> element in the layout.
 func (h *MenuHandlers) HamburgerMenu(w http.ResponseWriter, r *http.Request) {
-	authenticated := h.sessionManager.IsAuthenticated(r)
+	authenticated := h.sessionManager.IsAuthenticated(w, r)
 
 	data := map[string]any{
 		"IsAuthenticated": authenticated,
@@ -51,6 +50,6 @@ func (h *MenuHandlers) HamburgerMenu(w http.ResponseWriter, r *http.Request) {
 
 	if err := ui.RenderTemplate(w, "hamburger-menu-items.html.tmpl", data); err != nil {
 		slog.Error("failed to render hamburger menu", "err", err)
-		h.deps.ServerError(w, r, err)
+		h.ServerError(w, r, err)
 	}
 }

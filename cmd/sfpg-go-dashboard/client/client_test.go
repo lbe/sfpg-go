@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/lbe/sfpg-go/internal/testutil"
 )
 
 // galleryPageWithCSRF returns a minimal gallery page HTML containing a CSRF token
@@ -26,8 +28,8 @@ func TestLogin(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.URL.Path == "/gallery/1" && r.Method == "GET":
-			// Return gallery page with CSRF token
+		case r.URL.Path == "/login-form" && r.Method == "GET":
+			// Return login form with CSRF token
 			w.Header().Set("Content-Type", "text/html")
 			w.WriteHeader(http.StatusOK)
 			fmt.Fprint(w, galleryPageWithCSRF(csrfToken))
@@ -85,7 +87,7 @@ func TestLoginInvalidCredentials(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.URL.Path == "/gallery/1" && r.Method == "GET":
+		case r.URL.Path == "/login-form" && r.Method == "GET":
 			w.Header().Set("Content-Type", "text/html")
 			w.WriteHeader(http.StatusOK)
 			fmt.Fprint(w, galleryPageWithCSRF(csrfToken))
@@ -163,8 +165,12 @@ func TestFetchDashboard(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FetchDashboard failed: %v", err)
 	}
-	if !strings.Contains(html, "dashboard-container") {
-		t.Error("Response missing dashboard-container element")
+	doc, err := testutil.ParseHTML(strings.NewReader(html))
+	if err != nil {
+		t.Fatalf("failed to parse dashboard HTML: %v", err)
+	}
+	if testutil.FindElementByID(doc, "dashboard-container") == nil {
+		t.Error("Response missing #dashboard-container element")
 	}
 }
 

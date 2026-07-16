@@ -173,6 +173,32 @@ $ SEPG_SESSION_MAX_AGE=3600 ./sfpg
 $ SEPG_SESSION_MAX_AGE=2592000 ./sfpg
 ```
 
+### `SEPG_LOGIN_RATE_LIMIT_PER_IP`
+
+**Type**: Integer (requests per 60 seconds per IP)  
+**Default**: `10`  
+**Description**: Controls the maximum number of `POST /login` requests allowed
+per client IP address per 60-second window
+
+- Limits rapid-fire login attempts from a single IP (complements account lockout)
+- Uses the direct connection address (not `X-Forwarded-For`)
+- `0` disables IP rate limiting
+- Hot reload: changes via the config modal apply immediately (no restart)
+- Startup precedence: this env var overrides the database value on startup
+  (same as other `SEPG_*` vars; there is no CLI flag for this field)
+- Related settings (`lockout_threshold`, `lockout_duration`) are config-modal only
+  (Session tab → **Login security**); see [DEPLOYMENT.md](DEPLOYMENT.md#login-security-config-modal--optional-env)
+
+**Example**:
+
+```bash
+# Allow only 5 login attempts per IP per 60 seconds
+$ SEPG_LOGIN_RATE_LIMIT_PER_IP=5 ./sfpg
+
+# Disable IP rate limiting
+$ SEPG_LOGIN_RATE_LIMIT_PER_IP=0 ./sfpg
+```
+
 ### `SEPG_SESSION_SAMESITE`
 
 **Type**: String (`"Strict"`, `"Lax"`, or `"None"`)

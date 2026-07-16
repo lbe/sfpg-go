@@ -339,7 +339,7 @@ func themesField() configField {
 	}
 }
 
-// fields returns the single source of truth for all 33 config fields.
+// fields returns the single source of truth for all 34 config fields.
 // The table is the sole definition used by ToMap, SetValueFromString,
 // ExportToYAML, IdentifyChanges, restartRequiredKeys, MergeDefaults,
 // and RecoverFromCorruption.
@@ -362,7 +362,7 @@ func fields() []configField {
 			stringField("etag_version", "etag-version", func(c *Config) *string { return &c.ETagVersion }, nil, false).toConfigField(),
 			stringField("session_same_site", "session-same-site", func(c *Config) *string { return &c.SessionSameSite }, validateOneOfExactNamed("session same-site", "Lax", "Strict", "None"), true).toConfigField(),
 
-			// --- Int fields (10) ---
+			// --- Int fields (11) ---
 			intField("listener_port", "listener-port", func(c *Config) *int { return &c.ListenerPort }, parsePort, true).toConfigField(),
 			intField("log_retention_count", "log-retention-count", func(c *Config) *int { return &c.LogRetentionCount }, parseIntMin("log retention count", "log retention count", 1), true).toConfigField(),
 			intField("session_max_age", "session-max-age", func(c *Config) *int { return &c.SessionMaxAge }, parseIntNamed("session max age"), true).toConfigField(),
@@ -375,8 +375,11 @@ func fields() []configField {
 			intField("queue_size", "queue-size", func(c *Config) *int { return &c.QueueSize }, parseIntMin("queue size", "queue size", 1), true).toConfigField(),
 			intField("max_http_cache_entry_insert_per_transaction", "max-http-cache-entry-insert-per-transaction", func(c *Config) *int { return &c.MaxHTTPCacheEntryInsertPerTransaction }, parseIntNamed("max http cache entry insert per transaction"), false).toConfigField(),
 			intField("lockout_duration", "lockout-duration", func(c *Config) *int { return &c.LockoutDuration }, parseIntNamed("lockout duration"), false).toConfigField(),
+			intField("lockout_threshold", "lockout-threshold", func(c *Config) *int { return &c.LockoutThreshold }, parseIntMin("lockout threshold", "lockout threshold", 1), false).toConfigField(),
+			intField("login_rate_limit_per_ip", "login-rate-limit-per-ip", func(c *Config) *int { return &c.LoginRateLimitPerIP }, parseIntNonNeg("login rate limit per IP", "login rate limit per IP"), false).toConfigField(),
+			intField("discovery_queue_max", "discovery-queue-max", func(c *Config) *int { return &c.DiscoveryQueueMax }, parseIntNonNeg("discovery queue max", "discovery queue max"), false).toConfigField(),
 
-			// --- Bool fields (6) ---
+			// --- Bool fields (7) ---
 			// Note: third arg is human-readable name for error messages, not dbKey.
 			boolField("session_http_only", "session-http-only", "session http only", func(c *Config) *bool { return &c.SessionHttpOnly }, true, true).toConfigField(),
 			boolField("session_secure", "session-secure", "session secure", func(c *Config) *bool { return &c.SessionSecure }, true, true).toConfigField(),
@@ -384,6 +387,7 @@ func fields() []configField {
 			boolField("enable_http_cache", "http-cache", "http cache enable", func(c *Config) *bool { return &c.EnableHTTPCache }, true, true).toConfigField(),
 			boolField("enable_cache_preload", "enable-cache-preload", "enable cache preload", func(c *Config) *bool { return &c.EnableCachePreload }, false, true).toConfigField(),
 			boolField("run_file_discovery", "discover", "run file discovery", func(c *Config) *bool { return &c.RunFileDiscovery }, false, true).toConfigField(),
+			boolField("enable_pprof", "enable-pprof", "enable pprof", func(c *Config) *bool { return &c.EnablePprof }, true, true).toConfigField(),
 
 			// --- Int64 fields (2) ---
 			int64Field("cache_max_size", "cache-max-size", func(c *Config) *int64 { return &c.CacheMaxSize }, parseInt64NonNeg("cache max size"), true).toConfigField(),

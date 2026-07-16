@@ -9,5 +9,6 @@ NEW_VERSION="$major.$minor.$((patch + 1))"
 cat > $VERSION_FILE << EOF
 package main
 
+// Version is the application release version string.
 const Version = "$NEW_VERSION"
 EOF

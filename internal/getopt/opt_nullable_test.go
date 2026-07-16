@@ -13,7 +13,7 @@ func TestParse_NoDefaults_AllUnset(t *testing.T) {
 	resetEnv()
 	resetFlags()
 	// SessionSecret is required, so set it
-	os.Setenv("SEPG_SESSION_SECRET", "test-secret")
+	os.Setenv("SEPG_SESSION_SECRET", validTestSecret)
 
 	opt := Parse()
 
@@ -60,8 +60,8 @@ func TestParse_NoDefaults_AllUnset(t *testing.T) {
 		t.Errorf("expected EnableHTTPCache.IsSet=false, got %v", opt.EnableHTTPCache.IsSet)
 	}
 
-	if opt.SessionSecret.String != "test-secret" {
-		t.Errorf("expected SessionSecret.String=\"test-secret\", got %q", opt.SessionSecret.String)
+	if opt.SessionSecret.String != validTestSecret {
+		t.Errorf("expected SessionSecret.String=%q, got %q", validTestSecret, opt.SessionSecret.String)
 	}
 	if opt.SessionSecret.IsSet != true {
 		t.Errorf("expected SessionSecret.IsSet=true (required), got %v", opt.SessionSecret.IsSet)
@@ -86,7 +86,7 @@ func TestParse_NoDefaults_AllUnset(t *testing.T) {
 func TestParse_EnvVarSetsIsSet(t *testing.T) {
 	resetEnv()
 	resetFlags()
-	os.Setenv("SEPG_SESSION_SECRET", "test-secret")
+	os.Setenv("SEPG_SESSION_SECRET", validTestSecret)
 	os.Setenv("SFG_PORT", "9090")
 	os.Setenv("SFG_DISCOVER", "true")
 	os.Setenv("SFG_COMPRESSION", "false")
@@ -119,7 +119,7 @@ func TestParse_EnvVarSetsIsSet(t *testing.T) {
 func TestParse_CLIFlagSetsIsSet(t *testing.T) {
 	resetEnv()
 	resetFlags()
-	os.Setenv("SEPG_SESSION_SECRET", "test-secret")
+	os.Setenv("SEPG_SESSION_SECRET", validTestSecret)
 	os.Args = []string{"cmd", "-port=7777", "-discover=false", "-compression=true"}
 
 	opt := Parse()
@@ -150,7 +150,7 @@ func TestParse_CLIFlagSetsIsSet(t *testing.T) {
 func TestParse_CLIOverridesEnv(t *testing.T) {
 	resetEnv()
 	resetFlags()
-	os.Setenv("SEPG_SESSION_SECRET", "test-secret")
+	os.Setenv("SEPG_SESSION_SECRET", validTestSecret)
 	os.Setenv("SFG_PORT", "9090")
 	os.Setenv("SFG_DISCOVER", "true")
 	os.Args = []string{"cmd", "-port=7777", "-discover=false"}
@@ -177,7 +177,7 @@ func TestParse_CLIOverridesEnv(t *testing.T) {
 func TestParse_NoYAMLHandling(t *testing.T) {
 	resetEnv()
 	resetFlags()
-	os.Setenv("SEPG_SESSION_SECRET", "test-secret")
+	os.Setenv("SEPG_SESSION_SECRET", validTestSecret)
 
 	// Create a YAML config file
 	tmpDir := t.TempDir()

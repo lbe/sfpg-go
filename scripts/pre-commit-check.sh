@@ -54,7 +54,7 @@ fi
 
 run_check "lint" make lint
 run_check "validate-templates" make validate-templates
-run_check "validate-hyperscript" make validate-hyperscript
+run_check "validate-html-test-assertions" make validate-html-test-assertions
 
 if [[ "$FAILED_COUNT" -gt 0 ]]; then
   timestamp=$(date '+%Y-%m-%d %H:%M:%S')

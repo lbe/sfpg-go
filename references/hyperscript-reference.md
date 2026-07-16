@@ -1017,12 +1017,12 @@ Use the automated CLI validator to check Hyperscript syntax in templates. This s
 
 Commands:
 
-- Validate all templates: `go run ./scripts/validate-hyperscript.go web/templates`
-- Validate one file: `go run ./scripts/validate-hyperscript.go web/templates/<file>.html.tmpl`
-- Errors only: `go run ./scripts/validate-hyperscript.go -quiet web/templates`
-- JSON output: `go run ./scripts/validate-hyperscript.go -json web/templates`
-- Custom extensions: `go run ./scripts/validate-hyperscript.go -ext=".html,.tmpl,.gohtml" web/templates`
-- Local hyperscript.js: `go run ./scripts/validate-hyperscript.go -hyperscript=web/static/js/_hyperscript.min.js web/templates`
+- Validate all templates: `go run ./scripts/validate-hyperscript/ web/templates`
+- Validate one file: `go run ./scripts/validate-hyperscript/ web/templates/<file>.html.tmpl`
+- Errors only: `go run ./scripts/validate-hyperscript/ -quiet web/templates`
+- JSON output: `go run ./scripts/validate-hyperscript/ -json web/templates`
+- Custom extensions: `go run ./scripts/validate-hyperscript/ -ext=".html,.tmpl,.gohtml" web/templates`
+- Local hyperscript.js: `go run ./scripts/validate-hyperscript/ -hyperscript=web/static/js/_hyperscript.min.js web/templates`
 
 Behavior:
 

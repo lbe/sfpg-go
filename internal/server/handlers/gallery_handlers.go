@@ -70,24 +70,31 @@ type LightboxData struct {
 
 // GalleryHandlers holds dependencies for gallery, image, thumbnail, and lightbox handlers.
 // Dependencies are provided via constructor injection (concrete services) and
-// the deps field (interfaces.ServerDeps), eliminating runtime wiring checks.
+// the galleryOps field (interfaces.GalleryOps), with template helpers passed as
+// function fields — eliminating dependency on the monolithic ServerDeps.
 type GalleryHandlers struct {
-	DBRoPool       dbconnpool.ConnectionPool
-	Ctx            context.Context
-	deps           interfaces.ServerDeps
-	PreloadService cachepreload.PreloadService
+	DBRoPool              dbconnpool.ConnectionPool
+	Ctx                   context.Context
+	galleryOps            interfaces.GalleryOps
+	AddCommonTemplateData func(w http.ResponseWriter, r *http.Request, data map[string]any, fullPage bool) map[string]any
+	ServerError           func(w http.ResponseWriter, r *http.Request, err error)
+	PreloadService        cachepreload.PreloadService
 }
 
 // NewGalleryHandlers creates a new GalleryHandlers with the given dependencies.
 func NewGalleryHandlers(
 	dbRoPool dbconnpool.ConnectionPool,
 	ctx context.Context,
-	deps interfaces.ServerDeps,
+	galleryOps interfaces.GalleryOps,
+	addCommonTemplateData func(w http.ResponseWriter, r *http.Request, data map[string]any, fullPage bool) map[string]any,
+	serverError func(w http.ResponseWriter, r *http.Request, err error),
 ) *GalleryHandlers {
 	return &GalleryHandlers{
-		DBRoPool: dbRoPool,
-		Ctx:      ctx,
-		deps:     deps,
+		DBRoPool:              dbRoPool,
+		Ctx:                   ctx,
+		galleryOps:            galleryOps,
+		AddCommonTemplateData: addCommonTemplateData,
+		ServerError:           serverError,
 	}
 }
 
@@ -97,7 +104,7 @@ func (h *GalleryHandlers) getQueries() (interfaces.HandlerQueries, *dbconnpool.C
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	qh := h.deps.GetHandlerQueries(cpcRo)
+	qh := h.galleryOps.GetHandlerQueries(cpcRo)
 	return qh, cpcRo, func() { h.DBRoPool.Put(cpcRo) }, nil
 }
 
@@ -112,7 +119,7 @@ func (h *GalleryHandlers) handleDBError(w http.ResponseWriter, r *http.Request, 
 		http.NotFound(w, r)
 		return true
 	}
-	h.deps.ServerError(w, r, err)
+	h.ServerError(w, r, err)
 	return true
 }
 

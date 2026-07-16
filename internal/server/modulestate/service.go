@@ -1,3 +1,4 @@
+// Package modulestate tracks active/inactive state for server subsystems.
 package modulestate
 
 import (

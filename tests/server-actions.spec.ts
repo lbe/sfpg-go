@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { loginViaUI, openMenu, menu } from "./helpers";
+import { enableHTTPCache } from "./config-helpers";
 
 test.describe.configure({ timeout: 120000 });
 
@@ -110,53 +111,62 @@ test.describe.serial("Server Actions", () => {
     test.skip(true, "Destructive — server process would stop");
   });
 
-  test("7: Server restart", async ({ page }) => {
+  test("7: Server restart", async ({ page, request }) => {
     // Server restart is non-destructive — the process restarts in <10s.
     // We trigger restart via the UI (HTMX handles CSRF automatically).
-    await openMenu(page);
-    await page.locator('a[aria-label="Configuration"]').click();
-    await page.waitForSelector("#config-form", { timeout: 5000 });
+    // The finally block restores the original config so the server is left
+    // in a clean state.
 
-    // http-cache is in the Performance tab (not Server!). Switch tabs first.
-    await page.locator("#tab-performance-btn").click();
-    await page.waitForTimeout(200);
+    try {
+      await openMenu(page);
+      await page.locator('a[aria-label="Configuration"]').click();
+      await page.waitForSelector("#config-form", { timeout: 5000 });
 
-    const cacheCheckbox = page.locator('input[name="enable_http_cache"]');
-    await expect(cacheCheckbox).toBeVisible({ timeout: 3000 });
-    await cacheCheckbox.uncheck();
+      // http-cache is in the Performance tab (not Server!). Switch tabs first.
+      await page.locator("#tab-performance-btn").click();
+      await page.waitForTimeout(200);
 
-    // Save the config — this triggers the restart-required flow
-    await page.locator("#config-form button[type='submit']").first().click();
+      const cacheCheckbox = page.locator('input[name="enable_http_cache"]');
+      await expect(cacheCheckbox).toBeVisible({ timeout: 3000 });
+      await cacheCheckbox.uncheck();
 
-    // The restart modal should appear (restart-diff-modal)
-    const restartModalBtn = page.locator('button[hx-post="/config/restart"]');
-    await expect(restartModalBtn).toBeVisible({ timeout: 5000 });
-    await restartModalBtn.click({ force: true });
+      // Save the config — this triggers the restart-required flow
+      await page.locator("#config-form button[type='submit']").first().click();
 
-    // Wait for restart to begin
-    await page.waitForTimeout(1500);
+      // The restart modal should appear (restart-diff-modal)
+      const restartModalBtn = page.locator('button[hx-post="/config/restart"]');
+      await expect(restartModalBtn).toBeVisible({ timeout: 5000 });
+      await restartModalBtn.click({ force: true });
 
-    // Poll health endpoint until server recovers (up to 20s)
-    let recovered = false;
-    for (let i = 0; i < 20; i++) {
-      try {
-        const resp = await page.request.get("/health", { timeout: 2000 });
-        if (resp.status() === 200) {
-          recovered = true;
-          break;
+      // Wait for restart to begin
+      await page.waitForTimeout(1500);
+
+      // Poll health endpoint until server recovers (up to 20s)
+      let recovered = false;
+      for (let i = 0; i < 20; i++) {
+        try {
+          const resp = await page.request.get("/health", { timeout: 2000 });
+          if (resp.status() === 200) {
+            recovered = true;
+            break;
+          }
+        } catch {
+          // Server still restarting
         }
-      } catch {
-        // Server still restarting
+        await page.waitForTimeout(1000);
       }
-      await page.waitForTimeout(1000);
-    }
-    expect(recovered).toBeTruthy();
+      expect(recovered).toBeTruthy();
 
-    // Verify the app is fully functional after restart
-    await page.goto("/gallery/1");
-    await expect(page.locator("#gallery-content")).toBeVisible({
-      timeout: 10000,
-    });
+      // Verify the app is fully functional after restart
+      await page.goto("/gallery/1");
+      await expect(page.locator("#gallery-content")).toBeVisible({
+        timeout: 10000,
+      });
+    } finally {
+      // Re-enable HTTP cache so the server is left in a clean state for
+      // subsequent tests and the dev session.
+      await enableHTTPCache(request);
+    }
   });
 
   test("8: Unauthenticated access to server discovery", async ({ page }) => {

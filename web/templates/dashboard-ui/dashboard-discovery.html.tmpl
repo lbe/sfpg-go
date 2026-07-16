@@ -1,0 +1,217 @@
+{{ define "dashboard-discovery" }}
+  <!-- Module Status Cards -->
+  <div>
+    <h2 class="mb-4 text-base font-semibold">Module Status</h2>
+    <div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+      {{ range .Metrics.Modules }}
+        <div class="card border bg-base-200 shadow-sm">
+          <div class="card-body p-4">
+            <div class="flex items-center justify-between">
+              <span class="text-sm font-medium capitalize">{{ .Name }}</span>
+              {{ if eq .Status "active" }}
+                <span class="badge badge-success badge-sm animate-pulse"
+                  >active</span
+                >
+              {{ else if eq .Status "recent" }}
+                <span class="badge badge-warning badge-sm">recent</span>
+              {{ else }}
+                <span class="badge badge-ghost badge-sm">idle</span>
+              {{ end }}
+            </div>
+            {{ if gt .ActivityCount 0 }}
+              <div class="mt-2 text-xs text-base-content/70">
+                Activity count:
+                {{ formatCount .ActivityCount }}
+              </div>
+            {{ end }}
+          </div>
+        </div>
+      {{ else }}
+        <div class="card border bg-base-200 shadow-sm">
+          <div class="card-body p-4 text-center">
+            <p class="text-sm text-base-content/60">No modules registered</p>
+          </div>
+        </div>
+      {{ end }}
+    </div>
+  </div>
+
+  <!-- Worker Pool & Queue -->
+  <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
+    <!-- Worker Pool Stats -->
+    <div class="card border bg-base-200 shadow-sm">
+      <div class="card-body">
+        <h3 class="flex items-center gap-2 text-sm font-semibold">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            class="h-5 w-5"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"
+            />
+          </svg>
+          Worker Pool
+        </h3>
+        <div
+          class="stats stats-vertical bg-base-100 shadow-sm lg:stats-horizontal"
+        >
+          <div class="stat">
+            <div class="stat-title text-xs">Running Workers</div>
+            <div id="wp-running" class="stat-value text-base font-semibold">
+              {{ formatCount .Metrics.WorkerPool.RunningWorkers }} /
+              {{ formatCount .Metrics.WorkerPool.MaxWorkers }}
+            </div>
+          </div>
+          <div class="stat">
+            <div class="stat-title text-xs">Completed Tasks</div>
+            <div id="wp-completed" class="stat-value text-base font-semibold">
+              {{ formatCount .Metrics.WorkerPool.CompletedTasks }}
+            </div>
+          </div>
+          <div class="stat">
+            <div class="stat-title text-xs">Successful</div>
+            <div
+              id="wp-successful"
+              class="stat-value text-base font-semibold text-success"
+            >
+              {{ formatCount .Metrics.WorkerPool.SuccessfulTasks }}
+            </div>
+          </div>
+          <div class="stat">
+            <div class="stat-title text-xs">Failed</div>
+            <div
+              id="wp-failed"
+              class="{{ if gt .Metrics.WorkerPool.FailedTasks 0 }}
+                text-error
+              {{ end }} stat-value text-base font-semibold"
+            >
+              {{ formatCount .Metrics.WorkerPool.FailedTasks }}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Queue Stats -->
+    <div class="card border bg-base-200 shadow-sm">
+      <div class="card-body">
+        <h3 class="flex items-center gap-2 text-sm font-semibold">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            class="h-5 w-5"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M4 6h16M4 12h16M4 18h16"
+            />
+          </svg>
+          File Queue
+        </h3>
+        <div class="stats stats-vertical bg-base-100 shadow-sm">
+          <div class="stat">
+            <div class="stat-title text-xs">Queued Items</div>
+            <div id="queue-queued" class="stat-value text-lg font-semibold">
+              {{ formatCount .Metrics.QueueLength }}
+            </div>
+            <div id="queue-capacity-desc" class="stat-desc text-xs">
+              of {{ formatCount .Metrics.QueueCapacity }} items
+            </div>
+            <progress
+              class="{{ queueUtilizationColor .Metrics.QueueLength .Metrics.QueueCapacity }} progress mt-2 w-full"
+              value="{{ queueUtilizationPercent .Metrics.QueueLength .Metrics.QueueCapacity }}"
+              max="100"
+            ></progress>
+          </div>
+        </div>
+        <div
+          class="stats stats-vertical bg-base-100 shadow-sm sm:stats-horizontal"
+        >
+          <div class="stat">
+            <div class="stat-title text-xs">Utilization</div>
+            <div
+              id="queue-utilization"
+              class="stat-value text-base font-semibold"
+            >
+              {{ queueUtilizationPercent .Metrics.QueueLength .Metrics.QueueCapacity }}%
+            </div>
+          </div>
+          <div class="stat">
+            <div class="stat-title text-xs">Available</div>
+            <div
+              id="queue-available"
+              class="stat-value text-base font-semibold"
+            >
+              {{ formatCount (sub .Metrics.QueueCapacity .Metrics.QueueLength) }}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- File Processing Stats -->
+  <div>
+    <h2 class="mb-4 text-base font-semibold">File Processing</h2>
+    <div class="card border bg-base-200 shadow-sm">
+      <div class="card-body">
+        <div
+          class="stats stats-vertical bg-base-100 shadow-sm lg:stats-horizontal"
+        >
+          <div class="stat">
+            <div class="stat-title text-xs">Total Found</div>
+            <div id="fp-total" class="stat-value text-base font-semibold">
+              {{ formatCount .Metrics.FileProcessing.TotalFound }}
+            </div>
+          </div>
+          <div class="stat">
+            <div class="stat-title text-xs">Existing</div>
+            <div
+              id="fp-existing"
+              class="stat-value text-base font-semibold text-warning"
+            >
+              {{ formatCount .Metrics.FileProcessing.AlreadyExisting }}
+            </div>
+          </div>
+          <div class="stat">
+            <div class="stat-title text-xs">New</div>
+            <div
+              id="fp-new"
+              class="stat-value text-base font-semibold text-success"
+            >
+              {{ formatCount .Metrics.FileProcessing.NewlyInserted }}
+            </div>
+          </div>
+          <div class="stat">
+            <div class="stat-title text-xs">Invalid</div>
+            <div
+              id="fp-invalid"
+              class="stat-value text-base font-semibold text-error"
+            >
+              {{ formatCount .Metrics.FileProcessing.SkippedInvalid }}
+            </div>
+          </div>
+          <div class="stat">
+            <div class="stat-title text-xs">In Flight</div>
+            <div
+              id="fp-inflight"
+              class="stat-value text-base font-semibold text-primary"
+            >
+              {{ formatCount .Metrics.FileProcessing.InFlight }}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+{{ end }}

@@ -6,13 +6,16 @@ import (
 	"html/template"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/lbe/sfpg-go/internal/server/auth"
 	"github.com/lbe/sfpg-go/internal/server/config"
 	"github.com/lbe/sfpg-go/internal/server/ui"
+	"github.com/lbe/sfpg-go/internal/testutil"
 	"github.com/lbe/sfpg-go/web"
+	"golang.org/x/net/html"
 )
 
 // setupTestConfigHandlers creates a ConfigHandlers instance for testing.
@@ -24,7 +27,7 @@ func setupTestConfigHandlers(t *testing.T, mockSvc config.ConfigService, mockAut
 		mockSvc = &mockConfigServiceForETag{}
 	}
 	if mockAuthSvc == nil {
-		mockAuthSvc = &mockAuthService{}
+		mockAuthSvc = &mockAuthServiceForConfig{}
 	}
 
 	// Parse templates
@@ -79,7 +82,9 @@ func setupTestConfigHandlers(t *testing.T, mockSvc config.ConfigService, mockAut
 	sm := &mockSessionManagerAuth{}
 	ctx := context.Background()
 
-	deps := &mockServerDeps{
+	credStore := &fakeCredentialStore{}
+	cfgOps := &mockConfigOps{}
+	helper := &mockTemplateHelpers{
 		CSRFToken: "test-csrf-token",
 		Authed:    true,
 	}
@@ -88,9 +93,11 @@ func setupTestConfigHandlers(t *testing.T, mockSvc config.ConfigService, mockAut
 		mockSvc,
 		mockAuthSvc,
 		sm,
-		nil, // DBRoPool
-		nil, // DBRwPool
-		deps,
+		nil,       // DBRoPool
+		nil,       // DBRwPool
+		credStore, // credStore
+		cfgOps,    // cfgOps
+		helper.AddCommonTemplateData,
 		templates,
 		ctx,
 	)
@@ -158,8 +165,9 @@ func TestConfigIncrementETag_UpdatesInMemoryConfig(t *testing.T) {
 		t.Fatalf("Parse templates: %v", err)
 	}
 
-	// Setup mocks
+	// Setup mocks — load returns the new ETag (simulating post-increment reload)
 	newETag := "20260130-02"
+	defaultETag := config.DefaultConfig().ETagVersion
 	mockSvc := &mockConfigServiceForETag{
 		incrementETagFunc: func(ctx context.Context) (string, error) {
 			return newETag, nil
@@ -191,9 +199,44 @@ func TestConfigIncrementETag_UpdatesInMemoryConfig(t *testing.T) {
 		t.Fatalf("Status = %d, want %d, body: %s", w.Code, http.StatusOK, w.Body.String())
 	}
 
-	// Verify deps is set (UpdateConfigWithPrecedence is called through deps)
-	if h.deps == nil {
-		t.Fatal("deps not set on ConfigHandlers")
+	// Parse HTML response to verify ETag value is rendered
+	doc, err := html.Parse(strings.NewReader(w.Body.String()))
+	if err != nil {
+		t.Fatalf("Parse HTML: %v", err)
+	}
+
+	// Verify response contains #config-etag-version element with correct ETag value
+	etagElem := testutil.FindElementByID(doc, "config-etag-version")
+	if etagElem == nil {
+		t.Fatal("Element #config-etag-version not found in response")
+	}
+	gotETag := testutil.GetAttr(etagElem, "value")
+	if gotETag != newETag {
+		t.Errorf("ETag value = %q, want %q", gotETag, newETag)
+	}
+
+	// Verify ETag format matches the expected pattern (YYMMDD-NN)
+	pattern := `^\d{8}-\d{2}$`
+	matched, _ := regexp.MatchString(pattern, gotETag)
+	if !matched {
+		t.Errorf("ETag %q does not match pattern %s", gotETag, pattern)
+	}
+
+	// Verify ETag actually changed from the default (new != default)
+	if gotETag == defaultETag {
+		t.Errorf("ETag did not change from default: got %q, default was %q", gotETag, defaultETag)
+	}
+
+	// Verify in-memory config was updated via UpdateConfigWithPrecedence
+	cfgOps, ok := h.cfgOps.(*mockConfigOps)
+	if !ok {
+		t.Fatalf("cfgOps is not *mockConfigOps, got %T", h.cfgOps)
+	}
+	if cfgOps.Cfg == nil {
+		t.Fatal("cfgOps.Cfg is nil, UpdateConfigWithPrecedence was not called")
+	}
+	if cfgOps.Cfg.ETagVersion != newETag {
+		t.Errorf("cfgOps.Cfg.ETagVersion = %q, want %q", cfgOps.Cfg.ETagVersion, newETag)
 	}
 }
 
@@ -322,10 +365,18 @@ func TestConfigIncrementETag_InvalidatesHTTPCache(t *testing.T) {
 	// Set session to authenticated
 	h.SessionManager.(*mockSessionManagerAuth).authenticated = true
 
+	// Reset the call tracker before invoking
+	cfgOps := h.cfgOps.(*mockConfigOps)
+	cfgOps.InvalidateHTTPCacheCalled = false
+
 	NewConfigETagHandler(h).ConfigIncrementETag(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("Status = %d, want %d, body: %s", w.Code, http.StatusOK, w.Body.String())
 	}
-	// InvalidateHTTPCache is called through deps (handled by mockServerDeps)
+
+	// Verify that InvalidateHTTPCache was called
+	if !cfgOps.InvalidateHTTPCacheCalled {
+		t.Error("InvalidateHTTPCache was not called after ETag increment")
+	}
 }

@@ -1,5 +1,3 @@
-// Package config provides configuration parsing for the sfpg-go-dashboard TUI application.
-// It supports command-line flags, environment variables, and default values.
 package config
 
 import (
@@ -23,28 +21,6 @@ type Config struct {
 	NoRefresh bool
 	// ShowHelp indicates the help message was requested.
 	ShowHelp bool
-}
-
-// Parse parses command-line flags and environment variables to create a Config.
-// It uses flag.NewFlagSet to allow multiple calls in tests.
-//
-// Precedence (highest to lowest):
-//  1. Command-line flags
-//  2. Environment variables
-//  3. Default values
-//
-// Environment variables:
-//   - SFPG_SERVER: Server URL
-//   - SFPG_USERNAME: Username (optional, for automatic login)
-//   - SFPG_PASSWORD: Password (optional, for automatic login)
-//
-// Command-line flags:
-//   - -server: Server URL (default: http://localhost:8083)
-//   - -refresh: Auto-refresh interval (default: 5s)
-//   - -no-refresh: Disable auto-refresh
-//   - -help: Show help message
-func Parse() *Config {
-	return ParseArgs(os.Args[1:])
 }
 
 // ParseArgs parses the given arguments and returns a Config.

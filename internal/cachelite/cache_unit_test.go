@@ -93,6 +93,7 @@ func TestCanCacheResponse(t *testing.T) {
 		name         string
 		status       int
 		cacheControl string
+		setCookie    string
 		want         bool
 	}{
 		{
@@ -131,13 +132,35 @@ func TestCanCacheResponse(t *testing.T) {
 			cacheControl: "",
 			want:         true,
 		},
+		{
+			name:         "200 OK with Set-Cookie",
+			status:       200,
+			cacheControl: "max-age=3600",
+			setCookie:    "session=abc123; Path=/; HttpOnly",
+			want:         false,
+		},
+		{
+			name:         "200 OK no-store with Set-Cookie",
+			status:       200,
+			cacheControl: "no-store",
+			setCookie:    "session=abc123; Path=/; HttpOnly",
+			want:         false,
+		},
+		{
+			name:         "200 OK empty set-cookie still cacheable",
+			status:       200,
+			cacheControl: "max-age=3600",
+			setCookie:    "",
+			want:         true,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := cachelite.CanCacheResponse(tt.status, tt.cacheControl)
+			got := cachelite.CanCacheResponse(tt.status, tt.cacheControl, tt.setCookie)
 			if got != tt.want {
-				t.Errorf("CanCacheResponse() = %v, want %v", got, tt.want)
+				t.Errorf("CanCacheResponse() = %v, want %v (status=%d, cacheControl=%q, setCookie=%q)",
+					got, tt.want, tt.status, tt.cacheControl, tt.setCookie)
 			}
 		})
 	}

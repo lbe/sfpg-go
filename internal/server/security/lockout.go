@@ -11,13 +11,16 @@ const LockoutThreshold = 3
 
 // CalculateLockout calculates the lockout expiration timestamp based on failed attempts
 // and the configured lockout duration (in seconds).
-// Returns nil (invalid) if failed attempts < LockoutThreshold.
-// Returns the expiration timestamp if failed attempts >= LockoutThreshold.
-func CalculateLockout(failedAttempts int64, now int64, lockoutDurationSec int64) sql.NullInt64 {
+// Returns nil (invalid) if failed attempts < lockoutThreshold.
+// Returns the expiration timestamp if failed attempts >= lockoutThreshold.
+func CalculateLockout(failedAttempts int64, now int64, lockoutDurationSec int64, lockoutThreshold int64) sql.NullInt64 {
 	if lockoutDurationSec <= 0 {
 		lockoutDurationSec = 3600 // default 1 hour
 	}
-	if failedAttempts >= LockoutThreshold {
+	if lockoutThreshold <= 0 {
+		lockoutThreshold = LockoutThreshold // fallback to const default
+	}
+	if failedAttempts >= lockoutThreshold {
 		return sql.NullInt64{Int64: now + lockoutDurationSec, Valid: true}
 	}
 	return sql.NullInt64{Valid: false}

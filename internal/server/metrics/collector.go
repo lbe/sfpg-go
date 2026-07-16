@@ -19,17 +19,19 @@ import (
 
 // WriteBatcherMetrics holds statistics from the WriteBatcher.
 type WriteBatcherMetrics struct {
-	PendingCount  int64     `json:"pending_count"`
-	ChannelSize   int       `json:"channel_size"`
-	MaxBatchSize  int       `json:"max_batch_size"`
-	FlushInterval string    `json:"flush_interval"`
-	IsClosed      bool      `json:"is_closed"`
-	LastFlushTime time.Time `json:"last_flush_time"`
-	TotalFlushed  int64     `json:"total_flushed"`
-	TotalErrors   int64     `json:"total_errors"`
-	DQueEnabled   bool      `json:"dque_enabled"`
-	DQueSize      int       `json:"dque_size"`
-	OverflowCount int64     `json:"overflow_count"`
+	PendingCount   int64     `json:"pending_count"`
+	ChannelSize    int       `json:"channel_size"`
+	MaxBatchSize   int       `json:"max_batch_size"`
+	FlushInterval  string    `json:"flush_interval"`
+	IsClosed       bool      `json:"is_closed"`
+	LastFlushTime  time.Time `json:"last_flush_time"`
+	TotalFlushed   int64     `json:"total_flushed"`
+	TotalErrors    int64     `json:"total_errors"`
+	DQueEnabled    bool      `json:"dque_enabled"`
+	DQueSize       int       `json:"dque_size"`
+	OverflowCount  int64     `json:"overflow_count"`
+	DiskUsageBytes int64     `json:"disk_usage_bytes"`
+	DiskQuotaBytes int64     `json:"disk_quota_bytes"`
 }
 
 // WriteBatcherSource provides metrics from a WriteBatcher.
@@ -129,7 +131,8 @@ type HTTPCacheSource interface {
 	IsEnabled() bool
 	GetSizeBytes() int64
 	GetEntryCount() int64
-	GetConfig() HTTPCacheConfig
+	MaxEntrySize() int64
+	MaxTotalSize() int64
 }
 
 // CacheBatchLoadMetrics holds statistics from the cache batch load manager.
@@ -148,12 +151,6 @@ type CacheBatchLoadMetrics struct {
 // CacheBatchLoadSource provides metrics from the cache batch load manager.
 type CacheBatchLoadSource interface {
 	GetBatchLoadSnapshot() cachebatch.Metrics
-}
-
-// HTTPCacheConfig holds HTTP cache configuration for metrics.
-type HTTPCacheConfig struct {
-	MaxEntrySize int64
-	MaxTotalSize int64
 }
 
 // Snapshot holds a complete snapshot of all metrics.
@@ -309,16 +306,18 @@ func (c *Collector) Collect(ctx context.Context) Snapshot {
 	if c.writeBatcher != nil {
 		stats := c.writeBatcher.GetStats()
 		snapshot.WriteBatcher = WriteBatcherMetrics{
-			PendingCount:  c.writeBatcher.PendingCount(),
-			ChannelSize:   stats.ChannelSize,
-			MaxBatchSize:  stats.MaxBatchSize,
-			FlushInterval: stats.FlushInterval.String(),
-			IsClosed:      stats.IsClosed,
-			TotalFlushed:  stats.TotalFlushed,
-			TotalErrors:   stats.TotalErrors,
-			DQueEnabled:   stats.DQueEnabled,
-			DQueSize:      stats.DQueSize,
-			OverflowCount: stats.OverflowCount,
+			PendingCount:   c.writeBatcher.PendingCount(),
+			ChannelSize:    stats.ChannelSize,
+			MaxBatchSize:   stats.MaxBatchSize,
+			FlushInterval:  stats.FlushInterval.String(),
+			IsClosed:       stats.IsClosed,
+			TotalFlushed:   stats.TotalFlushed,
+			TotalErrors:    stats.TotalErrors,
+			DQueEnabled:    stats.DQueEnabled,
+			DQueSize:       stats.DQueSize,
+			OverflowCount:  stats.OverflowCount,
+			DiskUsageBytes: stats.DiskBytes,
+			DiskQuotaBytes: stats.MaxDiskBytes,
 		}
 	}
 
@@ -361,13 +360,12 @@ func (c *Collector) Collect(ctx context.Context) Snapshot {
 	}
 
 	if c.httpCache != nil {
-		cfg := c.httpCache.GetConfig()
 		snapshot.HTTPCache = HTTPCacheMetrics{
 			Enabled:      c.httpCache.IsEnabled(),
 			SizeBytes:    c.httpCache.GetSizeBytes(),
 			EntryCount:   c.httpCache.GetEntryCount(),
-			MaxEntrySize: cfg.MaxEntrySize,
-			MaxTotalSize: cfg.MaxTotalSize,
+			MaxEntrySize: c.httpCache.MaxEntrySize(),
+			MaxTotalSize: c.httpCache.MaxTotalSize(),
 		}
 	}
 

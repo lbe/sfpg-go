@@ -61,10 +61,12 @@ type ConnectionError struct {
 	Err error  // the underlying error
 }
 
+// Error returns a formatted connection error message.
 func (e *ConnectionError) Error() string {
 	return fmt.Sprintf("connection %s failed: %v", e.Op, e.Err)
 }
 
+// Unwrap returns the underlying error.
 func (e *ConnectionError) Unwrap() error {
 	return e.Err
 }
@@ -116,6 +118,7 @@ type CpConn struct {
 	idleSince time.Time
 }
 
+// Close closes the underlying connection and its prepared queries.
 func (cpc *CpConn) Close() error {
 	var errs []error
 
@@ -135,6 +138,7 @@ func (cpc *CpConn) Close() error {
 	return nil
 }
 
+// PragmaOptimize runs SQLite PRAGMA optimize on the connection.
 func (cpc *CpConn) PragmaOptimize(ctx context.Context) {
 	if _, err := cpc.Conn.ExecContext(ctx, `PRAGMA optimize;`); err != nil {
 		slog.Debug("PRAGMA Optimize", "err", err)
@@ -191,6 +195,22 @@ type DbSQLConnPool struct {
 	closed atomic.Bool
 }
 
+// isThumbsDBAttached reports whether the "thumbs" schema is already ATTACHed on
+// conn. Pool Monitor shrink returns driver connections to sql.DB with thumbs
+// still attached; without this guard newCpConn would ATTACH again and fail.
+func isThumbsDBAttached(conn *sql.Conn, ctx context.Context) (bool, error) {
+	var one int
+	err := conn.QueryRowContext(ctx, "SELECT 1 FROM pragma_database_list() WHERE name='thumbs' LIMIT 1").
+		Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("error querying database list: %w", err)
+	}
+	return true, nil
+}
+
 // newCpConn creates, pings, and initializes a new CpConn, wrapping a raw *sql.Conn.
 // For read-write pools, creation is serialized via creationMu to avoid SQLITE_BUSY.
 // For read-only pools, connections are created concurrently.
@@ -212,9 +232,17 @@ func (p *DbSQLConnPool) newCpConn() (*CpConn, error) {
 		return nil, &ConnectionError{Op: "ping", Err: err}
 	}
 
-	// ATTACH the thumbs database on this connection if configured.
-	// The attachment is connection-scoped: each *sql.Conn requires its own ATTACH.
+	var thumbsAttached bool
 	if p.Config.ThumbsDBPath != "" {
+		if thumbsAttached, err = isThumbsDBAttached(conn, p.ctx); err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("check thumbs database attachment: %w", err)
+		}
+	}
+
+	// ATTACH the thumbs database when configured and not already present on
+	// recycled driver connections (see isThumbsDBAttached).
+	if p.Config.ThumbsDBPath != "" && !thumbsAttached {
 		attachSQL := fmt.Sprintf("ATTACH DATABASE 'file:%s' AS thumbs", filepath.ToSlash(p.Config.ThumbsDBPath))
 		if _, err = conn.ExecContext(p.ctx, attachSQL); err != nil {
 			conn.Close()

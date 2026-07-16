@@ -1,3 +1,5 @@
+// Package getopt parses runtime configuration from environment variables and command-line flags.
+// Precedence: CLI flags > Environment variables.
 package getopt
 
 import (
@@ -28,8 +30,6 @@ type OptString struct {
 	IsSet  bool
 }
 
-// Package getopt parses runtime configuration from environment variables and command-line flags.
-// Precedence: CLI flags > Environment variables.
 // Opt holds all runtime options parsed from env and CLI flags.
 // All fields use nullable types to track whether they were explicitly set.
 type Opt struct {
@@ -45,6 +45,7 @@ type Opt struct {
 	SessionHttpOnly      OptBool   // Set HttpOnly flag on session cookies
 	SessionMaxAge        OptInt    // Max age for session cookies in seconds
 	SessionSameSite      OptString // SameSite policy for session cookies (Strict, Lax, None)
+	LoginRateLimitPerIP  OptInt    // Max login POST requests per IP per 60-second window (0 = disabled)
 	UnlockAccount        OptString // Username to unlock (empty string if not set)
 	RestoreLastKnownGood OptBool   // Restore last known good configuration from database on startup
 	IncrementETag        OptBool   // Increment application-wide ETag version on startup
@@ -218,8 +219,13 @@ func validateOpt(opt *Opt) error {
 		opt.DebugDelayMS.Int = 0
 	}
 	// Skip session secret validation when using unlock-account (database operation doesn't need sessions)
-	if (!opt.UnlockAccount.IsSet || opt.UnlockAccount.String == "") && (!opt.SessionSecret.IsSet || opt.SessionSecret.String == "") {
-		return fmt.Errorf("session-secret is required (set via SEPG_SESSION_SECRET environment variable or -session-secret flag)")
+	if !opt.UnlockAccount.IsSet || opt.UnlockAccount.String == "" {
+		if !opt.SessionSecret.IsSet || opt.SessionSecret.String == "" {
+			return fmt.Errorf("session-secret is required (set via SEPG_SESSION_SECRET environment variable or -session-secret flag)")
+		}
+		if len(opt.SessionSecret.String) < 32 {
+			return fmt.Errorf("session-secret must be at least 32 bytes long (got %d bytes); generate a strong random secret via: head -c 48 /dev/urandom | base64", len(opt.SessionSecret.String))
+		}
 	}
 	return nil
 }
@@ -310,6 +316,14 @@ func applyEnvVars(opt *Opt) {
 	if v := strings.TrimSpace(os.Getenv("SEPG_SESSION_SAMESITE")); v != "" {
 		opt.SessionSameSite.String = v
 		opt.SessionSameSite.IsSet = true
+	}
+	if v := strings.TrimSpace(os.Getenv("SEPG_LOGIN_RATE_LIMIT_PER_IP")); v != "" {
+		if i, err := strconv.Atoi(v); err == nil {
+			opt.LoginRateLimitPerIP.Int = i
+			opt.LoginRateLimitPerIP.IsSet = true
+		} else {
+			usageExit(fmt.Sprintf("invalid SEPG_LOGIN_RATE_LIMIT_PER_IP: %v", err))
+		}
 	}
 	if v := strings.TrimSpace(os.Getenv("SFG_UNLOCK_ACCOUNT")); v != "" {
 		opt.UnlockAccount.String = v

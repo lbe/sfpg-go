@@ -1,3 +1,4 @@
+// Package validation provides configuration and input validation helpers.
 package validation
 
 import (

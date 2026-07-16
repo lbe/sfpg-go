@@ -121,7 +121,7 @@ func TestConfigHandlers_ExportConfigToFileHandler_Success(t *testing.T) {
 	if pre == nil {
 		t.Fatal("missing pre element")
 	}
-	if got := testutil.GetTextContent(pre); !strings.Contains(got, "site_name: TestExport") {
-		t.Errorf("expected YAML content, got %q", got)
+	if got := testutil.GetTextContent(pre); got != "site_name: TestExport\n" {
+		t.Errorf("pre text = %q, want %q", got, "site_name: TestExport\n")
 	}
 }

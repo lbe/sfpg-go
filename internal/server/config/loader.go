@@ -139,6 +139,9 @@ var cliRoutes = []cliRoute{
 	}},
 	{"session_max_age", func(o getopt.Opt) (string, bool) { return strconv.Itoa(o.SessionMaxAge.Int), o.SessionMaxAge.IsSet }},
 	{"session_same_site", func(o getopt.Opt) (string, bool) { return o.SessionSameSite.String, o.SessionSameSite.IsSet }},
+	{"login_rate_limit_per_ip", func(o getopt.Opt) (string, bool) {
+		return strconv.Itoa(o.LoginRateLimitPerIP.Int), o.LoginRateLimitPerIP.IsSet
+	}},
 }
 
 // loadFromOpt applies explicitly set CLI/environment values to c. Fields whose

@@ -67,12 +67,7 @@ test.describe("Authentication", () => {
       form: { username: "admin", password: "admin" },
       headers: { Origin: "http://localhost:8083" },
     });
-    expect(r.status()).toBe(200);
-
-    // After login via request, navigate to dashboard to verify session
-    await page.goto("/dashboard");
-    await expect(page.locator("body")).toBeAttached();
-    // May or may not render dashboard depending on session sharing
+    expect(r.status()).toBe(403);
   });
 
   test("5: Logout clears session", async ({ page }) => {

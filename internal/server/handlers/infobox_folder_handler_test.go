@@ -4,12 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/lbe/sfpg-go/internal/gallerydb"
+	"github.com/lbe/sfpg-go/internal/server/ui"
 	"github.com/lbe/sfpg-go/internal/testutil"
 )
 
@@ -88,6 +90,9 @@ func TestInfoBoxFolder_LastModifiedAndCounts(t *testing.T) {
 	doc, err := testutil.ParseHTML(w.Body)
 	if err != nil {
 		t.Fatalf("parse HTML: %v", err)
+	}
+	if w.Header().Get("HX-Push-URL") != "" {
+		t.Error("expected no HX-Push-URL for info box (must not change URL for lightbox close navigation)")
 	}
 	if testutil.FindElementByID(doc, "folder-image-count") == nil {
 		t.Fatal("missing #folder-image-count")
@@ -174,5 +179,23 @@ func TestInfoBoxFolder_UpdatedAtFallback(t *testing.T) {
 	}
 	if _, err := http.ParseTime(w.Header().Get("Last-Modified")); err != nil {
 		t.Errorf("expected Last-Modified to be parseable, got %q", w.Header().Get("Last-Modified"))
+	}
+}
+
+func TestInfoBoxFolder_CacheBusting(t *testing.T) {
+	qh := &fakeHandlerQueries{
+		folder: gallerydb.Folder{ID: 99, Name: "CacheBust"},
+	}
+	gh := setupTestGalleryHandlers(t, qh)
+
+	url := fmt.Sprintf("/info/folder/99?v=%s", ui.GetCacheVersion())
+	req := httptest.NewRequest(http.MethodGet, url, nil)
+	req.SetPathValue("id", "99")
+	w := httptest.NewRecorder()
+
+	gh.InfoBoxFolder(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d", w.Code)
 	}
 }

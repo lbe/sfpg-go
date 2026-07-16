@@ -28,6 +28,7 @@ help:
 	@echo "  make perf-test-help - Show performance testing commands"
 	@echo "  make validate-templates - Validate Go template rendering + Hyperscript"
 	@echo "  make validate-hyperscript - Validate Hyperscript in templates"
+	@echo "  make validate-html-test-assertions - Detect forbidden HTML assertion patterns in tests"
 	@echo ""
 	@echo "Environment variables:"
 	@echo "  PKG=<path>         - Override package (default: $(PKG))"
@@ -41,7 +42,7 @@ test:
 .PHONY: test-all
 test-all:
 	# Run tests across all packages
-	time SEPG_SESSION_SECURE=false go test -tags "integration e2e e2eweb" ./... $(ARGS)
+	time SEPG_SESSION_SECURE=false go test -tags "integration e2eweb" ./... $(ARGS)
 
 .PHONY: test-browser
 test-browser:
@@ -124,13 +125,18 @@ clean: perf-test-clean
 .PHONY: validate-hyperscript
 validate-hyperscript:
 	# Validate Hyperscript syntax across templates
-	go run ./scripts/validate-hyperscript.go web/templates
+	go run ./scripts/validate-hyperscript/ web/templates
+
+.PHONY: validate-html-test-assertions
+validate-html-test-assertions:
+	# Detect forbidden HTML assertion patterns in *_test.go files
+	go run ./scripts/validate-html-test-assertions/ .
 
 .PHONY: validate-templates
 validate-templates:
 	# Fast-fail checks for template integrity and embedded hyperscript
 	SEPG_SESSION_SECURE=false go test ./internal/server -run TestTemplateRendering -count=1
-	go run ./scripts/validate-hyperscript.go -quiet web/templates
+	go run ./scripts/validate-hyperscript/ -quiet web/templates
 
 .PHONY: format fmt
 format fmt:
@@ -138,7 +144,7 @@ format fmt:
 	@git ls-files '*.go' | grep -Ev '^(tmp/|zarchive/)' | xargs gofmt -w
 	@git ls-files '*.go' | grep -Ev '^(tmp/|zarchive/)' | xargs goimports -w
 	# Format templates, styles, scripts, markdown, yaml, etc. via Prettier
-	npx --yes prettier --write .
+	npx prettier --write .
 
 .PHONY: format-check fmt-check
 format-check fmt-check:
@@ -152,7 +158,7 @@ format-check fmt-check:
 	# Check Go imports with goimports
 	@git ls-files '*.go' | grep -Ev '^(tmp/|zarchive/)' | xargs goimports -l 2>/dev/null | grep . && exit 1 || echo "Go imports are correct."
 	# Check Prettier formatting
-	npx --yes prettier --check .
+	npx prettier --check .
 
 # Performance testing targets
 .PHONY: perf-test

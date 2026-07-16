@@ -9,17 +9,6 @@ test.describe.configure({ timeout: 90000 });
 
 // Config tests modify server state — use serial execution to avoid races.
 test.describe.serial("Configuration", () => {
-  // Snapshot/restore config for tests that mutate server state (import preview/commit)
-  const snapshotRestore = makeSnapshotRestore();
-
-  test.beforeAll(async ({ request }) => {
-    await snapshotRestore.snapshot(request);
-  });
-
-  test.afterAll(async ({ request }) => {
-    await snapshotRestore.restore(request);
-  });
-
   test.beforeEach(async ({ page }) => {
     await loginViaUI(page);
   });
@@ -94,6 +83,58 @@ test.describe.serial("Configuration", () => {
         timeout: 10000,
       });
     }
+  });
+
+  test("3b: Config save (login security)", async ({ page }) => {
+    await openMenu(page);
+    await page.locator('a[aria-label="Configuration"]').click();
+    await page.waitForSelector("#config-form", { timeout: 5000 });
+    await page.locator("#tab-session-btn").click();
+    await page.waitForTimeout(200);
+
+    const ipLimit = page.locator('input[name="login_rate_limit_per_ip"]');
+    const threshold = page.locator('input[name="lockout_threshold"]');
+    const duration = page.locator('input[name="lockout_duration"]');
+
+    const origIP = await ipLimit.inputValue();
+    const origThreshold = await threshold.inputValue();
+    const origDuration = await duration.inputValue();
+
+    await ipLimit.fill("11");
+    await threshold.fill("5");
+    await duration.fill("2400");
+
+    await page.locator("#config-form button[type='submit']").first().click();
+    await expect(page.locator("#config-success-message")).toBeVisible({
+      timeout: 10000,
+    });
+
+    await page.locator("#config-cancel-btn").click();
+    await page.waitForTimeout(200);
+
+    await openMenu(page);
+    await page.locator('a[aria-label="Configuration"]').click();
+    await page.waitForSelector("#config-form", { timeout: 5000 });
+    await page.locator("#tab-session-btn").click();
+    await page.waitForTimeout(200);
+
+    await expect(
+      page.locator('input[name="login_rate_limit_per_ip"]'),
+    ).toHaveValue("11");
+    await expect(page.locator('input[name="lockout_threshold"]')).toHaveValue(
+      "5",
+    );
+    await expect(page.locator('input[name="lockout_duration"]')).toHaveValue(
+      "2400",
+    );
+
+    await ipLimit.fill(origIP);
+    await threshold.fill(origThreshold);
+    await duration.fill(origDuration);
+    await page.locator("#config-form button[type='submit']").first().click();
+    await expect(page.locator("#config-success-message")).toBeVisible({
+      timeout: 10000,
+    });
   });
 
   test("4: Config validation error", async ({ page }) => {
@@ -304,63 +345,7 @@ test.describe.serial("Configuration", () => {
     }
   });
 
-  test("12: Config restart", async ({ page }) => {
-    // Config restart is non-destructive — the server restarts in <10s.
-    // The snapshot/restore in beforeAll/afterAll ensures config is preserved.
-    // This test verifies the restart-required flow: toggle http-cache (which
-    // requires restart), confirm the badge appears, then trigger restart.
-
-    await openMenu(page);
-    await page.locator('a[aria-label="Configuration"]').click();
-    await page.waitForSelector("#config-form", { timeout: 5000 });
-
-    // http-cache is in the Performance tab (not Server!). Switch tabs first.
-    await page.locator("#tab-performance-btn").click();
-    await page.waitForTimeout(200);
-
-    const cacheCheckbox = page.locator('input[name="enable_http_cache"]');
-    await expect(cacheCheckbox).toBeVisible({ timeout: 3000 });
-    await cacheCheckbox.uncheck();
-
-    // Save — this triggers the restart-required flow:
-    // 1. Server returns OOB swap making badge visible
-    // 2. htmx:afterSettle handler opens #restart-diff-modal automatically
-    await page.locator("#config-form button[type='submit']").first().click();
-
-    // Wait for the restart modal to open (auto-triggered by settle handler)
-    const restartBtn = page.locator('button[hx-post="/config/restart"]');
-    await expect(restartBtn).toBeVisible({ timeout: 5000 });
-    await restartBtn.click({ force: true });
-
-    // Wait for restart to begin
-    await page.waitForTimeout(1000);
-
-    // Poll health endpoint until server recovers (up to 20s).
-    // The server restarts on the same port (we only toggled http-cache,
-    // not the listener port), so baseURL remains valid.
-    let recovered = false;
-    for (let i = 0; i < 20; i++) {
-      try {
-        const resp = await page.request.get("/health", { timeout: 2000 });
-        if (resp.status() === 200) {
-          recovered = true;
-          break;
-        }
-      } catch {
-        // Server still restarting
-      }
-      await page.waitForTimeout(1000);
-    }
-    expect(recovered).toBeTruthy();
-
-    // Verify the app is fully functional after restart
-    await page.goto("/gallery/1");
-    await expect(page.locator("#gallery-content")).toBeVisible({
-      timeout: 10000,
-    });
-  });
-
-  test("13: Config unauthenticated returns 401", async ({ browser }) => {
+  test("12: Config unauthenticated returns 401", async ({ browser }) => {
     // Use a brand-new context (isolated cookies) so auth from prior tests doesn't leak
     const freshContext = await browser.newContext();
     const freshPage = await freshContext.newPage();
@@ -368,4 +353,82 @@ test.describe.serial("Configuration", () => {
     expect(response?.status()).toBe(401);
     await freshContext.close();
   });
+
+  test("13: Config restart", async ({ page, request }) => {
+    // Config restart is non-destructive — the server restarts in <10s.
+    // This test is intentionally LAST in the serial run because it restarts
+    // the server and must not race with other tests.
+    // This test verifies the restart-required flow: toggle http-cache (which
+    // requires restart), confirm the badge appears, then trigger restart.
+    // It also restores the original config so the server is left in a clean
+    // state for subsequent test files.
+
+    try {
+      await openMenu(page);
+      await page.locator('a[aria-label="Configuration"]').click();
+      await page.waitForSelector("#config-form", { timeout: 5000 });
+
+      // http-cache is in the Performance tab (not Server!). Switch tabs first.
+      await page.locator("#tab-performance-btn").click();
+      await page.waitForTimeout(200);
+
+      const cacheCheckbox = page.locator('input[name="enable_http_cache"]');
+      await expect(cacheCheckbox).toBeVisible({ timeout: 3000 });
+      await cacheCheckbox.uncheck();
+
+      // Save — this triggers the restart-required flow:
+      // 1. Server returns OOB swap making badge visible
+      // 2. htmx:afterSettle handler opens #restart-diff-modal automatically
+      await page.locator("#config-form button[type='submit']").first().click();
+
+      // Wait for the restart modal to open (auto-triggered by settle handler)
+      const restartBtn = page.locator('button[hx-post="/config/restart"]');
+      await expect(restartBtn).toBeVisible({ timeout: 5000 });
+      await restartBtn.click({ force: true });
+
+      // Wait for restart to begin
+      await page.waitForTimeout(1000);
+
+      // Poll health endpoint until server recovers (up to 20s).
+      // The server restarts on the same port (we only toggled http-cache,
+      // not the listener port), so baseURL remains valid.
+      let recovered = false;
+      for (let i = 0; i < 20; i++) {
+        try {
+          const resp = await page.request.get("/health", { timeout: 2000 });
+          if (resp.status() === 200) {
+            recovered = true;
+            break;
+          }
+        } catch {
+          // Server still restarting
+        }
+        await page.waitForTimeout(1000);
+      }
+      expect(recovered).toBeTruthy();
+
+      // Verify the app is fully functional after restart
+      await page.goto("/gallery/1");
+      await expect(page.locator("#gallery-content")).toBeVisible({
+        timeout: 10000,
+      });
+    } finally {
+      // Restore the snapshot config and restart if required. This cleanup runs
+      // inside the test because Playwright runs this file's afterAll before the
+      // last test when it is the final serial test in the file.
+      await snapshotRestore.restore(request);
+    }
+  });
+});
+
+// Snapshot/restore config for tests that mutate server state.
+// Defined at file scope so the restore runs after the serial group completes.
+const snapshotRestore = makeSnapshotRestore();
+
+test.beforeAll(async ({ request }) => {
+  await snapshotRestore.snapshot(request);
+});
+
+test.afterAll(async ({ request }) => {
+  await snapshotRestore.restore(request);
 });

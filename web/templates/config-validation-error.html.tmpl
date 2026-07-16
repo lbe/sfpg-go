@@ -1,16 +1,10 @@
 <div id="config-success-message">
+  {{ template "config-spinner.html.tmpl" . }}
   <div
     id="config-error-message"
     class="alert alert-error mb-4"
     hx-swap-oob="outerHTML"
-    _="on load
-			remove .htmx-request from #config-form
-			remove .htmx-request from body
-			add .hidden to #config-spinner
-		on htmx:afterSwap from me
-			remove .htmx-request from #config-form
-			remove .htmx-request from body
-			add .hidden to #config-spinner"
+    _="on load call clearConfigSpinner()"
   >
     <svg
       xmlns="http://www.w3.org/2000/svg"
@@ -27,11 +21,17 @@
     </svg>
     <div>
       {{ range $key, $errMsg := .Errors }}
-        {{ if eq $key "_global" }}
-          {{ $errMsg }}<br />
-        {{ else }}
-          <strong>{{ $key }}:</strong> {{ $errMsg }}<br />
-        {{ end }}
+        <div
+          class="config-validation-error-entry"
+          data-error-key="{{ $key }}"
+          data-error-message="{{ $errMsg }}"
+        >
+          {{ if eq $key "_global" }}
+            {{ $errMsg }}
+          {{ else }}
+            <strong>{{ $key }}:</strong> {{ $errMsg }}
+          {{ end }}
+        </div>
       {{ end }}
     </div>
   </div>

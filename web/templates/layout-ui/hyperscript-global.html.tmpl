@@ -1,0 +1,214 @@
+<script type="text/hyperscript">
+  def disableFooterButtons()
+    add @disabled to #lightbox-first-btn
+    add @disabled to #lightbox-prev-btn
+    add @disabled to #lightbox_close-btn
+    add @disabled to #lightbox-next-btn
+    add @disabled to #lightbox-last-btn
+    add @disabled to #slideshow-btn
+    add @disabled to #info-btn
+    add @disabled to #lightbox-actual-size-btn
+  end
+
+  def enableFooterButtons()
+    remove @disabled from #lightbox-first-btn
+    remove @disabled from #lightbox-prev-btn
+    remove @disabled from #lightbox_close-btn
+    remove @disabled from #lightbox-next-btn
+    remove @disabled from #lightbox-last-btn
+    remove @disabled from #slideshow-btn
+    remove @disabled from #info-btn
+    remove @disabled from #lightbox-actual-size-btn
+  end
+
+  -- DRY Refactor for Lightbox Navigation
+  -- Route the image immediately. The info box is loaded by the new
+  -- #lightbox-ui after HTMX swaps it (initLightboxRouter sends manual-load).
+  def lightboxNav(imgUrl, infoId)
+     send route(url: imgUrl) to #lightbox-images
+  end
+
+  -- OPTIMIZED SCALING LOGIC (Fixed for 3-slot carousel)
+  def updateScaledValues()
+    -- Guard: elements may not exist outside lightbox context
+    if #scaled-width is null exit end
+    if #lightbox-images is null exit end
+
+    -- 1. Find the currently visible slot
+    set slots to #lightbox-images.querySelectorAll('img.lightbox-slot')
+    set img to null
+    for s in slots
+      if s does not match .hidden set img to s end
+    end
+
+    if img exists
+      if img.clientWidth > 0 and img.clientHeight > 0
+        set #scaled-width.innerText to img.clientWidth.toLocaleString()
+        set #scaled-height.innerText to img.clientHeight.toLocaleString()
+        if #scaled-spinner exists
+          add .hidden to #scaled-spinner
+        end
+      end
+    end
+  end
+
+  def updateScaled()
+    -- Use rAF-driven custom event to wait for layout without timing hacks.
+    -- requestAnimationFrame fires after the browser computes layout, so
+    -- clientWidth/Height are guaranteed valid when we check them.
+    if #lightbox-images is null exit end
+    js
+      requestAnimationFrame(function() {
+        var el = document.getElementById('lightbox-images');
+        if (el) el.dispatchEvent(new CustomEvent('layoutReady'));
+      });
+    end
+    wait for layoutReady from #lightbox-images
+    call updateScaledValues()
+  end
+
+  -- Calculate scale for lightbox images (up to 200% max)
+  -- Scales images to fit container, upscaling small images up to 200%
+  def updateLightboxScale(img)
+    if img is null exit end
+
+    set container to #lightbox-images
+    if container is null exit end
+    if container.clientWidth is 0 exit end
+
+    set containerWidth to container.clientWidth
+    set containerHeight to container.clientHeight
+
+    set naturalWidth to img.naturalWidth
+    set naturalHeight to img.naturalHeight
+
+    -- Exit if image hasn't loaded yet
+    if naturalWidth is 0 or naturalHeight is 0
+      exit
+    end
+
+    -- Calculate scale needed to fit container while maintaining aspect ratio
+    set scaleX to containerWidth / naturalWidth
+    set scaleY to containerHeight / naturalHeight
+    set scale to Math.min(scaleX, scaleY)
+
+    -- Cap at 200% max scale for upscaling
+    if scale > 2.0
+      set scale to 2.0
+    end
+
+    -- For upscaling (small images): apply scale transform and remove constraints
+    -- For downscaling (large images): use CSS max-width/height constraints only
+    if scale > 1.0
+      -- Upscale: apply transform and remove max-width/height constraints
+      set img.style.transform to 'translate(-50%, -50%) scale(' + scale + ')'
+      set img.style.maxWidth to 'none'
+      set img.style.maxHeight to 'none'
+    else
+      -- Downscale: clear transform, let CSS max-width/height handle it
+      set img.style.transform to 'translate(-50%, -50%)'
+      set img.style.maxWidth to '100%'
+      set img.style.maxHeight to '100%'
+    end
+  end
+
+  def resizeLightboxModal()
+    if #box_info_wrapper matches .hidden
+       set #lightbox_modal.style.left to '0px'
+    else
+       if body matches .info-pinned
+          set #lightbox_modal.style.left to '243px'
+       else
+          set #lightbox_modal.style.left to '0px'
+       end
+    end
+    set #lightbox_modal.style.right to '0px'
+  end
+
+  -- EVENT LISTENERS
+  on htmx:afterSwap from #lightbox_content call updateScaled() end
+  on htmx:afterSwap from #box_info call updateScaled() end
+
+  on 'auth-changed' from body
+    if #login_modal.checked
+      set #login_modal.checked to false
+    end
+  end
+
+  on resize from window
+    wait 150ms
+    if #lightbox-images is null exit end
+    call updateScaled()
+    -- Recalculate scale for visible lightbox image
+    set slots to #lightbox-images.querySelectorAll('img.lightbox-slot')
+    for s in slots
+      if s does not match .hidden
+        call updateLightboxScale(s)
+      end
+    end
+  end
+
+  -- Centralized Router Initialization Logic
+  def initLightboxRouter(container, currId, currSrc, nextSrc, prevSrc)
+      -- 1. Info Box Check
+      set box to #box_info
+      set needsLoad to true
+
+      if box and box.children.length > 0
+          set infoDiv to box.firstElementChild
+          if infoDiv and infoDiv@data-info-id == currId
+              set needsLoad to false
+          end
+      end
+      if needsLoad send 'manual-load' to container end
+
+      -- 2. SYNC & PRELOAD LOGIC
+      set targetCurr to currSrc
+      set targetNext to nextSrc
+      set targetPrev to prevSrc
+
+      set allSlots to [#slot-1, #slot-2, #slot-3]
+      set currSlot to null
+      set nextSlot to null
+      set prevSlot to null
+
+      -- A. Identify Slots
+      for s in allSlots
+        if s@src == targetCurr set currSlot to s end
+      end
+      if currSlot is null set currSlot to #slot-1 end
+
+      if currSlot@src != targetCurr set currSlot.src to targetCurr end
+
+      -- B. Identify Next/Prev
+      for s in allSlots
+        if s != currSlot and s@src == targetNext set nextSlot to s end
+      end
+      for s in allSlots
+         if s != currSlot and s != nextSlot and s@src == targetPrev set prevSlot to s end
+      end
+
+      -- C. Fill Gaps
+      if nextSlot is null
+         for s in allSlots
+            if s != currSlot and s != prevSlot and nextSlot is null
+               set nextSlot to s
+               if nextSlot@src != targetNext set nextSlot.src to targetNext end
+            end
+         end
+      end
+
+      if prevSlot is null
+         for s in allSlots
+            if s != currSlot and s != nextSlot and prevSlot is null
+               set prevSlot to s
+               if prevSlot@src != targetPrev set prevSlot.src to targetPrev end
+            end
+         end
+      end
+
+      -- D. Ensure Visibility
+      -- Route handler calls updateScaled() after making slot visible
+      send route(url: targetCurr) to #lightbox-images
+  end
+</script>

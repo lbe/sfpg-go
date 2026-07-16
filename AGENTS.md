@@ -57,6 +57,8 @@ This is my fundamental operating principle. There are no exceptions.
     -b /tmp/cookies.txt
   ```
 
+- **`web-testsuite` (`e2eweb`) and login rate limits:** `TestMain` sets `login_rate_limit_per_ip=0` before snapshotting config so many admin logins from one IP do not hit 429 on shared dev `air`. Restart tests (`TestRestart`) use `waitForServerDown` then `waitForServer` so a 200 from the dying process is not mistaken for the new one.
+
 ## Project Overview
 
 `sfpg-go` is a self-hosted photo gallery web application written in Go. It serves images from a local directory, generates thumbnails on the fly, and provides a responsive web interface for browsing with a password-protected administrative configuration. The application is designed to be performant, using concurrency for background tasks, aggressive caching strategies, and a hypermedia-driven frontend architecture to minimize client-side JavaScript.
@@ -124,9 +126,20 @@ The application follows a structured design with a clear separation of concerns,
 Handlers depend on the `HandlerQueries` interface defined in `internal/server/interfaces` for testability:
 
 - Unit tests construct handler groups directly and inject `fakeHandlerQueries` (see `internal/server/handlers/helpers_test.go`).
-- Integration tests can replace the live queries via `app.testHookHandlerQueries`.
+- Integration tests can replace the live queries via `app.InfrastructureService.testSeams.HandlerQueries`.
 - Handler groups are wired in `App.buildHandlers()` (called from `server.go`).
 - For routing/integration tests, use the server's router rather than calling handlers directly.
+
+### Test Seams (`testseams.go`)
+
+Optional test doubles live in `internal/server/testseams.go` and are wired through unexported `testSeams` fields on `App` and embedded managers. Zero value means production behavior.
+
+- **App lifecycle:** `app.testSeams.Serve`, `app.testSeams.LoadConfig`, `app.testSeams.GetGalleryStatistics`, etc.
+- **Infrastructure:** `infra.testSeams.*` or `app.InfrastructureService.testSeams.*` (e.g. `HandlerQueries`, `RecreatePoolsWithConfig`)
+- **Runtime:** `m.testSeams.*` or `app.RuntimeManager.testSeams.*` (e.g. `BeforeListen`, `ExecCommand`, `Exit`)
+- **Handlers:** `hm.testSeams.BuildHandlers` or `app.HandlerManager.testSeams.BuildHandlers`
+
+Do **not** add `testHook*` fields to production structs or use promoted `app.testHook*` in tests. Root test file inventory: `docs/phase2-test-ownership.md`.
 
 ### Database Access Pattern
 
@@ -158,7 +171,7 @@ Before integrating Hyperscript changes, ALWAYS validate:
 ```bash
 make validate-hyperscript
 # Or specific file:
-go run ./scripts/validate-hyperscript.go web/templates/gallery.html.tmpl
+go run ./scripts/validate-hyperscript/ web/templates/gallery.html.tmpl
 ```
 
 **After validating, also verify the RENDERED output with curl** — the validator checks
@@ -236,7 +249,6 @@ The project is configured to use `air` for live reloading during development.
 - ✅ DO: Run `go build -o /dev/null .` to verify clean builds
 - ✅ DO: Test against the running dev server (localhost:8083)
 - ✅ DO: Let `air` auto-rebuild when you save files
-- ❌ DON'T: Spawn separate test servers (causes OOM)
 - ❌ DON'T: Use Python scripts (use bash or Perl)
 - ❌ DON'T: Make assumptions without verification
 - ❌ DON'T: Use `strings.Contains` on HTTP responses (parse HTML first)
@@ -256,7 +268,9 @@ This AGENTS.md file is a concise guide for AI agents. For detailed information, 
 ### Core Documentation
 
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** - Comprehensive architecture documentation with diagrams, data flows, and design patterns
-- **[docs/SERVER_DEEP_DIVE.md](docs/SERVER_DEEP_DIVE.md)** - In-depth server architecture and component analysis
+- **[docs/SERVER_DEEP_DIVE.md](docs/SERVER_DEEP_DIVE.md)** - Archived server package entry point (links to ARCHITECTURE.md)
+- **[docs/phase2-test-ownership.md](docs/phase2-test-ownership.md)** - Root `internal/server/*_test.go` survivor map (19 files)
+- **[docs/phase2-test-merge-map.md](docs/phase2-test-merge-map.md)** - WP-54 test merge ledger
 - **[CLAUDE.md](CLAUDE.md)** - Project instructions for Claude Code (includes common commands, high-level architecture, forbidden practices)
 - **[README.md](README.md)** - Project overview, features, and setup instructions
 - **[DEPLOYMENT.md](DEPLOYMENT.md)** - Deployment and production configuration guide
@@ -264,7 +278,7 @@ This AGENTS.md file is a concise guide for AI agents. For detailed information, 
 
 ### References
 
-- **[references/htmx-referencd.md](references/htmx-referencd.md)** - HTMX patterns and usage in this project
+- **[references/htmx-reference.md](references/htmx-reference.md)** - HTMX patterns and usage in this project
 - **[references/hyperscript-reference.md](references/hyperscript-reference.md)** - Hyperscript patterns and examples
 - **[references/methodology-html-content-test-writing.md](references/methodology-html-content-test-writing.md)** - HTML testing methodology (structural assertions, no string contains)
 - **[references/tdd_process.md](references/tdd_process.md)** - Test-driven development process and workflow

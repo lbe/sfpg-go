@@ -1,3 +1,4 @@
+// Package config provides configuration loading, validation, persistence, and application for the server.
 package config
 
 import (
@@ -100,10 +101,30 @@ type Config struct {
 	// Discovery settings (runtime)
 	RunFileDiscovery bool
 
+	// DiscoveryQueueMax is the maximum number of items allowed in the discovery
+	// queue at any time. When the queue reaches this limit, the walker applies
+	// backpressure and waits for space before enqueueing more files.
+	// A value of 0 (the default) means unbounded — no maximum.
+	DiscoveryQueueMax int
+
 	// Security settings
 	// LockoutDuration is the account lockout period in seconds after
 	// LockoutThreshold failed login attempts.
 	LockoutDuration int
+
+	// LockoutThreshold is the number of failed login attempts before
+	// account lockout is triggered. Default: 3.
+	LockoutThreshold int
+
+	// LoginRateLimitPerIP is the maximum number of login POST requests
+	// allowed per IP address per 60-second window. 0 disables IP rate limiting.
+	LoginRateLimitPerIP int
+
+	// EnablePprof enables Go's net/http/pprof debug endpoints under /debug/pprof/.
+	// When false (the default), pprof routes are not registered and cannot be accessed.
+	// When true, pprof routes are registered and protected behind authentication.
+	// Requires restart to take effect.
+	EnablePprof bool
 
 	// HelpText and ExampleValues are populated by LoadFromDatabase from the
 	// metadata columns stored alongside each config row. Nil when loaded
@@ -159,10 +180,16 @@ func DefaultConfig() *Config {
 		MaxHTTPCacheEntryInsertPerTransaction: 10,
 
 		// Discovery
-		RunFileDiscovery: true,
+		RunFileDiscovery:  true,
+		DiscoveryQueueMax: 0, // 0 = unbounded (no maximum)
+
+		// Profiling
+		EnablePprof: false,
 
 		// Security
-		LockoutDuration: 3600, // 1 hour
+		LockoutDuration:     3600, // 1 hour
+		LockoutThreshold:    3,    // attempts before lockout
+		LoginRateLimitPerIP: 10,   // max login POST per IP per minute
 	}
 }
 

@@ -99,7 +99,7 @@ func TestRawImageByID_AllowsValidPath(t *testing.T) {
 
 	qh := &fakeHandlerQueries{fileView: gallerydb.FileView{ID: 1, Path: "ok.jpg", FolderID: sql.NullInt64{Int64: 1, Valid: true}}}
 	gh := setupTestGalleryHandlers(t, qh)
-	gh.deps.(*mockServerDeps).ImgDir = imagesDir
+	gh.galleryOps.(*mockGalleryOps).ImgDir = imagesDir
 
 	req := httptest.NewRequest(http.MethodGet, "/raw-image/1", nil)
 	req.SetPathValue("id", "1")

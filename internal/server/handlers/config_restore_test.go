@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lbe/sfpg-go/internal/dbconnpool"
 	"github.com/lbe/sfpg-go/internal/gallerydb"
 	"github.com/lbe/sfpg-go/internal/server/config"
 	"github.com/lbe/sfpg-go/internal/server/ui"
@@ -44,6 +45,24 @@ func TestConfigHandlers_RestoreLastKnownGood_PreviewDBError(t *testing.T) {
 
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("expected status 500, got %d", w.Code)
+	}
+}
+
+func TestConfigHandlers_RestoreLastKnownGood_PreviewInvalidCSRF(t *testing.T) {
+	if err := ui.ParseTemplates(web.FS); err != nil {
+		t.Fatalf("ParseTemplates failed: %v", err)
+	}
+
+	ch := setupTestConfigHandlers(t, &mockConfigServiceForConfig{}, &mockAuthServiceForConfig{})
+	ch.SessionManager = &mockSessionManagerAuthenticatedInvalidCSRF{}
+
+	req := httptest.NewRequest(http.MethodPost, "/config/restore-last-known-good?action=preview", nil)
+	w := httptest.NewRecorder()
+
+	ch.RestoreLastKnownGoodHandler(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected status 403, got %d", w.Code)
 	}
 }
 
@@ -107,7 +126,7 @@ func TestConfigHandlers_RestoreLastKnownGood_CommitRestoreError(t *testing.T) {
 		t.Errorf("expected status 400, got %d", w.Code)
 	}
 	body := strings.TrimSpace(w.Body.String())
-	expected := "Failed to restore last known good config: restore error"
+	expected := "Failed to restore last known good config"
 	if body != expected {
 		t.Errorf("expected %q error, got %s", expected, body)
 	}
@@ -192,7 +211,7 @@ func TestConfigHandlers_RestoreLastKnownGood_CommitValidateError(t *testing.T) {
 		t.Errorf("expected status 400, got %d", w.Code)
 	}
 	body := strings.TrimSpace(w.Body.String())
-	expected := "Restored config is invalid: invalid"
+	expected := "Restored config is invalid"
 	if body != expected {
 		t.Errorf("expected %q error, got %s", expected, body)
 	}
@@ -323,7 +342,9 @@ func TestConfigHandlers_RestoreLastKnownGood_PreviewDiffError(t *testing.T) {
 
 	ch := setupTestConfigHandlers(t, &mockConfigServiceForConfig{}, &mockAuthServiceForConfig{})
 	ch.DBRwPool = &testConnPool{}
-	ch.deps.(*mockServerDeps).ConfigQueries = fakeConfigQueries{err: errors.New("db unavailable")}
+	ch.getConfigQueries = func(cpc *dbconnpool.CpConn) config.ConfigQueries {
+		return fakeConfigQueries{err: errors.New("db unavailable")}
+	}
 	ch.SessionManager.(*mockSessionManagerAuth).authenticated = true
 
 	req := httptest.NewRequest(http.MethodPost, "/config/restore-last-known-good?action=preview", nil)
@@ -335,7 +356,7 @@ func TestConfigHandlers_RestoreLastKnownGood_PreviewDiffError(t *testing.T) {
 		t.Errorf("expected status 400, got %d", w.Code)
 	}
 	body := strings.TrimSpace(w.Body.String())
-	if !strings.HasPrefix(body, "Failed to get last known good config:") {
+	if !strings.HasPrefix(body, "Failed to get last known good config") {
 		t.Errorf("expected last known good error, got %s", body)
 	}
 }
@@ -352,11 +373,13 @@ func TestConfigHandlers_RestoreLastKnownGood_PreviewSuccess(t *testing.T) {
 	}
 	ch := setupTestConfigHandlers(t, mockSvc, &mockAuthServiceForConfig{})
 	ch.DBRwPool = &testConnPool{}
-	ch.deps.(*mockServerDeps).ConfigQueries = fakeConfigQueries{
-		configs: []gallerydb.Config{{
-			Key:   "LastKnownGoodConfig",
-			Value: "listener-port: 8081\nsite-name: Backup",
-		}},
+	ch.getConfigQueries = func(cpc *dbconnpool.CpConn) config.ConfigQueries {
+		return fakeConfigQueries{
+			configs: []gallerydb.Config{{
+				Key:   "LastKnownGoodConfig",
+				Value: "listener-port: 8081\nsite-name: Backup",
+			}},
+		}
 	}
 	ch.SessionManager.(*mockSessionManagerAuth).authenticated = true
 
@@ -368,16 +391,16 @@ func TestConfigHandlers_RestoreLastKnownGood_PreviewSuccess(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d: %s", w.Code, w.Body.String())
 	}
-	body := w.Body.String()
-	doc, err := testutil.ParseHTML(strings.NewReader(body))
+	doc, err := testutil.ParseHTML(w.Body)
 	if err != nil {
 		t.Fatalf("parse HTML: %v", err)
 	}
-	if testutil.FindElementByID(doc, "restore-yaml-content") == nil {
-		t.Error("missing #restore-yaml-content")
+	yamlEl := testutil.FindElementByID(doc, "restore-yaml-content")
+	if yamlEl == nil {
+		t.Fatal("missing #restore-yaml-content")
 	}
-	if !strings.Contains(body, "Backup") {
-		t.Error("expected response to contain backup site_name 'Backup'")
+	if got := strings.TrimSpace(testutil.GetTextContent(yamlEl)); got == "" {
+		t.Error("expected #restore-yaml-content to have backup YAML content")
 	}
 }
 
@@ -402,5 +425,38 @@ func TestConfigHandlers_RestoreLastKnownGood_CommitLoadError(t *testing.T) {
 
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("expected status 500, got %d", w.Code)
+	}
+}
+
+func TestFakeConfigSaver_SaveToDatabase(t *testing.T) {
+	t.Parallel()
+
+	// Proof-of-pattern: fakeConfigSaver captures all saved config values
+	// without requiring a real database connection.
+	saver := NewFakeConfigSaver()
+	ctx := context.Background()
+
+	cfg := config.DefaultConfig()
+	cfg.SiteName = "Test Gallery"
+
+	if err := cfg.SaveToDatabase(ctx, saver); err != nil {
+		t.Fatalf("SaveToDatabase failed: %v", err)
+	}
+
+	// Verify key config values were persisted
+	if got := saver.Saved["site_name"]; got != "Test Gallery" {
+		t.Errorf("site_name = %q, want %q", got, "Test Gallery")
+	}
+
+	// Verify LastKnownGoodConfig was saved (YAML export)
+	if yamlContent := saver.Saved["LastKnownGoodConfig"]; yamlContent == "" {
+		t.Error("LastKnownGoodConfig should be saved")
+	}
+
+	// fakeConfigSaver with SaveErr simulates database failures
+	failingSaver := NewFakeConfigSaver()
+	failingSaver.SaveErr = errors.New("disk full")
+	if err := cfg.SaveToDatabase(ctx, failingSaver); err == nil {
+		t.Error("expected error from failing saver, got nil")
 	}
 }

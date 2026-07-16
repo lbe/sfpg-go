@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"net/http"
 	"net/http/httptest"
-	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -291,48 +290,6 @@ func TestMaybeTriggerGalleryPreload(t *testing.T) {
 	case <-called:
 		t.Fatal("expected preload callback to be skipped")
 	case <-time.After(150 * time.Millisecond):
-	}
-}
-
-func TestEvictIfNeeded_Branches(t *testing.T) {
-	db := createTestDBPoolInternal(t)
-	ctx := context.Background()
-
-	dummySubmit := func(entry *HTTPCacheEntry) {}
-	mw := NewHTTPCacheMiddlewareForTest(db, CacheConfig{MaxTotalSize: 0}, nil, dummySubmit)
-	freed, err := mw.evictIfNeeded(ctx, 10)
-	if err != nil {
-		t.Fatalf("evictIfNeeded no budget: %v", err)
-	}
-	if freed != 0 {
-		t.Fatalf("expected freed 0, got %d", freed)
-	}
-
-	counter := &atomic.Int64{}
-	counter.Store(5)
-	dummySubmit2 := func(entry *HTTPCacheEntry) {}
-	mw = NewHTTPCacheMiddlewareForTest(db, CacheConfig{MaxTotalSize: 100}, counter, dummySubmit2)
-	freed, err = mw.evictIfNeeded(ctx, 10)
-	if err != nil {
-		t.Fatalf("evictIfNeeded with counter: %v", err)
-	}
-	if freed != 0 {
-		t.Fatalf("expected no eviction, got %d", freed)
-	}
-}
-
-func TestEvictIfNeeded_EvictError(t *testing.T) {
-	db := createTestDBPoolInternal(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	counter := &atomic.Int64{}
-	counter.Store(50)
-	dummySubmit := func(entry *HTTPCacheEntry) {}
-	mw := NewHTTPCacheMiddlewareForTest(db, CacheConfig{MaxTotalSize: 1}, counter, dummySubmit)
-
-	if _, err := mw.evictIfNeeded(ctx, 10); err == nil {
-		t.Fatal("expected eviction error with canceled context")
 	}
 }
 

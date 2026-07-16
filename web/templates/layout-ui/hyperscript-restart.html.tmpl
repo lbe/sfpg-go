@@ -1,0 +1,30 @@
+<script type="text/hyperscript">
+  def startRestartCounter()
+    if window.restartStartTime exists
+      set elapsed to Math.floor((Date.now() - window.restartStartTime) / 1000)
+      set #restart-counter.textContent to String(elapsed)
+      wait 1s
+      startRestartCounter()
+    end
+  end
+
+  behavior TabSwitcher
+    on click
+      set targetPanelId to my@data-tab
+      set targetPanel to document.getElementById(targetPanelId)
+      set tabList to me.closest('[role=tablist]')
+      set allTabs to tabList.querySelectorAll('button[role=tab]')
+      for tab in allTabs
+        remove .tab-active from tab
+        set tab@aria-selected to 'false'
+      end
+      add .tab-active to me
+      set my@aria-selected to 'true'
+      -- Use querySelectorAll to avoid Go template escaping of dot-class selectors
+      for panel in #tab-panels.querySelectorAll('.tab-panel')
+        add .hidden to panel
+      end
+      remove .hidden from targetPanel
+    end
+  end
+</script>

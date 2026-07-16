@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"errors"
-	"fmt"
 	"html"
 	"io"
 	"log/slog"
@@ -59,6 +58,12 @@ func (h *ConfigHandlers) ExportConfigDownloadHandler(w http.ResponseWriter, r *h
 // Response: HTML modal (bufferable, caching disabled).
 // Authentication and CSRF protection are required.
 func (h *ConfigHandlers) ImportConfigPreviewHandler(w http.ResponseWriter, r *http.Request) {
+	if !h.validateCsrf(r) {
+		slog.Warn("CSRF validation failed for config import preview", "remote_addr", r.RemoteAddr)
+		http.Error(w, "Forbidden - CSRF token invalid", http.StatusForbidden)
+		return
+	}
+
 	var yamlContent string
 	var err error
 
@@ -92,6 +97,7 @@ func (h *ConfigHandlers) ImportConfigPreviewHandler(w http.ResponseWriter, r *ht
 		yamlContent = string(contentBytes)
 	} else {
 		if parseFormErr := r.ParseForm(); parseFormErr != nil {
+			slog.Warn("failed to parse form", "err", parseFormErr)
 			http.Error(w, "Invalid form data", http.StatusBadRequest)
 			return
 		}
@@ -119,7 +125,7 @@ func (h *ConfigHandlers) ImportConfigPreviewHandler(w http.ResponseWriter, r *ht
 	diff, err := cfg.PreviewImport(yamlContent)
 	if err != nil {
 		slog.Warn("failed to preview import", "err", err)
-		http.Error(w, fmt.Sprintf("Invalid YAML: %v", err), http.StatusBadRequest)
+		http.Error(w, "Invalid YAML content", http.StatusBadRequest)
 		return
 	}
 
@@ -147,11 +153,13 @@ func (h *ConfigHandlers) ImportConfigPreviewHandler(w http.ResponseWriter, r *ht
 // Authentication and CSRF protection are required.
 func (h *ConfigHandlers) ImportConfigCommitHandler(w http.ResponseWriter, r *http.Request) {
 	if !h.validateCsrf(r) {
+		slog.Warn("CSRF validation failed for config import commit", "remote_addr", r.RemoteAddr)
 		http.Error(w, "Forbidden - CSRF token invalid", http.StatusForbidden)
 		return
 	}
 
 	if err := r.ParseForm(); err != nil {
+		slog.Warn("failed to parse form for config import", "err", err)
 		http.Error(w, "Invalid form data", http.StatusBadRequest)
 		return
 	}
@@ -172,7 +180,7 @@ func (h *ConfigHandlers) ImportConfigCommitHandler(w http.ResponseWriter, r *htt
 	importedConfig, err := config.BuildImportedConfig(oldConfig, yamlContent)
 	if err != nil {
 		slog.Warn("failed to import config", "err", err)
-		http.Error(w, fmt.Sprintf("Import failed: %v", err), http.StatusBadRequest)
+		http.Error(w, "Import failed", http.StatusBadRequest)
 		return
 	}
 
@@ -180,7 +188,7 @@ func (h *ConfigHandlers) ImportConfigCommitHandler(w http.ResponseWriter, r *htt
 	if err != nil {
 		var validationErr *config.ApplyValidationError
 		if errors.As(err, &validationErr) {
-			http.Error(w, fmt.Sprintf("Import failed: %v", validationErr.Error()), http.StatusBadRequest)
+			http.Error(w, "Import failed", http.StatusBadRequest)
 			return
 		}
 
@@ -189,10 +197,10 @@ func (h *ConfigHandlers) ImportConfigCommitHandler(w http.ResponseWriter, r *htt
 		return
 	}
 
-	h.deps.UpdateConfigWithPrecedence(applyResult.Config, applyResult.RestartRequiredKeys)
-	h.deps.ApplyConfig()
+	h.cfgOps.UpdateConfigWithPrecedence(applyResult.Config, applyResult.RestartRequiredKeys)
+	h.cfgOps.ApplyConfig()
 	if applyResult.RestartRequired {
-		h.deps.SetRestartRequired(true)
+		h.cfgOps.SetRestartRequired(true)
 	}
 
 	w.WriteHeader(http.StatusOK)
@@ -211,6 +219,12 @@ func (h *ConfigHandlers) ImportConfigCommitHandler(w http.ResponseWriter, r *htt
 func (h *ConfigHandlers) RestoreLastKnownGoodHandler(w http.ResponseWriter, r *http.Request) {
 	action := r.URL.Query().Get("action")
 	if action == "preview" || action == "" {
+		if !h.validateCsrf(r) {
+			slog.Warn("CSRF validation failed for config restore preview", "remote_addr", r.RemoteAddr)
+			http.Error(w, "Forbidden - CSRF token invalid", http.StatusForbidden)
+			return
+		}
+
 		// Preview: return diff
 		cpcRw, err := h.DBRwPool.Get()
 		if err != nil {
@@ -229,10 +243,10 @@ func (h *ConfigHandlers) RestoreLastKnownGoodHandler(w http.ResponseWriter, r *h
 		}
 
 		// GetLastKnownGoodDiff needs queries - cpcRw.Queries implements ConfigQueries interface
-		diff, err := cfg.GetLastKnownGoodDiff(h.Ctx, h.deps.GetConfigQueries(cpcRw))
+		diff, err := cfg.GetLastKnownGoodDiff(h.Ctx, h.getConfigQueriesFn(cpcRw))
 		if err != nil {
 			slog.Warn("failed to get last known good diff", "err", err)
-			http.Error(w, fmt.Sprintf("Failed to get last known good config: %v", err), http.StatusBadRequest)
+			http.Error(w, "Failed to get last known good config", http.StatusBadRequest)
 			return
 		}
 
@@ -277,7 +291,7 @@ func (h *ConfigHandlers) RestoreLastKnownGoodHandler(w http.ResponseWriter, r *h
 	restoredConfig, err := h.ConfigService.RestoreLastKnownGood(h.Ctx)
 	if err != nil {
 		slog.Warn("failed to restore last known good", "err", err)
-		http.Error(w, fmt.Sprintf("Failed to restore last known good config: %v", err), http.StatusBadRequest)
+		http.Error(w, "Failed to restore last known good config", http.StatusBadRequest)
 		return
 	}
 
@@ -285,7 +299,8 @@ func (h *ConfigHandlers) RestoreLastKnownGoodHandler(w http.ResponseWriter, r *h
 	if err != nil {
 		var validationErr *config.ApplyValidationError
 		if errors.As(err, &validationErr) {
-			http.Error(w, fmt.Sprintf("Restored config is invalid: %v", validationErr.Error()), http.StatusBadRequest)
+			slog.Warn("restored config is invalid", "err", err)
+			http.Error(w, "Restored config is invalid", http.StatusBadRequest)
 			return
 		}
 
@@ -294,12 +309,12 @@ func (h *ConfigHandlers) RestoreLastKnownGoodHandler(w http.ResponseWriter, r *h
 		return
 	}
 
-	h.deps.UpdateConfigWithPrecedence(applyResult.Config, applyResult.RestartRequiredKeys)
-	h.deps.ApplyConfig()
+	h.cfgOps.UpdateConfigWithPrecedence(applyResult.Config, applyResult.RestartRequiredKeys)
+	h.cfgOps.ApplyConfig()
 	restartRequired := applyResult.RestartRequired
 
 	if restartRequired {
-		h.deps.SetRestartRequired(true)
+		h.cfgOps.SetRestartRequired(true)
 	}
 
 	data := struct {

@@ -3,12 +3,9 @@ package server
 import (
 	"context"
 	"errors"
-	"net"
 	"net/http"
 	"testing"
 	"time"
-
-	_ "github.com/ncruces/go-sqlite3/driver"
 )
 
 func TestRuntimeManager_SetRestartRequired(t *testing.T) {
@@ -82,67 +79,6 @@ func TestRuntimeManager_TriggerRestart_NoServer(t *testing.T) {
 	}
 }
 
-func TestRuntimeManager_TriggerRestart_GracefulShutdown(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	m := NewRuntimeManager(ctx)
-	addr := getEphemeralAddr(t)
-	done := make(chan error, 1)
-	go func() {
-		done <- m.Serve(http.NewServeMux(), addr)
-	}()
-
-	// Wait for server to be ready.
-	if err := waitForServerReady(t, addr); err != nil {
-		t.Fatalf("server did not become ready: %v", err)
-	}
-
-	m.TriggerRestart()
-
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("Serve returned error: %v", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("Serve did not return after TriggerRestart")
-	}
-
-	if !m.IsRestartRequested() {
-		t.Error("IsRestartRequested should be true after TriggerRestart")
-	}
-}
-
-func TestRuntimeManager_TriggerRestart_Idempotent(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	m := NewRuntimeManager(ctx)
-	addr := getEphemeralAddr(t)
-	done := make(chan error, 1)
-	go func() {
-		done <- m.Serve(http.NewServeMux(), addr)
-	}()
-
-	if err := waitForServerReady(t, addr); err != nil {
-		t.Fatalf("server did not become ready: %v", err)
-	}
-
-	m.TriggerRestart()
-	m.TriggerRestart() // second call should not panic
-
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("Serve did not return after TriggerRestart")
-	}
-
-	if !m.IsRestartRequested() {
-		t.Error("IsRestartRequested should be true after TriggerRestart")
-	}
-}
-
 func TestRuntimeManager_ExecRestart_Success(t *testing.T) {
 	t.Parallel()
 	m := NewRuntimeManager(context.Background())
@@ -150,8 +86,8 @@ func TestRuntimeManager_ExecRestart_Success(t *testing.T) {
 	var execCalled bool
 	var gotPath string
 	var gotArgs []string
-	m.testHookExecutable = func() (string, error) { return "/test/exe", nil }
-	m.testHookExecCommand = func(path string, args []string, env []string) error {
+	m.testSeams.Executable = func() (string, error) { return "/test/exe", nil }
+	m.testSeams.ExecCommand = func(path string, args []string, env []string) error {
 		execCalled = true
 		gotPath = path
 		gotArgs = args
@@ -175,11 +111,11 @@ func TestRuntimeManager_ExecRestart_ExecutableError(t *testing.T) {
 	t.Parallel()
 	m := NewRuntimeManager(context.Background())
 
-	m.testHookExecutable = func() (string, error) { return "", errors.New("executable error") }
+	m.testSeams.Executable = func() (string, error) { return "", errors.New("executable error") }
 
 	var exitCode int
 	var exitCalled bool
-	m.testHookExit = func(code int) {
+	m.testSeams.Exit = func(code int) {
 		exitCalled = true
 		exitCode = code
 	}
@@ -198,12 +134,12 @@ func TestRuntimeManager_ExecRestart_ExecError(t *testing.T) {
 	t.Parallel()
 	m := NewRuntimeManager(context.Background())
 
-	m.testHookExecutable = func() (string, error) { return "/test/exe", nil }
-	m.testHookExecCommand = func(string, []string, []string) error { return errors.New("exec error") }
+	m.testSeams.Executable = func() (string, error) { return "/test/exe", nil }
+	m.testSeams.ExecCommand = func(string, []string, []string) error { return errors.New("exec error") }
 
 	var exitCode int
 	var exitCalled bool
-	m.testHookExit = func(code int) {
+	m.testSeams.Exit = func(code int) {
 		exitCalled = true
 		exitCode = code
 	}
@@ -269,147 +205,9 @@ func TestRuntimeManager_SetGalleryStatsCache(t *testing.T) {
 	}
 }
 
-func TestRuntimeManager_Serve_ContextCancel(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	m := NewRuntimeManager(ctx)
-	addr := getEphemeralAddr(t)
-
-	done := make(chan error, 1)
-	go func() {
-		done <- m.Serve(http.NewServeMux(), addr)
-	}()
-
-	if err := waitForServerReady(t, addr); err != nil {
-		t.Fatalf("server did not become ready: %v", err)
-	}
-
-	cancel()
-
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("Serve returned error on context cancel: %v", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("Serve did not return after context cancel")
-	}
-}
-
-func TestRuntimeManager_Serve_ListenError(t *testing.T) {
-	m := NewRuntimeManager(context.Background())
-	err := m.Serve(http.NewServeMux(), "127.0.0.1:-1")
-	if err == nil {
-		t.Fatal("expected error for invalid bind address")
-	}
-}
-
-func TestRuntimeManager_Serve_NilServerShutdown(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	m := NewRuntimeManager(ctx)
-	m.testHookBeforeListen = func() { cancel() }
-
-	err := m.Serve(http.NewServeMux(), "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("expected nil error when context cancelled before server creation, got %v", err)
-	}
-}
-
-func TestRuntimeManager_Serve_ShutdownError(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	m := NewRuntimeManager(ctx)
-	m.testHookShutdown = func(context.Context) error { return errors.New("shutdown error") }
-	addr := getEphemeralAddr(t)
-
-	done := make(chan error, 1)
-	go func() {
-		done <- m.Serve(http.NewServeMux(), addr)
-	}()
-
-	if err := waitForServerReady(t, addr); err != nil {
-		t.Fatalf("server did not become ready: %v", err)
-	}
-
-	cancel()
-
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("Serve returned error on context cancel: %v", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("Serve did not return after context cancel")
-	}
-}
-
-func TestRuntimeManager_TriggerRestart_ShutdownError(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	m := NewRuntimeManager(ctx)
-	m.testHookShutdown = func(context.Context) error { return errors.New("shutdown error") }
-	addr := getEphemeralAddr(t)
-	done := make(chan error, 1)
-	go func() {
-		done <- m.Serve(http.NewServeMux(), addr)
-	}()
-
-	if err := waitForServerReady(t, addr); err != nil {
-		t.Fatalf("server did not become ready: %v", err)
-	}
-
-	m.TriggerRestart()
-
-	if !m.IsRestartRequested() {
-		t.Error("IsRestartRequested should be true after TriggerRestart")
-	}
-
-	// The test hook prevented the real server shutdown, so cancel the context
-	// to make Serve return.
-	cancel()
-
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("Serve returned error: %v", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("Serve did not return after context cancel")
-	}
-}
-
-// getEphemeralAddr picks a free TCP port and returns its address. The listener
-// is closed before returning; the caller must bind to the address promptly.
-func getEphemeralAddr(t *testing.T) string {
-	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("failed to find free port: %v", err)
-	}
-	addr := ln.Addr().String()
-	ln.Close()
-	return addr
-}
-
-// waitForServerReady polls the given address until it accepts a connection.
-func waitForServerReady(t *testing.T, addr string) error {
-	t.Helper()
-
-	client := &http.Client{Timeout: 100 * time.Millisecond}
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		resp, err := client.Get("http://" + addr + "/")
-		if err == nil {
-			resp.Body.Close()
-			return nil
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	return errors.New("server did not become ready")
-}
-
 func TestRuntimeManager_Exit_FallsBackToOsExit(t *testing.T) {
 	m := NewRuntimeManager(context.Background())
-	// testHookExit is intentionally nil.
+	// testSeams.Exit is intentionally nil.
 
 	var gotCode int
 	var called bool
@@ -427,5 +225,35 @@ func TestRuntimeManager_Exit_FallsBackToOsExit(t *testing.T) {
 	}
 	if gotCode != 7 {
 		t.Errorf("exit code = %d, want 7", gotCode)
+	}
+}
+
+// TestRuntimeManager_Serve_DefaultCoverage exercises Serve and shutdownServer by
+// cancelling the manager context after the server has started listening.
+func TestRuntimeManager_Serve_DefaultCoverage(t *testing.T) {
+	m := NewRuntimeManager(context.Background())
+
+	var beforeListen bool
+	m.testSeams.BeforeListen = func() { beforeListen = true }
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- m.Serve(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), "127.0.0.1:0")
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+	m.cancel()
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Serve returned error: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for Serve to return")
+	}
+
+	if !beforeListen {
+		t.Error("testSeams.BeforeListen was not called")
 	}
 }

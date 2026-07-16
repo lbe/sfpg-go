@@ -1,12 +1,23 @@
 package ui
 
 import (
-	"bytes"
 	"strings"
 	"testing"
 
+	"github.com/lbe/sfpg-go/internal/testutil"
 	"github.com/lbe/sfpg-go/web"
+	"golang.org/x/net/html"
 )
+
+func hasClass(t *testing.T, n *html.Node, class string) bool {
+	t.Helper()
+	for _, c := range strings.Fields(testutil.GetAttr(n, "class")) {
+		if c == class {
+			return true
+		}
+	}
+	return false
+}
 
 func TestServerShutdownTemplate(t *testing.T) {
 	// Initialize templates
@@ -23,30 +34,39 @@ func TestServerShutdownTemplate(t *testing.T) {
 		"CSRFToken": "test-token",
 	}
 
-	var buf bytes.Buffer
+	var buf strings.Builder
 	err := serverShutdownTemplate.ExecuteTemplate(&buf, "layout", data)
 	if err != nil {
 		t.Fatalf("template execution failed: %v", err)
 	}
 
-	body := buf.String()
+	doc, err := testutil.ParseHTML(strings.NewReader(buf.String()))
+	if err != nil {
+		t.Fatalf("failed to parse HTML: %v", err)
+	}
 
-	// Check for expected content
-	if !strings.Contains(body, "Shutting Down") {
-		t.Error("template should contain 'Shutting Down' heading")
+	page := testutil.FindElementByID(doc, "server-shutdown-page")
+	if page == nil {
+		t.Fatal("missing #server-shutdown-page")
 	}
-	if !strings.Contains(body, "server is shutting down") {
-		t.Error("template should contain shutdown message")
+	if !hasClass(t, page, "hero") {
+		t.Error("#server-shutdown-page should have class hero")
 	}
-	if !strings.Contains(body, "close this window") {
-		t.Error("template should tell user they can close the window")
+
+	h1 := testutil.FindElementByTag(page, "h1")
+	if h1 == nil {
+		t.Fatal("missing h1 inside #server-shutdown-page")
 	}
-	// Check for DaisyUI classes
-	if !strings.Contains(body, "hero") {
-		t.Error("template should use DaisyUI hero class")
+	if got := testutil.GetTextContent(h1); got != "Shutting Down" {
+		t.Errorf("h1 text = %q, want %q", got, "Shutting Down")
 	}
-	if !strings.Contains(body, "alert") {
-		t.Error("template should use DaisyUI alert class")
+
+	alert := testutil.FindElementByClass(page, "alert")
+	if alert == nil {
+		t.Fatal("missing .alert inside #server-shutdown-page")
+	}
+	if !hasClass(t, alert, "alert-info") {
+		t.Error(".alert should have class alert-info")
 	}
 }
 
@@ -65,28 +85,40 @@ func TestDiscoveryStartedTemplate(t *testing.T) {
 		"Message": "File discovery started",
 	}
 
-	var buf bytes.Buffer
+	var buf strings.Builder
 	err := discoveryStartedTemplate.Execute(&buf, data)
 	if err != nil {
 		t.Fatalf("template execution failed: %v", err)
 	}
 
-	body := buf.String()
+	doc, err := testutil.ParseHTML(strings.NewReader(buf.String()))
+	if err != nil {
+		t.Fatalf("failed to parse HTML: %v", err)
+	}
 
-	// Check for expected content
-	if !strings.Contains(body, "File discovery started") {
-		t.Error("template should contain the message")
+	toast := testutil.FindElementByID(doc, "discovery-started-toast")
+	if toast == nil {
+		t.Fatal("missing #discovery-started-toast")
 	}
-	// Check for toast structure
-	if !strings.Contains(body, "toast") {
-		t.Error("template should use DaisyUI toast class")
+	if !hasClass(t, toast, "toast") {
+		t.Error("#discovery-started-toast should have class toast")
 	}
-	if !strings.Contains(body, "alert-success") {
-		t.Error("template should use DaisyUI alert-success class")
+
+	alert := testutil.FindElementByClass(toast, "alert-success")
+	if alert == nil {
+		t.Fatal("missing .alert-success inside #discovery-started-toast")
 	}
-	// Check for auto-hide Hyperscript
-	if !strings.Contains(body, "wait") || !strings.Contains(body, "remove me") {
-		t.Error("template should include auto-hide Hyperscript")
+
+	span := testutil.FindElementByTag(alert, "span")
+	if span == nil {
+		t.Fatal("missing span inside .alert-success")
+	}
+	if got := testutil.GetTextContent(span); got != "File discovery started" {
+		t.Errorf("alert text = %q, want %q", got, "File discovery started")
+	}
+
+	if hyperscript := testutil.GetAttr(toast, "_"); hyperscript == "" {
+		t.Error("#discovery-started-toast should have a Hyperscript _ attribute")
 	}
 }
 
@@ -106,28 +138,51 @@ func TestShutdownModalTemplate(t *testing.T) {
 		"CSRFToken": "test-token",
 	}
 
-	var buf bytes.Buffer
+	var buf strings.Builder
 	err := shutdownModalTemplate.Execute(&buf, data)
 	if err != nil {
 		t.Fatalf("template execution failed: %v", err)
 	}
 
-	body := buf.String()
+	doc, err := testutil.ParseHTML(strings.NewReader(buf.String()))
+	if err != nil {
+		t.Fatalf("failed to parse HTML: %v", err)
+	}
 
-	// Check for modal structure
-	if !strings.Contains(body, "shutdown_modal") {
-		t.Error("template should contain shutdown_modal id")
+	modalToggle := testutil.FindElementByID(doc, "shutdown_modal")
+	if modalToggle == nil {
+		t.Fatal("missing #shutdown_modal")
 	}
-	if !strings.Contains(body, "modal-toggle") {
-		t.Error("template should use DaisyUI modal-toggle class")
+	if !hasClass(t, modalToggle, "modal-toggle") {
+		t.Error("#shutdown_modal should have class modal-toggle")
 	}
-	if !strings.Contains(body, "modal-box") {
-		t.Error("template should use DaisyUI modal-box class")
+
+	modalBox := testutil.FindElementByClass(doc, "modal-box")
+	if modalBox == nil {
+		t.Fatal("missing .modal-box")
 	}
-	if !strings.Contains(body, "Confirm Shutdown") {
-		t.Error("template should contain 'Confirm Shutdown' heading")
+
+	h3 := testutil.FindElementByTag(modalBox, "h3")
+	if h3 == nil {
+		t.Fatal("missing h3 inside .modal-box")
 	}
-	if !strings.Contains(body, "/server/shutdown") {
-		t.Error("template should POST to /server/shutdown")
+	if got := testutil.GetTextContent(h3); got != "Confirm Shutdown" {
+		t.Errorf("h3 text = %q, want %q", got, "Confirm Shutdown")
+	}
+
+	form := testutil.FindElementByID(doc, "shutdown-form")
+	if form == nil {
+		t.Fatal("missing #shutdown-form")
+	}
+	if got := testutil.GetAttr(form, "hx-post"); got != "/server/shutdown" {
+		t.Errorf("form hx-post = %q, want %q", got, "/server/shutdown")
+	}
+
+	button := testutil.FindElementByTag(form, "button")
+	if button == nil {
+		t.Fatal("missing submit button inside #shutdown-form")
+	}
+	if got := testutil.GetTextContent(button); got != "Shutdown Server" {
+		t.Errorf("submit button text = %q, want %q", got, "Shutdown Server")
 	}
 }

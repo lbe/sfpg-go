@@ -46,5 +46,5 @@ func (h *ConfigRestartHandler) triggerRestart() {
 	time.Sleep(500 * time.Millisecond)
 	slog.Info("Restart requested via web interface, initiating process restart")
 
-	h.deps.TriggerRestart()
+	h.cfgOps.TriggerRestart()
 }

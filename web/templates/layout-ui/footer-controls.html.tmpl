@@ -1,0 +1,321 @@
+<!-- Footer - Floating Dock Style -->
+<div
+  id="footer-container"
+  class="sticky bottom-0 z-20 border-t border-[oklch(var(--bc)/0.08)] bg-[oklch(var(--b2)/0.85)] backdrop-blur-[20px]"
+>
+  <footer class="relative flex h-[72px] items-center px-6 pb-1 pt-7">
+    {{/* Gallery toolbar: only visible on gallery/lightbox pages, hidden on dashboard */}}
+    {{ if ne .PageName "dashboard" }}
+      {{/* Breadcrumbs: intercept link clicks and set location.href so we always do full navigation (not HTMX). Links without hx-get are treated as full-page. */}}
+      <div
+        id="breadcrumbs-container"
+        class="absolute left-0 right-0 top-0 flex h-7 items-center justify-center text-xs text-[oklch(var(--bc)/0.6)]"
+        _="install BreadcrumbLinks"
+      >
+        {{ if .Breadcrumbs }}
+          <div class="breadcrumbs text-[oklch(var(--bc)/0.6)]">
+            <ul>
+              {{ range .Breadcrumbs }}
+                <li>
+                  <a
+                    href="{{ .Path }}?v={{ cacheVersion }}"
+                    hx-boost="false"
+                    class="text-[oklch(var(--bc)/0.6)] transition-opacity hover:opacity-100"
+                    >{{ .Name }}</a
+                  >
+                </li>
+              {{ end }}
+            </ul>
+          </div>
+        {{ end }}
+      </div>
+
+      <!-- Group 1: Left Aligned - Info, Count -->
+      <div class="flex flex-1 items-center justify-start gap-3 pl-2">
+        <!-- Mobile Info Button (only visible on mobile) -->
+        <button
+          id="info-btn-mobile"
+          class="relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border border-base-content/5 bg-base-300/60 text-base-content/70 transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:border-primary/20 hover:bg-base-300 hover:text-primary hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none sm:hidden"
+          title="Info"
+          _="install MobileInfoButton"
+        >
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <circle cx="12" cy="12" r="10" />
+            <path d="M12 16v-4" />
+            <path d="M12 8h.01" />
+          </svg>
+        </button>
+        <!-- Info Button (desktop only) -->
+        <button
+          id="info-btn"
+          class="relative hidden h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border border-base-content/5 bg-base-300/60 text-base-content/70 transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:border-primary/20 hover:bg-base-300 hover:text-primary hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none sm:flex"
+          {{ if eq .PageName "dashboard" }}disabled{{ end }}
+          title="Info"
+          _="install DesktopInfoButton"
+        >
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <circle cx="12" cy="12" r="10" />
+            <path d="M12 16v-4" />
+            <path d="M12 8h.01" />
+          </svg>
+        </button>
+
+        <!-- Count Display -->
+        <span
+          id="image-count-display"
+          class="text-xs font-medium tracking-[-0.01em] text-base-content/80"
+        >
+          {{ template "image-count" . }}
+        </span>
+      </div>
+
+      <!-- Group 2: Center - Navigation Controls -->
+      <div class="flex flex-none items-center justify-center gap-1.5">
+        <!-- First -->
+        <button
+          id="lightbox-first-btn"
+          type="button"
+          class="relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border border-base-content/5 bg-base-300/60 text-base-content/70 transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:border-primary/20 hover:bg-base-300 hover:text-primary hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none"
+          disabled
+          title="First"
+        >
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="m11 17-5-5 5-5" />
+            <path d="m18 17-5-5 5-5" />
+          </svg>
+        </button>
+
+        <!-- Previous -->
+        <button
+          id="lightbox-prev-btn"
+          type="button"
+          class="relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border border-base-content/5 bg-base-300/60 text-base-content/70 transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:border-primary/20 hover:bg-base-300 hover:text-primary hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none"
+          disabled
+          title="Previous"
+        >
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="m15 18-6-6 6-6" />
+          </svg>
+        </button>
+
+        <!-- Close -->
+        <button
+          id="lightbox_close-btn"
+          class="relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border border-base-content/5 bg-base-300/60 text-base-content/70 transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:border-primary/20 hover:bg-base-300 hover:text-primary hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none"
+          disabled
+          title="Close"
+          _="install CloseLightbox"
+        >
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M18 6 6 18" />
+            <path d="m6 6 12 12" />
+          </svg>
+        </button>
+
+        <!-- Divider -->
+        <div class="mx-1 h-[18px] w-px bg-base-content/10"></div>
+
+        <!-- Slideshow / Play -->
+        <button
+          id="slideshow-btn"
+          class="relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border border-base-content/5 bg-base-300/60 text-base-content/70 transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:border-primary/20 hover:bg-base-300 hover:text-primary hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none"
+          disabled
+          title="Slideshow"
+          _="install SlideshowButton"
+        >
+          <svg
+            class="play-icon"
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <polygon points="5 3 19 12 5 21 5 3" />
+          </svg>
+          <svg
+            class="pause-icon hidden"
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <rect x="6" y="4" width="4" height="16" />
+            <rect x="14" y="4" width="4" height="16" />
+          </svg>
+        </button>
+
+        <!-- Actual Size -->
+        <button
+          id="lightbox-actual-size-btn"
+          class="relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border border-base-content/5 bg-base-300/60 text-base-content/70 transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:border-primary/20 hover:bg-base-300 hover:text-primary hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none"
+          disabled
+          title="Actual Size"
+          _="install ActualSizeButton"
+        >
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="m21 21-6-6m6 6v-4.8m0 4.8h-4.8" />
+            <path d="M3 16.2V21m0 0h4.8M3 21l6-6" />
+            <path d="M21 7.8V3m0 0h-4.8M21 3l-6 6" />
+            <path d="M3 7.8V3m0 0h4.8M3 3l6 6" />
+          </svg>
+        </button>
+
+        <!-- Divider -->
+        <div class="mx-1 h-[18px] w-px bg-base-content/10"></div>
+
+        <!-- Next -->
+        <button
+          id="lightbox-next-btn"
+          type="button"
+          class="relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border border-base-content/5 bg-base-300/60 text-base-content/70 transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:border-primary/20 hover:bg-base-300 hover:text-primary hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none"
+          disabled
+          title="Next"
+        >
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="m9 18 6-6-6-6" />
+          </svg>
+        </button>
+
+        <!-- Last -->
+        <button
+          id="lightbox-last-btn"
+          type="button"
+          class="relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border border-base-content/5 bg-base-300/60 text-base-content/70 transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:border-primary/20 hover:bg-base-300 hover:text-primary hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none"
+          disabled
+          title="Last"
+        >
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="m6 17 5-5-5-5" />
+            <path d="m13 17 5-5-5-5" />
+          </svg>
+        </button>
+      </div>
+    {{ end }}
+
+
+    <!-- Group 3: Right Aligned - Menu -->
+    <div class="flex flex-1 items-center justify-end gap-3 pr-2">
+      <div class="dropdown dropdown-end dropdown-top">
+        <button
+          id="hamburger-menu-btn"
+          type="button"
+          class="relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border border-base-content/5 bg-base-300/60 text-base-content/70 transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] before:absolute before:inset-0 before:bg-[linear-gradient(135deg,oklch(var(--p)/0.15)_0%,transparent_50%)] before:opacity-0 before:transition-opacity before:duration-300 hover:-translate-y-[3px] hover:scale-[1.08] hover:border-primary/20 hover:bg-base-300 hover:text-primary hover:shadow-[0_8px_24px_oklch(var(--p)/0.25)] hover:before:opacity-100 active:-translate-y-[1px] active:scale-[1.04] disabled:translate-y-0 disabled:scale-100 disabled:cursor-not-allowed disabled:opacity-25 disabled:shadow-none"
+          tabindex="0"
+          aria-label="Menu"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="4" x2="20" y1="12" y2="12" />
+            <line x1="4" x2="20" y1="6" y2="6" />
+            <line x1="4" x2="20" y1="18" y2="18" />
+          </svg>
+        </button>
+        <ul
+          id="hamburger-menu-items"
+          hx-get="/hamburger-menu"
+          hx-trigger="load, pageshow from:window, auth-changed from:body"
+          hx-swap="innerHTML"
+          class="menu dropdown-content z-[60] w-56 rounded-box border border-base-300 bg-base-100 p-2 shadow-lg"
+          tabindex="0"
+        >
+          <!-- Minimal placeholder while HTMX loads;
+               .dropdown-content keeps it display:none until button click,
+               so this is invisible. HTMX replaces children on pageshow/auth-changed.
+               pageshow from:window covers both initial load and bfcache restore. -->
+          <li class="pointer-events-none">
+            <span class="px-4 py-2">&nbsp;</span>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </footer>
+</div>

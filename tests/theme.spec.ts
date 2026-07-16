@@ -48,6 +48,10 @@ test.describe("Theme", () => {
   });
 
   test("3: Switch to light theme", async ({ page }) => {
+    // Visit /login-form first to establish a session with a fresh CSRF
+    // token.  /gallery/1 is HTTP-cached and may serve a stale CSRF token
+    // from a preload session, causing theme POSTs to fail after WP-12.
+    await page.goto("/login-form");
     // Start from dark theme state
     await goToGallery(page);
     await openMenu(page);

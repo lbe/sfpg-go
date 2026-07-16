@@ -47,6 +47,7 @@ type SubsystemManager struct {
 	infra *InfrastructureService
 }
 
+// NewSubsystemManager constructs a subsystem manager bound to infrastructure services.
 func NewSubsystemManager(infra *InfrastructureService) *SubsystemManager {
 	return &SubsystemManager{
 		infra:     infra,
@@ -73,17 +74,22 @@ func (m *SubsystemManager) Start(
 
 	// Queue
 	queueSize := 10000
+	discoveryQueueMax := 0
 	if cfg != nil {
 		queueSize = cfg.QueueSize
+		discoveryQueueMax = cfg.DiscoveryQueueMax
 	}
-	m.q = queue.NewQueue[string](queueSize)
+	if discoveryQueueMax > 0 {
+		m.q = queue.NewBoundedQueue[string](queueSize, discoveryQueueMax)
+	} else {
+		m.q = queue.NewQueue[string](queueSize)
+	}
 
 	// File processor (tests may inject a fake via m.fileProcessor)
 	if m.fileProcessor == nil {
-		batcherAdapter := newBatcherAdapter(m.infra.WriteBatcher())
 		m.fileProcessor = files.NewFileProcessor(
 			m.infra.DBRoPool(), m.infra.DBRwPool(),
-			m.infra.ImporterFactory, imagesDir, batcherAdapter,
+			m.infra.ImporterFactory, imagesDir, newFileBatcher(m.infra.WriteBatcher()),
 		)
 	}
 
@@ -149,6 +155,7 @@ func (m *SubsystemManager) StartPool(ctx context.Context, poolDone chan struct{}
 	}()
 }
 
+// Shutdown stops preload and file-processing subsystems.
 func (m *SubsystemManager) Shutdown() {
 	if m.preloadManager != nil {
 		m.preloadManager.Shutdown()
@@ -160,6 +167,7 @@ func (m *SubsystemManager) Shutdown() {
 
 // ─── ServerDeps methods ─────────────────────────────────────────────
 
+// StartCacheBatchLoad starts background cache batch loading when discovery is not active.
 func (m *SubsystemManager) StartCacheBatchLoad(ctx context.Context) (interfaces.StartCacheBatchLoadResult, error) {
 	if m.moduleStateService != nil {
 		active, err := m.moduleStateService.IsActive(ctx, "discovery")
@@ -186,12 +194,14 @@ func (m *SubsystemManager) StartCacheBatchLoad(ctx context.Context) (interfaces.
 	return interfaces.StartCacheBatchLoadResult{Blocked: false, Message: "Cache batch load started"}, nil
 }
 
+// ResetStats clears file-processing counters.
 func (m *SubsystemManager) ResetStats() {
 	if m.processingStats != nil {
 		m.processingStats.Reset()
 	}
 }
 
+// SetPreloadEnabled enables or disables cache preload scheduling.
 func (m *SubsystemManager) SetPreloadEnabled(enabled bool) {
 	if m.preloadManager != nil {
 		m.preloadManager.SetEnabled(enabled)
@@ -202,20 +212,21 @@ func (m *SubsystemManager) SetPreloadEnabled(enabled bool) {
 
 // ─── Metrics ────────────────────────────────────────────────────────
 
+// WireMetrics connects subsystem components to the metrics collector.
 func (m *SubsystemManager) WireMetrics(collector *metrics.Collector) {
 	if m.infra.WriteBatcher() != nil {
-		collector.SetWriteBatcher(&writeBatcherAdapter{wb: m.infra.WriteBatcher()})
+		collector.SetWriteBatcher(m.infra.WriteBatcher())
 	}
 	if m.pool != nil {
-		collector.SetWorkerPool(&workerPoolAdapter{pool: m.pool})
+		collector.SetWorkerPool(m.pool)
 	}
 	if m.preloadManager != nil {
-		collector.SetCachePreload(&cachePreloadAdapter{pm: m.preloadManager})
+		collector.SetCachePreload(m.preloadManager)
 	}
 	if m.infra.CacheMW() != nil {
-		collector.SetHTTPCache(&httpCacheAdapter{cache: m.infra.CacheMW()})
+		collector.SetHTTPCache(m.infra.CacheMW())
 	}
 	if m.processingStats != nil {
-		collector.SetFileProcessor(&fileProcessorAdapter{stats: m.processingStats})
+		collector.SetFileProcessor(m.processingStats)
 	}
 }

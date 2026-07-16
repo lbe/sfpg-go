@@ -11,8 +11,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/gorilla/sessions"
-
 	"github.com/lbe/sfpg-go/internal/gallerydb"
 	"github.com/lbe/sfpg-go/internal/humanize"
 	"github.com/lbe/sfpg-go/internal/server/config"
@@ -25,8 +23,10 @@ import (
 	"github.com/lbe/sfpg-go/web"
 )
 
-// Compile-time check: *App satisfies all handler dependencies via ServerDeps.
+// Compile-time checks: *App satisfies all handler dependency interfaces.
 var _ interfaces.ServerDeps = (*App)(nil)
+var _ interfaces.GalleryOps = (*App)(nil)
+var _ interfaces.ServerControl = (*App)(nil)
 
 // UpdateUsername updates the admin username in the config table.
 // Uses gallerydb-generated queries (no inline SQL).
@@ -74,15 +74,12 @@ func (app *App) RestartRequired() bool {
 	return app.RuntimeManager.RestartRequired()
 }
 
-// GetMetadataQueries returns the metadata query interface for a connection.
-// *gallerydb.Queries already satisfies interfaces.MetadataQueries directly,
-// so no adapter wrapper is needed.
-
 // ImagesDir returns the current images directory path.
 func (app *App) ImagesDir() string {
 	return app.imagesDir
 }
 
+// UpdateConfigWithPrecedence stores configuration and reapplies CLI/env precedence rules.
 func (app *App) UpdateConfigWithPrecedence(c *config.Config, changedFields []string) {
 	app.ConfigManager.UpdateConfigWithPrecedence(c, changedFields, app.opt)
 }
@@ -91,9 +88,6 @@ func (app *App) UpdateConfigWithPrecedence(c *config.Config, changedFields []str
 func (app *App) ResetStats() {
 	app.SubsystemManager.ResetStats()
 }
-
-// GetConfig returns the current application configuration.
-// Safe for concurrent use (acquires read lock).
 
 // ensureSession creates the session store and session manager if not already set.
 // Called from Run(), Serve(), and CreateApp before building handlers.
@@ -105,15 +99,15 @@ func (app *App) ensureSession() {
 func (app *App) buildHandlers(templateFS fs.FS) error {
 	return app.Build(
 		templateFS,
-		app,                  // interfaces.ServerDeps
-		app.authService,      // auth.AuthService
-		app.sessionManager,   // session.SessionManager
-		app.dbRoPool,         // *dbconnpool.DbSQLConnPool
-		app.dbRwPool,         // *dbconnpool.DbSQLConnPool
-		app.ctx,              // context.Context
-		app.configService,    // config.ConfigService
-		app.GetETagVersion,   // func() string
-		app.metricsCollector, // *metrics.Collector
+		app,                                  // interfaces.ServerDeps
+		app.SessionAuthFacade.authService,    // auth.AuthService
+		app.SessionAuthFacade.sessionManager, // session.SessionManager
+		app.dbRoPool,                         // *dbconnpool.DbSQLConnPool
+		app.dbRwPool,                         // *dbconnpool.DbSQLConnPool
+		app.RuntimeManager.ctx,               // context.Context
+		app.ConfigManager.ConfigService,      // config.ConfigService
+		app.GetETagVersion,                   // func() string
+		app.RuntimeManager.metricsCollector,  // *metrics.Collector
 	)
 }
 
@@ -127,7 +121,7 @@ func removeImagesDirPrefix(normalizedImagesDir, path string) (string, error) {
 	return pathutil.RemoveImagesDirPrefix(normalizedImagesDir, path)
 }
 
-// serverError logs an error and sends a generic 500 Internal Server Error
+// ServerError logs an error and sends a generic 500 Internal Server Error
 // response to the client.
 func (app *App) ServerError(w http.ResponseWriter, r *http.Request, err error) {
 	slog.Error("server error", "error", err, "path", r.URL.Path)
@@ -137,37 +131,18 @@ func (app *App) ServerError(w http.ResponseWriter, r *http.Request, err error) {
 // getSessionOptionsConfig returns session configuration as OptionsConfig for the session manager.
 // This is used by the session manager's configGetter function to retrieve current session settings.
 func (app *App) getSessionOptionsConfig() *session.OptionsConfig {
-	app.configMu.RLock()
-	defer app.configMu.RUnlock()
-	if app.config == nil {
+	app.ConfigManager.ConfigMu.RLock()
+	defer app.ConfigManager.ConfigMu.RUnlock()
+	if app.ConfigManager.Config == nil {
 		return nil
 	}
 	return &session.OptionsConfig{
-		SessionMaxAge:   app.config.SessionMaxAge,
-		SessionHttpOnly: app.config.SessionHttpOnly,
-		SessionSecure:   app.config.SessionSecure,
-		SessionSameSite: app.config.SessionSameSite,
+		SessionMaxAge:   app.ConfigManager.Config.SessionMaxAge,
+		SessionHttpOnly: app.ConfigManager.Config.SessionHttpOnly,
+		SessionSecure:   app.ConfigManager.Config.SessionSecure,
+		SessionSameSite: app.ConfigManager.Config.SessionSameSite,
 	}
 }
-
-// getSessionOptions returns session cookie options configured from app.config.
-// It delegates to the session manager.
-func (app *App) getSessionOptions() *sessions.Options {
-	if app.sessionManager != nil {
-		return app.sessionManager.GetOptions()
-	}
-	// Fallback for tests or early initialization before sessionManager is created
-	return session.GetSessionOptions(app.getSessionOptionsConfig())
-}
-
-// ensureCsrfToken ensures a CSRF token exists in the session and returns it.
-// It generates and saves a new token if none exists. Only use this from
-// handlers that need to persist a CSRF token (e.g., login, config).
-
-// csrfTokenForPage returns a CSRF token for template rendering.
-// For authenticated users: persists the token in the session as usual.
-// For unauthenticated users: generates a random token but does NOT save
-// to the session, avoiding Set-Cookie on cached public pages.
 
 // Serve initializes the session store and starts the HTTP server on the configured port.
 // It runs until the server encounters a fatal error, a process restart is requested
@@ -176,22 +151,22 @@ func (app *App) Serve() error {
 	slog.Info("Serve called")
 	app.ensureSession()
 
-	app.configMu.Lock()
-	if app.config == nil {
-		app.configMu.Unlock()
+	app.ConfigManager.ConfigMu.Lock()
+	if app.ConfigManager.Config == nil {
+		app.ConfigManager.ConfigMu.Unlock()
 		if err := app.loadConfig(); err != nil {
 			slog.Warn("failed to load configuration in Serve()", "err", err)
-			app.configMu.Lock()
-			app.config = config.DefaultConfig()
-			app.config.LoadFromOpt(app.opt)
-			app.configMu.Unlock()
+			app.ConfigManager.ConfigMu.Lock()
+			app.ConfigManager.Config = config.DefaultConfig()
+			app.ConfigManager.Config.LoadFromOpt(app.opt)
+			app.ConfigManager.ConfigMu.Unlock()
 		}
 	} else {
-		app.config.LoadFromOpt(app.opt)
-		app.configMu.Unlock()
+		app.ConfigManager.Config.LoadFromOpt(app.opt)
+		app.ConfigManager.ConfigMu.Unlock()
 	}
 
-	if app.authHandlers == nil {
+	if app.HandlerManager.authHandlers == nil {
 		if err := app.buildHandlers(web.FS); err != nil {
 			return err
 		}
@@ -199,28 +174,15 @@ func (app *App) Serve() error {
 	app.scheduleStaleCacheDrop("serve-startup")
 
 	mux := app.getRouter()
-	app.configMu.RLock()
-	addr := fmt.Sprintf("%s:%d", app.config.ListenerAddress, app.config.ListenerPort)
-	app.configMu.RUnlock()
+	app.ConfigManager.ConfigMu.RLock()
+	addr := fmt.Sprintf("%s:%d", app.ConfigManager.Config.ListenerAddress, app.ConfigManager.Config.ListenerPort)
+	app.ConfigManager.ConfigMu.RUnlock()
 
-	if app.testHookServe != nil {
-		return app.testHookServe(mux, addr)
+	if app.testSeams.Serve != nil {
+		return app.testSeams.Serve(mux, addr)
 	}
 	return app.RuntimeManager.Serve(mux, addr)
 }
-
-// requestRestart is invoked from the config restart handler. It flags that a
-// process restart has been requested and gracefully shuts down the HTTP server
-// so Serve() returns and Run() can exec a new process image.
-
-// getAdminUsername retrieves the administrator's username from the database 'config' table.
-// Delegates to ConfigService.GetConfigValue when available.
-func (app *App) getAdminUsername() (string, error) {
-	return app.GetAdminUsername(app.ctx, app.dbRoPool)
-}
-
-// GetETagVersion returns the current ETag version for cache-busting URLs.
-// Thread-safe: acquires configMu.RLock to read app.config.ETagVersion.
 
 // authMiddleware is a middleware that protects routes by checking for a valid session.
 // It delegates to middleware.AuthMiddleware, using the current store and sessionManager.
@@ -238,15 +200,15 @@ func (app *App) authMiddleware(next http.Handler) http.Handler {
 			Int:   app.opt.DebugDelayMS.Int,
 		},
 	}
-	// Create middleware function that uses current app.store and app.sessionManager
+	// Create middleware function that uses current app.SessionAuthFacade.store and app.SessionAuthFacade.sessionManager
 	// This ensures it works even if store is rotated (e.g., in tests)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		sm := app.sessionManager
-		if sm == nil && app.store != nil {
+		sm := app.SessionAuthFacade.sessionManager
+		if sm == nil && app.SessionAuthFacade.store != nil {
 			// Fallback for tests: create temporary session manager
-			sm = session.NewManager(app.store, app.getSessionOptionsConfig)
+			sm = session.NewManager(app.SessionAuthFacade.store, app.getSessionOptionsConfig)
 		}
-		authFunc := middleware.AuthMiddleware(app.store, sm, config)
+		authFunc := middleware.AuthMiddleware(app.SessionAuthFacade.store, sm, config)
 		// After auth: set cache policy for HTMX before calling handler (see e32e621).
 		withHTMXCachePolicy := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Header.Get("HX-Request") == "true" {
@@ -262,21 +224,18 @@ func (app *App) authMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// isAuthenticated checks if the current request has a valid authenticated session.
-// If the session cookie is invalid or malformed, it clears the cookie and returns false.
-
-// addCommonTemplateData adds common template data (auth state, CSRF token, theme, and gallery statistics) to template data map.
+// AddCommonTemplateData adds common template data (auth state, CSRF token, theme, and gallery statistics) to template data map.
 // When partial is true, skips GalleryStats (expensive getGalleryStatistics) since partials (HTMX swaps, modals, toasts)
 // don't include the about modal. Full pages need GalleryStats for the about modal in the layout.
 func (app *App) AddCommonTemplateData(w http.ResponseWriter, r *http.Request, data map[string]any, partial bool) map[string]any {
 	authenticated := app.IsAuthenticated(w, r)
 	data = template.AddCommonData(data, authenticated, app.CSRFTokenForPage(w, r, authenticated))
 	data["Theme"] = app.getEffectiveTheme(r)
-	data["Version"] = app.version
+	data["Version"] = app.RuntimeManager.version
 
 	if !partial {
 		// Add gallery statistics for the about modal (full pages only)
-		if app.moduleStateService == nil {
+		if app.SubsystemManager.moduleStateService == nil {
 			stats, err := app.getGalleryStatistics(r.Context())
 			if err != nil {
 				slog.Warn("failed to get gallery statistics", "err", err)
@@ -288,20 +247,20 @@ func (app *App) AddCommonTemplateData(w http.ResponseWriter, r *http.Request, da
 			ctx := r.Context()
 			var isActive bool
 			var aErr error
-			if app.testHookAddCommonDataIsActive != nil {
-				isActive, aErr = app.testHookAddCommonDataIsActive(ctx, "discovery")
+			if app.testSeams.AddCommonDataIsActive != nil {
+				isActive, aErr = app.testSeams.AddCommonDataIsActive(ctx, "discovery")
 			} else {
-				isActive, aErr = app.moduleStateService.IsActive(ctx, "discovery")
+				isActive, aErr = app.SubsystemManager.moduleStateService.IsActive(ctx, "discovery")
 			}
 			if aErr != nil {
 				slog.Error("failed to check discovery active state", "err", aErr)
 			}
 			var lastStarted int64
 			var lsErr error
-			if app.testHookAddCommonDataLastStarted != nil {
-				lastStarted, _, lsErr = app.testHookAddCommonDataLastStarted(ctx, "discovery")
+			if app.testSeams.AddCommonDataLastStarted != nil {
+				lastStarted, _, lsErr = app.testSeams.AddCommonDataLastStarted(ctx, "discovery")
 			} else {
-				lastStarted, _, lsErr = app.moduleStateService.GetLastStartedAt(ctx, "discovery")
+				lastStarted, _, lsErr = app.SubsystemManager.moduleStateService.GetLastStartedAt(ctx, "discovery")
 			}
 			if lsErr != nil {
 				slog.Error("failed to get discovery last started at", "err", lsErr)
@@ -355,8 +314,8 @@ type GalleryStats struct {
 
 // getGalleryStatistics retrieves gallery statistics from the database.
 func (app *App) getGalleryStatistics(ctx context.Context) (GalleryStats, error) {
-	if app.testHookGetGalleryStatistics != nil {
-		return app.testHookGetGalleryStatistics(ctx)
+	if app.testSeams.GetGalleryStatistics != nil {
+		return app.testSeams.GetGalleryStatistics(ctx)
 	}
 
 	cpcRo, err := app.dbRoPool.Get()
@@ -396,70 +355,74 @@ func (app *App) getGalleryStatistics(ctx context.Context) (GalleryStats, error) 
 	return result, nil
 }
 
-// getUser retrieves the stored user details from the database for authentication.
+// GetUser retrieves the stored user details from the database for authentication.
 // It returns a session.User struct containing the username and the stored password hash.
 func (app *App) GetUser(ctx context.Context, username string) (*session.User, error) {
-	return app.AuthService.GetUser(ctx, username, app.dbRoPool, app.dbRwPool)
+	return app.SessionAuthFacade.GetUser(ctx, username, app.dbRoPool, app.dbRwPool)
 }
 
-// checkAccountLockout checks if an account is locked and returns true if locked, false otherwise.
+// CheckAccountLockout checks if an account is locked and returns true if locked, false otherwise.
 // If the lockout has expired, it clears the lockout.
 func (app *App) CheckAccountLockout(ctx context.Context, username string) (bool, error) {
-	return app.AuthService.CheckAccountLockout(ctx, username, app.dbRwPool)
+	return app.SessionAuthFacade.CheckAccountLockout(ctx, username, app.dbRwPool)
 }
 
-// recordFailedLoginAttempt records a failed login attempt and locks the account after 3 failures.
+// RecordFailedLoginAttempt records a failed login attempt and locks the account after 3 failures.
 func (app *App) RecordFailedLoginAttempt(ctx context.Context, username string) error {
 	lockout := int64(3600)
+	threshold := int64(3)
 	cfg := app.GetConfig()
 	if cfg != nil && cfg.LockoutDuration > 0 {
 		lockout = int64(cfg.LockoutDuration)
 	}
-	return app.AuthService.RecordFailedLoginAttempt(
-		ctx, username, app.dbRwPool, lockout, app.scheduler, app.unlockAccountFromTask,
+	if cfg != nil && cfg.LockoutThreshold > 0 {
+		threshold = int64(cfg.LockoutThreshold)
+	}
+	return app.SessionAuthFacade.RecordFailedLoginAttempt(
+		ctx, username, app.dbRwPool, lockout, threshold, app.SubsystemManager.scheduler, app.unlockAccountFromTask,
 	)
 }
 
-// clearLoginAttempts clears failed login attempts for a username (called on successful login).
+// ClearLoginAttempts clears failed login attempts for a username (called on successful login).
 func (app *App) ClearLoginAttempts(ctx context.Context, username string) error {
-	return app.AuthService.ClearLoginAttempts(ctx, username, app.dbRwPool)
+	return app.SessionAuthFacade.ClearLoginAttempts(ctx, username, app.dbRwPool)
 }
 
 // unlockAccountFromTask unlocks a user account (called by scheduled unlock task).
 // This function is used by the UnlockAccountTask scheduled when a lockout is set.
 func (app *App) unlockAccountFromTask(ctx context.Context, username string) error {
-	return app.UnlockAccountFromTask(ctx, username, app.dbRwPool)
+	return app.SessionAuthFacade.UnlockAccountFromTask(ctx, username, app.dbRwPool)
 }
 
-// walkImageDir starts a background process to recursively scan the images directory.
+// TriggerDiscovery starts a background process to recursively scan the images directory.
 // It delegates to files.WalkImageDir with app-specific deps.
 // Updates module_state for "discovery" so batch load can guard against concurrent discovery.
 func (app *App) TriggerDiscovery() {
 	ctx := app.getCtx()
 
-	if app.moduleStateService != nil {
-		if err := app.moduleStateService.SetActive(ctx, "discovery", true); err != nil {
+	if app.SubsystemManager.moduleStateService != nil {
+		if err := app.SubsystemManager.moduleStateService.SetActive(ctx, "discovery", true); err != nil {
 			slog.Error("failed to set discovery active in module_state", "err", err)
 		}
 		defer func() {
 			// Use Background so finish is persisted even if app ctx is cancelled
-			if err := app.moduleStateService.SetActive(context.Background(), "discovery", false); err != nil {
+			if err := app.SubsystemManager.moduleStateService.SetActive(context.Background(), "discovery", false); err != nil {
 				slog.Error("failed to set discovery inactive in module_state", "err", err)
 			}
 		}()
 	}
 
 	files.WalkImageDir(&files.WalkDeps{
-		Wg:             &app.wg,
-		QSendersActive: &app.qSendersActive,
+		Wg:             &app.RuntimeManager.wg,
+		QSendersActive: &app.SubsystemManager.qSendersActive,
 		Ctx:            ctx,
 		ImagesDir:      app.imagesDir,
-		Q:              app.q,
+		Q:              app.SubsystemManager.q,
 	})
 
 	// Refresh gallery stats cache after discovery completes (covers both startup and server menu)
-	if app.moduleStateService != nil {
-		if lastStarted, ok, gsErr := app.moduleStateService.GetLastStartedAt(ctx, "discovery"); ok && gsErr == nil {
+	if app.SubsystemManager.moduleStateService != nil {
+		if lastStarted, ok, gsErr := app.SubsystemManager.moduleStateService.GetLastStartedAt(ctx, "discovery"); ok && gsErr == nil {
 			if _, refreshErr := app.refreshGalleryStatsCache(ctx, lastStarted); refreshErr != nil {
 				slog.Error("failed to refresh gallery stats cache", "err", refreshErr)
 			}

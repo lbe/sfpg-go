@@ -1,0 +1,19 @@
+<script type="text/hyperscript">
+  behavior InfoBoxWrapper
+    init
+      if body matches .info-pinned
+        remove .hidden from me
+      end
+    end
+  end
+
+  behavior InfoBoxMirror
+    on htmx:afterSwap
+      if #mobile_info_modal.checked
+        set #box_info_mobile.innerHTML to my.innerHTML
+        set #box_info_mobile.scrollTop to 0
+        set #mobile_info_modal_box.scrollTop to 0
+      end
+    end
+  end
+</script>

@@ -17,13 +17,13 @@ func (h *GalleryHandlers) ImageByID(w http.ResponseWriter, r *http.Request) {
 	idStr := r.PathValue("id")
 	fileID, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		h.deps.ServerError(w, r, fmt.Errorf("invalid file id: %s", idStr))
+		h.ServerError(w, r, fmt.Errorf("invalid file id: %s", idStr))
 		return
 	}
 
 	qh, _, put, err := h.getQueries()
 	if err != nil {
-		h.deps.ServerError(w, r, err)
+		h.ServerError(w, r, err)
 		return
 	}
 	defer put()
@@ -33,14 +33,14 @@ func (h *GalleryHandlers) ImageByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	etagVersion := h.deps.GetETagVersion()
+	etagVersion := h.galleryOps.GetETagVersion()
 	etag := fmt.Sprintf("\"%s-%d\"", etagVersion, fileID)
 	h.setCacheHeaders(w, etag)
 	w.Header().Set("HX-Push-URL", fmt.Sprintf("/image/%d?v=%s", fileID, etagVersion))
 
 	breadcrumbs, err := h.generateBreadcrumbsByID(file.FolderID.Int64)
 	if err != nil {
-		h.deps.ServerError(w, r, err)
+		h.ServerError(w, r, err)
 		return
 	}
 
@@ -52,9 +52,9 @@ func (h *GalleryHandlers) ImageByID(w http.ResponseWriter, r *http.Request) {
 		"CacheVersion": time.Now().Unix(),
 		"ImageCount":   1,
 	}
-	data = h.deps.AddCommonTemplateData(w, r, data, false)
+	data = h.AddCommonTemplateData(w, r, data, false)
 	if err := ui.RenderPage(w, "image", data, false); err != nil {
-		h.deps.ServerError(w, r, err)
+		h.ServerError(w, r, err)
 	}
 }
 
@@ -63,13 +63,13 @@ func (h *GalleryHandlers) RawImageByID(w http.ResponseWriter, r *http.Request) {
 	idStr := r.PathValue("id")
 	fileID, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		h.deps.ServerError(w, r, fmt.Errorf("invalid file id: %s", idStr))
+		h.ServerError(w, r, fmt.Errorf("invalid file id: %s", idStr))
 		return
 	}
 
 	qh, _, put, err := h.getQueries()
 	if err != nil {
-		h.deps.ServerError(w, r, err)
+		h.ServerError(w, r, err)
 		return
 	}
 	defer put()
@@ -79,7 +79,7 @@ func (h *GalleryHandlers) RawImageByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	imagesDir := h.deps.ImagesDir()
+	imagesDir := h.galleryOps.ImagesDir()
 
 	absPath, err := pathutil.SafeImagePath(imagesDir, file.Path)
 	if err != nil {

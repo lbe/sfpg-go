@@ -408,6 +408,38 @@ func (q *DQue[T]) sizeUnsafeLocked() int {
 	return q.firstSegment.size() + (numSegmentsBetween * q.config.ItemsPerSegment) + q.lastSegment.size()
 }
 
+// DiskBytes returns an estimate of disk usage for the queue in bytes
+// by summing the sizes of all segment files in the queue directory.
+// Returns 0 when the queue is closed or on any filesystem error.
+func (q *DQue[T]) DiskBytes() int64 {
+	q.mutex.Lock()
+	defer q.mutex.Unlock()
+
+	if q.closed {
+		return 0
+	}
+	return q.diskBytesLocked()
+}
+
+func (q *DQue[T]) diskBytesLocked() int64 {
+	entries, err := osReadDir(q.fullPath)
+	if err != nil {
+		return 0
+	}
+	var total int64
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		total += info.Size()
+	}
+	return total
+}
+
 // SizeUnsafe returns the approximate number of items in the queue.  Use Size() if
 // having the exact size is important to your use-case.
 //

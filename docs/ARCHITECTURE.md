@@ -1,7 +1,7 @@
 # SFPG Architecture Documentation
 
-**Version:** 1.2
-**Last Updated:** 2026-06-19
+**Version:** 1.3
+**Last Updated:** 2026-07-13
 **Application:** Simple Fast Photo Gallery (SFPG)
 
 ## Table of Contents
@@ -156,54 +156,56 @@ Authentication is applied route-specifically (e.g., `/config`, `/dashboard`, `/s
 
 The application is organized into domain-driven packages under `internal/`:
 
-| Package                 | Purpose                                | Key Exports                        |
-| ----------------------- | -------------------------------------- | ---------------------------------- |
-| **server**              | HTTP server, routing, orchestration    | `App`, `getRouter`, middleware     |
-| **server/auth**         | Authentication service                 | `AuthService`, `Authenticate`      |
-| **server/cachebatch**   | Cache batch-load coordination          | batch loader helpers               |
-| **server/cachepreload** | Cache preload manager & tasks          | `Manager`, preload tasks           |
-| **server/config**       | Configuration management               | `Config`, `ConfigService`          |
-| **server/database**     | Database setup, migrations, pools      | `Setup`, `RecreatePoolsWithConfig` |
-| **server/files**        | File processing pipeline               | `FileProcessor`, `ProcessFile`     |
-| **server/handlers**     | Route handlers                         | `GalleryHandlers`, `AuthHandlers`  |
-| **server/interfaces**   | Dependency interfaces for handlers     | `ServerDeps`, `HandlerQueries`     |
-| **server/logging**      | Request logging helpers                | logging middleware wrappers        |
-| **server/menu**         | Hamburger menu handler                 | `MenuHandlers`                     |
-| **server/metrics**      | Runtime metrics collection             | `Collector`                        |
-| **server/middleware**   | HTTP middleware (auth, CSRF, etc.)     | `AuthMiddleware`, `CSRFProtection` |
-| **server/modulestate**  | Module active-state tracking           | `ModuleStateService`               |
-| **server/pathutil**     | Image-directory path utilities         | `RemoveImagesDirPrefix`            |
-| **server/runtime**      | Process runtime / restart management   | `RuntimeManager`                   |
-| **server/security**     | Lockout calculations                   | `CalculateLockout`, `IsLocked`     |
-| **server/session**      | Session & CSRF management              | `SessionManager`, `Manager`        |
-| **server/subsystem**    | Lifecycle management for subsystems    | `SubsystemManager`                 |
-| **server/template**     | Shared template data helpers           | `AddCommonData`                    |
-| **server/theme**        | Theme cookie handling                  | theme helpers                      |
-| **server/ui**           | Template rendering helpers             | `RenderTemplate`                   |
-| **server/validation**   | Config validation helpers              | validators                         |
-| **cachelite**           | HTTP response caching                  | `HTTPCacheMiddleware`, `EvictLRU`  |
-| **workerpool**          | Concurrent task processing             | `Pool`, `Worker`                   |
-| **scheduler**           | Cron-like task scheduling              | `Scheduler`, `Task` interface      |
-| **queue**               | Thread-safe deque                      | `Queue`                            |
-| **writebatcher**        | Batch database operations              | `WriteBatcher`, `Config`           |
-| **dque**                | Persistent on-disk FIFO overflow queue | `New`, `Queue`                     |
-| **flock**               | Cross-platform file locking            | `Flock`                            |
-| **errors**              | Error sentinels for dque               | `ErrXxx` sentinels                 |
-| **dbconnpool**          | SQLite connection pools                | `DbSQLConnPool`                    |
-| **gallerydb**           | Database queries (sqlc)                | `Queries`, `CustomQueries`         |
-| **gallerylib**          | File import / path-chain upserts       | `Importer`                         |
-| **thumbnail**           | Thumbnail generation                   | `GenerateThumbnailAndHashes`       |
-| **imagemeta**           | EXIF extraction (local `replace`)      | Metadata parsers                   |
-| **multihandler**        | Multi-handler structured logging       | `MultiHandler`                     |
-| **profiler**            | Optional CPU/mem/block profiling       | `Start`                            |
-| **coords**              | Geographic coordinate parsing          | `Parse`                            |
-| **humanize**            | Human-readable formatting              | formatters                         |
-| **log**                 | Structured logging                     | `Logger`                           |
-| **gensyncpool**         | Reset-enforcing `sync.Pool` wrappers   | `NewPool`                          |
-| **getopt**              | Config from flags/env                  | config loader                      |
-| **parallelwalkdir**     | Concurrent directory scanning          | `WalkFunc`                         |
-| **testutil**            | Shared test helpers                    | `Equals`, `HTMLContains`           |
-| **gen-test-files**      | Synthetic test file generation         | `Generate`                         |
+| Package                 | Purpose                                | Key Exports                                                                     |
+| ----------------------- | -------------------------------------- | ------------------------------------------------------------------------------- |
+| **server**              | HTTP server, routing, orchestration    | `App`, `getRouter`, middleware                                                  |
+| **server** (managers)   | Embedded orchestration on `App`        | `InfrastructureService`, `RuntimeManager`, `HandlerManager`, `SubsystemManager` |
+| **server** (test seams) | Optional test doubles (production pkg) | `testseams.go`: `AppTestSeams`, `*TestSeams` structs                            |
+| **server/auth**         | Authentication service                 | `AuthService`, `Authenticate`                                                   |
+| **server/cachebatch**   | Cache batch-load coordination          | batch loader helpers                                                            |
+| **server/cachepreload** | Cache preload manager & tasks          | `Manager`, preload tasks                                                        |
+| **server/config**       | Configuration management               | `Config`, `ConfigService`                                                       |
+| **server/database**     | Database setup, migrations, pools      | `Setup`, `RecreatePoolsWithConfig`                                              |
+| **server/files**        | File processing pipeline               | `FileProcessor`, `ProcessFile`                                                  |
+| **server/handlers**     | Route handlers                         | `GalleryHandlers`, `AuthHandlers`                                               |
+| **server/interfaces**   | Dependency interfaces for handlers     | `ServerDeps`, `HandlerQueries`                                                  |
+| **server/logging**      | Request logging helpers                | logging middleware wrappers                                                     |
+| **server/menu**         | Hamburger menu handler                 | `MenuHandlers`                                                                  |
+| **server/metrics**      | Runtime metrics collection             | `Collector`                                                                     |
+| **server/middleware**   | HTTP middleware (auth, CSRF, etc.)     | `AuthMiddleware`, `CSRFProtection`                                              |
+| **server/modulestate**  | Module active-state tracking           | `ModuleStateService`                                                            |
+| **server/pathutil**     | Image-directory path utilities         | `RemoveImagesDirPrefix`                                                         |
+| **server/runtime**      | Process runtime / restart management   | `RuntimeManager`                                                                |
+| **server/security**     | Lockout calculations                   | `CalculateLockout`, `IsLocked`                                                  |
+| **server/session**      | Session & CSRF management              | `SessionManager`, `Manager`                                                     |
+| **server/subsystem**    | Lifecycle management for subsystems    | `SubsystemManager`                                                              |
+| **server/template**     | Shared template data helpers           | `AddCommonData`                                                                 |
+| **server/theme**        | Theme cookie handling                  | theme helpers                                                                   |
+| **server/ui**           | Template rendering helpers             | `RenderTemplate`                                                                |
+| **server/validation**   | Config validation helpers              | validators                                                                      |
+| **cachelite**           | HTTP response caching                  | `HTTPCacheMiddleware`, `EvictLRU`                                               |
+| **workerpool**          | Concurrent task processing             | `Pool`, `Worker`                                                                |
+| **scheduler**           | Cron-like task scheduling              | `Scheduler`, `Task` interface                                                   |
+| **queue**               | Thread-safe deque                      | `Queue`                                                                         |
+| **writebatcher**        | Batch database operations              | `WriteBatcher`, `Config`                                                        |
+| **dque**                | Persistent on-disk FIFO overflow queue | `New`, `Queue`                                                                  |
+| **flock**               | Cross-platform file locking            | `Flock`                                                                         |
+| **errors**              | Error sentinels for dque               | `ErrXxx` sentinels                                                              |
+| **dbconnpool**          | SQLite connection pools                | `DbSQLConnPool`                                                                 |
+| **gallerydb**           | Database queries (sqlc)                | `Queries`, `CustomQueries`                                                      |
+| **gallerylib**          | File import / path-chain upserts       | `Importer`                                                                      |
+| **thumbnail**           | Thumbnail generation                   | `GenerateThumbnailAndHashes`                                                    |
+| **imagemeta**           | EXIF extraction (local `replace`)      | Metadata parsers                                                                |
+| **multihandler**        | Multi-handler structured logging       | `MultiHandler`                                                                  |
+| **profiler**            | Optional CPU/mem/block profiling       | `Start`                                                                         |
+| **coords**              | Geographic coordinate parsing          | `Parse`                                                                         |
+| **humanize**            | Human-readable formatting              | formatters                                                                      |
+| **log**                 | Structured logging                     | `Logger`                                                                        |
+| **gensyncpool**         | Reset-enforcing `sync.Pool` wrappers   | `NewPool`                                                                       |
+| **getopt**              | Config from flags/env                  | config loader                                                                   |
+| **parallelwalkdir**     | Concurrent directory scanning          | `WalkFunc`                                                                      |
+| **testutil**            | Shared test helpers                    | `Equals`, `HTMLContains`                                                        |
+| **gen-test-files**      | Synthetic test file generation         | `Generate`                                                                      |
 
 ### Component Diagram
 
@@ -290,7 +292,7 @@ To make `BatchedWrite` items persistable, `BatchedWrite` and `files.File` implem
 
 - **[internal/server/batched_write.go](internal/server/batched_write.go)**: Defines the `BatchedWrite` union type (`File` and `CacheEntry` variants), its memory estimation logic, and `GobEncode`/`GobDecode` for persistence in `dque`.
 - **[internal/server/batched_write_flush.go](internal/server/batched_write_flush.go)**: Contains the unified transactional flush logic, prepared-statement threading (`WithTx`), per-batch `Importer` construction, and resource cleanup.
-- **[internal/server/batcher_adapter.go](internal/server/batcher_adapter.go)**: Implements the adapter pattern to break circular dependencies between `server` and `files` packages; returns `ErrClosed` when the batcher is nil.
+- **[internal/server/batcher_wiring.go](internal/server/batcher_wiring.go)**: Thin `fileBatcher` wiring that implements `files.UnifiedBatcher` by delegating to the app-level `WriteBatcher[BatchedWrite]`; returns `ErrClosed` when the batcher is nil. Cache entries are submitted directly on `WriteBatcher` from `InfrastructureService.submitCacheWrite` (no separate cache adapter).
 - **[internal/server/files/gob.go](internal/server/files/gob.go)**: `GobEncode`/`GobDecode` for `files.File` (handles the `*bytes.Buffer` thumbnail as raw `[]byte`).
 - **[internal/gallerylib/importer.go](internal/gallerylib/importer.go)**: File import logic with per-batch `folderCache`/`tiledDirs` memoization.
 - **[internal/server/files/service.go](internal/server/files/service.go)**: Consumes the batcher via the `UnifiedBatcher` interface.
@@ -415,6 +417,32 @@ sqlc/queries/
 ---
 
 ## Web Server Layer
+
+### App Orchestration
+
+`App` (`internal/server/app.go`) is the root orchestrator. It embeds four manager structs that own distinct concerns:
+
+| Manager                 | File                        | Responsibility                                                                  |
+| ----------------------- | --------------------------- | ------------------------------------------------------------------------------- |
+| `InfrastructureService` | `infrastructure_service.go` | DB pools, write batcher, HTTP cache middleware, WAL checkpoints, cache eviction |
+| `RuntimeManager`        | `runtime_manager.go`        | Process lifecycle, HTTP `Serve`, restart/exec, gallery stats cache              |
+| `HandlerManager`        | `handler_manager.go`        | Constructs and holds domain handler groups                                      |
+| `SubsystemManager`      | `subsystem_manager.go`      | Background subsystems (discovery, cache batch load, worker pool wiring)         |
+
+Handlers depend on narrow interfaces in `internal/server/interfaces` (`ServerDeps`, `HandlerQueries`, etc.) rather than the full `App` struct.
+
+### Test Seams
+
+Production code uses optional test doubles collected in `internal/server/testseams.go`. Each orchestration struct holds an unexported `testSeams` field; the **zero value means use production implementations**.
+
+| Struct                    | Owner                   | Typical test assignments                                                                     |
+| ------------------------- | ----------------------- | -------------------------------------------------------------------------------------------- |
+| `AppTestSeams`            | `App`                   | `app.testSeams.Serve`, `app.testSeams.LoadConfig`, `app.testSeams.GetGalleryStatistics`, …   |
+| `InfrastructureTestSeams` | `InfrastructureService` | `infra.testSeams.BuildWriteBatcher`, `app.InfrastructureService.testSeams.HandlerQueries`, … |
+| `RuntimeManagerTestSeams` | `RuntimeManager`        | `m.testSeams.BeforeListen`, `app.RuntimeManager.testSeams.ExecCommand`, …                    |
+| `HandlerManagerTestSeams` | `HandlerManager`        | `hm.testSeams.BuildHandlers`, `app.HandlerManager.testSeams.BuildHandlers`                   |
+
+Do **not** add `testHook*` fields to production structs or use promoted `app.testHook*` assignments in tests (embedding made those ambiguous; they were removed in favor of explicit `*.testSeams.*` paths).
 
 ### Server Lifecycle
 
@@ -873,9 +901,20 @@ auth-changed
 **Account Lockout:**
 
 - Credentials are stored in the `config` table (keys `user` and `password`), not in a separate `admin` table
-- Threshold: 3 failed attempts
+- Threshold: configurable via `lockout_threshold` (default 3 failed attempts per account; minimum 1)
 - Duration: configurable via `LockoutDuration` (`lockout_duration`, default 1 hour)
 - Automatic unlock after duration
+- Configured in the config modal **Session** tab under **Login security** (hot reload, no restart)
+
+**IP login rate limiting:**
+
+- Limits `POST /login` attempts per client IP per **60-second sliding window** (`internal/server/security/ratelimit.go`)
+- Config key: `login_rate_limit_per_ip` (default **10**; **`0` disables** IP rate limiting)
+- Enforced in `AuthHandlers.Login` **before** CSRF validation (each POST counts, including failed auth)
+- Uses `RemoteAddr` only (not `X-Forwarded-For`); behind a reverse proxy all clients may share the proxy IP unless the app sees distinct connection addresses
+- Hot reload: `SyncLoginRateLimitMax` on config apply (`SetMax` + `Clear` on one limiter instance)
+- Startup override: `SEPG_LOGIN_RATE_LIMIT_PER_IP` (see [ENV_CONFIGURATION.md](../ENV_CONFIGURATION.md)); no CLI flag
+- Complements per-account lockout (IP cap vs. account lockout are independent)
 
 ### CSRF Protection
 
@@ -1024,27 +1063,19 @@ Diagnostic logging for mismatch visibility:
 - `configured/effective DB pool mismatch`: emits warning-level diagnostics when values diverge (except intentional auto min-idle behavior with `db_min_idle_connections=0`).
 - `startup config summary`: emits one low-noise startup snapshot of configured versus effective values for DB pools and other critical subsystems.
 
-Regression protections:
+Regression protections (consolidated into Phase 2 survivor files — see `docs/phase2-test-ownership.md`):
 
-- Step 2 pool precedence tests (`internal/server/config_pool_precedence_test.go`):
+- Pool precedence and startup/restart sizing (`config_lifecycle_integration_test.go`):
   - `TestDBPoolPrecedence_PoolsIgnoreDatabaseConfig`
   - `TestDBPoolPrecedence_ConfigLoadedAfterPoolCreation`
-  - Prevents regressions where pools are initialized from defaults and never reconciled.
-- Step 4 broader precedence tests (`internal/server/config_integration_test.go`):
-  - `TestIntegration_ConfigPrecedence`
-  - `TestConfigPrecedence_CLIOverridesDB`
-  - `TestConfigPrecedence_EnvOverridesDB`
-  - `TestAppConfigPrecedence_DBOverridesDefaults`
-  - Prevents precedence drift across defaults/database/env/CLI layers.
-- Step 6 startup/restart regression tests (`internal/server/config_startup_restart_regression_test.go`):
   - `TestStartupWithDBConfig_PoolSizeHonored`
   - `TestRestartWithModifiedDBConfig_AppliesNewValues`
-  - Prevents startup/restart paths from reintroducing stale pool sizing.
-- Step 8 UI validation tests (`internal/server/config_ui_test.go` and `internal/server/config_modal_javascript_test.go`):
-  - `TestConfigUI_FormSubmission_UpdatesDatabase`
-  - `TestConfigUI_RestartWarning_Appears`
-  - `TestConfigUI_HTMX_PartialUpdate`
-  - `TestConfigModal_JavaScript_RendersCorrectly`
+  - Prevents pools from staying on defaults or ignoring database config after restart.
+- Broader precedence (`config_precedence_integration_test.go`):
+  - `TestConfigPrecedence_*`, `TestCLI_*`, `TestConfigImport_*`
+  - Prevents precedence drift across defaults/database/env/CLI layers.
+- Config UI validation (`internal/server/config/config_ui_test.go` and related):
+  - Form submission, restart warning, HTMX partial update coverage
   - Prevents config UI regressions from silently breaking persistence or restart signaling.
 
 ### Configuration Schema
@@ -1253,6 +1284,44 @@ pool.Put(conn)
 - Connection validation
 - Graceful shutdown
 
+#### imagemeta
+
+**Purpose:** EXIF/XMP metadata extraction (forked)
+
+`internal/imagemeta` is a fork of [`github.com/evanoberholster/imagemeta`](https://github.com/evanoberholster/imagemeta) v0.3.1
+(MIT-licensed), vendored as a git submodule at [`github.com/lbe/imagemeta`](https://github.com/lbe/imagemeta)
+and wired into the module graph via a `replace` directive in `go.mod`:
+
+```
+replace github.com/evanoberholster/imagemeta => ./internal/imagemeta
+```
+
+The fork has diverged significantly with project-specific enhancements that would be
+difficult to upstream cleanly:
+
+| Area                                     | Changes                                                           |
+| ---------------------------------------- | ----------------------------------------------------------------- |
+| **Canon makernotes**                     | Enhanced Canon metadata handling and makernote parsing            |
+| **Apple makernotes**                     | New Apple makernote package                                       |
+| **XMP**                                  | XMP namespace additions and improvements                          |
+| **GPS / EXIF**                           | Improved GPS IFD, EXIF IFD, and coordinate parsing                |
+| **Image type detection**                 | Expanded magic byte signatures, BMFF/JXL detection, SVG sniffing, |
+| subtype detection, ExifTool-style naming |
+| **pHash**                                | Deterministic perceptual hash across x86-64 and ARM64             |
+| **CI / linting**                         | Harden golangci-lint configuration and security checks            |
+
+**Fork policy:**
+
+- **Status:** Maintain separately. The upstream repository sees limited activity,
+  and the fork carries substantial enhancements tailored to this project's needs.
+- **Upstream merging:** The fork periodically merges upstream changes to stay
+  current with any bug fixes or CL improvements. Merge commits are visible in the
+  submodule history.
+- **Future direction:** Maintain as a fork. Selective cherry-picks from upstream
+  can be pulled in as needed, but the codebases have diverged enough that a
+  clean re-merge is impractical. If the upstream project becomes active again,
+  individual improvements could be contributed back on a case-by-case basis.
+
 ### Testing Utilities
 
 #### testutil
@@ -1350,13 +1419,17 @@ internal/
 │   ├── http_cache_middleware_test.go          # Unit tests (default)
 │   ├── http_cache_middleware_integration_test.go  # Integration tests
 │   └── cache_benchmark_test.go                # Benchmarks
-├── server/
+├── server/                                    # 19 root *_test.go survivors (see docs/phase2-test-ownership.md)
+│   ├── helpers_test.go                        # CreateApp, shared test options
 │   ├── server_test.go                         # Unit tests (default)
-│   ├── server_integration_test.go             # Integration tests
-│   ├── config_integration_test.go             # Config E2E tests
-│   ├── etag_integration_test.go               # ETag behavior tests
-│   ├── logging_integration_test.go            # Logging E2E tests
-│   ├── admin_credentials_integration_test.go  # Admin auth tests
+│   ├── app_test.go                            # App + handler manager unit tests
+│   ├── server_integration_test.go             # Router/middleware integration
+│   ├── app_lifecycle_integration_test.go      # Run/Serve/restart integration
+│   ├── config_lifecycle_integration_test.go     # Config DB lifecycle integration
+│   ├── config_precedence_integration_test.go  # Precedence integration/e2e
+│   ├── server_e2e_test.go                     # e2e-tagged flows
+│   ├── infrastructure_service_test.go         # InfrastructureService unit
+│   ├── runtime_manager_test.go                # RuntimeManager unit
 │   └── files/
 │       ├── service_test.go                    # Unit tests (default)
 │       └── files_integration_test.go          # Integration tests
@@ -1364,6 +1437,8 @@ internal/
     ├── workerpool_test.go                     # Unit tests
     └── mock.go                                # Test doubles
 ```
+
+Handoff docs for the consolidated root survivors: `docs/phase2-test-ownership.md` (per-file map) and `docs/phase2-test-merge-map.md` (WP-54 merge ledger).
 
 **Running tests:**
 
@@ -1399,6 +1474,48 @@ go test -tags integration ./internal/server -run TestConfigIntegration
 2. **Integration Tests**: Test package interactions (requires `-tags integration`)
 3. **End-to-End Tests**: Test complete workflows (subset of integration)
 4. **Benchmarks**: Measure performance
+
+### Test Location Conventions
+
+Where each test category lives and how to choose the right seam.
+
+#### Unit Tests
+
+- Live in `*_test.go` files in the same package as the code under test.
+- Run with `go test ./...` (no build tag).
+- Should be fast and isolated; prefer fakes and mocks over real databases or full server startup.
+
+#### Integration Tests
+
+- Live in `*_integration_test.go` files guarded by `//go:build integration`.
+- Run with `go test -tags integration ./...`.
+- May use real SQLite databases, cross-package wiring, or the full HTTP router.
+
+#### E2E / Browser Tests
+
+- Live in `tests/*.spec.ts` as Playwright specifications.
+- Exercise the running application through a real browser.
+- Shared helpers: `tests/helpers.ts`, `tests/global-setup.ts`.
+
+#### Choosing a Test Seam
+
+| Seam                                   | Location                                                                                | Cost     | Use When                                                                                                                                                 |
+| -------------------------------------- | --------------------------------------------------------------------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mockConfigOps`                        | `internal/server/handlers/helpers_test.go`                                              | Very low | Unit-testing config/theme handlers that only need `interfaces.ConfigOps` / `func() *config.Config`.                                                      |
+| `mockGalleryOps`                       | `internal/server/handlers/helpers_test.go`                                              | Very low | Unit-testing gallery/image/info-box handlers that only need `interfaces.GalleryOps`.                                                                     |
+| `mockServerControl`                    | `internal/server/handlers/helpers_test.go`                                              | Very low | Unit-testing server/dashboard handlers that only need `interfaces.ServerControl`.                                                                        |
+| `mockTemplateHelpers`                  | `internal/server/handlers/helpers_test.go`                                              | Very low | Unit-testing handlers that need `AddCommonTemplateData` and `ServerError` helpers.                                                                       |
+| `fakeCredentialStore`                  | `internal/server/handlers/helpers_test.go`                                              | Very low | Unit-testing auth handlers that only need `interfaces.CredentialStore`.                                                                                  |
+| `setupTestConfigHandlers`              | `internal/server/handlers/config_etag_test.go`                                          | Low      | Unit-testing config handlers with mocked `config.ConfigService` and `auth.AuthService`.                                                                  |
+| `setupTestDB` / `setupTestDBForConfig` | `internal/server/config/config_test.go`, `internal/server/config_helpers_test.go`, etc. | Medium   | Testing config/database logic that needs a real migrated SQLite database (in-memory or temp file).                                                       |
+| `*.testSeams.*`                        | `internal/server/testseams.go` + manager structs                                        | Low–Med  | Stubbing App/manager lifecycle paths (serve, restart, pool recreate, handler build, cache hooks) without full `CreateApp` when a narrower seam suffices. |
+| `CreateApp`                            | `internal/server/helpers_test.go`                                                       | High     | Testing full routing, middleware, lifecycle, or anything that requires a wired `*server.App`. Use sparingly.                                             |
+
+Prefer the lightest seam that exercises the behavior under test. `CreateApp` is appropriate when the test must verify interactions across handlers, middleware, sessions, the worker pool, or the database pools. For handler business logic in isolation, use the narrow per-group mocks (`mockConfigOps`, `mockGalleryOps`, `mockServerControl`, `mockTemplateHelpers`, `fakeCredentialStore`) or `setupTestConfigHandlers` instead. For App or manager lifecycle paths, prefer explicit `app.testSeams.*` or `app.<Manager>.testSeams.*` over embedding-promoted field names.
+
+Integration tests that need custom `HandlerQueries` should set `app.InfrastructureService.testSeams.HandlerQueries` (not `app.testHookHandlerQueries`).
+
+See also `AGENTS.md` for the project's testing workflow (for example, run `make test-all` once and grep the saved output rather than piping `go test` directly).
 
 ### Running Tests
 
@@ -1448,6 +1565,20 @@ go test -tags integration -race ./...
 - Descriptive error messages with input/got/want context
 - Proper cleanup with `t.Cleanup()` where appropriate
 - See `references/tdd_process.md` and `references/methodology-html-content-test-writing.md` for testing methodology details
+
+### Recent Testing Improvements (Jul 2026)
+
+**Phase 2 consolidation (WP-51 … WP-54, WP-16):**
+
+- Reduced root `internal/server/*_test.go` files from 74 → **19** survivors
+- Root `CreateApp` mentions from 135 → **64**; 0 uncovered `internal/server/` functions (default + integration)
+- Survivor inventory: `docs/phase2-test-ownership.md`; merge ledger: `docs/phase2-test-merge-map.md`
+
+**Test seam extraction (WP-17, WP-18):**
+
+- Removed all `testHook*` fields from `App` and embedded managers
+- Centralized optional doubles in `internal/server/testseams.go` (`AppTestSeams`, `InfrastructureTestSeams`, `RuntimeManagerTestSeams`, `HandlerManagerTestSeams`)
+- Tests use explicit `*.testSeams.*` accessors; no promoted `app.testHook*` assignments
 
 ---
 
@@ -1535,7 +1666,9 @@ sfpg-go/
 │   └── (main package at root)   # Main application entry point (root main.go)
 ├── docs/
 │   ├── diagrams/                # Architecture diagrams
-│   └── ARCHITECTURE.md          # This file
+│   ├── ARCHITECTURE.md          # This file
+│   ├── phase2-test-ownership.md # Root server test survivor map
+│   └── phase2-test-merge-map.md # WP-54 merge ledger
 ├── internal/
 │   ├── cachelite/               # HTTP response caching
 │   ├── workerpool/              # Concurrent task processing
@@ -1561,6 +1694,9 @@ sfpg-go/
 │   ├── testutil/                # Shared test helpers
 │   ├── gen-test-files/          # Synthetic test file generation
 │   ├── server/                  # Web server
+│   │   ├── app.go, server.go, router.go
+│   │   ├── infrastructure_service.go, runtime_manager.go, handler_manager.go, subsystem_manager.go
+│   │   ├── testseams.go         # App/manager test doubles
 │   │   ├── auth/                # Authentication service
 │   │   ├── cachebatch/          # Cache batch-load coordination
 │   │   ├── cachepreload/        # Cache preload manager
@@ -1576,7 +1712,7 @@ sfpg-go/
 │   │   ├── modulestate/         # Module active-state tracking
 │   │   ├── pathutil/            # Path utilities
 │   │   ├── runtime/             # Process runtime / restart
-│   │   ├── security/            # Lockout calculations
+│   │   ├── security/            # Lockout calculations and IP rate limiting
 │   │   ├── session/             # Session & CSRF management
 │   │   ├── subsystem/           # Subsystem lifecycle
 │   │   ├── template/            # Shared template data

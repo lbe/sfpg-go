@@ -92,11 +92,11 @@ That's it! Open `http://localhost:8081` in your browser and log in with:
   - Full keyboard navigation, including circular (looping) navigation.
   - "Actual Size" mode to view the image at its native resolution.
 - **Keyboard Shortcuts:** Navigate through the gallery pages using Vim-style (`h`, `j`, `k`, `l`) or arrow keys.
-- **Secure:** Uses session-based authentication with secure cookie settings to protect access to the gallery.
-- **Web-Based Configuration:** Easily update administrator credentials through the web UI.
+- **Secure:** Session-based authentication with configurable per-IP login rate limiting and per-account lockout (Session tab → **Login security** in the config modal).
+- **Web-Based Configuration:** Update administrator credentials, session settings, and login security through the web UI.
 - **Self-Contained Deployment:** The compiled binary includes all necessary assets and migrations, requiring no external file dependencies to run.
 - **Live-Reload for Development:** Includes an `air` configuration for a smooth development workflow.
-- **Robust Testing:** Comprehensive test suite with unit and integration tests, separated by build tags for fast TDD cycles.
+- **Robust Testing:** Comprehensive test suite with unit, integration, e2e, and browser tests; **19** consolidated root `internal/server/*_test.go` survivors (see `docs/phase2-test-ownership.md`); optional test doubles in `internal/server/testseams.go`.
 
 ## Technology Stack
 
@@ -142,9 +142,11 @@ golangci-lint --version
 
 **Pre-commit hooks:** The project includes pre-commit hooks that run automatically before each commit to ensure code quality:
 
-- All tests must pass
-- Code formatting must be correct
-- Linter must pass
+- Code formatting must be correct (`make format-check`)
+- Linter must pass (`make lint`)
+- Template and Hyperscript validation must pass (`make validate-templates`)
+- HTML test assertions must pass (`make validate-html-test-assertions`)
+- All tests must pass (`make test-all`)
 
 The hooks are automatically enabled if you've cloned the repository. To manually enable them:
 
@@ -226,11 +228,12 @@ make test-race    # Run tests with race detector
 make test-browser # Run Playwright browser tests
 
 # Code quality
-make lint                 # Run golangci-lint (required before commits)
-make validate-templates   # Validate Go template rendering + Hyperscript
-make validate-hyperscript # Validate Hyperscript syntax in templates
-make format               # Format Go code and run Prettier
-make format-check         # Check formatting without writing changes
+make lint                          # Run golangci-lint (required before commits)
+make validate-templates            # Validate Go template rendering + Hyperscript
+make validate-hyperscript          # Validate Hyperscript syntax in templates
+make validate-html-test-assertions # Forbid strings.Contains HTML assertions in tests
+make format                        # Format Go code and run Prettier
+make format-check                  # Check formatting without writing changes
 
 # Coverage and benchmarks
 make cover  # Generate coverage report (coverage.html)
@@ -251,7 +254,7 @@ make perf-test-clean         # Clean up performance test artifacts
 make perf-test-help          # Show performance test options
 ```
 
-**Before committing:** The pre-commit hooks will automatically run `make validate-templates`, `make test-all`, `make format-check`, and `make lint`. If any check fails, the commit will be aborted.
+**Before committing:** The pre-commit hooks run `make format-check`, `make lint`, `make validate-templates`, `make validate-html-test-assertions`, and `make test-all`. If any check fails, the commit will be aborted. You can run the same sequence manually with `./scripts/pre-commit-check.sh` (also runs `make test-browser`). For a full Hyperscript pass outside the hook, use `make validate-hyperscript`.
 
 ### Code Linting
 
@@ -513,7 +516,8 @@ Configuration is managed via the web interface.
 
 - Navigate to `http://localhost:8081` and log in.
 - On the first run, the default credentials are **username:** `admin` / **password:** `admin`.
-- After logging in, click **Configuration** in the menu to open the configuration modal and update settings.
+- After logging in, click **Configuration** in the menu to open the configuration modal and update settings (including **Login security** on the Session tab: IP rate limit, lockout threshold, and lockout duration).
+- IP rate limit startup override: `SEPG_LOGIN_RATE_LIMIT_PER_IP` (see `ENV_CONFIGURATION.md`). **`0` disables** IP rate limiting.
 
 ## Project Architecture
 
@@ -521,12 +525,14 @@ The application is organized with a clear separation of concerns, with most of t
 
 - **`main.go`**: The application entry point. It initializes and runs the main server application from `internal/server`.
 - **`internal/server`**: The core application package, organized into domain-driven subpackages.
-  - `app.go`: The central `App` struct and service wiring.
+  - `app.go`: The central `App` struct; embeds `InfrastructureService`, `RuntimeManager`, `HandlerManager`, and `SubsystemManager`.
   - `server.go`: HTTP server lifecycle.
   - `router.go`: Route registration and middleware chain.
+  - `infrastructure_service.go`, `runtime_manager.go`, `handler_manager.go`, `subsystem_manager.go`: Orchestration managers embedded on `App`.
+  - `testseams.go`: Optional test doubles (`AppTestSeams`, `InfrastructureTestSeams`, `RuntimeManagerTestSeams`, `HandlerManagerTestSeams`); zero value means production behavior.
   - `auth/`: Authentication service (bcrypt credential verification, account lockout).
   - `batched_write.go`, `batched_write_flush.go`: Unified `BatchedWrite` union and flush logic for file metadata and HTTP cache entries.
-  - `batcher_adapter.go`: Adapter that lets the `files` package submit writes without importing `server`.
+  - `batcher_wiring.go`: Thin `fileBatcher` wiring implementing `files.UnifiedBatcher` so the `files` package submits writes without importing `writebatcher`.
   - `cachebatch/`: One-shot HTTP cache batch-load manager.
   - `cachepreload/`: Cache preloading when folders are opened.
   - `compress/`, `conditional/`: Pure helper packages for compression negotiation and ETag/304 handling.
@@ -541,7 +547,7 @@ The application is organized with a clear separation of concerns, with most of t
   - `middleware/`: Reusable middleware (auth, compress, conditional, CSRF, logging).
   - `modulestate/`: Tracks active background modules (discovery, cache batch load).
   - `pathutil/`: Path-manipulation utilities with path-traversal checks.
-  - `security/`: Lockout thresholds, unlock tasks, and security helpers.
+  - `security/`: Per-IP login rate limiting (`IPRateLimiter`), lockout thresholds, unlock tasks, and security helpers.
   - `session/`: Session management and CSRF helpers.
   - `subsystem/`: Background subsystem coordination helpers.
   - `template/`: Template data helpers.
@@ -578,4 +584,7 @@ The application is organized with a clear separation of concerns, with most of t
   - `thumbs/thumbs.db` — separate SQLite database for thumbnail JPEG blobs.
   - `sfpg.db-dque/` — persistent write-overflow queue used by `writebatcher`.
 - **`docs/`**: Comprehensive architecture documentation and design diagrams.
+  - `ARCHITECTURE.md` — authoritative system reference.
+  - `phase2-test-ownership.md` — map of the 19 root `internal/server/*_test.go` survivors.
+  - `phase2-test-merge-map.md` — WP-54 merge ledger (source → destination tests).
 - **`Images/`**: The default directory where you should place your photos.

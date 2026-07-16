@@ -15,6 +15,63 @@ import (
 	"github.com/lbe/sfpg-go/web"
 )
 
+// logStartupConfigSummary emits one low-noise startup summary of configured
+// versus effective values for critical subsystems.
+func (app *App) logStartupConfigSummary(queueSize int, runDiscovery bool) {
+	app.ConfigManager.ConfigMu.RLock()
+	cfg := app.ConfigManager.Config
+	app.ConfigManager.ConfigMu.RUnlock()
+	if cfg == nil {
+		return
+	}
+
+	effectivePreload := false
+	if app.SubsystemManager.preloadManager != nil {
+		effectivePreload = app.SubsystemManager.preloadManager.IsEnabled()
+	}
+
+	rwEffectiveMax := int64(0)
+	rwEffectiveMinIdle := int64(0)
+	roEffectiveMax := int64(0)
+	roEffectiveMinIdle := int64(0)
+	if app.dbRwPool != nil {
+		rwEffectiveMax = app.dbRwPool.Config.MaxConnections
+		rwEffectiveMinIdle = app.dbRwPool.Config.MinIdleConnections
+	}
+	if app.dbRoPool != nil {
+		roEffectiveMax = app.dbRoPool.Config.MaxConnections
+		roEffectiveMinIdle = app.dbRoPool.Config.MinIdleConnections
+	}
+
+	effectiveWorkerMax := 0
+	effectiveWorkerMinIdle := 0
+	if app.SubsystemManager.pool != nil {
+		effectiveWorkerMax = app.SubsystemManager.pool.MaxWorkers
+		effectiveWorkerMinIdle = app.SubsystemManager.pool.MinWorkers
+	}
+
+	slog.Info("startup config summary",
+		"db_configured_max", cfg.DBMaxPoolSize,
+		"db_rw_effective_max", rwEffectiveMax,
+		"db_ro_effective_max", roEffectiveMax,
+		"db_configured_min_idle", cfg.DBMinIdleConnections,
+		"db_rw_effective_min_idle", rwEffectiveMinIdle,
+		"db_ro_effective_min_idle", roEffectiveMinIdle,
+		"worker_configured_max", cfg.WorkerPoolMax,
+		"worker_effective_max", effectiveWorkerMax,
+		"worker_configured_min_idle", cfg.WorkerPoolMinIdle,
+		"worker_effective_min_idle", effectiveWorkerMinIdle,
+		"queue_configured_size", cfg.QueueSize,
+		"queue_effective_size", queueSize,
+		"cache_configured_enabled", cfg.EnableHTTPCache,
+		"cache_effective_enabled", app.cacheMW != nil,
+		"preload_configured_enabled", cfg.EnableCachePreload,
+		"preload_effective_enabled", effectivePreload,
+		"discovery_configured_enabled", cfg.RunFileDiscovery,
+		"discovery_effective_enabled", runDiscovery)
+}
+
+// Run initializes the application, starts background workers, and blocks until shutdown or error.
 func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 	if app.rootDir == "" {
 		app.setRootDir(nil)
@@ -24,9 +81,9 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 	// Log file closing is handled by Shutdown() via logger.Shutdown()
 
 	// Initialize scheduler (defaults to runtime.NumCPU() when maxConcurrentTasks is 0)
-	app.scheduler = scheduler.NewScheduler(0)
+	app.SubsystemManager.scheduler = scheduler.NewScheduler(0)
 	go func() {
-		if err := app.scheduler.Start(app.ctx); err != nil {
+		if err := app.SubsystemManager.scheduler.Start(app.RuntimeManager.ctx); err != nil {
 			slog.Error("scheduler error", "err", err)
 		}
 	}()
@@ -35,8 +92,8 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 	if app.opt.Profile.IsSet && app.opt.Profile.String != "" {
 		var stopProfile func()
 		var err error
-		if app.testHookProfilerStart != nil {
-			stopProfile, err = app.testHookProfilerStart(profiler.Config{Mode: app.opt.Profile.String})
+		if app.testSeams.ProfilerStart != nil {
+			stopProfile, err = app.testSeams.ProfilerStart(profiler.Config{Mode: app.opt.Profile.String})
 		} else {
 			stopProfile, err = profiler.Start(profiler.Config{Mode: app.opt.Profile.String})
 		}
@@ -44,7 +101,7 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 			slog.Error("failed to start profiler", "err", err)
 			return err
 		}
-		app.stopProfiler = stopProfile
+		app.RuntimeManager.stopProfiler = stopProfile
 		slog.Info("Profiler", "mode", app.opt.Profile.String, "dir", profiler.Dir())
 	}
 
@@ -62,20 +119,20 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 		defer app.dbRwPool.Put(cpcRw)
 
 		// Restore last known good config via ConfigService
-		restoredConfig, err := app.configService.RestoreLastKnownGood(app.ctx)
+		restoredConfig, err := app.ConfigManager.ConfigService.RestoreLastKnownGood(app.RuntimeManager.ctx)
 		if err != nil {
 			slog.Error("failed to restore last known good config", "err", err)
 			return fmt.Errorf("failed to restore last known good config: %w", err)
 		}
 
 		// Validate restored config
-		if err := app.configService.Validate(restoredConfig); err != nil {
+		if err := app.ConfigManager.ConfigService.Validate(restoredConfig); err != nil {
 			slog.Error("restored config is invalid", "err", err)
 			return fmt.Errorf("restored config is invalid: %w", err)
 		}
 
 		// Save restored config to database via ConfigService
-		if err := app.configService.Save(app.ctx, restoredConfig); err != nil {
+		if err := app.ConfigManager.ConfigService.Save(app.RuntimeManager.ctx, restoredConfig); err != nil {
 			slog.Error("failed to save restored config", "err", err)
 			return fmt.Errorf("failed to save restored config: %w", err)
 		}
@@ -83,10 +140,10 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 		// Apply CLI/env overrides after restore
 		restoredConfig.LoadFromOpt(app.opt)
 
-		// Update app.config atomically
-		app.configMu.Lock()
-		app.config = restoredConfig
-		app.configMu.Unlock()
+		// Update app.ConfigManager.Config atomically
+		app.ConfigManager.ConfigMu.Lock()
+		app.ConfigManager.Config = restoredConfig
+		app.ConfigManager.ConfigMu.Unlock()
 		slog.Info("last known good configuration restored from database")
 
 		// Reconfigure database pools with restored config values
@@ -101,13 +158,13 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 			slog.Warn("failed to load configuration", "err", err)
 			// Continue with defaults
 			defaultConfig := config.DefaultConfig()
-			if app.testHookFallbackConfig != nil {
-				defaultConfig = app.testHookFallbackConfig()
+			if app.testSeams.FallbackConfig != nil {
+				defaultConfig = app.testSeams.FallbackConfig()
 			}
 			defaultConfig.LoadFromOpt(app.opt)
-			app.configMu.Lock()
-			app.config = defaultConfig
-			app.configMu.Unlock()
+			app.ConfigManager.ConfigMu.Lock()
+			app.ConfigManager.Config = defaultConfig
+			app.ConfigManager.ConfigMu.Unlock()
 
 			// Reconfigure pools with default config
 			if err := app.reconfigurePoolsFromConfig(); err != nil {
@@ -132,7 +189,7 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 	// --- SubsystemManager: creates queue, fileProcessor, preloadManager,
 	//     moduleStateService, pool, and processingStats ---
 	app.Start(
-		app.ctx, app.config, minPoolWorkers, maxPoolWorkers,
+		app.RuntimeManager.ctx, app.ConfigManager.Config, minPoolWorkers, maxPoolWorkers,
 		app.imagesDir, app.normalizedImagesDir,
 		removeImagesDirPrefix,
 		app.getRouter,
@@ -142,21 +199,24 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 
 	// Run file discovery based on config value (defaults to true)
 	runDiscovery := true // default
-	if app.config != nil {
-		runDiscovery = app.config.RunFileDiscovery
+	if app.ConfigManager.Config != nil {
+		runDiscovery = app.ConfigManager.Config.RunFileDiscovery
 	}
 	if runDiscovery {
 		go app.TriggerDiscovery()
-	} else if app.moduleStateService != nil || app.testHookGetLastStartedAt != nil {
+	} else if app.SubsystemManager.moduleStateService != nil || app.testSeams.GetLastStartedAt != nil {
 		go func() {
+			if app.testSeams.NoDiscoveryStatsDone != nil {
+				defer close(app.testSeams.NoDiscoveryStatsDone)
+			}
 			ctx := app.getCtx()
 			var lastStarted int64
 			var ok bool
 			var err error
-			if app.testHookGetLastStartedAt != nil {
-				lastStarted, ok, err = app.testHookGetLastStartedAt(ctx, "discovery")
+			if app.testSeams.GetLastStartedAt != nil {
+				lastStarted, ok, err = app.testSeams.GetLastStartedAt(ctx, "discovery")
 			} else {
-				lastStarted, ok, err = app.moduleStateService.GetLastStartedAt(ctx, "discovery")
+				lastStarted, ok, err = app.SubsystemManager.moduleStateService.GetLastStartedAt(ctx, "discovery")
 			}
 			if err != nil {
 				slog.Error("failed to get last started at", "err", err)
@@ -174,8 +234,8 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 	}
 
 	// Worker pool startup
-	app.poolDone = make(chan struct{})
-	app.StartPool(app.ctx, app.poolDone, app.normalizedImagesDir, removeImagesDirPrefix, app.fileProcessor)
+	app.RuntimeManager.poolDone = make(chan struct{})
+	app.StartPool(app.RuntimeManager.ctx, app.RuntimeManager.poolDone, app.normalizedImagesDir, removeImagesDirPrefix, app.SubsystemManager.fileProcessor)
 
 	// Completion monitor for initial batch processing
 	if runDiscovery {
@@ -188,13 +248,13 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 
 			for {
 				select {
-				case <-app.ctx.Done():
+				case <-app.RuntimeManager.ctx.Done():
 					return
 				case <-timeout:
 					// If nothing happened in 30s, just exit monitor
 					return
 				case <-ticker.C:
-					if app.qSendersActive.Load() > 0 || app.processingStats.TotalFound.Load() > 0 {
+					if app.SubsystemManager.qSendersActive.Load() > 0 || app.SubsystemManager.processingStats.TotalFound.Load() > 0 {
 						goto wait_for_end
 					}
 				}
@@ -204,20 +264,20 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 			// 2. Wait for discovery to finish AND queue to drain AND workers to finish
 			for {
 				select {
-				case <-app.ctx.Done():
+				case <-app.RuntimeManager.ctx.Done():
 					return
 				case <-ticker.C:
-					activeSenders := app.qSendersActive.Load()
-					queueLen := app.q.Len()
-					inFlight := app.processingStats.InFlight.Load()
-					pendingWrites := app.fileProcessor.PendingWriteCount()
+					activeSenders := app.SubsystemManager.qSendersActive.Load()
+					queueLen := app.SubsystemManager.q.Len()
+					inFlight := app.SubsystemManager.processingStats.InFlight.Load()
+					pendingWrites := app.SubsystemManager.fileProcessor.PendingWriteCount()
 
 					if activeSenders == 0 && queueLen == 0 && inFlight == 0 && pendingWrites == 0 {
 						slog.Info("File processing completed",
-							"found", app.processingStats.TotalFound.Load(),
-							"existing", app.processingStats.AlreadyExisting.Load(),
-							"inserted", app.processingStats.NewlyInserted.Load(),
-							"skipped_invalid", app.processingStats.SkippedInvalid.Load(),
+							"found", app.SubsystemManager.processingStats.TotalFound.Load(),
+							"existing", app.SubsystemManager.processingStats.AlreadyExisting.Load(),
+							"inserted", app.SubsystemManager.processingStats.NewlyInserted.Load(),
+							"skipped_invalid", app.SubsystemManager.processingStats.SkippedInvalid.Load(),
 						)
 						return
 					}
@@ -232,19 +292,19 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 		IdleThreshold: 10 * time.Second,
 		FreeMemFunc:   debug.FreeOSMemory,
 	}
-	if app.testHookMemoryReclaimer != nil {
-		go app.testHookMemoryReclaimer(prodReclaimerCfg)
+	if app.testSeams.MemoryReclaimer != nil {
+		go app.testSeams.MemoryReclaimer(prodReclaimerCfg)
 	} else {
 		go app.memoryReclaimer(prodReclaimerCfg)
 	}
 
 	// Start HTTP cache cleanup goroutine if caching is enabled in config
-	app.configMu.RLock()
-	cacheEnabled := app.config != nil && app.config.EnableHTTPCache
-	app.configMu.RUnlock()
+	app.ConfigManager.ConfigMu.RLock()
+	cacheEnabled := app.ConfigManager.Config != nil && app.ConfigManager.Config.EnableHTTPCache
+	app.ConfigManager.ConfigMu.RUnlock()
 
 	if cacheEnabled {
-		app.wg.Go(func() {
+		app.RuntimeManager.wg.Go(func() {
 			ticker := time.NewTicker(5 * time.Minute)
 			defer ticker.Stop()
 
@@ -267,20 +327,20 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 	}
 
 	// --- Metrics ---
-	app.metricsCollector = metrics.NewCollector()
-	app.WireMetrics(app.metricsCollector)
+	app.RuntimeManager.metricsCollector = metrics.NewCollector()
+	app.WireMetrics(app.RuntimeManager.metricsCollector)
 	// Wire up batch load manager (created below if cacheEnabled)
-	// app.metricsCollector.SetCacheBatchLoad handled below
+	// app.RuntimeManager.metricsCollector.SetCacheBatchLoad handled below
 
 	// Queue info
 	queueSize := 10000
-	if app.config != nil {
-		queueSize = app.config.QueueSize
+	if app.ConfigManager.Config != nil {
+		queueSize = app.ConfigManager.Config.QueueSize
 	}
-	app.metricsCollector.SetQueueInfo(func() int { return app.q.Len() }, queueSize)
-	app.metricsCollector.RecordModuleActivity("discovery", runDiscovery)
-	app.metricsCollector.RecordModuleActivity("cache_preload",
-		app.config != nil && app.config.EnableCachePreload)
+	app.RuntimeManager.metricsCollector.SetQueueInfo(func() int { return app.SubsystemManager.q.Len() }, queueSize)
+	app.RuntimeManager.metricsCollector.RecordModuleActivity("discovery", runDiscovery)
+	app.RuntimeManager.metricsCollector.RecordModuleActivity("cache_preload",
+		app.ConfigManager.Config != nil && app.ConfigManager.Config.EnableCachePreload)
 	app.logStartupConfigSummary(queueSize, runDiscovery)
 
 	// Ensure the session store and manager exist before building handlers.
@@ -291,11 +351,11 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 
 	// Wire preload service into gallery handlers (must be after both
 	// SubsystemManager.Start and HandlerManager.Build)
-	app.SetPreloadService(app.preloadManager)
+	app.SetPreloadService(app.SubsystemManager.preloadManager)
 
 	// Create batch load manager and wire to metrics (requires buildHandlers for getRouter)
-	if cacheEnabled && app.moduleStateService != nil {
-		app.batchLoadManager = cachebatch.NewManager(cachebatch.Config{
+	if cacheEnabled && app.SubsystemManager.moduleStateService != nil {
+		app.SubsystemManager.batchLoadManager = cachebatch.NewManager(cachebatch.Config{
 			GetQueries: func() (cachebatch.BatchLoadQueries, func()) {
 				cpcRo, err := app.dbRoPool.Get()
 				if err != nil {
@@ -305,9 +365,9 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 			},
 			GetHandler:         app.getRouter,
 			GetETagVersion:     app.GetETagVersion,
-			ModuleStateService: app.moduleStateService,
+			ModuleStateService: app.SubsystemManager.moduleStateService,
 		})
-		app.metricsCollector.SetCacheBatchLoad(app.batchLoadManager)
+		app.RuntimeManager.metricsCollector.SetCacheBatchLoad(app.SubsystemManager.batchLoadManager)
 	}
 
 	slog.Info("Calling app.Serve()")

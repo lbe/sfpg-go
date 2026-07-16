@@ -72,6 +72,22 @@ func TestReuse(t *testing.T) {
 	}
 }
 
+// TestPutNil verifies that Put(nil) panics for pointer types when the reset
+// function dereferences its argument. This documents that callers must guard
+// against nil — the pool itself does not perform nil checks.
+func TestPutNil(t *testing.T) {
+	pool := New(func() *testObj { return &testObj{} }, func(o *testObj) {
+		o.used = 0
+	})
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatalf("expected panic from Put(nil) with pointer-dereferencing reset, but no panic occurred")
+		}
+	}()
+	pool.Put(nil) // should panic: reset dereferences nil pointer
+}
+
 // TestConcurrentAccess stresses pool under concurrency.
 func TestConcurrentAccess(t *testing.T) {
 	pool := New(func() *testObj { return &testObj{} }, func(o *testObj) {

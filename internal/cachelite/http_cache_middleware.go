@@ -86,17 +86,27 @@ func (hcm *HTTPCacheMiddleware) Config() CacheConfig {
 	return hcm.config
 }
 
+// MaxEntrySize returns the maximum size of a single cache entry in bytes.
+func (hcm *HTTPCacheMiddleware) MaxEntrySize() int64 {
+	return hcm.config.MaxEntrySize
+}
+
+// MaxTotalSize returns the maximum total cache size in bytes.
+func (hcm *HTTPCacheMiddleware) MaxTotalSize() int64 {
+	return hcm.config.MaxTotalSize
+}
+
 // IsEnabled returns true if the cache is enabled.
 func (hcm *HTTPCacheMiddleware) IsEnabled() bool {
 	return hcm.config.Enabled
 }
 
-// UpdatePool updates the internal pool reference. Called when database pools are reconfigured.
-// SetOnGalleryCacheHit replaces the OnGalleryCacheHit callback after creation.
+// SetOnGalleryCacheHit replaces the OnGalleryCacheHit callback after middleware creation.
 func (hcm *HTTPCacheMiddleware) SetOnGalleryCacheHit(fn func(ctx context.Context, folderID int64, sessionID, acceptEncoding string)) {
 	hcm.config.OnGalleryCacheHit = fn
 }
 
+// UpdatePool updates the internal pool reference. Called when database pools are reconfigured.
 func (hcm *HTTPCacheMiddleware) UpdatePool(newPool *dbconnpool.DbSQLConnPool) {
 	if newPool != nil {
 		hcm.db = newPool
@@ -288,9 +298,12 @@ func (hcm *HTTPCacheMiddleware) Middleware(next http.Handler) http.Handler {
 		// Cache-Control (e.g. max-age) or 2xx with no-store when the path is in
 		// CacheableRoutes (e.g. gallery partials). no-store is replayed to the client
 		// so the browser does not cache; the server cache is separate.
+		// Responses with Set-Cookie headers are never cached to avoid leaking
+		// session tokens or other sensitive state.
 		cacheControl := buf.Header().Get("Cache-Control")
-		storeInServerCache := CanCacheResponse(buf.statusCode, cacheControl) ||
-			(buf.statusCode == 200 && strings.Contains(cacheControl, "no-store") && hcm.config.IsCacheablePath(r.URL.Path))
+		setCookie := buf.Header().Get("Set-Cookie")
+		storeInServerCache := CanCacheResponse(buf.statusCode, cacheControl, setCookie) ||
+			(buf.statusCode == 200 && strings.Contains(cacheControl, "no-store") && hcm.config.IsCacheablePath(r.URL.Path) && setCookie == "")
 		if !storeInServerCache {
 			return
 		}
@@ -348,38 +361,6 @@ func (hcm *HTTPCacheMiddleware) Middleware(next http.Handler) http.Handler {
 // checkCache retrieves a cached entry from SQLite by key.
 func (hcm *HTTPCacheMiddleware) checkCache(ctx context.Context, key string) (*HTTPCacheEntry, error) {
 	return GetCacheEntry(ctx, hcm.db, key)
-}
-
-// evictIfNeeded checks total cache size and evicts LRU entries if budget exceeded.
-// Returns the actual number of bytes freed.
-func (hcm *HTTPCacheMiddleware) evictIfNeeded(ctx context.Context, newEntrySize int64) (int64, error) {
-	if hcm.config.MaxTotalSize <= 0 {
-		return 0, nil
-	}
-
-	var currentSize int64
-	if hcm.sizeCounter != nil {
-		currentSize = hcm.sizeCounter.Load()
-	} else {
-		var err error
-		currentSize, err = GetCacheSizeBytes(ctx, hcm.db)
-		if err != nil {
-			return 0, err
-		}
-	}
-
-	if currentSize+newEntrySize > hcm.config.MaxTotalSize {
-		targetFree := (currentSize + newEntrySize) - hcm.config.MaxTotalSize
-		freed, err := EvictLRU(ctx, hcm.db, targetFree)
-		if err != nil {
-			return freed, err
-		}
-		if hcm.sizeCounter != nil && freed > 0 {
-			hcm.sizeCounter.Add(-freed)
-		}
-		return freed, nil
-	}
-	return 0, nil
 }
 
 // hasCacheBypassDirective checks for directives that should bypass the cache.

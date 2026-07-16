@@ -5,5 +5,7 @@ package web
 
 import "embed"
 
+// FS embeds static assets and HTML templates for the web UI.
+//
 //go:embed static templates
 var FS embed.FS

@@ -20,19 +20,23 @@ type DiscardingResponseWriter struct {
 	header     http.Header
 }
 
+// Header returns the response headers map.
 func (w *DiscardingResponseWriter) Header() http.Header {
 	return w.header
 }
 
+// WriteHeader records the HTTP status code without writing to a client.
 func (w *DiscardingResponseWriter) WriteHeader(code int) {
 	w.statusCode = code
 }
 
+// Write discards the response body and reports the input length.
 func (w *DiscardingResponseWriter) Write(b []byte) (int, error) {
 	// Discard body immediately - no buffering
 	return len(b), nil
 }
 
+// StatusCode returns the recorded HTTP status code.
 func (w *DiscardingResponseWriter) StatusCode() int {
 	return w.statusCode
 }

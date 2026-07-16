@@ -47,18 +47,6 @@ func GetBytesBuffer() *bytes.Buffer { return bytesBufferPool.Get() }
 // PutBytesBuffer returns a bytes.Buffer to the pool, resetting it first.
 func PutBytesBuffer(buf *bytes.Buffer) { bytesBufferPool.Put(buf) }
 
-// imagePhash64Pool is a gensyncpool-backed pool for *imagehash.PHash64.
-var imagePhash64Pool = gensyncpool.New(
-	func() *imagehash.PHash64 { var p imagehash.PHash64; return &p },
-	func(p *imagehash.PHash64) { *p = 0 },
-)
-
-// GetImagePhash64 retrieves an imagehash.PHash64 from the pool.
-func GetImagePhash64() *imagehash.PHash64 { return imagePhash64Pool.Get() }
-
-// PutImagePhash64 returns an imagehash.PHash64 to the pool, resetting it first.
-func PutImagePhash64(phash64 *imagehash.PHash64) { imagePhash64Pool.Put(phash64) }
-
 // nullStringPool is a gensyncpool-backed pool for *sql.NullString.
 var nullStringPool = gensyncpool.New(
 	func() *sql.NullString { return &sql.NullString{} },

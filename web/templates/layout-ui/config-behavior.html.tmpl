@@ -1,0 +1,211 @@
+{{ define "config-behavior.html.tmpl" }}
+  <!-- Config-modal helpers and behaviors. Each behavior is in its own
+       script block so behaviors are registered reliably on initial page
+       load, before HTMX swaps the config modal into the DOM. -->
+  <!-- NOTE: clearConfigSpinner() is defined in config-ui/config-spinner.html.tmpl
+       and included by config-modal.html.tmpl and error partials. -->
+
+  <script type="text/hyperscript">
+    behavior ButtonExplanation
+      on mouseenter
+        set #button-explanation-text.textContent to @data-tip
+      on mouseleave
+        set #button-explanation-text.textContent to ''
+    end
+  </script>
+
+  <script type="text/hyperscript">
+    behavior CloseConfigModal
+      on click
+        set #config_modal.checked to false
+        wait 300ms
+        remove #config-modal-container from body
+    end
+  </script>
+
+  <script type="text/hyperscript">
+    def buildConfigDiff(fieldList, targetElement, includeThemes)
+      set changesHTML to '<table class="table table-compact w-full"><thead><tr><th>Setting</th><th>Current Value</th><th>Unsaved Value</th></tr></thead><tbody>'
+
+      set form to #config-form
+      if form and window.configOriginalValues
+        for fieldName in fieldList
+          set field to form.querySelector(`[name='${fieldName}']`)
+          if field
+            set originalValue to window.configOriginalValues[fieldName]
+            if originalValue is not undefined
+              set currentValue to null
+              if field.type == 'checkbox'
+                set currentValue to field.checked
+              else
+                set currentValue to field.value
+              end
+
+              set origStr to String(originalValue)
+              set currStr to String(currentValue)
+
+              if origStr != currStr
+                set changesHTML to `${changesHTML}<tr><td class="font-semibold">${fieldName}</td><td class="text-base-content">${origStr}</td><td class="text-warning">${currStr}</td></tr>`
+              end
+            end
+          end
+        end
+
+        if includeThemes
+          set themesSelect to form.querySelector('select[name=themes]')
+          if themesSelect
+            set originalThemes to window.configOriginalValues['themes']
+            set origThemesStr to ''
+            set currThemesStr to ''
+
+            if originalThemes and originalThemes.length > 0
+              for theme in originalThemes
+                if origThemesStr != '' set origThemesStr to `${origThemesStr}, ` end
+                set origThemesStr to `${origThemesStr}${theme}`
+              end
+            end
+
+            set selectedOptions to themesSelect.selectedOptions
+            set firstTheme to true
+            for option in selectedOptions
+              if not firstTheme set currThemesStr to `${currThemesStr}, ` end
+              set currThemesStr to `${currThemesStr}${option.value}`
+              set firstTheme to false
+            end
+
+            if origThemesStr == '' set origThemesStr to '(none)' end
+            if currThemesStr == '' set currThemesStr to '(none)' end
+
+            if origThemesStr != currThemesStr
+              set changesHTML to `${changesHTML}<tr><td class="font-semibold">themes</td><td class="text-base-content">${origThemesStr}</td><td class="text-warning">${currThemesStr}</td></tr>`
+            end
+          end
+        end
+      end
+
+      set changesHTML to `${changesHTML}</tbody></table>`
+      set targetElement.innerHTML to changesHTML
+    end
+  </script>
+
+  <script type="text/hyperscript">
+    behavior ConfigCancelButton
+      on click
+        set hasChanges to false
+        set configFields to ['listener_address', 'listener_port', 'server_compression_enable',
+                             'log_directory', 'log_level', 'log_rollover', 'log_retention_count',
+                             'site_name', 'image_directory', 'current_theme',
+                             'session_max_age', 'session_http_only', 'session_secure', 'session_same_site',
+                             'login_rate_limit_per_ip', 'lockout_threshold', 'lockout_duration',
+                             'enable_http_cache', 'enable_cache_preload', 'cache_max_size', 'cache_max_entry_size', 'cache_max_time', 'cache_cleanup_interval',
+                             'db_max_pool_size', 'db_min_idle_connections', 'db_optimize_interval', 'db_pool_monitor_interval',
+                             'worker_pool_max', 'worker_pool_min_idle', 'worker_pool_max_idle_time', 'queue_size',
+                             'run_file_discovery']
+        set form to #config-form
+        if form and window.configOriginalValues
+          for fieldName in configFields
+            set field to form.querySelector(`[name='${fieldName}']`)
+            if field
+              set originalValue to window.configOriginalValues[fieldName]
+              if originalValue is not undefined
+                set currentValue to null
+                if field.type == 'checkbox'
+                  set currentValue to field.checked
+                else
+                  set currentValue to field.value
+                end
+
+                if String(originalValue) != String(currentValue)
+                  set hasChanges to true
+                end
+              end
+            end
+          end
+
+          set themesSelect to form.querySelector('select[name=themes]')
+          if themesSelect
+            set originalThemes to window.configOriginalValues['themes']
+            set origThemesStr to ''
+            set currThemesStr to ''
+
+            if originalThemes and originalThemes.length > 0
+              for theme in originalThemes
+                if origThemesStr != '' set origThemesStr to `${origThemesStr}, ` end
+                set origThemesStr to `${origThemesStr}${theme}`
+              end
+            end
+
+            set selectedOptions to themesSelect.selectedOptions
+            set firstTheme to true
+            for option in selectedOptions
+              if not firstTheme set currThemesStr to `${currThemesStr}, ` end
+              set currThemesStr to `${currThemesStr}${option.value}`
+              set firstTheme to false
+            end
+
+            if origThemesStr == '' set origThemesStr to '(none)' end
+            if currThemesStr == '' set currThemesStr to '(none)' end
+
+            if origThemesStr != currThemesStr
+              set hasChanges to true
+            end
+          end
+        end
+
+        if hasChanges
+          call buildConfigDiff(configFields, #cancel-diff-content, true)
+          set #cancel-diff-modal.checked to true
+        else
+          set #config_modal.checked to false
+          wait 300ms
+          remove #config-modal-container from body
+        end
+    end
+  </script>
+
+  <script type="text/hyperscript">
+    on htmx:afterSettle from document
+      set badge to #config-restart-badge
+      if badge exists
+        if badge.textContent == 'Restart Required' and badge does not match .hidden and badge does not match .restart-modal-shown
+          wait 100ms
+          set configFields to ['listener_address', 'listener_port', 'server_compression_enable', 'log_directory', 'log_level', 'log_rollover', 'log_retention_count', 'site_name', 'image_directory', 'current_theme', 'session_max_age', 'session_http_only', 'session_secure', 'session_same_site', 'login_rate_limit_per_ip', 'lockout_threshold', 'lockout_duration', 'enable_http_cache', 'enable_cache_preload', 'cache_max_size', 'cache_max_entry_size', 'cache_max_time', 'cache_cleanup_interval', 'db_max_pool_size', 'db_min_idle_connections', 'db_optimize_interval', 'db_pool_monitor_interval', 'worker_pool_max', 'worker_pool_min_idle', 'worker_pool_max_idle_time', 'queue_size', 'run_file_discovery']
+          call buildConfigDiff(configFields, #restart-diff-content, true)
+          wait 200ms
+          set #restart-diff-modal.checked to true
+          add .restart-modal-shown to badge
+        end
+      end
+    end
+  </script>
+
+  <script type="text/hyperscript">
+    on change from #config-form
+      set needsRestart to false
+      set changedField to event.target
+      set changedFieldName to changedField@name
+
+      set adminFields to ['admin_username', 'admin_current_password', 'admin_new_password', 'admin_confirm_password']
+      if changedFieldName in adminFields
+        exit
+      end
+
+      if #config-form and window.configOriginalValues
+        set restartFields to #config-form.querySelectorAll('[data-requires-restart="true"]')
+        for field in restartFields
+          set fieldName to field@name
+          set originalValue to window.configOriginalValues[fieldName]
+          if originalValue is not undefined and field.value != originalValue
+            set needsRestart to true
+          end
+        end
+      end
+
+      if needsRestart
+        remove .hidden from #config-restart-badge
+      else
+        add .hidden to #config-restart-badge
+      end
+    end
+  </script>
+{{ end }}

@@ -9,16 +9,16 @@
 
 2. **Test execution workflow**:
    - **NEVER** repeatedly run `go test` with different grep pipes sequentially
-   - **ALWAYS** redirect test output to a text file first: `go test -tags "integration e2e" ./... > ./tmp/test_output.txt 2>&1` (create `./tmp` if needed: `mkdir -p ./tmp`)
+   - **ALWAYS** redirect test output to a text file first: `go test -tags "integration e2eweb" ./... > ./tmp/test_output.txt 2>&1` (create `./tmp` if needed: `mkdir -p ./tmp`)
    - Then grep the text file as many times as needed: `grep -E "FAIL|PASS|ERROR" ./tmp/test_output.txt`
    - This is more efficient and follows user instructions exactly (server package tests take ~1 minute)
-   - **ALL tests** = unit + integration + e2e. Always use `-tags "integration e2e"` so integration/e2e-tagged tests run.
+   - **ALL tests** = unit + integration + e2eweb. Always use `-tags "integration e2eweb"` so integration/e2eweb-tagged tests run.
 
 3. **Test verification**:
-   - **Before every commit**: Run `go test -tags "integration e2e" ./...` (redirect to `./tmp/test_output.txt`, grep for FAIL). All must pass.
+   - **Before every commit**: Run `go test -tags "integration e2eweb" ./...` (redirect to `./tmp/test_output.txt`, grep for FAIL). All must pass.
    - Always run and confirm ALL tests pass before considering work complete
    - When fixing one test, verify all other tests still pass
-   - Use `go test -tags "integration e2e" ./... -race` for race condition testing
+   - Use `go test -tags "integration e2eweb" ./... -race` for race condition testing
    - Use `required_permissions: ['all']` for go test/build commands (they need to run outside sandbox)
    - **If you see errors like "package encoding/pem is not in std" or similar Go standard library errors when running go build/test, this indicates the command needs `required_permissions: ['all']` to access the Go standard library outside the sandbox**
 

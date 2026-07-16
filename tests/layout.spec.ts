@@ -78,17 +78,15 @@ test.describe("Layout & Static Assets", () => {
     });
   });
 
-  test("8: Pprof unauthenticated returns 401", async ({ page }) => {
+  test("8: Pprof unauthenticated returns 400", async ({ page }) => {
     const response = await page.goto("/debug/pprof/");
-    expect(response?.status()).toBe(401);
+    expect(response?.status()).toBe(400);
   });
 
-  test("9: Pprof accessible when authenticated", async ({ page }) => {
+  test("9: Pprof disabled when authenticated", async ({ page }) => {
     await loginViaUI(page);
     const response = await page.goto("/debug/pprof/");
-    expect(response?.status()).toBe(200);
-    const body = await page.locator("body").innerText();
-    expect(body).toContain("goroutine");
+    expect(response?.status()).toBe(400);
   });
 
   test("10: HTML title is not empty", async ({ page }) => {

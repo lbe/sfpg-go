@@ -1,0 +1,40 @@
+<!-- Lightbox Modal -->
+<div
+  id="lightbox_modal"
+  class="fixed left-0 right-0 top-0 z-50 hidden items-center justify-center"
+  style="height: calc(100dvh - 4rem - max(0px, env(safe-area-inset-bottom))); bottom: auto;"
+  _="install LightboxModal"
+>
+  <!-- Semi-transparent overlay -->
+  <div
+    id="lightbox_overlay"
+    class="absolute inset-0 bg-base-200 opacity-80"
+    _="install LightboxOverlay"
+  ></div>
+
+  <!-- Content area -->
+  <div
+    id="lightbox_content"
+    class="relative z-10 flex h-full w-full items-center justify-center p-4 transition-opacity duration-200 [&.htmx-request]:opacity-0"
+  >
+    <span class="loading loading-spinner loading-lg"></span>
+  </div>
+</div>
+
+<!-- Actual Size Modal -->
+<div
+  id="actual-size_modal"
+  class="z-51 fixed inset-x-0 top-0 hidden overflow-auto bg-base-200"
+  style="height: calc(100dvh - 4rem - max(0px, env(safe-area-inset-bottom))); bottom: auto;"
+  _="install ActualSizeModal"
+>
+  <div class="flex min-h-full w-full items-center justify-center">
+    <img
+      id="actual-size-image"
+      src=""
+      alt="Full size image"
+      class="max-h-none max-w-none"
+      _="install ActualSizeImage"
+    />
+  </div>
+</div>

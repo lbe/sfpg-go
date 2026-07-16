@@ -60,8 +60,8 @@ func (h *ConfigThemesHandler) UpdateThemesHandler(w http.ResponseWriter, r *http
 		return
 	}
 
-	h.deps.UpdateConfigWithPrecedence(applyResult.Config, applyResult.RestartRequiredKeys)
-	h.deps.ApplyConfig()
+	h.cfgOps.UpdateConfigWithPrecedence(applyResult.Config, applyResult.RestartRequiredKeys)
+	h.cfgOps.ApplyConfig()
 
 	w.Header().Set("HX-Trigger", "config-saved")
 	w.WriteHeader(http.StatusOK)

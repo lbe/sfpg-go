@@ -91,8 +91,8 @@ func New[T any](init func() T, reset func(T)) GenSyncPool[T] {
 //
 // Get is safe to call concurrently from multiple goroutines.
 func (p *GenSyncPool[T]) Get() T {
-	// Return the object as-is. The caller should assume it was reset before
-	// last Put, or perform any additional initialization needed for this use.
+	// Return the object as-is. A reused object was reset before its last Put;
+	// a freshly allocated object (from init) has never been reset.
 	return p.pool.Get().(T)
 }
 
@@ -105,8 +105,10 @@ func (p *GenSyncPool[T]) Get() T {
 //
 // Put is safe to call concurrently from multiple goroutines.
 //
-// It is safe (but wasteful) to Put the same object multiple times or to Put nil.
-// However, putting an object of the wrong type will cause a panic on the next Get.
+// Calling Put with the same object multiple times is wasteful but harmless.
+// Calling Put with a nil value (when T is a pointer type) panics if the reset
+// function dereferences its argument — the caller must guard against nil.
+// Putting an object of the wrong type will cause a panic on the next Get.
 func (p *GenSyncPool[T]) Put(val T) {
 	// Apply reset before making the object available to other callers.
 	p.reset(val)

@@ -7,8 +7,7 @@
     Compare the imported configuration with the current configuration:
   </p>
   <textarea name="yaml" id="import-yaml-content" class="hidden">
-{{ .ImportedYAML }}</textarea
-  >
+{{ .ImportedYAML }}</textarea>
   <input
     type="hidden"
     name="csrf_token"
@@ -21,16 +20,14 @@
       <pre
         class="max-h-[50vh] overflow-auto whitespace-pre-wrap rounded-lg bg-base-200 p-4 text-xs"
       >
-{{ .CurrentYAML }}</pre
-      >
+{{ .CurrentYAML }}</pre>
     </div>
     <div>
       <h4 class="mb-2 font-semibold">Imported Configuration</h4>
       <pre
         class="max-h-[50vh] overflow-auto whitespace-pre-wrap rounded-lg bg-base-200 p-4 text-xs"
       >
-{{ .NewYAML }}</pre
-      >
+{{ .NewYAML }}</pre>
     </div>
   </div>
   <div class="modal-action">

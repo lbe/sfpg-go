@@ -1,3 +1,4 @@
+// Package middleware provides HTTP middleware for the server (auth, CSRF, compression, logging).
 package middleware
 
 import (
@@ -49,12 +50,6 @@ func sanitizeHeaders(headers http.Header) http.Header {
 		sanitized[k] = v
 	}
 	return sanitized
-}
-
-// LoggingMiddleware creates a middleware that logs every request received and response sent.
-// It uses the default slog logger. For custom logger support, use NewLoggingMiddleware.
-func LoggingMiddleware(next http.Handler) http.Handler {
-	return NewLoggingMiddleware(nil)(next)
 }
 
 // NewLoggingMiddleware creates a logging middleware function that accepts a logger.

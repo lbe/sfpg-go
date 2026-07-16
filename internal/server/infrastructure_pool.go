@@ -1,0 +1,219 @@
+package server
+
+import (
+	"context"
+	"database/sql"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/lbe/sfpg-go/internal/cachelite"
+	"github.com/lbe/sfpg-go/internal/dbconnpool"
+	"github.com/lbe/sfpg-go/internal/server/config"
+	"github.com/lbe/sfpg-go/internal/server/database"
+)
+
+// databaseInitializer abstracts database.Setup and database.RecreatePoolsWithConfig.
+type databaseInitializer interface {
+	Setup(ctx context.Context, rootDir string, cfg *config.Config) (database.DatabasePaths, *dbconnpool.DbSQLConnPool, *dbconnpool.DbSQLConnPool, error)
+	RecreatePoolsWithConfig(ctx context.Context, dbPaths database.DatabasePaths, cfg *config.Config, oldRw, oldRo *dbconnpool.DbSQLConnPool) (*dbconnpool.DbSQLConnPool, *dbconnpool.DbSQLConnPool, error)
+}
+
+// defaultDatabaseInitializer is the production implementation of databaseInitializer.
+type defaultDatabaseInitializer struct{}
+
+func (defaultDatabaseInitializer) Setup(ctx context.Context, rootDir string, cfg *config.Config) (database.DatabasePaths, *dbconnpool.DbSQLConnPool, *dbconnpool.DbSQLConnPool, error) {
+	return database.Setup(ctx, rootDir, cfg)
+}
+
+func (defaultDatabaseInitializer) RecreatePoolsWithConfig(ctx context.Context, dbPaths database.DatabasePaths, cfg *config.Config, oldRw, oldRo *dbconnpool.DbSQLConnPool) (*dbconnpool.DbSQLConnPool, *dbconnpool.DbSQLConnPool, error) {
+	return database.RecreatePoolsWithConfig(ctx, dbPaths, cfg, oldRw, oldRo)
+}
+
+// dbPoolForCheckpoint is the subset of *dbconnpool.DbSQLConnPool used by WAL checkpoint logic.
+type dbPoolForCheckpoint interface {
+	Get() (*dbconnpool.CpConn, error)
+	Put(*dbconnpool.CpConn)
+}
+
+// =====================================================================
+// DB pool lifecycle
+// =====================================================================
+
+// SetupDB creates database pools, write batcher, cache store, and cache
+// size counter. Called early in startup before config is loaded.
+func (s *InfrastructureService) SetupDB(ctx context.Context, config *config.Config) {
+	var err error
+	s.dbPaths, s.dbRwPool, s.dbRoPool, err = s.dbInitializer.Setup(ctx, s.rootDir, config)
+	if err != nil {
+		slog.Error("failed to setup database", "err", err)
+		panic("main")
+	}
+
+	s.dqueDirPath = filepath.Join(
+		filepath.Dir(s.dbPaths.Main),
+		filepath.Base(s.dbPaths.Main)+"-dque",
+	)
+
+	configuredMax := 100
+	configuredMinIdle := 10
+	if config != nil {
+		configuredMax = config.DBMaxPoolSize
+		configuredMinIdle = config.DBMinIdleConnections
+	}
+	slog.Info("database pools initialized")
+	s.logDBPoolConfiguredVsEffective("SetupDB", configuredMax, configuredMinIdle)
+
+	if s.testSeams.BuildWriteBatcher != nil {
+		s.writeBatcher, err = s.testSeams.BuildWriteBatcher(ctx, 10000, 50*time.Millisecond)
+	} else {
+		s.writeBatcher, err = s.buildWriteBatcher(ctx, 10000, 50*time.Millisecond)
+	}
+	if err != nil {
+		slog.Error("failed to create unified WriteBatcher", "err", err)
+		panic("failed to create unified WriteBatcher")
+	}
+	slog.Info("unified WriteBatcher initialized",
+		"max_batch_size", 10000, "max_batch_bytes", 8*1024*1024,
+		"flush_interval_ms", 50, "channel_size", 4096,
+		"dque_dir", s.dqueDirPath, "dque_enabled", s.dqueDirPath != "")
+
+	s.cacheStore = cachelite.NewSQLiteCacheStore(s.dbRwPool)
+	if size, sizeErr := s.testSeams.GetCacheSizeBytes(ctx, s.dbRwPool); sizeErr == nil {
+		s.cacheSizeBytes.Store(size)
+	} else {
+		slog.Warn("Failed to initialize cache size counter", "err", sizeErr)
+	}
+}
+
+// ReconfigurePools recreates database pools from loaded config.
+func (s *InfrastructureService) ReconfigurePools(ctx context.Context, config *config.Config) error {
+	if config == nil {
+		return nil
+	}
+	oldMaxConns := s.dbRwPool.Config.MaxConnections
+	oldMinIdle := s.dbRwPool.Config.MinIdleConnections
+	newMaxConns := config.DBMaxPoolSize
+	newMinIdle := config.DBMinIdleConnections
+
+	if oldMaxConns == int64(newMaxConns) && oldMinIdle == int64(newMinIdle) {
+		return nil
+	}
+	slog.Info("reconfiguring database pools from loaded config",
+		"old_max", oldMaxConns, "new_max", newMaxConns,
+		"old_min_idle", oldMinIdle, "new_min_idle", newMinIdle)
+
+	var newRw, newRo *dbconnpool.DbSQLConnPool
+	var rErr error
+	if s.testSeams.RecreatePoolsWithConfig != nil {
+		newRw, newRo, rErr = s.testSeams.RecreatePoolsWithConfig(ctx, s.dbPaths, config, s.dbRwPool, s.dbRoPool)
+	} else {
+		newRw, newRo, rErr = s.dbInitializer.RecreatePoolsWithConfig(ctx, s.dbPaths, config, s.dbRwPool, s.dbRoPool)
+	}
+	if rErr != nil {
+		return rErr
+	}
+	s.dbRwPool = newRw
+	s.dbRoPool = newRo
+	s.cacheStore = cachelite.NewSQLiteCacheStore(s.dbRwPool)
+
+	if s.writeBatcher != nil {
+		s.writeBatcher.Close()
+	}
+	var bwErr error
+	if s.testSeams.BuildWriteBatcher != nil {
+		s.writeBatcher, bwErr = s.testSeams.BuildWriteBatcher(ctx, 1000, 200*time.Millisecond)
+	} else {
+		s.writeBatcher, bwErr = s.buildWriteBatcher(ctx, 1000, 200*time.Millisecond)
+	}
+	if bwErr != nil {
+		slog.Error("failed to recreate write batcher", "err", bwErr)
+	}
+	if s.cacheMW != nil {
+		s.cacheMW.UpdatePool(s.dbRwPool)
+	}
+
+	slog.Info("database pools reconfigured successfully")
+	s.logDBPoolConfiguredVsEffective("ReconfigurePools", newMaxConns, newMinIdle)
+	return nil
+}
+
+// =====================================================================
+// WAL checkpoint
+// =====================================================================
+
+func (s *InfrastructureService) walCheckpointAfterCommit(ctx context.Context, lastWalCheckpointTime, lastOptimizeTime time.Time, totalCommitted int64) {
+	const walSizeThreshold = 256 * 1024 * 1024
+	walPath := s.dbPaths.Main + "-wal"
+	info, err := os.Stat(walPath)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			slog.Warn("failed to stat WAL file", "path", walPath, "err", err)
+		}
+	} else if info.Size() > walSizeThreshold {
+		slog.Info("WAL file exceeds threshold, forcing checkpoint")
+		if s.testSeams.PerformWALCheckpoint != nil {
+			s.testSeams.PerformWALCheckpoint(ctx)
+		} else {
+			s.performWALCheckpoint(ctx, s.dbRwPool)
+		}
+		return
+	}
+	if !lastWalCheckpointTime.IsZero() && time.Since(lastWalCheckpointTime) >= 5*time.Minute {
+		slog.Info("WAL checkpoint: 5 minutes elapsed")
+		if s.testSeams.PerformWALCheckpoint != nil {
+			s.testSeams.PerformWALCheckpoint(ctx)
+		} else {
+			s.performWALCheckpoint(ctx, s.dbRwPool)
+		}
+	}
+	if !lastOptimizeTime.IsZero() && time.Since(lastOptimizeTime) >= 1*time.Hour {
+		slog.Info("PRAGMA optimize: 1 hour elapsed")
+		if s.testSeams.PragmaOptimize != nil {
+			s.testSeams.PragmaOptimize(ctx, s.dbRwPool)
+		} else {
+			s.pragmaOptimize(ctx, s.dbRwPool)
+		}
+	}
+}
+
+func (s *InfrastructureService) pragmaOptimize(ctx context.Context, pool dbPoolForCheckpoint) {
+	cpcRw, poolErr := pool.Get()
+	if poolErr != nil {
+		slog.Warn("failed to get connection for PRAGMA optimize", "err", poolErr)
+		return
+	}
+	defer pool.Put(cpcRw)
+	cpcRw.PragmaOptimize(ctx)
+}
+
+func (s *InfrastructureService) performWALCheckpoint(ctx context.Context, pool dbPoolForCheckpoint) {
+	cpcRw, err := pool.Get()
+	if err != nil {
+		slog.Error("failed to get connection for WAL checkpoint", "err", err)
+		return
+	}
+	defer pool.Put(cpcRw)
+	var result *sql.Rows
+	var qErr error
+	if s.testSeams.WALCheckpointQuery != nil {
+		result, qErr = s.testSeams.WALCheckpointQuery(ctx, cpcRw.Conn)
+	} else {
+		result, qErr = cpcRw.Conn.QueryContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)")
+	}
+	if qErr != nil {
+		slog.Error("WAL checkpoint failed", "err", qErr)
+		return
+	}
+	defer result.Close()
+	if result.Next() {
+		var walFrames, checkpointed, inLog int
+		if scanErr := result.Scan(&walFrames, &checkpointed, &inLog); scanErr != nil {
+			slog.Warn("failed to parse wal_checkpoint result", "err", scanErr)
+		} else {
+			slog.Debug("WAL checkpoint completed",
+				"wal_frames", walFrames, "checkpointed", checkpointed, "in_log", inLog)
+		}
+	}
+}

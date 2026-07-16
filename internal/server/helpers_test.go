@@ -12,7 +12,6 @@ import (
 	"github.com/lbe/sfpg-go/internal/getopt"
 	"github.com/lbe/sfpg-go/internal/queue"
 	"github.com/lbe/sfpg-go/internal/server/files"
-	"github.com/lbe/sfpg-go/internal/server/session"
 	"github.com/lbe/sfpg-go/internal/workerpool"
 	"github.com/lbe/sfpg-go/web"
 )
@@ -155,15 +154,20 @@ func CreateApp(t testing.TB, opts ...AppOption) *App {
 		if !opt.SessionSameSite.IsSet && envOpt.SessionSameSite.IsSet {
 			opt.SessionSameSite = envOpt.SessionSameSite
 		}
+		// Merge LoginRateLimitPerIP so setenvForTest(t, "SEPG_LOGIN_RATE_LIMIT_PER_IP", ...)
+		// applies in integration tests the same way as other SEPG_* session/security vars.
+		if !opt.LoginRateLimitPerIP.IsSet && envOpt.LoginRateLimitPerIP.IsSet {
+			opt.LoginRateLimitPerIP = envOpt.LoginRateLimitPerIP
+		}
 	}
 
 	// Ensure SessionSecret is set in opt if not already provided
 	if opt.SessionSecret.String == "" {
-		opt.SessionSecret.String = "this-is-a-test-secret"
+		opt.SessionSecret.String = "this-is-a-test-secret-with-min-32-bytes"
 		opt.SessionSecret.IsSet = true
 	}
 	app := New(opt, "x.y.z")
-	app.pool = workerpool.NewPool(app.ctx, 4, 4, 10*time.Second)
+	app.SubsystemManager.pool = workerpool.NewPool(app.RuntimeManager.ctx, 4, 4, 10*time.Second)
 
 	if cfg.rootDir != "" {
 		app.setRootDir(&cfg.rootDir)
@@ -197,19 +201,19 @@ func CreateApp(t testing.TB, opts ...AppOption) *App {
 	}
 	app.normalizedImagesDir = filepath.ToSlash(app.imagesDir)
 
-	app.q = queue.NewQueue[string](10_000)
+	app.SubsystemManager.q = queue.NewQueue[string](10_000)
 
 	// Initialize FileProcessor for tests
-	app.fileProcessor = files.NewFileProcessor(app.dbRoPool, app.dbRwPool, app.ImporterFactory, app.imagesDir, newBatcherAdapter(app.writeBatcher))
+	app.SubsystemManager.fileProcessor = files.NewFileProcessor(app.dbRoPool, app.dbRwPool, app.ImporterFactory, app.imagesDir, newFileBatcher(app.writeBatcher))
 
 	if cfg.startPool {
-		app.pool.MinWorkers = 1
-		app.pool.MaxWorkers = 1
-		app.poolDone = make(chan struct{})
-		pf := files.NewPoolFuncWithProcessor(app.fileProcessor, app.q, app.normalizedImagesDir, removeImagesDirPrefix, nil)
+		app.SubsystemManager.pool.MinWorkers = 1
+		app.SubsystemManager.pool.MaxWorkers = 1
+		app.RuntimeManager.poolDone = make(chan struct{})
+		pf := files.NewPoolFuncWithProcessor(app.SubsystemManager.fileProcessor, app.SubsystemManager.q, app.normalizedImagesDir, removeImagesDirPrefix, nil)
 		go func() {
-			defer close(app.poolDone)
-			app.pool.StartWorkerPool(pf, app.dbRoPool, app.dbRwPool, app.q.Len)
+			defer close(app.RuntimeManager.poolDone)
+			app.SubsystemManager.pool.StartWorkerPool(pf, app.dbRoPool, app.dbRwPool, app.SubsystemManager.q.Len)
 		}()
 	}
 
@@ -232,7 +236,7 @@ func MakeAuthCookie(t *testing.T, app *App) *http.Cookie {
 	t.Helper()
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/", nil)
-	session, err := app.store.Get(req, "session-name")
+	session, err := app.SessionAuthFacade.store.Get(req, "session-name")
 	if err != nil {
 		t.Fatalf("failed to get session: %v", err)
 	}
@@ -243,31 +247,4 @@ func MakeAuthCookie(t *testing.T, app *App) *http.Cookie {
 		t.Fatalf("Failed to save session: %v", err)
 	}
 	return rr.Result().Cookies()[0]
-}
-
-// addAuthToRequest adds an authenticated session cookie to a request.
-// Also sets a CSRF token in the session for form validation.
-// This is a helper for tests in the server package.
-func addAuthToRequest(t *testing.T, sm session.SessionManager, req *http.Request) {
-	t.Helper()
-	w := httptest.NewRecorder()
-
-	// Set authenticated via SessionManager
-	if err := sm.SetAuthenticated(w, req, true); err != nil {
-		t.Fatalf("failed to set authenticated: %v", err)
-	}
-
-	// Set a CSRF token in the session for form validation
-	// Tests should use "csrf_token=valid-token" in their form data
-	session, _ := sm.GetSession(w, req)
-	session.Values["csrf_token"] = "valid-token"
-	if err := session.Save(req, w); err != nil {
-		t.Fatalf("failed to save session with CSRF token: %v", err)
-	}
-
-	// Copy the cookie to the request
-	cookies := w.Result().Cookies()
-	for _, c := range cookies {
-		req.AddCookie(c)
-	}
 }

@@ -19,7 +19,7 @@
 //
 // # Example
 //
-//	cfg := config.Parse()
+//	cfg := config.ParseArgs(os.Args[1:])
 //	if cfg.Username != "" && cfg.Password != "" {
 //	    // automatic login available
 //	}

@@ -205,11 +205,27 @@ func ParseTemplates(templateFS fs.FS) (err error) {
 		"templates/logout-modal.html.tmpl",
 		"templates/shutdown-modal.html.tmpl",
 		"templates/about-modal.html.tmpl",
+		"templates/layout-ui/hyperscript-global.html.tmpl",
+		"templates/layout-ui/hyperscript-restart.html.tmpl",
+		"templates/layout-ui/body-behavior.html.tmpl",
+		"templates/layout-ui/lightbox-behavior.html.tmpl",
+		"templates/layout-ui/dashboard-poller-behavior.html.tmpl",
+		"templates/layout-ui/info-box-behavior.html.tmpl",
+		"templates/layout-ui/actual-size-behavior.html.tmpl",
+		"templates/layout-ui/breadcrumbs-behavior.html.tmpl",
+		"templates/layout-ui/footer-buttons-behavior.html.tmpl",
+		"templates/layout-ui/restart-overlay-behavior.html.tmpl",
+		"templates/layout-ui/config-behavior.html.tmpl",
+		"templates/layout-ui/info-box.html.tmpl",
+		"templates/layout-ui/info-box-sidebar.html.tmpl",
+		"templates/layout-ui/lightbox-modals.html.tmpl",
+		"templates/layout-ui/footer-controls.html.tmpl",
+		"templates/layout-ui/restart-overlay.html.tmpl",
 	}
 	galleryTemplate = template.Must(template.New("gallery.html.tmpl").Funcs(funcMap).
 		ParseFS(templateFS, append(baseTemplates, "templates/gallery.html.tmpl")...))
 	configModalTemplate = template.Must(template.New("config-modal.html.tmpl").Funcs(funcMap).
-		ParseFS(templateFS, "templates/config-modal.html.tmpl", "templates/config-etag-field.html.tmpl"))
+		ParseFS(templateFS, "templates/config-modal.html.tmpl", "templates/config-etag-field.html.tmpl", "templates/config-ui/*.tmpl"))
 	imageTemplate = template.Must(template.New("image.html.tmpl").Funcs(funcMap).
 		ParseFS(templateFS, append(baseTemplates, "templates/image.html.tmpl")...))
 
@@ -232,13 +248,13 @@ func ParseTemplates(templateFS fs.FS) (err error) {
 		ParseFS(templateFS, "templates/admin-credentials-success.html.tmpl"))
 
 	configValidationErrorTemplate = template.Must(template.New("config-validation-error.html.tmpl").Funcs(funcMap).
-		ParseFS(templateFS, "templates/config-validation-error.html.tmpl"))
+		ParseFS(templateFS, "templates/config-validation-error.html.tmpl", "templates/config-ui/config-spinner.html.tmpl"))
 
 	configGenericErrorTemplate = template.Must(template.New("config-generic-error.html.tmpl").Funcs(funcMap).
-		ParseFS(templateFS, "templates/config-generic-error.html.tmpl"))
+		ParseFS(templateFS, "templates/config-generic-error.html.tmpl", "templates/config-ui/config-spinner.html.tmpl"))
 
 	configDatabaseErrorTemplate = template.Must(template.New("config-database-error.html.tmpl").Funcs(funcMap).
-		ParseFS(templateFS, "templates/config-database-error.html.tmpl"))
+		ParseFS(templateFS, "templates/config-database-error.html.tmpl", "templates/config-ui/config-spinner.html.tmpl"))
 
 	loginFormTemplate = template.Must(template.New("login-form.html.tmpl").Funcs(funcMap).
 		ParseFS(templateFS, "templates/login-form.html.tmpl"))
@@ -262,7 +278,12 @@ func ParseTemplates(templateFS fs.FS) (err error) {
 		ParseFS(templateFS, "templates/hamburger-menu-items.html.tmpl"))
 
 	dashboardTemplate = template.Must(template.New("dashboard.html.tmpl").Funcs(funcMap).
-		ParseFS(templateFS, append(baseTemplates, "templates/dashboard.html.tmpl")...))
+		ParseFS(templateFS, append(baseTemplates,
+			"templates/dashboard.html.tmpl",
+			"templates/dashboard-ui/dashboard-cache-batch-load.html.tmpl",
+			"templates/dashboard-ui/dashboard-discovery.html.tmpl",
+			"templates/dashboard-ui/dashboard-sse-stats.html.tmpl",
+		)...))
 
 	dashboardPartialTemplate = dashboardTemplate.Lookup("body")
 	if dashboardPartialTemplate == nil {

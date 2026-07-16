@@ -3,14 +3,15 @@ package handlers
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/lbe/sfpg-go/internal/testutil"
 )
 
 // TestGalleryByID_IncludesInfoBoxStateScript verifies that the gallery page
-// includes the JavaScript necessary to persist and restore the info box state
-// across page navigations (e.g., when clicking breadcrumbs).
+// includes the Hyperscript behaviors necessary to persist and restore the info
+// box state across page navigations (e.g., when clicking breadcrumbs).
 func TestGalleryByID_IncludesInfoBoxStateScript(t *testing.T) {
 	gh := setupTestGalleryHandlers(t, &fakeHandlerQueries{})
 
@@ -24,12 +25,14 @@ func TestGalleryByID_IncludesInfoBoxStateScript(t *testing.T) {
 		t.Fatalf("expected status 200, got %d", w.Code)
 	}
 
-	doc, err := testutil.ParseHTML(w.Body)
+	rendered := w.Body.String()
+
+	doc, err := testutil.ParseHTML(strings.NewReader(rendered))
 	if err != nil {
 		t.Fatalf("failed to parse HTML: %v", err)
 	}
 
-	// Verify the body has the _= attribute with sessionStorage check
+	// Verify the body installs the behavior that restores info box state
 	body := testutil.FindElementByTag(doc, "body")
 	if body == nil {
 		t.Fatal("missing body element")
@@ -40,12 +43,19 @@ func TestGalleryByID_IncludesInfoBoxStateScript(t *testing.T) {
 		t.Error("body element missing _ (hyperscript) attribute for state restoration")
 	}
 
-	// The script should check sessionStorage for info box state
-	if !containsAny(bodyScript, []string{"sessionStorage", "infobox-visible"}) {
-		t.Error("body init script should check sessionStorage for 'infobox-visible' state")
+	if !contains(bodyScript, "BodyKeyHandler") {
+		t.Error("body should install BodyKeyHandler behavior")
 	}
 
-	// Find the info button and verify it has script to persist state
+	// The BodyKeyHandler behavior restores state from sessionStorage
+	if !contains(rendered, "behavior BodyKeyHandler") {
+		t.Error("rendered page should define BodyKeyHandler behavior")
+	}
+	if !containsAny(rendered, []string{"sessionStorage.getItem('infobox-visible')", "sessionStorage.getItem(\"infobox-visible\")"}) {
+		t.Error("BodyKeyHandler behavior should check sessionStorage for 'infobox-visible' state")
+	}
+
+	// Find the info button and verify it installs the behavior that persists state
 	infoBtn := testutil.FindElementByID(doc, "info-btn")
 	if infoBtn == nil {
 		t.Fatal("missing #info-btn element")
@@ -56,9 +66,16 @@ func TestGalleryByID_IncludesInfoBoxStateScript(t *testing.T) {
 		t.Error("info-btn missing _ (hyperscript) attribute")
 	}
 
-	// The info button script should save state to sessionStorage
-	if !containsAny(infoBtnScript, []string{"sessionStorage", "infobox-visible"}) {
-		t.Error("info-btn script should save 'infobox-visible' state to sessionStorage")
+	if !contains(infoBtnScript, "DesktopInfoButton") {
+		t.Error("info-btn should install DesktopInfoButton behavior")
+	}
+
+	// The DesktopInfoButton behavior persists state to sessionStorage
+	if !contains(rendered, "behavior DesktopInfoButton") {
+		t.Error("rendered page should define DesktopInfoButton behavior")
+	}
+	if !containsAny(rendered, []string{"sessionStorage.setItem('infobox-visible'", "sessionStorage.setItem(\"infobox-visible\""}) {
+		t.Error("DesktopInfoButton behavior should save 'infobox-visible' state to sessionStorage")
 	}
 }
 

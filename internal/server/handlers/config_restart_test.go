@@ -39,7 +39,7 @@ func TestConfigHandlers_Restart_Authenticated(t *testing.T) {
 
 	// TriggerRestart handled by deps
 	ch := setupTestConfigHandlers(t, &mockConfigServiceForConfig{}, &mockAuthServiceForConfig{})
-	// TriggerRestart handled by deps (mockServerDeps)
+	// TriggerRestart handled by cfgOps (mockConfigOps)
 	ch.SessionManager.(*mockSessionManagerAuth).authenticated = true
 
 	req := httptest.NewRequest(http.MethodPost, "/config/restart", strings.NewReader("csrf_token=valid"))
@@ -62,7 +62,7 @@ func TestConfigHandlers_RestartHandler_FlushesResponseAndTriggersRestart(t *test
 
 	// TriggerRestart handled by deps
 	ch := setupTestConfigHandlers(t, &mockConfigServiceForConfig{}, &mockAuthServiceForConfig{})
-	// TriggerRestart handled by deps (mockServerDeps)
+	// TriggerRestart handled by cfgOps (mockConfigOps)
 	ch.SessionManager.(*mockSessionManagerAuth).authenticated = true
 
 	req := httptest.NewRequest(http.MethodPost, "/config/restart", strings.NewReader("csrf_token=valid"))

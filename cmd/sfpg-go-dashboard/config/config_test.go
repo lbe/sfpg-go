@@ -68,19 +68,6 @@ func TestParseFlags(t *testing.T) {
 	}
 }
 
-// TestParse_DelegatesToParseArgs verifies Parse uses os.Args.
-func TestParse_DelegatesToParseArgs(t *testing.T) {
-	origArgs := os.Args
-	defer func() { os.Args = origArgs }()
-
-	os.Args = []string{"sfpg-go-dashboard", "-server", "http://test:9999"}
-	cfg := Parse()
-
-	if cfg.ServerURL != "http://test:9999" {
-		t.Errorf("ServerURL = %q, want %q", cfg.ServerURL, "http://test:9999")
-	}
-}
-
 // TestParseArgs_Help returns ShowHelp when -help is requested.
 func TestParseArgs_Help(t *testing.T) {
 	cfg := ParseArgs([]string{"-help"})

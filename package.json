@@ -8,7 +8,7 @@
     "daisyui": "^4.12.10",
     "htmx.org": "^1.9.12",
     "hyperscript.org": "^0.9.12",
-    "prettier": "^3.8.1",
+    "prettier": "3.9.5",
     "prettier-plugin-go-template": "^0.0.15",
     "prettier-plugin-sh": "^0.18.0",
     "prettier-plugin-tailwindcss": "^0.6.11",

@@ -21,6 +21,7 @@ type ApplyValidationError struct {
 	err error
 }
 
+// Error returns the validation failure message.
 func (e *ApplyValidationError) Error() string {
 	if e == nil || e.err == nil {
 		return "configuration validation failed"
@@ -28,6 +29,7 @@ func (e *ApplyValidationError) Error() string {
 	return e.err.Error()
 }
 
+// Unwrap returns the underlying validation error.
 func (e *ApplyValidationError) Unwrap() error {
 	if e == nil {
 		return nil
@@ -40,6 +42,7 @@ type ApplyPersistenceError struct {
 	err error
 }
 
+// Error returns the persistence failure message.
 func (e *ApplyPersistenceError) Error() string {
 	if e == nil || e.err == nil {
 		return "failed to persist configuration"
@@ -47,6 +50,7 @@ func (e *ApplyPersistenceError) Error() string {
 	return e.err.Error()
 }
 
+// Unwrap returns the underlying persistence error.
 func (e *ApplyPersistenceError) Unwrap() error {
 	if e == nil {
 		return nil

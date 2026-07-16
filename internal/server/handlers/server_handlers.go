@@ -10,18 +10,24 @@ import (
 
 // ServerHandlers holds dependencies for server management handlers.
 type ServerHandlers struct {
-	sessionManager SessionManager
-	deps           interfaces.ServerDeps
+	sessionManager        SessionManager
+	serverControl         interfaces.ServerControl
+	AddCommonTemplateData func(w http.ResponseWriter, r *http.Request, data map[string]any, fullPage bool) map[string]any
+	ServerError           func(w http.ResponseWriter, r *http.Request, err error)
 }
 
 // NewServerHandlers creates a new ServerHandlers with the given dependencies.
 func NewServerHandlers(
 	sessionManager SessionManager,
-	deps interfaces.ServerDeps,
+	serverControl interfaces.ServerControl,
+	addCommonTemplateData func(w http.ResponseWriter, r *http.Request, data map[string]any, fullPage bool) map[string]any,
+	serverError func(w http.ResponseWriter, r *http.Request, err error),
 ) *ServerHandlers {
 	return &ServerHandlers{
-		sessionManager: sessionManager,
-		deps:           deps,
+		sessionManager:        sessionManager,
+		serverControl:         serverControl,
+		AddCommonTemplateData: addCommonTemplateData,
+		ServerError:           serverError,
 	}
 }
 
@@ -33,7 +39,7 @@ func (h *ServerHandlers) validateCsrf(r *http.Request) bool {
 // ServerShutdownPost handles POST /server/shutdown requests.
 // Requires authentication and valid CSRF token. Triggers graceful server shutdown.
 func (h *ServerHandlers) ServerShutdownPost(w http.ResponseWriter, r *http.Request) {
-	if !h.sessionManager.IsAuthenticated(r) {
+	if !h.sessionManager.IsAuthenticated(w, r) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -50,27 +56,27 @@ func (h *ServerHandlers) ServerShutdownPost(w http.ResponseWriter, r *http.Reque
 		"PageName": "shutdown",
 	}
 
-	data = h.deps.AddCommonTemplateData(w, r, data, false)
+	data = h.AddCommonTemplateData(w, r, data, false)
 
 	// Render the shutdown page
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	if err := ui.RenderPage(w, "shutdown", data, false); err != nil {
 		slog.Error("failed to render shutdown page", "err", err)
-		h.deps.ServerError(w, r, err)
+		h.ServerError(w, r, err)
 		return
 	}
 
 	// Trigger shutdown after response is sent
 	go func() {
-		h.deps.Shutdown()
+		h.serverControl.Shutdown()
 	}()
 }
 
 // ServerDiscoveryPost handles POST /server/discovery requests.
 // Requires authentication and valid CSRF token. Triggers file discovery.
 func (h *ServerHandlers) ServerDiscoveryPost(w http.ResponseWriter, r *http.Request) {
-	if !h.sessionManager.IsAuthenticated(r) {
+	if !h.sessionManager.IsAuthenticated(w, r) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -84,10 +90,10 @@ func (h *ServerHandlers) ServerDiscoveryPost(w http.ResponseWriter, r *http.Requ
 	slog.Info("Discovery requested via web interface")
 
 	// Reset stats before starting new discovery
-	h.deps.ResetStats()
+	h.serverControl.ResetStats()
 
 	// Trigger discovery in a goroutine so it doesn't block the HTTP response
-	go h.deps.TriggerDiscovery()
+	go h.serverControl.TriggerDiscovery()
 
 	// Return success notification
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -97,7 +103,7 @@ func (h *ServerHandlers) ServerDiscoveryPost(w http.ResponseWriter, r *http.Requ
 		"Message": "File discovery started",
 	}
 
-	data = h.deps.AddCommonTemplateData(w, r, data, true)
+	data = h.AddCommonTemplateData(w, r, data, true)
 
 	if err := ui.RenderPage(w, "discovery-started", data, false); err != nil {
 		slog.Error("failed to render discovery started notification", "err", err)
@@ -109,7 +115,7 @@ func (h *ServerHandlers) ServerDiscoveryPost(w http.ResponseWriter, r *http.Requ
 // Requires authentication and valid CSRF token. Blocks if discovery is active (returns 409). Otherwise
 // starts batch load in a goroutine and returns success toast.
 func (h *ServerHandlers) ServerCacheBatchLoadPost(w http.ResponseWriter, r *http.Request) {
-	if !h.sessionManager.IsAuthenticated(r) {
+	if !h.sessionManager.IsAuthenticated(w, r) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -120,10 +126,10 @@ func (h *ServerHandlers) ServerCacheBatchLoadPost(w http.ResponseWriter, r *http
 		return
 	}
 
-	result, err := h.deps.StartCacheBatchLoad()
+	result, err := h.serverControl.StartCacheBatchLoad()
 	if err != nil {
 		slog.Error("cache batch load start failed", "err", err)
-		h.deps.ServerError(w, r, err)
+		h.ServerError(w, r, err)
 		return
 	}
 
@@ -138,7 +144,7 @@ func (h *ServerHandlers) ServerCacheBatchLoadPost(w http.ResponseWriter, r *http
 		"Message":    result.Message,
 		"AlertClass": alertClass,
 	}
-	data = h.deps.AddCommonTemplateData(w, r, data, true)
+	data = h.AddCommonTemplateData(w, r, data, true)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)

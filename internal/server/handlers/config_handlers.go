@@ -34,38 +34,50 @@ type ConfigTemplates struct {
 
 // ConfigHandlers holds dependencies for configuration-related HTTP handlers.
 // Dependencies are provided via constructor injection (concrete services) and
-// the deps field (interfaces.ServerDeps), eliminating runtime wiring checks.
+// the narrow interfaces (interfaces.CredentialStore, interfaces.ConfigOps),
+// replacing the previous monolithic ServerDeps dependency.
 type ConfigHandlers struct {
-	ConfigService  config.ConfigService
-	AuthService    auth.AuthService
-	SessionManager session.SessionManager
-	DBRoPool       dbconnpool.ConnectionPool
-	DBRwPool       dbconnpool.ConnectionPool
-	Templates      ConfigTemplates
-	Ctx            context.Context
-	deps           interfaces.ServerDeps // replaces CredentialStore + 8 callbacks
+	ConfigService         config.ConfigService
+	AuthService           auth.AuthService
+	SessionManager        session.SessionManager
+	DBRoPool              dbconnpool.ConnectionPool
+	DBRwPool              dbconnpool.ConnectionPool
+	Templates             ConfigTemplates
+	Ctx                   context.Context
+	credStore             interfaces.CredentialStore
+	cfgOps                interfaces.ConfigOps
+	AddCommonTemplateData func(w http.ResponseWriter, r *http.Request, data map[string]any, fullPage bool) map[string]any
+	// getConfigQueries is a test hook that returns the ConfigQueries implementation
+	// for a connection. When nil, cpc.Queries is used directly.
+	getConfigQueries func(cpc *dbconnpool.CpConn) config.ConfigQueries
 }
 
 // NewConfigHandlers creates a new ConfigHandlers with the given dependencies.
+// It accepts narrow interfaces (CredentialStore, ConfigOps) and a function
+// for adding common template data, avoiding a dependency on the full ServerDeps.
 func NewConfigHandlers(
 	configService config.ConfigService,
 	authService auth.AuthService,
 	sessionManager session.SessionManager,
 	dbRoPool dbconnpool.ConnectionPool,
 	dbRwPool dbconnpool.ConnectionPool,
-	deps interfaces.ServerDeps,
+	credStore interfaces.CredentialStore,
+	cfgOps interfaces.ConfigOps,
+	addCommonTemplateData func(w http.ResponseWriter, r *http.Request, data map[string]any, fullPage bool) map[string]any,
 	templates ConfigTemplates,
 	ctx context.Context,
 ) *ConfigHandlers {
 	return &ConfigHandlers{
-		ConfigService:  configService,
-		AuthService:    authService,
-		SessionManager: sessionManager,
-		DBRoPool:       dbRoPool,
-		DBRwPool:       dbRwPool,
-		deps:           deps,
-		Templates:      templates,
-		Ctx:            ctx,
+		ConfigService:         configService,
+		AuthService:           authService,
+		SessionManager:        sessionManager,
+		DBRoPool:              dbRoPool,
+		DBRwPool:              dbRwPool,
+		credStore:             credStore,
+		cfgOps:                cfgOps,
+		AddCommonTemplateData: addCommonTemplateData,
+		Templates:             templates,
+		Ctx:                   ctx,
 	}
 }
 
@@ -142,7 +154,9 @@ func (h *ConfigHandlers) ConfigGet(w http.ResponseWriter, r *http.Request) {
 		data["Category"] = category
 	}
 
-	data = h.deps.AddCommonTemplateData(w, r, data, true)
+	if h.AddCommonTemplateData != nil {
+		data = h.AddCommonTemplateData(w, r, data, true)
+	}
 
 	// Render modal template
 	if err := ui.RenderTemplate(w, "config-modal.html.tmpl", data); err != nil {
@@ -196,7 +210,7 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 		CurrentPassword: r.FormValue("admin_current_password"),
 		NewPassword:     r.FormValue("admin_new_password"),
 		ConfirmPassword: r.FormValue("admin_confirm_password"),
-	}, h.deps)
+	}, h.credStore)
 
 	if err != nil {
 		slog.Error("failed to update admin credentials", "err", err)
@@ -267,7 +281,7 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 
 		// Inline the former configFieldSetter sideEffect for cache preload.
 		if f.DBKey == "enable_cache_preload" {
-			h.deps.SetPreloadEnabled(value == "true")
+			h.cfgOps.SetPreloadEnabled(value == "true")
 		}
 	}
 
@@ -319,12 +333,12 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.deps.UpdateConfigWithPrecedence(applyResult.Config, applyResult.RestartRequiredKeys)
-	h.deps.ApplyConfig()
+	h.cfgOps.UpdateConfigWithPrecedence(applyResult.Config, applyResult.RestartRequiredKeys)
+	h.cfgOps.ApplyConfig()
 
 	// Set restart required flag if any restart-required fields changed
 	if applyResult.RestartRequired {
-		h.deps.SetRestartRequired(true)
+		h.cfgOps.SetRestartRequired(true)
 	}
 
 	w.Header().Set("HX-Trigger", "config-saved")
@@ -337,4 +351,13 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 	h.executeConfigTemplate(w, h.Templates.SaveSuccessAlert, "config-save-success-alert.html.tmpl", nil)
+}
+
+// getConfigQueriesFn returns the ConfigQueries implementation for a connection.
+// It checks for a test hook first, falling back to cpc.Queries.
+func (h *ConfigHandlers) getConfigQueriesFn(cpc *dbconnpool.CpConn) config.ConfigQueries {
+	if h.getConfigQueries != nil {
+		return h.getConfigQueries(cpc)
+	}
+	return cpc.Queries
 }

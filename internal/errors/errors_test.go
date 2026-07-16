@@ -214,8 +214,8 @@ func TestAs(t *testing.T) {
 	cause := New("cause")
 	wrapped := Wrap(cause, "msg")
 	var target *wrappedError
-	if !As(wrapped, &target) {
-		t.Fatal("expected As to find wrappedError")
+	if !stderrors.As(wrapped, &target) {
+		t.Fatal("expected stdlib errors.As to find wrappedError")
 	}
 	if target == nil {
 		t.Fatal("expected non-nil target")

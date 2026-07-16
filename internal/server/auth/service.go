@@ -3,6 +3,7 @@ package auth
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"strings"
 
@@ -46,18 +47,18 @@ type AuthService interface {
 	UpdateCredentials(ctx context.Context, opts CredentialUpdateOptions, store CredentialStore) (*CredentialUpdateResult, error)
 }
 
-// Service implements AuthService.
-type Service struct {
+// authService implements AuthService.
+type authService struct {
 	store UserStore
 }
 
 // NewService creates a new AuthService with the given UserStore.
 func NewService(store UserStore) AuthService {
-	return &Service{store: store}
+	return &authService{store: store}
 }
 
 // Authenticate validates credentials and returns the user if successful.
-func (s *Service) Authenticate(ctx context.Context, username, password string) (*session.User, error) {
+func (s *authService) Authenticate(ctx context.Context, username, password string) (*session.User, error) {
 	// Check lockout first
 	locked, err := s.store.CheckAccountLockout(ctx, username)
 	if err != nil {
@@ -70,7 +71,7 @@ func (s *Service) Authenticate(ctx context.Context, username, password string) (
 	// Get user
 	user, err := s.store.GetUser(ctx, username)
 	if err != nil {
-		if errors.Is(err, ErrUserNotFound) {
+		if errors.Is(err, ErrUserNotFound) || errors.Is(err, sql.ErrNoRows) {
 			if recErr := s.store.RecordFailedLoginAttempt(ctx, username); recErr != nil {
 				return nil, errors.Join(ErrInvalidCredentials, recErr)
 			}
@@ -96,17 +97,17 @@ func (s *Service) Authenticate(ctx context.Context, username, password string) (
 }
 
 // CheckLockout returns true if the account is locked.
-func (s *Service) CheckLockout(ctx context.Context, username string) (bool, error) {
+func (s *authService) CheckLockout(ctx context.Context, username string) (bool, error) {
 	return s.store.CheckAccountLockout(ctx, username)
 }
 
 // RecordFailedAttempt records a failed login attempt.
-func (s *Service) RecordFailedAttempt(ctx context.Context, username string) error {
+func (s *authService) RecordFailedAttempt(ctx context.Context, username string) error {
 	return s.store.RecordFailedLoginAttempt(ctx, username)
 }
 
 // ClearAttempts clears failed login attempts.
-func (s *Service) ClearAttempts(ctx context.Context, username string) error {
+func (s *authService) ClearAttempts(ctx context.Context, username string) error {
 	return s.store.ClearLoginAttempts(ctx, username)
 }
 
@@ -152,7 +153,7 @@ type CredentialUpdateResult struct {
 // UpdateCredentials validates and updates admin credentials.
 // It returns a result containing what changes were made and any validation errors.
 // Returns true if credentials were updated, false if only validation was performed.
-func (s *Service) UpdateCredentials(ctx context.Context, opts CredentialUpdateOptions, store CredentialStore) (*CredentialUpdateResult, error) {
+func (s *authService) UpdateCredentials(ctx context.Context, opts CredentialUpdateOptions, store CredentialStore) (*CredentialUpdateResult, error) {
 	result := &CredentialUpdateResult{
 		ValidationErrors: make(map[string]string),
 	}

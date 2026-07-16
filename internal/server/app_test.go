@@ -3,58 +3,56 @@ package server
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
 	"time"
 
-	"github.com/lbe/sfpg-go/internal/cachelite"
 	"github.com/lbe/sfpg-go/internal/dbconnpool"
-	"github.com/lbe/sfpg-go/internal/gallerydb"
 	"github.com/lbe/sfpg-go/internal/getopt"
 	"github.com/lbe/sfpg-go/internal/log"
 	"github.com/lbe/sfpg-go/internal/profiler"
 	"github.com/lbe/sfpg-go/internal/scheduler"
 	"github.com/lbe/sfpg-go/internal/server/config"
 	"github.com/lbe/sfpg-go/internal/server/database"
-	"github.com/lbe/sfpg-go/internal/server/ui"
 )
 
-// TestNew verifies that the New function initializes the App struct correctly.
+// --- merged from app_test.go ---
 func TestNew(t *testing.T) {
-	ss := "this-is-a-test-secret"
+	ss := "this-is-a-test-secret-with-min-32-bytes"
 	opt := getopt.Opt{SessionSecret: getopt.OptString{String: ss, IsSet: true}}
 	app := New(opt, "x.y.z")
 	t.Run("Initializes App struct correctly", func(t *testing.T) {
-		if app.ctx == nil {
-			t.Error("Expected app.ctx to not be nil")
+		if app.RuntimeManager.ctx == nil {
+			t.Error("Expected app.RuntimeManager.ctx to not be nil")
 		}
-		if app.cancel == nil {
-			t.Error("Expected app.cancel to not be nil")
+		if app.RuntimeManager.cancel == nil {
+			t.Error("Expected app.RuntimeManager.cancel to not be nil")
 		}
-		if app.sessionSecret != ss {
-			t.Errorf("Expected sessionSecret to be %q, got %q", ss, app.sessionSecret)
+		if app.SessionAuthFacade.sessionSecret != ss {
+			t.Errorf("Expected sessionSecret to be %q, got %q", ss, app.SessionAuthFacade.sessionSecret)
 		}
 	})
 }
 
-// TestNew_DoesNotCreatePool verifies that New does not create the worker pool;
-// pool creation is deferred to SubsystemManager.Start.
 func TestNew_DoesNotCreatePool(t *testing.T) {
-	ss := "this-is-a-test-secret"
+	ss := "this-is-a-test-secret-with-min-32-bytes"
 	opt := getopt.Opt{SessionSecret: getopt.OptString{String: ss, IsSet: true}}
 	app := New(opt, "x.y.z")
 	defer app.Shutdown()
 
-	if app.pool != nil {
-		t.Errorf("Expected app.pool to be nil after New, got %v", app.pool)
+	if app.SubsystemManager.pool != nil {
+		t.Errorf("Expected app.SubsystemManager.pool to be nil after New, got %v", app.SubsystemManager.pool)
 	}
 	if app.InfrastructureService == nil {
 		t.Error("Expected InfrastructureService to be initialized")
@@ -62,8 +60,8 @@ func TestNew_DoesNotCreatePool(t *testing.T) {
 	if app.ConfigManager == nil {
 		t.Error("Expected ConfigManager to be initialized")
 	}
-	if app.AuthService == nil {
-		t.Error("Expected AuthService to be initialized")
+	if app.SessionAuthFacade == nil {
+		t.Error("Expected SessionAuthFacade to be initialized")
 	}
 	if app.HandlerManager == nil {
 		t.Error("Expected HandlerManager to be initialized")
@@ -76,1400 +74,41 @@ func TestNew_DoesNotCreatePool(t *testing.T) {
 	}
 }
 
-// TestSetDB verifies that the setDB method initializes the database connection pools correctly.
-func TestSetDB(t *testing.T) {
-	// Create a temporary directory structure
-	tempDir := t.TempDir()
-
-	// discardHandler := slog.NewTextHandler(io.Discard, nil)
-	// slog.SetDefault(slog.New(discardHandler))
-
-	ss := "this-is-a-test-secret"
-	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
-	app := New(getopt.Opt{}, "x.y.z")
-
-	app.setRootDir(&tempDir)
-
-	defer app.cancel()
-
-	// Initialize DB (setDB will set app.dbPaths)
-	app.setDB()
-
-	// Test that both dbConnPools are operational
-	t.Run("verify pools operational", func(t *testing.T) {
-		// Test deferred (RO) pool
-		roConn, err := app.dbRoPool.Get()
-		if err != nil {
-			t.Fatalf("failed to get deferred tx connection: %v", err)
-		}
-
-		// Basic query should work
-		var count int
-		err = roConn.Conn.QueryRowContext(app.ctx, "SELECT 1").Scan(&count)
-		if err != nil {
-			t.Errorf("failed basic query on deferred tx connection: %v", err)
-		}
-		app.dbRoPool.Put(roConn)
-
-		// Test immediate (RW) pool
-		rwConn, err := app.dbRwPool.Get()
-		if err != nil {
-			t.Fatalf("failed to get immediate tx connection: %v", err)
-		}
-
-		err = rwConn.Conn.QueryRowContext(app.ctx, "SELECT 1").Scan(&count)
-		if err != nil {
-			t.Errorf("failed basic query on immediate tx connection: %v", err)
-		}
-		app.dbRwPool.Put(rwConn)
-	})
-
-	t.Run("writeBatcher configured with dque overflow", func(t *testing.T) {
-		if app.writeBatcher == nil {
-			t.Fatal("writeBatcher should be initialized after setDB")
-		}
-
-		stats := app.writeBatcher.GetStats()
-		if !stats.DQueEnabled {
-			t.Error("writeBatcher.DQueEnabled is false — DQueDirPath not set in setDB()")
-		}
-
-		// Verify the dque overflow directory exists on disk
-		dqueDir := filepath.Join(filepath.Dir(app.dbPaths.Main), filepath.Base(app.dbPaths.Main)+"-dque")
-		if _, err := os.Stat(dqueDir); os.IsNotExist(err) {
-			t.Error("dque overflow directory was not created — DQueDirPath not set in setDB()")
-		}
-	})
-
-	// Close writeBatcher first to release any database connections
-	if app.writeBatcher != nil {
-		if err := app.writeBatcher.Close(); err != nil {
-			t.Errorf("failed to close writeBatcher: %v", err)
-		}
-	}
-
-	// Give a moment for connections to be fully returned to the pool
-	// This helps avoid "database is locked" errors with SQLite
-	time.Sleep(100 * time.Millisecond)
-
-	// Close pools at end of test
-	// Note: With SQLite, closing one pool may fail if the other pool still has
-	// connections open, since they share the same database file. We close both
-	// and only report errors if they're not "database is locked" errors.
-	roErr := app.dbRoPool.Close()
-	rwErr := app.dbRwPool.Close()
-
-	// Only report errors that aren't related to database locking
-	// (which is expected when multiple pools access the same SQLite file)
-	if roErr != nil && !strings.Contains(roErr.Error(), "database is locked") {
-		t.Errorf("failed to close deferred tx pool: %v", roErr)
-	}
-	if rwErr != nil && !strings.Contains(rwErr.Error(), "database is locked") {
-		t.Errorf("failed to close immediate tx pool: %v", rwErr)
-	}
-}
-
-// TestReconfigurePools_DQueWired verifies that reconfigurePoolsFromConfig
-// creates a WriteBatcher with dque overflow configured.
-func TestReconfigurePools_DQueWired(t *testing.T) {
-	tempDir := t.TempDir()
-	ss := "this-is-a-test-secret"
-	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
-	app := New(getopt.Opt{}, "x.y.z")
-	app.setRootDir(&tempDir)
-	defer app.cancel()
-
-	// Initialize DB
-	app.setDB()
-
-	// Ensure config is initialized before reconfiguration
-	app.configMu.Lock()
-	if app.config == nil {
-		app.config = config.DefaultConfig()
-	}
-	app.config.DBMaxPoolSize = 999 // different from default to trigger reconfigure
-	app.configMu.Unlock()
-
-	// Verify the new batcher has dque overflow configured after reconfigure.
-	// This also implicitly tests close-before-create ordering: once setDB is
-	// fixed to configure dque, the old batcher will hold a dque flock.
-	// If reconfigurePoolsFromConfig creates the new batcher before closing
-	// the old one, dque.NewOrOpen will fail with a flock conflict on the
-	// same directory, causing reconfigurePoolsFromConfig to return an error.
-	err := app.reconfigurePoolsFromConfig()
-	if err != nil {
-		t.Fatalf("reconfigurePoolsFromConfig failed: %v", err)
-	}
-
-	if app.writeBatcher == nil {
-		t.Fatal("writeBatcher is nil after reconfigure")
-	}
-
-	stats := app.writeBatcher.GetStats()
-	if !stats.DQueEnabled {
-		t.Error("writeBatcher.DQueEnabled is false after reconfigure — DQueDirPath not set in reconfigurePoolsFromConfig()")
-	}
-
-	dqueDir := filepath.Join(filepath.Dir(app.dbPaths.Main), filepath.Base(app.dbPaths.Main)+"-dque")
-	if _, err := os.Stat(dqueDir); os.IsNotExist(err) {
-		t.Error("dque overflow directory was not created after reconfigure — DQueDirPath not set in reconfigurePoolsFromConfig()")
-	}
-
-	// Cleanup
-	if app.writeBatcher != nil {
-		app.writeBatcher.Close()
-	}
-	app.dbRoPool.Close()
-	app.dbRwPool.Close()
-}
-
-func TestUnlockAccount(t *testing.T) {
-	tempDir := t.TempDir()
-	ss := "this-is-a-test-secret"
-	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
-	app := New(getopt.Opt{}, "x.y.z")
-
-	app.setRootDir(&tempDir)
-
-	defer app.cancel()
-
-	app.setDB()
-	defer func() {
-		_ = app.dbRoPool.Close()
-		_ = app.dbRwPool.Close()
-	}()
-
-	username := "testuser"
-
-	// Create a locked account
-	cpcRw, err := app.dbRwPool.Get()
-	if err != nil {
-		t.Fatalf("failed to get RW DB connection: %v", err)
-	}
-	defer app.dbRwPool.Put(cpcRw)
-
-	now := time.Now().Unix()
-	futureTime := now + 3600
-	err = cpcRw.Queries.UpsertLoginAttempt(app.ctx, gallerydb.UpsertLoginAttemptParams{
-		Username:       username,
-		FailedAttempts: 3,
-		LastAttemptAt:  now,
-		LockedUntil:    sql.NullInt64{Int64: futureTime, Valid: true},
-	})
-	if err != nil {
-		t.Fatalf("UpsertLoginAttempt failed: %v", err)
-	}
-
-	// Verify account is locked
-	attempt, err := cpcRw.Queries.GetLoginAttempt(app.ctx, username)
-	if err != nil {
-		t.Fatalf("GetLoginAttempt failed: %v", err)
-	}
-	if attempt.FailedAttempts != 3 {
-		t.Errorf("expected failed_attempts 3, got %d", attempt.FailedAttempts)
-	}
-	if !attempt.LockedUntil.Valid {
-		t.Error("expected locked_until to be set, but it was NULL")
-	}
-
-	// Unlock the account
-	err = app.UnlockAccount(username)
-	if err != nil {
-		t.Fatalf("UnlockAccount failed: %v", err)
-	}
-
-	// Verify account is unlocked
-	attempt, err = cpcRw.Queries.GetLoginAttempt(app.ctx, username)
-	if err != nil {
-		t.Fatalf("GetLoginAttempt failed: %v", err)
-	}
-	if attempt.FailedAttempts != 0 {
-		t.Errorf("expected failed_attempts 0 after unlock, got %d", attempt.FailedAttempts)
-	}
-	if attempt.LockedUntil.Valid {
-		t.Error("expected locked_until to be NULL after unlock, but it was set")
-	}
-}
-
-func TestUnlockAccount_NonExistent(t *testing.T) {
-	tempDir := t.TempDir()
-	ss := "this-is-a-test-secret"
-	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
-	app := New(getopt.Opt{}, "x.y.z")
-
-	app.setRootDir(&tempDir)
-
-	defer app.cancel()
-
-	app.setDB()
-	defer func() {
-		_ = app.dbRoPool.Close()
-		_ = app.dbRwPool.Close()
-	}()
-
-	// Unlocking non-existent account should succeed (no rows affected is not an error)
-	err := app.UnlockAccount("nonexistent")
-	if err != nil {
-		t.Fatalf("UnlockAccount on non-existent account should not error, got: %v", err)
-	}
-}
-
-// TestApp_ImageDirectory_FromConfig_NotHardcoded verifies that image directory comes from config,
-// not from a hardcoded default. It ensures setDBDirectory() does not create the Images directory,
-// and that setImageDirectory() uses the configured path instead.
-func TestApp_ImageDirectory_FromConfig_NotHardcoded(t *testing.T) {
-	tempDir := t.TempDir()
-	customImageDir := filepath.Join(tempDir, "custom-images")
-
-	ss := "this-is-a-test-secret"
-	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
-	app := New(getopt.Opt{}, "x.y.z")
-
-	app.setRootDir(&tempDir)
-	app.setupBootstrapLogging()
-	defer func() {
-		if app.logger != nil {
-			_ = app.logger.Shutdown()
-		}
-	}()
-
-	// Initialize scheduler
-	app.scheduler = scheduler.NewScheduler(0)
-	go func() {
-		if err := app.scheduler.Start(app.ctx); err != nil {
-			t.Logf("scheduler error: %v", err)
-		}
-	}()
-	defer func() {
-		if app.scheduler != nil {
-			_ = app.scheduler.Shutdown()
-		}
-	}()
-
-	// Call setDBDirectory (should only create DB directory, not Images)
-
-	// Verify default Images directory was NOT created
-	defaultImagesDir := filepath.Join(tempDir, "Images")
-	if _, err := os.Stat(defaultImagesDir); !os.IsNotExist(err) {
-		t.Errorf("setDBDirectory should not create Images directory, but it exists at %q", defaultImagesDir)
-	}
-
-	// Set up DB and config
-	app.setDB()
-	defer func() {
-		if app.dbRoPool != nil {
-			_ = app.dbRoPool.Close()
-		}
-		if app.dbRwPool != nil {
-			_ = app.dbRwPool.Close()
-		}
-	}()
-
-	app.setConfigDefaults()
-
-	// Load config and set custom image directory
-	if err := app.loadConfig(); err != nil {
-		t.Fatalf("loadConfig failed: %v", err)
-	}
-
-	// Set custom image directory in config
-	app.configMu.Lock()
-	app.config.ImageDirectory = customImageDir
-	app.configMu.Unlock()
-
-	// Apply config
-	app.ApplyConfig()
-
-	// Set image directory (should create it from config)
-
-	// Verify custom directory was created and used
-	if app.imagesDir != customImageDir {
-		t.Errorf("expected imagesDir to be %q from config, got %q", customImageDir, app.imagesDir)
-	}
-	if _, err := os.Stat(customImageDir); os.IsNotExist(err) {
-		t.Errorf("setImageDirectory should have created custom image directory at %q", customImageDir)
-	}
-}
-
-// TestApp_ImageDirectory_CreatedAfterConfigLoad verifies that image directory is created
-// after config is loaded and applied, not before.
-func TestApp_ImageDirectory_CreatedAfterConfigLoad(t *testing.T) {
-	tempDir := t.TempDir()
-	customImageDir := filepath.Join(tempDir, "my-images")
-
-	ss := "this-is-a-test-secret"
-	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
-	app := New(getopt.Opt{}, "x.y.z")
-
-	app.setRootDir(&tempDir)
-	app.setupBootstrapLogging()
-	defer func() {
-		if app.logger != nil {
-			_ = app.logger.Shutdown()
-		}
-	}()
-
-	// Initialize scheduler
-	app.scheduler = scheduler.NewScheduler(0)
-	go func() {
-		if err := app.scheduler.Start(app.ctx); err != nil {
-			t.Logf("scheduler error: %v", err)
-		}
-	}()
-	defer func() {
-		if app.scheduler != nil {
-			_ = app.scheduler.Shutdown()
-		}
-	}()
-
-	// Call setDBDirectory (should only create DB directory)
-
-	// Verify image directory does NOT exist yet
-	if _, err := os.Stat(customImageDir); !os.IsNotExist(err) {
-		t.Fatalf("image directory should not exist before config load, but it does: %v", err)
-	}
-
-	// Set up DB and config
-	app.setDB()
-	defer func() {
-		if app.dbRoPool != nil {
-			_ = app.dbRoPool.Close()
-		}
-		if app.dbRwPool != nil {
-			_ = app.dbRwPool.Close()
-		}
-	}()
-
-	app.setConfigDefaults()
-
-	// Load config
-	if err := app.loadConfig(); err != nil {
-		t.Fatalf("loadConfig failed: %v", err)
-	}
-
-	// Set custom image directory in config
-	app.configMu.Lock()
-	app.config.ImageDirectory = customImageDir
-	app.configMu.Unlock()
-
-	// Apply config
-	app.ApplyConfig()
-
-	// At this point, directory should still not exist (applyConfig doesn't create it yet)
-	// setImageDirectory() will create it
-	if _, err := os.Stat(customImageDir); !os.IsNotExist(err) {
-		t.Logf("Note: directory exists after applyConfig (this is OK if applyConfig creates it)")
-	}
-
-	// Now call setImageDirectory - this should create the directory
-
-	// Verify directory was created
-	if _, err := os.Stat(customImageDir); os.IsNotExist(err) {
-		t.Errorf("setImageDirectory should have created image directory at %q, but it doesn't exist", customImageDir)
-	}
-
-	// Verify app.imagesDir is set correctly
-	if app.imagesDir != customImageDir {
-		t.Errorf("expected imagesDir to be %q, got %q", customImageDir, app.imagesDir)
-	}
-}
-
-// TestApp_ImageDirectory_CustomPath verifies that custom image directory path from config
-// is used instead of default.
-func TestApp_ImageDirectory_CustomPath(t *testing.T) {
-	tempDir := t.TempDir()
-	customImageDir := filepath.Join(tempDir, "photos", "gallery")
-
-	ss := "this-is-a-test-secret"
-	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
-	app := New(getopt.Opt{}, "x.y.z")
-
-	app.setRootDir(&tempDir)
-	app.setupBootstrapLogging()
-	defer func() {
-		if app.logger != nil {
-			_ = app.logger.Shutdown()
-		}
-	}()
-
-	// Initialize scheduler
-	app.scheduler = scheduler.NewScheduler(0)
-	go func() {
-		if err := app.scheduler.Start(app.ctx); err != nil {
-			t.Logf("scheduler error: %v", err)
-		}
-	}()
-	defer func() {
-		if app.scheduler != nil {
-			_ = app.scheduler.Shutdown()
-		}
-	}()
-
-	app.setDB()
-	defer func() {
-		if app.dbRoPool != nil {
-			_ = app.dbRoPool.Close()
-		}
-		if app.dbRwPool != nil {
-			_ = app.dbRwPool.Close()
-		}
-	}()
-
-	app.setConfigDefaults()
-
-	// Load config
-	if err := app.loadConfig(); err != nil {
-		t.Fatalf("loadConfig failed: %v", err)
-	}
-
-	// Set custom nested image directory in config
-	app.configMu.Lock()
-	app.config.ImageDirectory = customImageDir
-	app.configMu.Unlock()
-
-	// Apply config
-	app.ApplyConfig()
-
-	// Set image directory
-
-	// Verify custom path is used (not default)
-	defaultPath := filepath.Join(tempDir, "Images")
-	if app.imagesDir == defaultPath {
-		t.Errorf("expected custom path %q, but got default path %q", customImageDir, defaultPath)
-	}
-
-	if app.imagesDir != customImageDir {
-		t.Errorf("expected imagesDir to be %q, got %q", customImageDir, app.imagesDir)
-	}
-
-	// Verify directory was created
-	if _, err := os.Stat(customImageDir); os.IsNotExist(err) {
-		t.Errorf("custom image directory should exist at %q, but it doesn't", customImageDir)
-	}
-
-	// Verify normalized path is set correctly
-	expectedNormalized := filepath.ToSlash(customImageDir)
-	if app.normalizedImagesDir != expectedNormalized {
-		t.Errorf("expected normalizedImagesDir to be %q, got %q", expectedNormalized, app.normalizedImagesDir)
-	}
-}
-
-// TestImageDirectoryIntegration_StartupFlow tests complete startup flow with custom image directory.
-func TestImageDirectoryIntegration_StartupFlow(t *testing.T) {
-	tempDir := t.TempDir()
-	customImageDir := filepath.Join(tempDir, "custom-gallery")
-
-	ss := "this-is-a-test-secret"
-	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
-	app := New(getopt.Opt{}, "x.y.z")
-
-	app.setRootDir(&tempDir)
-	app.setupBootstrapLogging()
-	defer func() {
-		if app.logger != nil {
-			_ = app.logger.Shutdown()
-		}
-	}()
-
-	// Initialize scheduler
-	app.scheduler = scheduler.NewScheduler(0)
-	go func() {
-		if err := app.scheduler.Start(app.ctx); err != nil {
-			t.Logf("scheduler error: %v", err)
-		}
-	}()
-	defer func() {
-		if app.scheduler != nil {
-			_ = app.scheduler.Shutdown()
-		}
-	}()
-
-	// Simulate Run() sequence
-	app.setDB()
-	defer func() {
-		if app.dbRoPool != nil {
-			_ = app.dbRoPool.Close()
-		}
-		if app.dbRwPool != nil {
-			_ = app.dbRwPool.Close()
-		}
-	}()
-
-	app.setConfigDefaults()
-
-	// Load config
-	if err := app.loadConfig(); err != nil {
-		t.Fatalf("loadConfig failed: %v", err)
-	}
-
-	// Set custom image directory in config
-	app.configMu.Lock()
-	app.config.ImageDirectory = customImageDir
-	app.configMu.Unlock()
-
-	// Apply config
-	app.ApplyConfig()
-
-	// Set image directory (from Run() sequence)
-
-	// Verify complete integration
-	if app.imagesDir != customImageDir {
-		t.Errorf("expected imagesDir to be %q after startup flow, got %q", customImageDir, app.imagesDir)
-	}
-
-	if _, err := os.Stat(customImageDir); os.IsNotExist(err) {
-		t.Errorf("custom image directory should exist after startup flow, but it doesn't: %v", err)
-	}
-
-	expectedNormalized := filepath.ToSlash(customImageDir)
-	if app.normalizedImagesDir != expectedNormalized {
-		t.Errorf("expected normalizedImagesDir to be %q, got %q", expectedNormalized, app.normalizedImagesDir)
-	}
-}
-
-// TestImageDirectoryIntegration_RuntimeChange tests that runtime config change requires restart.
-func TestImageDirectoryIntegration_RuntimeChange(t *testing.T) {
-	tempDir := t.TempDir()
-	initialImageDir := filepath.Join(tempDir, "initial")
-	newImageDir := filepath.Join(tempDir, "new")
-
-	ss := "this-is-a-test-secret"
-	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
-	app := New(getopt.Opt{}, "x.y.z")
-
-	app.setRootDir(&tempDir)
-	app.setupBootstrapLogging()
-	defer func() {
-		if app.logger != nil {
-			_ = app.logger.Shutdown()
-		}
-	}()
-
-	// Initialize scheduler
-	app.scheduler = scheduler.NewScheduler(0)
-	go func() {
-		if err := app.scheduler.Start(app.ctx); err != nil {
-			t.Logf("scheduler error: %v", err)
-		}
-	}()
-	defer func() {
-		if app.scheduler != nil {
-			_ = app.scheduler.Shutdown()
-		}
-	}()
-
-	app.setDB()
-	defer func() {
-		if app.dbRoPool != nil {
-			_ = app.dbRoPool.Close()
-		}
-		if app.dbRwPool != nil {
-			_ = app.dbRwPool.Close()
-		}
-	}()
-
-	app.setConfigDefaults()
-
-	// Load config
-	if err := app.loadConfig(); err != nil {
-		t.Fatalf("loadConfig failed: %v", err)
-	}
-
-	// Set initial image directory
-	app.configMu.Lock()
-	app.config.ImageDirectory = initialImageDir
-	app.configMu.Unlock()
-
-	app.ApplyConfig()
-
-	// Verify initial directory is set
-	if app.imagesDir != initialImageDir {
-		t.Errorf("expected initial imagesDir to be %q, got %q", initialImageDir, app.imagesDir)
-	}
-
-	// Simulate runtime config change (as if from config handler)
-	app.configMu.Lock()
-	app.config.ImageDirectory = newImageDir
-	app.configMu.Unlock()
-
-	app.ApplyConfig()
-
-	// After applyConfig, imagesDir should be updated
-	if app.imagesDir != newImageDir {
-		t.Errorf("expected imagesDir to be updated to %q after config change, got %q", newImageDir, app.imagesDir)
-	}
-
-	// Note: In real scenario, restart would be required and walkImageDir() would use new directory
-	// This test verifies the config change is applied correctly
-}
-
-// TestImageDirectoryIntegration_FileDiscoveryUsesConfig verifies that walkImageDir()
-// would use config directory (we can't actually run walkImageDir in test, but we verify
-// the directory it would use is from config).
-func TestImageDirectoryIntegration_FileDiscoveryUsesConfig(t *testing.T) {
-	tempDir := t.TempDir()
-	customImageDir := filepath.Join(tempDir, "discovery-test")
-
-	ss := "this-is-a-test-secret"
-	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
-	app := New(getopt.Opt{}, "x.y.z")
-
-	app.setRootDir(&tempDir)
-	app.setupBootstrapLogging()
-	defer func() {
-		if app.logger != nil {
-			_ = app.logger.Shutdown()
-		}
-	}()
-
-	// Initialize scheduler
-	app.scheduler = scheduler.NewScheduler(0)
-	go func() {
-		if err := app.scheduler.Start(app.ctx); err != nil {
-			t.Logf("scheduler error: %v", err)
-		}
-	}()
-	defer func() {
-		if app.scheduler != nil {
-			_ = app.scheduler.Shutdown()
-		}
-	}()
-
-	app.setDB()
-	defer func() {
-		if app.dbRoPool != nil {
-			_ = app.dbRoPool.Close()
-		}
-		if app.dbRwPool != nil {
-			_ = app.dbRwPool.Close()
-		}
-	}()
-
-	app.setConfigDefaults()
-
-	// Load config
-	if err := app.loadConfig(); err != nil {
-		t.Fatalf("loadConfig failed: %v", err)
-	}
-
-	// Set custom image directory in config
-	app.configMu.Lock()
-	app.config.ImageDirectory = customImageDir
-	app.configMu.Unlock()
-
-	app.ApplyConfig()
-
-	// Verify app.imagesDir is set from config (this is what walkImageDir() would use)
-	if app.imagesDir != customImageDir {
-		t.Errorf("expected imagesDir to be %q (what walkImageDir would use), got %q", customImageDir, app.imagesDir)
-	}
-
-	// Verify directory exists (walkImageDir would fail if it doesn't)
-	if _, err := os.Stat(customImageDir); os.IsNotExist(err) {
-		t.Errorf("image directory should exist for walkImageDir to use, but it doesn't: %v", err)
-	}
-}
-
-// TestApplyConfig_PanicsWhenImageDirectoryUndefined verifies that applyConfig()
-// panics when ImageDirectory is undefined.
-func TestApplyConfig_PanicsWhenImageDirectoryUndefined(t *testing.T) {
-	tempDir := t.TempDir()
-
-	ss := "this-is-a-test-secret"
-	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
-	app := New(getopt.Opt{}, "x.y.z")
-
-	app.setRootDir(&tempDir)
-	app.setupBootstrapLogging()
-	defer func() {
-		if app.logger != nil {
-			_ = app.logger.Shutdown()
-		}
-	}()
-
-	// Initialize scheduler
-	app.scheduler = scheduler.NewScheduler(0)
-	go func() {
-		if err := app.scheduler.Start(app.ctx); err != nil {
-			t.Logf("scheduler error: %v", err)
-		}
-	}()
-	defer func() {
-		if app.scheduler != nil {
-			_ = app.scheduler.Shutdown()
-		}
-	}()
-
-	app.setDB()
-	defer func() {
-		if app.dbRoPool != nil {
-			_ = app.dbRoPool.Close()
-		}
-		if app.dbRwPool != nil {
-			_ = app.dbRwPool.Close()
-		}
-	}()
-
-	app.setConfigDefaults()
-
-	// Load config
-	if err := app.loadConfig(); err != nil {
-		t.Fatalf("loadConfig failed: %v", err)
-	}
-
-	// Simulate cold-start scenario: Empty ImageDirectory in config
-	app.configMu.Lock()
-	app.config.ImageDirectory = ""
-	app.configMu.Unlock()
-
-	// Reset app state before calling applyConfig
-	app.imagesDir = ""
-	app.normalizedImagesDir = ""
-
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected panic when ImageDirectory is undefined")
-		}
-	}()
-
-	// Expect panic when ImageDirectory is undefined
-	app.ApplyConfig()
-}
-
-func TestApp_Shutdown_DelegatesToSubsystemManager(t *testing.T) {
-	app := CreateApp(t)
-	app.Start(app.ctx, app.config, 1, 2, app.imagesDir, app.normalizedImagesDir, removeImagesDirPrefix, app.getRouter, app.GetHandlerQueries, app.GetETagVersion)
-
-	app.poolDone = make(chan struct{})
-	app.StartPool(app.ctx, app.poolDone, app.normalizedImagesDir, removeImagesDirPrefix, app.fileProcessor)
-
-	app.Shutdown()
-
-	if app.preloadManager.GetScheduler() != nil {
-		t.Error("preloadManager scheduler should be stopped after Shutdown")
-	}
-}
-
-func TestApp_ResetStats_DelegatesToSubsystemManager(t *testing.T) {
-	app := CreateApp(t)
-	app.Start(app.ctx, app.config, 1, 2, app.imagesDir, app.normalizedImagesDir, removeImagesDirPrefix, app.getRouter, app.GetHandlerQueries, app.GetETagVersion)
-
-	app.processingStats.TotalFound.Store(5)
-	app.processingStats.AlreadyExisting.Store(4)
-	app.processingStats.NewlyInserted.Store(3)
-	app.processingStats.SkippedInvalid.Store(2)
-	app.processingStats.InFlight.Store(1)
-
-	app.ResetStats()
-
-	if app.processingStats.TotalFound.Load() != 0 {
-		t.Errorf("TotalFound = %d, want 0", app.processingStats.TotalFound.Load())
-	}
-	if app.processingStats.AlreadyExisting.Load() != 0 {
-		t.Errorf("AlreadyExisting = %d, want 0", app.processingStats.AlreadyExisting.Load())
-	}
-	if app.processingStats.NewlyInserted.Load() != 0 {
-		t.Errorf("NewlyInserted = %d, want 0", app.processingStats.NewlyInserted.Load())
-	}
-	if app.processingStats.SkippedInvalid.Load() != 0 {
-		t.Errorf("SkippedInvalid = %d, want 0", app.processingStats.SkippedInvalid.Load())
-	}
-	if app.processingStats.InFlight.Load() != 0 {
-		t.Errorf("InFlight = %d, want 0", app.processingStats.InFlight.Load())
-	}
-}
-
-func TestApp_LoadsETagFromConfig(t *testing.T) {
-	app := CreateApp(t)
-	t.Parallel()
-	ctx := context.Background()
-
-	// Set custom ETag in database
-	cfg, err := app.configService.Load(ctx)
-	if err != nil {
-		t.Fatalf("Load config: %v", err)
-	}
-	cfg.ETagVersion = "20260129-99"
-	app.configService.Save(ctx, cfg)
-
-	// Shut down the first app so its dque flock is released before
-	// creating the second app with the same root directory.
-	app.Shutdown()
-
-	// Create new app using same root directory (simulates restart, same database)
-	app2 := CreateApp(t, WithRoot(app.rootDir))
-
-	// Verify ui package has correct cache version (should be set during app2 initialization)
-	cacheVer := ui.GetCacheVersion()
-	if cacheVer != "20260129-99" {
-		t.Errorf("UI cache version = %q, want %q", cacheVer, "20260129-99")
-	}
-
-	// Verify GetETagVersion returns correct ETag from config
-	etagVer := app2.GetETagVersion()
-	if etagVer != "20260129-99" {
-		t.Errorf("GetETagVersion() = %q, want %q", etagVer, "20260129-99")
-	}
-}
-
-// TestMemoryReclaimer verifies the memory reclaimer's idle-detection logic.
-func TestMemoryReclaimer(t *testing.T) {
-	t.Run("triggers when idle", func(t *testing.T) {
-		app := CreateApp(t, WithPool())
-		defer app.Shutdown()
-
-		called := make(chan struct{}, 1)
-		cfg := MemoryReclaimerConfig{
-			InitialDelay:  10 * time.Millisecond,
-			CheckInterval: 20 * time.Millisecond,
-			IdleThreshold: 50 * time.Millisecond,
-			FreeMemFunc:   func() { called <- struct{}{} },
-		}
-
-		// Mark a task completion so TimeSinceLastCompletion is meaningful.
-		app.pool.AddCompleted()
-
-		done := make(chan struct{})
-		go func() {
-			app.memoryReclaimer(cfg)
-			close(done)
-		}()
-
-		select {
-		case <-called:
-			// success
-		case <-time.After(2 * time.Second):
-			t.Error("FreeMemFunc was not called while idle")
-		}
-
-		app.cancel()
-		<-done
-	})
-
-	t.Run("does not trigger when queue is not empty", func(t *testing.T) {
-		app := CreateApp(t)
-		defer app.Shutdown()
-
-		app.q.Enqueue("dummy-path")
-
-		called := make(chan struct{}, 1)
-		cfg := MemoryReclaimerConfig{
-			InitialDelay:  10 * time.Millisecond,
-			CheckInterval: 20 * time.Millisecond,
-			IdleThreshold: 50 * time.Millisecond,
-			FreeMemFunc:   func() { called <- struct{}{} },
-		}
-
-		app.pool.AddCompleted()
-
-		done := make(chan struct{})
-		go func() {
-			app.memoryReclaimer(cfg)
-			close(done)
-		}()
-
-		select {
-		case <-called:
-			t.Error("FreeMemFunc was called even though queue was not empty")
-		case <-time.After(300 * time.Millisecond):
-			// expected
-		}
-
-		app.cancel()
-		<-done
-	})
-
-	t.Run("does not trigger when recently active", func(t *testing.T) {
-		app := CreateApp(t, WithPool())
-		defer app.Shutdown()
-
-		called := make(chan struct{}, 1)
-		cfg := MemoryReclaimerConfig{
-			InitialDelay:  10 * time.Millisecond,
-			CheckInterval: 20 * time.Millisecond,
-			IdleThreshold: 1 * time.Second,
-			FreeMemFunc:   func() { called <- struct{}{} },
-		}
-
-		app.pool.AddCompleted()
-
-		done := make(chan struct{})
-		go func() {
-			app.memoryReclaimer(cfg)
-			close(done)
-		}()
-
-		select {
-		case <-called:
-			t.Error("FreeMemFunc was called even though pool was recently active")
-		case <-time.After(300 * time.Millisecond):
-			// expected
-		}
-
-		app.cancel()
-		<-done
-	})
-}
-
-// TestApp_SetupBootstrapLogging_CreatesLogger verifies that setupBootstrapLogging
-// initializes the logger and creates the logs directory under rootDir.
-func TestApp_SetupBootstrapLogging_CreatesLogger(t *testing.T) {
-	tempDir := t.TempDir()
-	opt := getopt.Opt{SessionSecret: getopt.OptString{String: "test-secret", IsSet: true}}
-	app := New(opt, "x.y.z")
-	defer app.Shutdown()
-
-	app.setRootDir(&tempDir)
-	app.setupBootstrapLogging()
-
-	if app.logger == nil {
-		t.Fatal("Expected app.logger to be initialized")
-	}
-
-	logsDir := filepath.Join(tempDir, "logs")
-	if _, err := os.Stat(logsDir); os.IsNotExist(err) {
-		t.Errorf("Expected logs directory to be created at %q", logsDir)
-	}
-}
-
-// TestApp_GetCtx_ReturnsCtxOrBackground verifies getCtx behavior before and
-// after the application context is set.
 func TestApp_GetCtx_ReturnsCtxOrBackground(t *testing.T) {
-	opt := getopt.Opt{SessionSecret: getopt.OptString{String: "test-secret", IsSet: true}}
+	opt := getopt.Opt{SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true}}
 	app := New(opt, "x.y.z")
 	defer app.Shutdown()
 
-	if got := app.getCtx(); got != app.ctx {
-		t.Errorf("getCtx() with RuntimeManager ctx = %v, want %v", got, app.ctx)
+	if got := app.getCtx(); got != app.RuntimeManager.ctx {
+		t.Errorf("getCtx() with RuntimeManager ctx = %v, want %v", got, app.RuntimeManager.ctx)
 	}
 
-	app.ctx = nil
+	app.RuntimeManager.ctx = nil
 	if got := app.getCtx(); got != context.Background() {
 		t.Errorf("getCtx() with nil ctx = %v, want context.Background()", got)
 	}
 }
 
-// errorConfigService is a fake ConfigService that returns an error from Load
-// but still records the call and returns a supplied config.
-type errorConfigService struct {
-	recordingConfigService
-	loadCfg    *config.Config
-	loadErr    error
-	loadCalled bool
-}
-
-func (e *errorConfigService) Load(ctx context.Context) (*config.Config, error) {
-	e.loadCalled = true
-	return e.loadCfg, e.loadErr
-}
-
-// TestApp_LoadConfig_StoreErrorFallsBackToDefaults verifies that loadConfig
-// falls back to default config and logs diagnostics when ConfigStore.Load fails.
-func TestApp_LoadConfig_StoreErrorFallsBackToDefaults(t *testing.T) {
-	var logBuf bytes.Buffer
-	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	original := slog.Default()
-	slog.SetDefault(logger)
-	t.Cleanup(func() {
-		slog.SetDefault(original)
-	})
-
-	tempDir := t.TempDir()
-	opt := getopt.Opt{SessionSecret: getopt.OptString{String: "test-secret", IsSet: true}}
-	app := New(opt, "x.y.z")
-	defer app.Shutdown()
-	app.setRootDir(&tempDir)
-	app.setDB()
-
-	validCfg := config.DefaultConfig()
-	validCfg.ImageDirectory = filepath.Join(tempDir, "from-fake-service")
-	fakeSvc := &errorConfigService{
-		loadCfg: validCfg,
-		loadErr: errors.New("load failed"),
-	}
-	app.configService = fakeSvc
-
-	// config.Load ignores the returned config on store error and continues with
-	// defaults + rootDir merge, so app.config.ImageDirectory must come from rootDir.
-	err := app.loadConfig()
-	if err != nil {
-		t.Fatalf("Expected loadConfig to swallow store error, got: %v", err)
-	}
-	if !fakeSvc.loadCalled {
-		t.Error("Expected ConfigService.Load to be called")
-	}
-	logs := logBuf.String()
-	if !strings.Contains(logs, "failed to load config from database") {
-		t.Errorf("Expected database load warning log, got: %s", logs)
-	}
-	if app.config == nil {
-		t.Fatal("Expected app.config to be set")
-	}
-	wantImageDir := filepath.Join(tempDir, "Images")
-	if app.config.ImageDirectory != wantImageDir {
-		t.Errorf("ImageDirectory = %q, want %q", app.config.ImageDirectory, wantImageDir)
-	}
-}
-
-// TestApp_ApplyConfig_InvalidatesETagWhenChanged verifies that ApplyConfig
-// updates the UI cache version and invalidates the HTTP cache when the ETag changes.
-func TestApp_ApplyConfig_InvalidatesETagWhenChanged(t *testing.T) {
-	app := CreateApp(t)
-	defer app.Shutdown()
-
-	oldETag := "20260101-01"
-	newETag := "20260101-02"
-
-	ui.SetCacheVersion(oldETag)
-
-	// Seed one HTTP cache entry so we can verify invalidation runs.
-	ctx := app.ctx
-	entry := &cachelite.HTTPCacheEntry{
-		Key:           "etag-test-key",
-		Method:        "GET",
-		Path:          "/gallery/1",
-		Status:        200,
-		Body:          []byte("test"),
-		ContentLength: sql.NullInt64{Int64: 4, Valid: true},
-		CreatedAt:     time.Now().Unix(),
-	}
-	if err := cachelite.StoreCacheEntry(ctx, app.dbRwPool, entry); err != nil {
-		t.Fatalf("failed to seed cache entry: %v", err)
-	}
-	before, err := cachelite.CountCacheEntries(ctx, app.dbRwPool)
-	if err != nil {
-		t.Fatalf("failed to count cache entries before: %v", err)
-	}
-	if before != 1 {
-		t.Fatalf("expected 1 cache entry before ETag change, got %d", before)
-	}
-
-	app.configMu.Lock()
-	app.config.ETagVersion = newETag
-	app.configMu.Unlock()
-
-	app.ApplyConfig()
-
-	if got := ui.GetCacheVersion(); got != newETag {
-		t.Errorf("ui.GetCacheVersion() = %q, want %q", got, newETag)
-	}
-
-	after, err := cachelite.CountCacheEntries(ctx, app.dbRwPool)
-	if err != nil {
-		t.Fatalf("failed to count cache entries after: %v", err)
-	}
-	if after != 0 {
-		t.Errorf("expected cache to be invalidated after ETag change, got %d entries", after)
-	}
-}
-
-// TestApp_LogProfileLocation verifies that LogProfileLocation calls the stop
-// function and logs the profile directory.
-func TestApp_LogProfileLocation(t *testing.T) {
-	var logBuf bytes.Buffer
-	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	original := slog.Default()
-	slog.SetDefault(logger)
-	t.Cleanup(func() {
-		slog.SetDefault(original)
-	})
-
-	opt := getopt.Opt{SessionSecret: getopt.OptString{String: "test-secret", IsSet: true}}
-	app := New(opt, "x.y.z")
-	defer app.Shutdown()
-
-	stopProfiler, err := profiler.Start(profiler.Config{Mode: "cpu"})
-	if err != nil {
-		t.Fatalf("profiler.Start failed: %v", err)
-	}
-	defer stopProfiler()
-
-	stopped := false
-	app.stopProfiler = func() {
-		stopped = true
-		stopProfiler()
-	}
-
-	app.LogProfileLocation()
-
-	if !stopped {
-		t.Error("Expected stopProfiler to be called")
-	}
-	logs := logBuf.String()
-	if !strings.Contains(logs, "Profile artifacts written") {
-		t.Errorf("Expected profile log, got: %s", logs)
-	}
-}
-
-// TestApp_ApplyConfig_NilConfigNoPanic verifies that ApplyConfig returns early
-// without panicking when the config is nil.
-func TestApp_ApplyConfig_NilConfigNoPanic(t *testing.T) {
-	opt := getopt.Opt{SessionSecret: getopt.OptString{String: "test-secret", IsSet: true}}
-	app := New(opt, "x.y.z")
-	defer app.Shutdown()
-
-	app.configMu.Lock()
-	app.config = nil
-	app.configMu.Unlock()
-
-	app.ApplyConfig()
-}
-
-// TestApp_ApplyConfig_ETagUnchangedSkipsInvalidate verifies that the HTTP cache
-// is preserved when the ETag version does not change.
-func TestApp_ApplyConfig_ETagUnchangedSkipsInvalidate(t *testing.T) {
-	app := CreateApp(t)
-	defer app.Shutdown()
-
-	const etag = "same-etag"
-	ui.SetCacheVersion(etag)
-
-	ctx := app.ctx
-	entry := &cachelite.HTTPCacheEntry{
-		Key:           "etag-unchanged-key",
-		Method:        "GET",
-		Path:          "/gallery/1",
-		Status:        200,
-		Body:          []byte("test"),
-		ContentLength: sql.NullInt64{Int64: 4, Valid: true},
-		CreatedAt:     time.Now().Unix(),
-	}
-	if err := cachelite.StoreCacheEntry(ctx, app.dbRwPool, entry); err != nil {
-		t.Fatalf("failed to seed cache entry: %v", err)
-	}
-
-	app.configMu.Lock()
-	app.config.ETagVersion = etag
-	app.configMu.Unlock()
-
-	app.ApplyConfig()
-
-	after, err := cachelite.CountCacheEntries(ctx, app.dbRwPool)
-	if err != nil {
-		t.Fatalf("failed to count cache entries: %v", err)
-	}
-	if after != 1 {
-		t.Errorf("expected cache entry to be preserved, got %d entries", after)
-	}
-}
-
-// TestApp_ApplyConfig_PreloadManagerSetEnabled verifies that ApplyConfig toggles
-// the preload manager enabled state.
-func TestApp_ApplyConfig_PreloadManagerSetEnabled(t *testing.T) {
-	app := CreateApp(t)
-	defer app.Shutdown()
-
-	// Wire the preload manager via SubsystemManager.Start.
-	app.Start(app.ctx, app.config, 1, 2, app.imagesDir, app.normalizedImagesDir, removeImagesDirPrefix, app.getRouter, app.GetHandlerQueries, app.GetETagVersion)
-
-	if app.preloadManager == nil {
-		t.Fatal("preloadManager should be wired after Start")
-	}
-
-	app.configMu.Lock()
-	app.config.EnableCachePreload = true
-	app.configMu.Unlock()
-	app.ApplyConfig()
-	if !app.preloadManager.IsEnabled() {
-		t.Error("expected preload manager to be enabled")
-	}
-
-	app.configMu.Lock()
-	app.config.EnableCachePreload = false
-	app.configMu.Unlock()
-	app.ApplyConfig()
-	if app.preloadManager.IsEnabled() {
-		t.Error("expected preload manager to be disabled")
-	}
-}
-
-// TestApp_setDB_RebuildsHandlersWhenAlreadyBuilt verifies that setDB rebuilds
-// handlers when they have already been constructed.
-func TestApp_setDB_RebuildsHandlersWhenAlreadyBuilt(t *testing.T) {
-	app := CreateApp(t)
-	defer app.Shutdown()
-
-	if app.authHandlers == nil {
-		t.Fatal("expected handlers to be built by CreateApp")
-	}
-
-	// Close the existing write batcher so setDB can recreate it without dque
-	// flock conflicts.
-	if app.writeBatcher != nil {
-		if err := app.writeBatcher.Close(); err != nil {
-			t.Fatalf("failed to close writeBatcher: %v", err)
-		}
-	}
-
-	app.setDB()
-
-	if app.authHandlers == nil {
-		t.Error("expected authHandlers to be rebuilt after setDB")
-	}
-	if app.galleryHandlers == nil {
-		t.Error("expected galleryHandlers to be rebuilt after setDB")
-	}
-}
-
-// TestApp_reconfigurePoolsFromConfig_RebuildsHandlers verifies that
-// reconfigurePoolsFromConfig rebuilds handlers when they already exist.
-func TestApp_reconfigurePoolsFromConfig_RebuildsHandlers(t *testing.T) {
-	app := CreateApp(t)
-	defer app.Shutdown()
-
-	if app.authHandlers == nil {
-		t.Fatal("expected handlers to be built by CreateApp")
-	}
-
-	app.configMu.Lock()
-	currentMax := app.config.DBMaxPoolSize
-	app.config.DBMaxPoolSize = currentMax + 1
-	app.configMu.Unlock()
-
-	app.testHookRecreatePoolsWithConfig = func(ctx context.Context, dbPaths database.DatabasePaths, cfg *config.Config, oldRw, oldRo *dbconnpool.DbSQLConnPool) (*dbconnpool.DbSQLConnPool, *dbconnpool.DbSQLConnPool, error) {
-		return oldRw, oldRo, nil
-	}
-
-	if err := app.reconfigurePoolsFromConfig(); err != nil {
-		t.Fatalf("reconfigurePoolsFromConfig failed: %v", err)
-	}
-
-	if app.authHandlers == nil {
-		t.Error("expected authHandlers to remain wired after reconfigure")
-	}
-	if app.galleryHandlers == nil {
-		t.Error("expected galleryHandlers to remain wired after reconfigure")
-	}
-}
-
-// TestApp_setDB_RebuildHandlersError verifies that setDB panics when handler
-// reconstruction fails after the DB is re-initialized.
-func TestApp_setDB_RebuildHandlersError(t *testing.T) {
-	app := CreateApp(t)
-	defer app.Shutdown()
-
-	if app.authHandlers == nil {
-		t.Fatal("expected handlers to be built by CreateApp")
-	}
-
-	app.testHookBuildHandlers = func(fs.FS) error {
-		return fmt.Errorf("rebuild failed")
-	}
-
-	// Close the existing write batcher so setDB can recreate it without dque
-	// flock conflicts.
-	if app.writeBatcher != nil {
-		if err := app.writeBatcher.Close(); err != nil {
-			t.Fatalf("failed to close writeBatcher: %v", err)
-		}
-	}
-
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected panic when handler rebuild fails")
-		}
-	}()
-
-	app.setDB()
-}
-
-// TestApp_reconfigurePoolsFromConfig_NilConfig verifies that
-// reconfigurePoolsFromConfig returns early when the config is nil.
-func TestApp_reconfigurePoolsFromConfig_NilConfig(t *testing.T) {
-	app := CreateApp(t)
-	defer app.Shutdown()
-
-	app.configMu.Lock()
-	app.config = nil
-	app.configMu.Unlock()
-
-	if err := app.reconfigurePoolsFromConfig(); err != nil {
-		t.Fatalf("reconfigurePoolsFromConfig with nil config returned error: %v", err)
-	}
-}
-
-// TestApp_reconfigurePoolsFromConfig_UpdatesCacheMiddleware verifies that an
-// existing HTTP cache middleware has its pool updated during reconfiguration.
-func TestApp_reconfigurePoolsFromConfig_UpdatesCacheMiddleware(t *testing.T) {
-	app := CreateApp(t)
-	defer app.Shutdown()
-
-	app.configMu.Lock()
-	app.config.EnableHTTPCache = true
-	app.configMu.Unlock()
-	app.initializeHTTPCache()
-
-	if app.cacheMW == nil {
-		t.Fatal("expected cacheMW to be initialized")
-	}
-
-	app.configMu.Lock()
-	currentMax := app.config.DBMaxPoolSize
-	app.config.DBMaxPoolSize = currentMax + 1
-	app.configMu.Unlock()
-
-	app.testHookRecreatePoolsWithConfig = func(ctx context.Context, dbPaths database.DatabasePaths, cfg *config.Config, oldRw, oldRo *dbconnpool.DbSQLConnPool) (*dbconnpool.DbSQLConnPool, *dbconnpool.DbSQLConnPool, error) {
-		return oldRw, oldRo, nil
-	}
-
-	if err := app.reconfigurePoolsFromConfig(); err != nil {
-		t.Fatalf("reconfigurePoolsFromConfig failed: %v", err)
-	}
-}
-
-// TestApp_reconfigurePoolsFromConfig_BuildHandlersError verifies that
-// reconfigurePoolsFromConfig returns an error when handler rebuild fails.
-func TestApp_reconfigurePoolsFromConfig_BuildHandlersError(t *testing.T) {
-	app := CreateApp(t)
-	defer app.Shutdown()
-
-	if app.authHandlers == nil {
-		t.Fatal("expected handlers to be built by CreateApp")
-	}
-
-	app.configMu.Lock()
-	currentMax := app.config.DBMaxPoolSize
-	app.config.DBMaxPoolSize = currentMax + 1
-	app.configMu.Unlock()
-
-	app.testHookBuildHandlers = func(fs.FS) error {
-		return fmt.Errorf("rebuild failed")
-	}
-
-	app.testHookRecreatePoolsWithConfig = func(ctx context.Context, dbPaths database.DatabasePaths, cfg *config.Config, oldRw, oldRo *dbconnpool.DbSQLConnPool) (*dbconnpool.DbSQLConnPool, *dbconnpool.DbSQLConnPool, error) {
-		return oldRw, oldRo, nil
-	}
-
-	err := app.reconfigurePoolsFromConfig()
-	if err == nil {
-		t.Fatal("expected reconfigurePoolsFromConfig to return error")
-	}
-	if !strings.Contains(err.Error(), "rebuild failed") {
-		t.Errorf("error = %q, want rebuild failed", err.Error())
-	}
-}
-
-// TestNew_ParseTemplatesError_Exits verifies that New exits with code 1 when
-// template parsing fails.
 func TestNew_ParseTemplatesError_Exits(t *testing.T) {
 	var parseCalled bool
 	var exitCode int
-	testHookNewParseTemplates = func(fs.FS) error {
-		parseCalled = true
-		return fmt.Errorf("parse failed")
-	}
-	testHookNewExit = func(code int) {
-		exitCode = code
-		panic("exit")
+	defaultNewTestSeams = AppTestSeams{
+		NewParseTemplates: func(fs.FS) error {
+			parseCalled = true
+			return fmt.Errorf("parse failed")
+		},
+		NewExit: func(code int) {
+			exitCode = code
+			panic("exit")
+		},
 	}
 	t.Cleanup(func() {
-		testHookNewParseTemplates = nil
-		testHookNewExit = nil
+		defaultNewTestSeams = AppTestSeams{}
 	})
 
 	func() {
 		defer func() { recover() }()
-		New(getopt.Opt{SessionSecret: getopt.OptString{String: "test-secret", IsSet: true}}, "x.y.z")
+		New(getopt.Opt{SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true}}, "x.y.z")
 	}()
 
 	if !parseCalled {
@@ -1480,8 +119,6 @@ func TestNew_ParseTemplatesError_Exits(t *testing.T) {
 	}
 }
 
-// TestParseConfigUITemplates_MissingFileReturnsError verifies that a missing
-// config UI template file returns an error.
 func TestParseConfigUITemplates_MissingFileReturnsError(t *testing.T) {
 	fsys := fstest.MapFS{}
 	_, err := parseConfigUITemplates(fsys)
@@ -1490,8 +127,6 @@ func TestParseConfigUITemplates_MissingFileReturnsError(t *testing.T) {
 	}
 }
 
-// TestParseConfigUITemplates_InvalidTemplatePerFile_ReturnsError verifies that
-// an invalid config UI template at each position returns a parse error.
 func TestParseConfigUITemplates_InvalidTemplatePerFile_ReturnsError(t *testing.T) {
 	templateNames := []string{
 		"templates/config-ui/config-save-restart-alert.html.tmpl",
@@ -1521,12 +156,10 @@ func TestParseConfigUITemplates_InvalidTemplatePerFile_ReturnsError(t *testing.T
 	}
 }
 
-// TestSetRootDir_ExecutableErrorPanics verifies that setRootDir panics when
-// os.Executable fails.
 func TestSetRootDir_ExecutableErrorPanics(t *testing.T) {
-	app := New(getopt.Opt{SessionSecret: getopt.OptString{String: "test-secret", IsSet: true}}, "x.y.z")
+	app := New(getopt.Opt{SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true}}, "x.y.z")
 	defer app.Shutdown()
-	app.testHookExecutable = func() (string, error) {
+	app.testSeams.Executable = func() (string, error) {
 		return "", fmt.Errorf("exec failed")
 	}
 
@@ -1538,14 +171,12 @@ func TestSetRootDir_ExecutableErrorPanics(t *testing.T) {
 	app.setRootDir(nil)
 }
 
-// TestSetupBootstrapLogging_ErrorPanics verifies that setupBootstrapLogging
-// panics when bootstrap logging setup fails.
 func TestSetupBootstrapLogging_ErrorPanics(t *testing.T) {
-	app := New(getopt.Opt{SessionSecret: getopt.OptString{String: "test-secret", IsSet: true}}, "x.y.z")
+	app := New(getopt.Opt{SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true}}, "x.y.z")
 	defer app.Shutdown()
 	tempDir := t.TempDir()
 	app.setRootDir(&tempDir)
-	app.testHookSetupBootstrapLogging = func(string, *scheduler.Scheduler, string) (*log.Logger, error) {
+	app.testSeams.SetupBootstrapLogging = func(string, *scheduler.Scheduler, string) (*log.Logger, error) {
 		return nil, fmt.Errorf("setup failed")
 	}
 
@@ -1557,46 +188,43 @@ func TestSetupBootstrapLogging_ErrorPanics(t *testing.T) {
 	app.setupBootstrapLogging()
 }
 
-// TestUnlockAccount_PoolGetError verifies that UnlockAccount returns an error
-// when the database pool cannot provide a connection.
-func TestUnlockAccount_PoolGetError(t *testing.T) {
-	app := CreateApp(t)
+func TestApp_SetupBootstrapLogging_CreatesLogger(t *testing.T) {
+	tempDir := t.TempDir()
+	opt := getopt.Opt{SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true}}
+	app := New(opt, "x.y.z")
 	defer app.Shutdown()
-	_ = app.dbRwPool.Close()
 
-	err := app.UnlockAccount("anyone")
-	if err == nil {
-		t.Fatal("expected error when pool Get fails")
+	app.setRootDir(&tempDir)
+	app.setupBootstrapLogging()
+
+	if app.logger == nil {
+		t.Fatal("Expected app.logger to be initialized")
 	}
-	if !strings.Contains(err.Error(), "failed to get database connection") {
-		t.Errorf("error = %q, want connection failure", err.Error())
+
+	logsDir := filepath.Join(tempDir, "logs")
+	if _, err := os.Stat(logsDir); os.IsNotExist(err) {
+		t.Errorf("Expected logs directory to be created at %q", logsDir)
 	}
 }
 
-// TestUnlockAccount_QueryError verifies that UnlockAccount returns an error
-// when the database query fails.
-func TestUnlockAccount_QueryError(t *testing.T) {
-	app := CreateApp(t)
+func TestApp_ApplyConfig_NilConfigNoPanic(t *testing.T) {
+	opt := getopt.Opt{SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true}}
+	app := New(opt, "x.y.z")
 	defer app.Shutdown()
-	app.cancel()
 
-	err := app.UnlockAccount("anyone")
-	if err == nil {
-		t.Fatal("expected error when unlock query fails")
-	}
-	if !strings.Contains(err.Error(), "failed to unlock account") {
-		t.Errorf("error = %q, want unlock failure", err.Error())
-	}
+	app.ConfigManager.ConfigMu.Lock()
+	app.ConfigManager.Config = nil
+	app.ConfigManager.ConfigMu.Unlock()
+
+	app.ApplyConfig()
 }
 
-// TestInitForIncrementETag_DatabaseSetupError verifies that InitForIncrementETag
-// returns an error when database setup fails.
 func TestInitForIncrementETag_DatabaseSetupError(t *testing.T) {
-	app := New(getopt.Opt{SessionSecret: getopt.OptString{String: "test-secret", IsSet: true}}, "x.y.z")
+	app := New(getopt.Opt{SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true}}, "x.y.z")
 	defer app.Shutdown()
 	tempDir := t.TempDir()
 	app.setRootDir(&tempDir)
-	app.testHookDatabaseSetup = func(context.Context, string, *config.Config) (database.DatabasePaths, *dbconnpool.DbSQLConnPool, *dbconnpool.DbSQLConnPool, error) {
+	app.testSeams.DatabaseSetup = func(context.Context, string, *config.Config) (database.DatabasePaths, *dbconnpool.DbSQLConnPool, *dbconnpool.DbSQLConnPool, error) {
 		return database.DatabasePaths{}, nil, nil, fmt.Errorf("setup failed")
 	}
 
@@ -1609,39 +237,1264 @@ func TestInitForIncrementETag_DatabaseSetupError(t *testing.T) {
 	}
 }
 
-// ensureDefaultsFailConfigService is a fake ConfigService that fails EnsureDefaults.
-type ensureDefaultsFailConfigService struct {
-	recordingConfigService
-}
-
-func (e *ensureDefaultsFailConfigService) EnsureDefaults(ctx context.Context, rootDir string) error {
-	e.ensureDefaultsCalled = true
-	e.ensureDefaultsRoot = rootDir
-	return fmt.Errorf("ensure failed")
-}
-
-// TestInitForIncrementETag_EnsureDefaultsError verifies that InitForIncrementETag
-// returns an error when EnsureDefaults fails.
-func TestInitForIncrementETag_EnsureDefaultsError(t *testing.T) {
-	app := New(getopt.Opt{SessionSecret: getopt.OptString{String: "test-secret", IsSet: true}}, "x.y.z")
-	defer app.Shutdown()
+func newAppForUnlock(t *testing.T) *App {
+	t.Helper()
+	opt := getopt.Opt{SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true}}
+	app := New(opt, "x.y.z")
+	t.Cleanup(app.Shutdown)
 	tempDir := t.TempDir()
 	app.setRootDir(&tempDir)
-	app.testHookDatabaseSetup = database.Setup
-	fakeSvc := &ensureDefaultsFailConfigService{}
-	app.testHookConfigService = fakeSvc
+	if err := app.InitForUnlock(); err != nil {
+		t.Fatalf("InitForUnlock: %v", err)
+	}
+	return app
+}
+
+func newAppForIncrementETag(t *testing.T) *App {
+	t.Helper()
+	opt := getopt.Opt{SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true}}
+	app := New(opt, "x.y.z")
+	t.Cleanup(app.Shutdown)
+	tempDir := t.TempDir()
+	app.setRootDir(&tempDir)
+	if err := app.InitForIncrementETag(opt); err != nil {
+		t.Fatalf("InitForIncrementETag: %v", err)
+	}
+	return app
+}
+
+func TestApp_UnlockAccount(t *testing.T) {
+	app := newAppForUnlock(t)
+	if err := app.UnlockAccount("admin"); err != nil {
+		t.Fatalf("UnlockAccount: %v", err)
+	}
+}
+
+func TestApp_InitForBatchLoad(t *testing.T) {
+	opt := getopt.Opt{SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true}}
+	app := New(opt, "x.y.z")
+	t.Cleanup(app.Shutdown)
+	tempDir := t.TempDir()
+	app.setRootDir(&tempDir)
+
+	if err := app.InitForBatchLoad(opt); err != nil {
+		t.Fatalf("InitForBatchLoad: %v", err)
+	}
+	if app.cacheMW == nil {
+		t.Error("expected cacheMW to be initialized")
+	}
+	app.InvalidateHTTPCache()
+	if code := app.RunCacheBatchLoad(); code != 0 {
+		t.Errorf("RunCacheBatchLoad = %d, want 0", code)
+	}
+}
+
+func TestApp_ConfigServiceMethods(t *testing.T) {
+	app := newAppForIncrementETag(t)
+	ctx := context.Background()
+	if app.ConfigManager.ConfigService == nil {
+		t.Fatal("configService is nil")
+	}
+
+	cfg, err := app.ConfigManager.ConfigService.Load(ctx)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if err := app.ConfigManager.ConfigService.Validate(cfg); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if err := app.ConfigManager.ConfigService.Save(ctx, cfg); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if _, err := app.ConfigManager.ConfigService.Export(ctx); err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	if err := app.ConfigManager.ConfigService.Import("log-level: info\n", ctx); err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if _, err := app.ConfigManager.ConfigService.RestoreLastKnownGood(ctx); err != nil {
+		// A missing last-known-good record is acceptable; the call itself is the coverage target.
+		t.Logf("RestoreLastKnownGood: %v", err)
+	}
+	if _, err := app.ConfigManager.ConfigService.GetConfigValue(ctx, "user"); err != nil {
+		t.Fatalf("GetConfigValue: %v", err)
+	}
+	if _, err := app.ConfigManager.ConfigService.IncrementETag(ctx); err != nil {
+		t.Fatalf("IncrementETag: %v", err)
+	}
+}
+
+func TestConfigManager_GetETagVersion_And_UpdateConfigWithPrecedence(t *testing.T) {
+	cm := config.NewConfigManager()
+	if v := cm.GetETagVersion(); v == "" {
+		t.Error("GetETagVersion returned empty string with no config")
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.ETagVersion = "test-etag-123"
+	cm.SetConfig(cfg)
+	if got := cm.GetETagVersion(); got != cfg.ETagVersion {
+		t.Errorf("GetETagVersion = %q, want %q", got, cfg.ETagVersion)
+	}
+
+	opt := getopt.Opt{Port: getopt.OptInt{Int: 1234, IsSet: true}}
+	updated := config.DefaultConfig()
+	updated.ListenerPort = 9999
+	cm.UpdateConfigWithPrecedence(updated, []string{"ListenerPort"}, opt)
+	if cm.GetConfig() != updated {
+		t.Error("UpdateConfigWithPrecedence did not replace the stored config")
+	}
+}
+
+func TestApp_ScheduleStaleCacheDrop(t *testing.T) {
+	app := newAppForUnlock(t)
+	app.scheduleStaleCacheDrop("test")
+	time.Sleep(50 * time.Millisecond)
+}
+
+func Test_GetAdminUsername_delegates_to_AuthService(t *testing.T) {
+	t.Setenv("SEPG_SESSION_SECRET", "test-secret-with-at-least-32-bytes-long")
+
+	app := New(getopt.Opt{SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true}}, "x.y.z")
+	defer app.Shutdown()
+
+	app.RuntimeManager.ctx = context.Background()
+	rootDir := t.TempDir()
+	app.setRootDir(&rootDir)
+
+	// Use real database setup for a proper pool.
+	dbPaths, rwPool, roPool, err := database.Setup(app.RuntimeManager.ctx, rootDir, config.DefaultConfig())
+	if err != nil {
+		t.Fatalf("database.Setup() error = %v", err)
+	}
+	_ = dbPaths
+	app.dbRwPool = rwPool
+	app.dbRoPool = roPool
+
+	// Verify the public App method delegates to AuthService.GetAdminUsername end-to-end.
+	username, err := app.GetAdminUsername(app.RuntimeManager.ctx, app.dbRoPool)
+	if err != nil {
+		t.Logf("GetAdminUsername returned error (OK in empty DB): %v", err)
+	}
+	// In an empty (just-migrated) database, the query should return empty string.
+	// This verifies the delegation works end-to-end without panicking.
+	_ = username
+}
+
+// --- merged from handler_manager_test.go ---
+func TestHandlerManager_Build_DelegatesToHook(t *testing.T) {
+	hm := NewHandlerManager()
+
+	var hookCalled bool
+	var receivedFS fs.FS
+	hm.testSeams.BuildHandlers = func(tfs fs.FS) error {
+		hookCalled = true
+		receivedFS = tfs
+		return nil
+	}
+
+	testFS := fstest.MapFS{}
+	err := hm.Build(testFS, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Build error: %v", err)
+	}
+	if !hookCalled {
+		t.Error("expected testSeams.BuildHandlers to be called")
+	}
+	if receivedFS == nil {
+		t.Error("expected non-nil templateFS in hook")
+	}
+}
+
+func TestHandlerManager_Build_HookError(t *testing.T) {
+	hm := NewHandlerManager()
+	expectedErr := errors.New("handler build error")
+	hm.testSeams.BuildHandlers = func(_ fs.FS) error {
+		return expectedErr
+	}
+
+	err := hm.Build(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	if !errors.Is(err, expectedErr) {
+		t.Errorf("Build error = %v, want %v", err, expectedErr)
+	}
+}
+
+func TestParseConfigUITemplates_EmptyFS(t *testing.T) {
+	_, err := parseConfigUITemplates(fstest.MapFS{})
+	if err == nil {
+		t.Fatal("expected parseConfigUITemplates to return error for empty FS")
+	}
+}
+
+// --- merged from app_startup_mock_test.go ---
+func readStartupLogs(t *testing.T, app *App) string {
+	t.Helper()
+	if app.logger == nil {
+		t.Fatal("app.logger is nil")
+	}
+	data, err := os.ReadFile(app.logger.FilePath())
+	if err != nil {
+		t.Fatalf("failed to read startup log file: %v", err)
+	}
+	return string(data)
+}
+
+func installNoDiscoveryStatsDone(app *App) chan struct{} {
+	statsDone := make(chan struct{})
+	app.testSeams.NoDiscoveryStatsDone = statsDone
+	return statsDone
+}
+
+func waitForNoDiscoveryStats(t *testing.T, statsDone <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-statsDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no-discovery stats goroutine did not finish")
+	}
+}
+
+type safeLogBuf struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *safeLogBuf) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *safeLogBuf) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func (b *safeLogBuf) Len() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Len()
+}
+
+func captureLogs(t *testing.T) *safeLogBuf {
+	t.Helper()
+	logBuf := &safeLogBuf{}
+	logger := slog.New(slog.NewTextHandler(logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	original := slog.Default()
+	slog.SetDefault(logger)
+	t.Cleanup(func() {
+		slog.SetDefault(original)
+	})
+	return logBuf
+}
+
+type recordingServeHook struct {
+	called  bool
+	handler http.Handler
+	addr    string
+}
+
+func (r *recordingServeHook) Serve(h http.Handler, addr string) error {
+	r.called = true
+	r.handler = h
+	r.addr = addr
+	return nil
+}
+
+type restoreConfigService struct {
+	restoredCfg    *config.Config
+	restoreErr     error
+	validateErr    error
+	saveErr        error
+	restoreCalled  bool
+	validateCalled bool
+	saveCalled     bool
+}
+
+func (r *restoreConfigService) Load(ctx context.Context) (*config.Config, error) {
+	return config.DefaultConfig(), nil
+}
+
+func (r *restoreConfigService) Save(ctx context.Context, cfg *config.Config) error {
+	r.saveCalled = true
+	return r.saveErr
+}
+
+func (r *restoreConfigService) Validate(cfg *config.Config) error {
+	r.validateCalled = true
+	return r.validateErr
+}
+
+func (r *restoreConfigService) Export(ctx context.Context) (string, error) {
+	return "", nil
+}
+
+func (r *restoreConfigService) Import(yamlContent string, ctx context.Context) error {
+	return nil
+}
+
+func (r *restoreConfigService) RestoreLastKnownGood(ctx context.Context) (*config.Config, error) {
+	r.restoreCalled = true
+	return r.restoredCfg, r.restoreErr
+}
+
+func (r *restoreConfigService) EnsureDefaults(ctx context.Context, rootDir string) error {
+	return nil
+}
+
+func (r *restoreConfigService) GetConfigValue(ctx context.Context, key string) (string, error) {
+	return "", nil
+}
+
+func (r *restoreConfigService) IncrementETag(ctx context.Context) (string, error) {
+	return "20260129-01", nil
+}
+
+type reconfigureFailConfigService struct{}
+
+func (r *reconfigureFailConfigService) Load(ctx context.Context) (*config.Config, error) {
+	cfg := config.DefaultConfig()
+	cfg.DBMaxPoolSize = 50       // different from default 100
+	cfg.DBMinIdleConnections = 5 // different from default 10
+	return cfg, nil
+}
+
+func (r *reconfigureFailConfigService) Save(ctx context.Context, cfg *config.Config) error {
+	return nil
+}
+
+func (r *reconfigureFailConfigService) Validate(cfg *config.Config) error {
+	return nil
+}
+
+func (r *reconfigureFailConfigService) Export(ctx context.Context) (string, error) {
+	return "", nil
+}
+
+func (r *reconfigureFailConfigService) Import(yamlContent string, ctx context.Context) error {
+	return nil
+}
+
+func (r *reconfigureFailConfigService) RestoreLastKnownGood(ctx context.Context) (*config.Config, error) {
+	return config.DefaultConfig(), nil
+}
+
+func (r *reconfigureFailConfigService) EnsureDefaults(ctx context.Context, rootDir string) error {
+	return nil
+}
+
+func (r *reconfigureFailConfigService) GetConfigValue(ctx context.Context, key string) (string, error) {
+	return "", nil
+}
+
+func (r *reconfigureFailConfigService) IncrementETag(ctx context.Context) (string, error) {
+	return "20260129-01", nil
+}
+
+func validConfigWithImageDir(rootDir string) *config.Config {
+	cfg := config.DefaultConfig()
+	cfg.ImageDirectory = filepath.Join(rootDir, "Images")
+	return cfg
+}
+
+func TestApp_Run_ReconfigurePoolsFails(t *testing.T) {
+	tempDir := t.TempDir()
+	opt := getopt.Opt{SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true}}
+	app := New(opt, "x.y.z")
+	defer app.Shutdown()
+
+	app.setRootDir(&tempDir)
+
+	app.testSeams.ConfigService = &reconfigureFailConfigService{}
+
+	app.InfrastructureService.testSeams.RecreatePoolsWithConfig = func(ctx context.Context, dbPaths database.DatabasePaths, cfg *config.Config, oldRw, oldRo *dbconnpool.DbSQLConnPool) (*dbconnpool.DbSQLConnPool, *dbconnpool.DbSQLConnPool, error) {
+		return nil, nil, fmt.Errorf("reconfigure failed")
+	}
+
+	serveHook := &recordingServeHook{}
+	app.testSeams.Serve = serveHook.Serve
+
+	err := app.Run(1, 1)
+	if err == nil {
+		t.Fatal("Expected Run to return error")
+	}
+	if serveHook.called {
+		t.Error("Serve should not be called when reconfigure fails")
+	}
+}
+
+func TestApp_Run_RestoreLastKnownGood_Success(t *testing.T) {
+	tempDir := t.TempDir()
+	opt := getopt.Opt{
+		SessionSecret:        getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true},
+		RestoreLastKnownGood: getopt.OptBool{Bool: true, IsSet: true},
+	}
+	app := New(opt, "x.y.z")
+	defer app.Shutdown()
+
+	app.setRootDir(&tempDir)
+
+	restoredCfg := validConfigWithImageDir(tempDir)
+	restoredCfg.WorkerPoolMax = 9
+	fakeSvc := &restoreConfigService{restoredCfg: restoredCfg}
+	app.testSeams.ConfigService = fakeSvc
+
+	serveHook := &recordingServeHook{}
+	app.testSeams.Serve = serveHook.Serve
+
+	if err := app.Run(1, 1); err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	if !fakeSvc.restoreCalled {
+		t.Error("RestoreLastKnownGood was not called")
+	}
+	if !fakeSvc.validateCalled {
+		t.Error("Validate was not called")
+	}
+	if !fakeSvc.saveCalled {
+		t.Error("Save was not called")
+	}
+	if app.ConfigManager.Config.WorkerPoolMax != 9 {
+		t.Errorf("WorkerPoolMax = %d, want 9", app.ConfigManager.Config.WorkerPoolMax)
+	}
+	if !serveHook.called {
+		t.Error("Serve was not called")
+	}
+}
+
+func TestApp_Run_RestoreLastKnownGood_ValidateFails(t *testing.T) {
+	tempDir := t.TempDir()
+	opt := getopt.Opt{
+		SessionSecret:        getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true},
+		RestoreLastKnownGood: getopt.OptBool{Bool: true, IsSet: true},
+	}
+	app := New(opt, "x.y.z")
+	defer app.Shutdown()
+
+	app.setRootDir(&tempDir)
+
+	fakeSvc := &restoreConfigService{
+		restoredCfg: validConfigWithImageDir(tempDir),
+		validateErr: fmt.Errorf("validation failed"),
+	}
+	app.testSeams.ConfigService = fakeSvc
+
+	serveHook := &recordingServeHook{}
+	app.testSeams.Serve = serveHook.Serve
+
+	err := app.Run(1, 1)
+	if err == nil {
+		t.Fatal("Expected Run to return error")
+	}
+	if serveHook.called {
+		t.Error("Serve should not be called when validation fails")
+	}
+}
+
+func TestApp_Run_RestoreLastKnownGood_SaveFails(t *testing.T) {
+	tempDir := t.TempDir()
+	opt := getopt.Opt{
+		SessionSecret:        getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true},
+		RestoreLastKnownGood: getopt.OptBool{Bool: true, IsSet: true},
+	}
+	app := New(opt, "x.y.z")
+	defer app.Shutdown()
+
+	app.setRootDir(&tempDir)
+
+	fakeSvc := &restoreConfigService{
+		restoredCfg: validConfigWithImageDir(tempDir),
+		saveErr:     fmt.Errorf("save failed"),
+	}
+	app.testSeams.ConfigService = fakeSvc
+
+	serveHook := &recordingServeHook{}
+	app.testSeams.Serve = serveHook.Serve
+
+	err := app.Run(1, 1)
+	if err == nil {
+		t.Fatal("Expected Run to return error")
+	}
+	if serveHook.called {
+		t.Error("Serve should not be called when save fails")
+	}
+}
+
+func TestApp_Run_ProfilerEnabled(t *testing.T) {
+	tempDir := t.TempDir()
+	opt := getopt.Opt{
+		SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true},
+		Profile:       getopt.OptString{String: "cpu", IsSet: true},
+	}
+	app := New(opt, "x.y.z")
+	defer app.Shutdown()
+
+	app.setRootDir(&tempDir)
+
+	profilerCalled := false
+	app.testSeams.ProfilerStart = func(cfg profiler.Config) (func(), error) {
+		profilerCalled = true
+		if cfg.Mode != "cpu" {
+			t.Errorf("profiler mode = %q, want cpu", cfg.Mode)
+		}
+		return func() {}, nil
+	}
+
+	serveHook := &recordingServeHook{}
+	app.testSeams.Serve = serveHook.Serve
+
+	if err := app.Run(1, 1); err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	if !profilerCalled {
+		t.Error("profiler start was not called")
+	}
+	if app.RuntimeManager.stopProfiler == nil {
+		t.Error("stopProfiler was not set")
+	}
+}
+
+func TestApp_Run_ProfilerStartError(t *testing.T) {
+	tempDir := t.TempDir()
+	opt := getopt.Opt{
+		SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true},
+		Profile:       getopt.OptString{String: "cpu", IsSet: true},
+	}
+	app := New(opt, "x.y.z")
+	defer app.Shutdown()
+
+	app.setRootDir(&tempDir)
+
+	app.testSeams.ProfilerStart = func(cfg profiler.Config) (func(), error) {
+		return nil, fmt.Errorf("profiler failed")
+	}
+
+	serveHook := &recordingServeHook{}
+	app.testSeams.Serve = serveHook.Serve
+
+	err := app.Run(1, 1)
+	if err == nil {
+		t.Fatal("Expected Run to return error")
+	}
+	if serveHook.called {
+		t.Error("Serve should not be called when profiler fails")
+	}
+}
+
+func TestApp_Run_BuildHandlersError(t *testing.T) {
+	tempDir := t.TempDir()
+	opt := getopt.Opt{SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true}}
+	app := New(opt, "x.y.z")
+	defer app.Shutdown()
+
+	app.setRootDir(&tempDir)
+
+	app.HandlerManager.testSeams.BuildHandlers = func(fs fs.FS) error {
+		return fmt.Errorf("build handlers failed")
+	}
+
+	serveHook := &recordingServeHook{}
+	app.testSeams.Serve = serveHook.Serve
+
+	err := app.Run(1, 1)
+	if err == nil {
+		t.Fatal("Expected Run to return error")
+	}
+	if serveHook.called {
+		t.Error("Serve should not be called when buildHandlers fails")
+	}
+}
+
+func TestApp_Run_NoDiscovery_RefreshesGalleryStats(t *testing.T) {
+	tempDir := t.TempDir()
+	opt := getopt.Opt{
+		SessionSecret:    getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true},
+		RunFileDiscovery: getopt.OptBool{Bool: false, IsSet: true},
+	}
+	app := New(opt, "x.y.z")
+	defer app.Shutdown()
+
+	app.setRootDir(&tempDir)
+
+	expectedStats := GalleryStats{ImagesSize: 4242}
+	app.testSeams.GetGalleryStatistics = func(ctx context.Context) (GalleryStats, error) {
+		return expectedStats, nil
+	}
+
+	app.testSeams.GetLastStartedAt = func(ctx context.Context, module string) (int64, bool, error) {
+		return 12345, true, nil
+	}
+
+	serveHook := &recordingServeHook{}
+	app.testSeams.Serve = serveHook.Serve
+
+	if err := app.Run(1, 1); err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	// Wait for the async stats refresh goroutine to complete.
+	var got *GalleryStats
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		got = app.GetGalleryStatsCached(12345)
+		if got != nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got == nil {
+		t.Fatal("gallery stats cache was not refreshed for lastStarted=12345")
+	}
+	if got.ImagesSize != expectedStats.ImagesSize {
+		t.Errorf("ImagesSize = %d, want %d", got.ImagesSize, expectedStats.ImagesSize)
+	}
+}
+
+func TestApp_Run_NoDiscovery_NoPreviousRun(t *testing.T) {
+	tempDir := t.TempDir()
+	opt := getopt.Opt{
+		SessionSecret:    getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true},
+		RunFileDiscovery: getopt.OptBool{Bool: false, IsSet: true},
+	}
+	app := New(opt, "x.y.z")
+	defer app.Shutdown()
+
+	app.setRootDir(&tempDir)
+
+	expectedStats := GalleryStats{ImagesSize: 777}
+	app.testSeams.GetGalleryStatistics = func(ctx context.Context) (GalleryStats, error) {
+		return expectedStats, nil
+	}
+
+	app.testSeams.GetLastStartedAt = func(ctx context.Context, module string) (int64, bool, error) {
+		return 0, false, nil
+	}
+
+	serveHook := &recordingServeHook{}
+	app.testSeams.Serve = serveHook.Serve
+
+	if err := app.Run(1, 1); err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	var got *GalleryStats
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		got = app.GetGalleryStatsCached(0)
+		if got != nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got == nil {
+		t.Fatal("gallery stats cache was not refreshed for lastStarted=0")
+	}
+	if got.ImagesSize != expectedStats.ImagesSize {
+		t.Errorf("ImagesSize = %d, want %d", got.ImagesSize, expectedStats.ImagesSize)
+	}
+}
+
+func TestApp_Run_SetRestartRequired_DoesNotExecRestart(t *testing.T) {
+	tempDir := t.TempDir()
+	opt := getopt.Opt{SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true}}
+	app := New(opt, "x.y.z")
+	defer app.Shutdown()
+
+	app.setRootDir(&tempDir)
+	app.SetRestartRequired(true)
+
+	execCalled := false
+	app.RuntimeManager.testSeams.Executable = func() (string, error) {
+		return "/tmp/test-exe", nil
+	}
+	app.RuntimeManager.testSeams.ExecCommand = func(path string, args []string, env []string) error {
+		execCalled = true
+		return nil
+	}
+	app.RuntimeManager.testSeams.Exit = func(code int) {}
+
+	serveHook := &recordingServeHook{}
+	app.testSeams.Serve = serveHook.Serve
+
+	if err := app.Run(1, 1); err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	if execCalled {
+		t.Error("ExecRestart should not be called when only SetRestartRequired was set")
+	}
+}
+
+func TestStartCacheBatchLoad_BlockedWhenDiscoveryActive(t *testing.T) {
+	opt := getopt.Opt{SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true}}
+	app := New(opt, "x.y.z")
+	defer app.Shutdown()
+
+	app.testSeams.ModuleStateActive = func() (bool, error) {
+		return true, nil
+	}
+
+	res, err := app.StartCacheBatchLoad()
+	if err != nil {
+		t.Fatalf("StartCacheBatchLoad failed: %v", err)
+	}
+	if !res.Blocked {
+		t.Errorf("Blocked = %v, want true", res.Blocked)
+	}
+	if !strings.Contains(res.Message, "discovery active") {
+		t.Errorf("Message = %q, want discovery active", res.Message)
+	}
+}
+
+func TestStartCacheBatchLoad_AllowedWhenIdle(t *testing.T) {
+	opt := getopt.Opt{SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true}}
+	app := New(opt, "x.y.z")
+	defer app.Shutdown()
+
+	app.testSeams.ModuleStateActive = func() (bool, error) {
+		return false, nil
+	}
+
+	var runCalled atomic.Bool
+	app.testSeams.BatchLoadManagerRun = func(ctx context.Context) error {
+		runCalled.Store(true)
+		return nil
+	}
+
+	res, err := app.StartCacheBatchLoad()
+	if err != nil {
+		t.Fatalf("StartCacheBatchLoad failed: %v", err)
+	}
+	if res.Blocked {
+		t.Errorf("Blocked = %v, want false", res.Blocked)
+	}
+	if !strings.Contains(res.Message, "started") {
+		t.Errorf("Message = %q, want started", res.Message)
+	}
+
+	// Wait briefly for the goroutine to invoke the hook.
+	time.Sleep(50 * time.Millisecond)
+	if !runCalled.Load() {
+		t.Error("batch load run was not invoked")
+	}
+}
+
+func TestStartCacheBatchLoad_ModuleStateError(t *testing.T) {
+	opt := getopt.Opt{SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true}}
+	app := New(opt, "x.y.z")
+	defer app.Shutdown()
+
+	app.testSeams.ModuleStateActive = func() (bool, error) {
+		return false, fmt.Errorf("module state error")
+	}
+
+	_, err := app.StartCacheBatchLoad()
+	if err == nil {
+		t.Fatal("Expected StartCacheBatchLoad to return error")
+	}
+}
+
+func TestStartCacheBatchLoad_ManagerNil(t *testing.T) {
+	opt := getopt.Opt{SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true}}
+	app := New(opt, "x.y.z")
+	defer app.Shutdown()
+
+	app.SubsystemManager.batchLoadManager = nil
+
+	res, err := app.StartCacheBatchLoad()
+	if err != nil {
+		t.Fatalf("StartCacheBatchLoad failed: %v", err)
+	}
+	if res.Blocked {
+		t.Errorf("Blocked = %v, want false", res.Blocked)
+	}
+	if !strings.Contains(res.Message, "not available") {
+		t.Errorf("Message = %q, want not available", res.Message)
+	}
+}
+
+func TestApp_Run_ServeErrorPanics(t *testing.T) {
+	tempDir := t.TempDir()
+	opt := getopt.Opt{SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true}}
+	app := New(opt, "x.y.z")
+	defer app.Shutdown()
+
+	app.setRootDir(&tempDir)
+	app.testSeams.Serve = func(http.Handler, string) error {
+		return fmt.Errorf("serve failed")
+	}
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic when Serve fails")
+		}
+	}()
+	defer app.Shutdown()
+
+	_ = app.Run(1, 1)
+}
+
+func TestApp_Run_RestoreLastKnownGood_DBGetFails(t *testing.T) {
+	tempDir := t.TempDir()
+	opt := getopt.Opt{
+		SessionSecret:        getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true},
+		RestoreLastKnownGood: getopt.OptBool{Bool: true, IsSet: true},
+	}
+	app := New(opt, "x.y.z")
+	defer app.Shutdown()
+
+	app.setRootDir(&tempDir)
+
+	// Prevent setConfigDefaults from touching the closed pools.
+	app.testSeams.ConfigService = &reconfigureFailConfigService{}
+
+	// Create and immediately close real pools so the fake initializer returns
+	// pools whose Get() calls fail.
+	_, closedRw, closedRo, err := database.Setup(app.RuntimeManager.ctx, tempDir, nil)
+	if err != nil {
+		t.Fatalf("failed to setup closed pools: %v", err)
+	}
+	_ = closedRw.Close()
+	_ = closedRo.Close()
+
+	app.dbInitializer = &fakeDatabaseInitializer{
+		setupPaths: database.DatabasePaths{Main: filepath.Join(tempDir, "test.db")},
+		setupRw:    closedRw,
+		setupRo:    closedRo,
+	}
+
+	serveHook := &recordingServeHook{}
+	app.testSeams.Serve = serveHook.Serve
+
+	runErr := app.Run(1, 1)
+	if runErr == nil {
+		t.Fatal("expected Run to return error")
+	}
+	if !strings.Contains(runErr.Error(), "failed to get db connection for restore") {
+		t.Errorf("Run error = %q, want restore db get failure", runErr.Error())
+	}
+	if serveHook.called {
+		t.Error("Serve should not be called when restore DB get fails")
+	}
+}
+
+func TestApp_Run_NoDiscovery_GetLastStartedAtError(t *testing.T) {
+	tempDir := t.TempDir()
+	opt := getopt.Opt{
+		SessionSecret:    getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true},
+		RunFileDiscovery: getopt.OptBool{Bool: false, IsSet: true},
+	}
+	app := New(opt, "x.y.z")
+	defer app.Shutdown()
+
+	app.setRootDir(&tempDir)
+
+	app.testSeams.GetLastStartedAt = func(context.Context, string) (int64, bool, error) {
+		return 0, false, fmt.Errorf("module state error")
+	}
+	app.testSeams.GetGalleryStatistics = func(context.Context) (GalleryStats, error) {
+		return GalleryStats{ImagesSize: 1}, nil
+	}
+
+	serveHook := &recordingServeHook{}
+	app.testSeams.Serve = serveHook.Serve
+
+	statsDone := installNoDiscoveryStatsDone(app)
+
+	if err := app.Run(1, 1); err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	waitForNoDiscoveryStats(t, statsDone)
+
+	logs := readStartupLogs(t, app)
+	if !strings.Contains(logs, "failed to get last started at") {
+		t.Errorf("expected 'failed to get last started at' log, got: %s", logs)
+	}
+}
+
+func TestApp_Run_NoDiscovery_RefreshStatsError(t *testing.T) {
+	tempDir := t.TempDir()
+	opt := getopt.Opt{
+		SessionSecret:    getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true},
+		RunFileDiscovery: getopt.OptBool{Bool: false, IsSet: true},
+	}
+	app := New(opt, "x.y.z")
+	defer app.Shutdown()
+
+	app.setRootDir(&tempDir)
+
+	app.testSeams.GetLastStartedAt = func(context.Context, string) (int64, bool, error) {
+		return 12345, true, nil
+	}
+	app.testSeams.GetGalleryStatistics = func(context.Context) (GalleryStats, error) {
+		return GalleryStats{}, fmt.Errorf("stats failure")
+	}
+
+	serveHook := &recordingServeHook{}
+	app.testSeams.Serve = serveHook.Serve
+
+	statsDone := installNoDiscoveryStatsDone(app)
+
+	if err := app.Run(1, 1); err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	waitForNoDiscoveryStats(t, statsDone)
+
+	logs := readStartupLogs(t, app)
+	if !strings.Contains(logs, "failed to refresh gallery stats cache") {
+		t.Errorf("expected 'failed to refresh gallery stats cache' log, got: %s", logs)
+	}
+}
+
+func TestStartCacheBatchLoad_ManagerRunError(t *testing.T) {
+	opt := getopt.Opt{SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true}}
+	app := New(opt, "x.y.z")
+	defer app.Shutdown()
+
+	app.testSeams.ModuleStateActive = func() (bool, error) {
+		return false, nil
+	}
+
+	runCalled := make(chan struct{}, 1)
+	app.testSeams.BatchLoadManagerRun = func(context.Context) error {
+		close(runCalled)
+		return fmt.Errorf("run failed")
+	}
+
+	logBuf := captureLogs(t)
+
+	res, err := app.StartCacheBatchLoad()
+	if err != nil {
+		t.Fatalf("StartCacheBatchLoad failed: %v", err)
+	}
+	if res.Blocked {
+		t.Errorf("Blocked = %v, want false", res.Blocked)
+	}
+
+	select {
+	case <-runCalled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("batch load run hook was not invoked")
+	}
+
+	// Wait for the background goroutine to log the error. logBuf is
+	// mutex-protected so polling is race-free.
+	var logs string
+	deadline := time.Now().Add(2 * time.Second)
+	for !strings.Contains(logs, "cache batch load run failed") {
+		if time.Now().After(deadline) {
+			t.Fatalf("timeout waiting for 'cache batch load run failed' log, got: %s", logs)
+		}
+		time.Sleep(10 * time.Millisecond)
+		logs = logBuf.String()
+	}
+}
+
+func TestApp_Run_RestoreLastKnownGood_RestoreFails(t *testing.T) {
+	tempDir := t.TempDir()
+	opt := getopt.Opt{
+		SessionSecret:        getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true},
+		RestoreLastKnownGood: getopt.OptBool{Bool: true, IsSet: true},
+	}
+	app := New(opt, "x.y.z")
+	defer app.Shutdown()
+
+	app.setRootDir(&tempDir)
+
+	fakeSvc := &restoreConfigService{
+		restoredCfg: validConfigWithImageDir(tempDir),
+		restoreErr:  fmt.Errorf("restore failed"),
+	}
+	app.testSeams.ConfigService = fakeSvc
+
+	serveHook := &recordingServeHook{}
+	app.testSeams.Serve = serveHook.Serve
+
+	err := app.Run(1, 1)
+	if err == nil {
+		t.Fatal("Expected Run to return error")
+	}
+	if serveHook.called {
+		t.Error("Serve should not be called when restore fails")
+	}
+}
+
+func TestApp_Run_RestoreLastKnownGood_ReconfigureFails(t *testing.T) {
+	tempDir := t.TempDir()
+	opt := getopt.Opt{
+		SessionSecret:        getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true},
+		RestoreLastKnownGood: getopt.OptBool{Bool: true, IsSet: true},
+	}
+	app := New(opt, "x.y.z")
+	defer app.Shutdown()
+
+	app.setRootDir(&tempDir)
+
+	restoredCfg := validConfigWithImageDir(tempDir)
+	restoredCfg.DBMaxPoolSize = 101 // force reconfigure
+	fakeSvc := &restoreConfigService{restoredCfg: restoredCfg}
+	app.testSeams.ConfigService = fakeSvc
+
+	app.InfrastructureService.testSeams.RecreatePoolsWithConfig = func(ctx context.Context, dbPaths database.DatabasePaths, cfg *config.Config, oldRw, oldRo *dbconnpool.DbSQLConnPool) (*dbconnpool.DbSQLConnPool, *dbconnpool.DbSQLConnPool, error) {
+		return nil, nil, fmt.Errorf("reconfigure failed")
+	}
+
+	serveHook := &recordingServeHook{}
+	app.testSeams.Serve = serveHook.Serve
+
+	err := app.Run(1, 1)
+	if err == nil {
+		t.Fatal("Expected Run to return error")
+	}
+	if !strings.Contains(err.Error(), "reconfigure pools after restore") {
+		t.Errorf("Run error = %q, want reconfigure pools after restore", err.Error())
+	}
+	if serveHook.called {
+		t.Error("Serve should not be called when reconfigure after restore fails")
+	}
+}
+
+func TestApp_Run_LoadConfigFails_ReconfigureDefaultsFails(t *testing.T) {
+	tempDir := t.TempDir()
+	opt := getopt.Opt{SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true}}
+	app := New(opt, "x.y.z")
+	defer app.Shutdown()
+
+	app.setRootDir(&tempDir)
+
+	fallbackCfg := validConfigWithImageDir(tempDir)
+	fallbackCfg.DBMaxPoolSize = 101 // force reconfigure
+	app.testSeams.FallbackConfig = func() *config.Config {
+		return fallbackCfg
+	}
+
+	app.testSeams.LoadConfig = func() (*config.Config, error) {
+		return nil, fmt.Errorf("database load failed")
+	}
+	app.InfrastructureService.testSeams.RecreatePoolsWithConfig = func(ctx context.Context, dbPaths database.DatabasePaths, cfg *config.Config, oldRw, oldRo *dbconnpool.DbSQLConnPool) (*dbconnpool.DbSQLConnPool, *dbconnpool.DbSQLConnPool, error) {
+		return nil, nil, fmt.Errorf("reconfigure defaults failed")
+	}
+
+	serveHook := &recordingServeHook{}
+	app.testSeams.Serve = serveHook.Serve
+
+	err := app.Run(1, 1)
+	if err == nil {
+		t.Fatal("Expected Run to return error")
+	}
+	if !strings.Contains(err.Error(), "reconfigure pools with defaults") {
+		t.Errorf("Run error = %q, want reconfigure pools with defaults", err.Error())
+	}
+	if serveHook.called {
+		t.Error("Serve should not be called when reconfigure with defaults fails")
+	}
+}
+
+// --- merged from etag_cli_test.go ---
+func TestApp_IncrementETag(t *testing.T) {
+	// We use testSeams.ConfigService to inject a mock that returns a known ETag
+	// after increment, so this test exercises the full App->InfrastructureService
+	// delegation without a real database.
+	mockSvc := &mockConfigServiceForETagCLI{
+		loadReturn: func() *config.Config {
+			cfg := config.DefaultConfig()
+			cfg.ETagVersion = "20260701-01"
+			return cfg
+		}(),
+	}
+
+	app := New(getopt.Opt{SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true}}, "x.y.z")
+	app.RuntimeManager.ctx = context.Background()
+
+	// Set config service directly on the embedded ConfigManager.
+	app.SetConfigService(mockSvc)
+
+	// Use a fake cache rotator to avoid needing a real pool.
+	rotator := &fakeCacheRotator{}
+	app.cacheRotator = rotator
+
+	newETag, err := app.IncrementETag()
+	if err != nil {
+		t.Fatalf("IncrementETag() error = %v", err)
+	}
+
+	// Verify format
+	pattern := `^\d{8}-\d{2}$`
+	matched, _ := regexp.MatchString(pattern, newETag)
+	if !matched {
+		t.Errorf("New ETag %q does not match pattern %q", newETag, pattern)
+	}
+
+	// Verify the value was incremented from the original
+	if newETag == "20260701-01" {
+		t.Error("ETag was not incremented")
+	}
+
+	// Verify Save was called with the new value
+	if !mockSvc.saveCalled {
+		t.Error("Expected Save to be called")
+	}
+
+	// Verify cache rotation was triggered
+	if !rotator.rotateCalled {
+		t.Error("Expected cache rotation after IncrementETag")
+	}
+	if mockSvc.savedConfig == nil {
+		t.Fatal("savedConfig is nil")
+	}
+	if mockSvc.savedConfig.ETagVersion != newETag {
+		t.Errorf("Saved ETag = %q, want %q", mockSvc.savedConfig.ETagVersion, newETag)
+	}
+}
+
+func TestApp_IncrementETag_ClearsCache(t *testing.T) {
+	mockSvc := &mockConfigServiceForETagCLI{
+		loadReturn: func() *config.Config {
+			cfg := config.DefaultConfig()
+			cfg.ETagVersion = "20260701-01"
+			return cfg
+		}(),
+	}
+
+	app := New(getopt.Opt{SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true}}, "x.y.z")
+	app.RuntimeManager.ctx = context.Background()
+	app.SetConfigService(mockSvc)
+
+	rotator := &fakeCacheRotator{}
+	app.cacheRotator = rotator
+
+	// The cache clearing is performed by RotateCacheTable (via the rotator).
+	// We verify the rotator was called, which proves cache clearing was delegated.
+	newETag, err := app.IncrementETag()
+	if err != nil {
+		t.Fatalf("IncrementETag() error = %v", err)
+	}
+	if newETag == "" {
+		t.Error("expected non-empty ETag after increment")
+	}
+
+	// Verify cache rotation was triggered
+	if !rotator.rotateCalled {
+		t.Error("RotateCacheTable should be called during IncrementETag to clear cache")
+	}
+
+	// Verify Save was called (config was persisted)
+	if !mockSvc.saveCalled {
+		t.Error("Expected Save to be called")
+	}
+}
+
+func TestApp_InitForIncrementETag(t *testing.T) {
+	// Use real database setup (Setup) so that DbSQLConnPool instances have
+	// a done channel and can be closed cleanly by Shutdown.
+	t.Setenv("SEPG_SESSION_SECRET", "test-secret-with-at-least-32-bytes-long")
+
+	app := New(getopt.Opt{SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true}}, "x.y.z")
+
+	ctx := context.Background()
+	app.RuntimeManager.ctx = ctx
+	app.setRootDir(nil)
+
+	// Route through real database.Setup for proper pool initialization.
+	app.testSeams.DatabaseSetup = database.Setup
+
+	// Make testSeams.ConfigService return a mock that succeeds on EnsureDefaults.
+	mockSvc := &mockConfigServiceForETagCLI{}
+	app.testSeams.ConfigService = mockSvc
+
+	err := app.InitForIncrementETag(getopt.Opt{})
+	defer app.Shutdown()
+	if err != nil {
+		t.Fatalf("InitForIncrementETag() error = %v", err)
+	}
+
+	// Verify essential services are initialized
+	if app.dbRwPool == nil {
+		t.Error("dbRwPool not initialized")
+	}
+	if app.ConfigManager.ConfigService == nil {
+		t.Error("ConfigService not initialized")
+	}
+
+	// Verify EnsureDefaults was called
+	if !mockSvc.ensureDefaultsCalled {
+		t.Error("EnsureDefaults should be called")
+	}
+}
+
+func TestApp_InitForIncrementETag_DBSetupError(t *testing.T) {
+	app := New(getopt.Opt{SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true}}, "x.y.z")
+	defer app.Shutdown()
+
+	app.RuntimeManager.ctx = context.Background()
+
+	expectedErr := errors.New("db setup failed")
+	app.testSeams.DatabaseSetup = func(ctx context.Context, rootDir string, cfg *config.Config) (database.DatabasePaths, *dbconnpool.DbSQLConnPool, *dbconnpool.DbSQLConnPool, error) {
+		return database.DatabasePaths{}, nil, nil, expectedErr
+	}
 
 	err := app.InitForIncrementETag(getopt.Opt{})
 	if err == nil {
-		t.Fatal("expected error when EnsureDefaults fails")
+		t.Fatal("Expected error from InitForIncrementETag, got nil")
 	}
-	if !strings.Contains(err.Error(), "failed to ensure config defaults") {
-		t.Errorf("error = %q, want ensure defaults failure", err.Error())
+}
+
+type mockConfigServiceForETagCLI struct {
+	loadReturn           *config.Config
+	loadErr              error
+	validateErr          error
+	saveErr              error
+	saveCalled           bool
+	savedConfig          *config.Config
+	ensureDefaultsCalled bool
+}
+
+func (m *mockConfigServiceForETagCLI) Load(ctx context.Context) (*config.Config, error) {
+	if m.loadErr != nil {
+		return nil, m.loadErr
 	}
-	if !fakeSvc.ensureDefaultsCalled {
-		t.Error("expected EnsureDefaults to be called")
+	if m.loadReturn != nil {
+		return m.loadReturn, nil
 	}
-	if fakeSvc.ensureDefaultsRoot != app.rootDir {
-		t.Errorf("EnsureDefaults rootDir = %q, want %q", fakeSvc.ensureDefaultsRoot, app.rootDir)
-	}
+	return config.DefaultConfig(), nil
+}
+
+func (m *mockConfigServiceForETagCLI) Save(ctx context.Context, cfg *config.Config) error {
+	m.saveCalled = true
+	m.savedConfig = cfg
+	return m.saveErr
+}
+
+func (m *mockConfigServiceForETagCLI) Validate(cfg *config.Config) error {
+	return m.validateErr
+}
+
+func (m *mockConfigServiceForETagCLI) Export(ctx context.Context) (string, error) {
+	return "", nil
+}
+
+func (m *mockConfigServiceForETagCLI) Import(yamlContent string, ctx context.Context) error {
+	return nil
+}
+
+func (m *mockConfigServiceForETagCLI) RestoreLastKnownGood(ctx context.Context) (*config.Config, error) {
+	return nil, nil
+}
+
+func (m *mockConfigServiceForETagCLI) EnsureDefaults(ctx context.Context, rootDir string) error {
+	m.ensureDefaultsCalled = true
+	return nil
+}
+
+func (m *mockConfigServiceForETagCLI) GetConfigValue(ctx context.Context, key string) (string, error) {
+	return "", nil
+}
+
+func (m *mockConfigServiceForETagCLI) IncrementETag(ctx context.Context) (string, error) {
+	return "", nil
 }

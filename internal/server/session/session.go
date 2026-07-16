@@ -140,24 +140,6 @@ func EnsureCsrfToken(store *sessions.CookieStore, w http.ResponseWriter, r *http
 	return token
 }
 
-// ValidateCsrfToken checks the CSRF token in the request form against the session.
-// Returns false if the session has no token or the form token is missing or doesn't match.
-func ValidateCsrfToken(store *sessions.CookieStore, r *http.Request) bool {
-	// gorilla/sessions returns a usable session even on cookie decode error.
-	sess, _ := store.Get(r, SessionName) //nolint:errcheck
-	sessionToken, ok := sess.Values["csrf_token"].(string)
-	if !ok || sessionToken == "" {
-		slog.Warn("validateCsrfToken: no token in session")
-		return false
-	}
-	formToken := r.FormValue("csrf_token")
-	if formToken == "" {
-		slog.Warn("validateCsrfToken: no token in form")
-		return false
-	}
-	return subtle.ConstantTimeCompare([]byte(sessionToken), []byte(formToken)) == 1
-}
-
 // IsAuthenticated reports whether the request has a valid authenticated session.
 // If the session cookie is invalid or malformed, it clears the cookie and
 // returns false.
@@ -203,7 +185,9 @@ type SessionManager interface {
 	SaveSession(w http.ResponseWriter, r *http.Request, sess *sessions.Session) error
 
 	// IsAuthenticated returns true if the user is authenticated.
-	IsAuthenticated(r *http.Request) bool
+	// If the session cookie is invalid or malformed, it clears the cookie and
+	// returns false.
+	IsAuthenticated(w http.ResponseWriter, r *http.Request) bool
 
 	// SetAuthenticated sets the authenticated status for the session.
 	SetAuthenticated(w http.ResponseWriter, r *http.Request, authenticated bool) error
@@ -346,13 +330,17 @@ func (m *Manager) SaveSession(w http.ResponseWriter, r *http.Request, sess *sess
 }
 
 // IsAuthenticated returns true if the user is authenticated.
-func (m *Manager) IsAuthenticated(r *http.Request) bool {
+// If the session cookie is invalid or malformed, it clears the cookie from
+// the browser and returns false. This aligns with the auth middleware and
+// the package-level IsAuthenticated function.
+func (m *Manager) IsAuthenticated(w http.ResponseWriter, r *http.Request) bool {
 	sess, err := m.store.Get(r, SessionName)
 	if err != nil {
-		slog.Warn("IsAuthenticated: session decode error",
+		slog.Warn("IsAuthenticated: clearing invalid session cookie",
 			"path", r.URL.Path,
 			"remote_addr", r.RemoteAddr,
 			"err", err)
+		ClearSessionCookie(m.store, w, r)
 		return false
 	}
 	authenticated, ok := sess.Values["authenticated"].(bool)

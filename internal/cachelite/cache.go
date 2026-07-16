@@ -247,67 +247,6 @@ func StoreCacheEntryInTx(ctx context.Context, tx *sql.Tx, entry *HTTPCacheEntry)
 	})
 }
 
-// StoreCacheEntryBatch inserts multiple cache entries in a single transaction.
-// Uses a loop of single inserts (SQLite best practice).
-//
-// Failure semantics: All-or-nothing. If any entry fails to insert, the entire
-// batch is rolled back. Failed entries will be retried on subsequent preload runs.
-func StoreCacheEntryBatch(ctx context.Context, db *dbconnpool.DbSQLConnPool, entries []*HTTPCacheEntry) error {
-	if len(entries) == 0 {
-		return nil
-	}
-	for i, e := range entries {
-		if e == nil {
-			return fmt.Errorf("nil entry at index %d in batch", i)
-		}
-	}
-
-	cpc, err := db.Get()
-	if err != nil {
-		return fmt.Errorf("failed to get connection: %w", err)
-	}
-	defer db.Put(cpc)
-
-	tx, err := cpc.Conn.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() {
-		if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
-			slog.Warn("cache tx rollback failed", "err", err)
-		}
-	}()
-
-	queries := gallerydb.New(tx)
-	for _, entry := range entries {
-		if err := queries.UpsertHttpCache(ctx, gallerydb.UpsertHttpCacheParams{
-			Key:             entry.Key,
-			Method:          entry.Method,
-			Path:            entry.Path,
-			QueryString:     entry.QueryString,
-			Encoding:        entry.Encoding,
-			Status:          entry.Status,
-			ContentType:     entry.ContentType,
-			ContentEncoding: entry.ContentEncoding,
-			CacheControl:    entry.CacheControl,
-			Etag:            entry.ETag,
-			LastModified:    entry.LastModified,
-			Vary:            entry.Vary,
-			Body:            entry.Body,
-			ContentLength:   entry.ContentLength,
-			CreatedAt:       entry.CreatedAt,
-			ExpiresAt:       entry.ExpiresAt,
-		}); err != nil {
-			slog.Warn("Batch insert failed for entry", "key", entry.Key, "path", entry.Path, "err", err)
-			return fmt.Errorf("failed to insert entry %s: %w", entry.Key, err)
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit transaction: %w", err)
-	}
-	return nil
-}
-
 // DeleteCacheEntry removes a single cache entry by key.
 func DeleteCacheEntry(ctx context.Context, db *dbconnpool.DbSQLConnPool, key string) error {
 	cpc, err := db.Get()
@@ -489,12 +428,16 @@ func CleanupExpired(ctx context.Context, db *dbconnpool.DbSQLConnPool) (int64, e
 }
 
 // CanCacheResponse determines if an HTTP response is eligible for caching.
-// Returns false if status != 200 or Cache-Control contains "no-store".
-func CanCacheResponse(status int, cacheControl string) bool {
+// Returns false if status != 200, Cache-Control contains "no-store",
+// or a Set-Cookie header is present (responses that set cookies must not be cached).
+func CanCacheResponse(status int, cacheControl string, setCookie string) bool {
 	if status != 200 {
 		return false
 	}
 	if strings.Contains(cacheControl, "no-store") {
+		return false
+	}
+	if setCookie != "" {
 		return false
 	}
 	return true

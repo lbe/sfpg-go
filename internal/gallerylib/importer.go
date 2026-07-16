@@ -32,6 +32,8 @@ type importerQueries interface {
 	UpdateFolderTileId(ctx context.Context, arg gallerydb.UpdateFolderTileIdParams) error
 	DeleteInvalidFileByPath(ctx context.Context, path string) error
 	UpsertExif(ctx context.Context, arg gallerydb.UpsertExifParams) error
+	UpsertXMPRaw(ctx context.Context, arg gallerydb.UpsertXMPRawParams) error
+	UpsertXMPProperty(ctx context.Context, arg gallerydb.UpsertXMPPropertyParams) error
 	GetThumbnailExistsViewByID(ctx context.Context, id int64) (bool, error)
 	GetFolderTileExistsViewByPath(ctx context.Context, path string) (bool, error)
 	UpsertThumbnailReturningID(ctx context.Context, arg gallerydb.UpsertThumbnailReturningIDParams) (int64, error)

@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Strip Cursor agent attribution trailers injected despite user opt-out.
+# Runs on every commit (including agent commits that use git hooks).
+
+set -euo pipefail
+
+msgfile="${1:?commit-msg hook requires path to commit message file}"
+
+if [[ ! -f "$msgfile" ]]; then
+  echo "[commit-msg] missing commit message file: $msgfile" >&2
+  exit 1
+fi
+
+# Remove known Cursor attribution lines (exact and common variants).
+sed -i \
+  -e '/^Co-authored-by: Cursor <cursoragent@cursor.com>[[:space:]]*$/d' \
+  -e '/^Made-with: Cursor[[:space:]]*$/d' \
+  "$msgfile"
+
+# Collapse excessive trailing blank lines left after removal.
+sed -i -e :a -e '/^\n*$/{$d;N;ba' -e '}' "$msgfile"
+
+exit 0

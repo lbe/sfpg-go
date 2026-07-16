@@ -12,17 +12,17 @@ import (
 
 // setDB initializes and configures the database using the database package.
 func (app *App) setDB() {
-	app.SetupDB(app.ctx, app.config)
+	app.SetupDB(app.RuntimeManager.ctx, app.ConfigManager.Config)
 
-	if app.testHookConfigService != nil {
-		app.SetConfigService(app.testHookConfigService)
+	if app.testSeams.ConfigService != nil {
+		app.SetConfigService(app.testSeams.ConfigService)
 	} else {
 		app.SetConfigService(config.NewService(app.dbRwPool, app.dbRoPool))
 	}
-	app.authService = auth.NewService(app)
-	app.moduleStateService = modulestate.NewService(app.dbRwPool)
+	app.SessionAuthFacade.authService = auth.NewService(app)
+	app.SubsystemManager.moduleStateService = modulestate.NewService(app.dbRwPool)
 
-	if app.authHandlers != nil {
+	if app.HandlerManager.authHandlers != nil {
 		app.ensureSession()
 		if err := app.buildHandlers(web.FS); err != nil {
 			slog.Error("failed to rebuild handlers after setDB", "err", err)
@@ -41,29 +41,29 @@ func (app *App) setDB() {
 // given config and reinitializes dependent services. Returns an error if the
 // pool recreation itself fails (non-nil errors from dependent reinit are logged).
 func (app *App) reconfigurePoolsFromConfig() error {
-	app.configMu.RLock()
-	cfg := app.config
-	app.configMu.RUnlock()
+	app.ConfigManager.ConfigMu.RLock()
+	cfg := app.ConfigManager.Config
+	app.ConfigManager.ConfigMu.RUnlock()
 	if cfg == nil {
 		return nil
 	}
 
-	if err := app.ReconfigurePools(app.ctx, cfg); err != nil {
+	if err := app.ReconfigurePools(app.RuntimeManager.ctx, cfg); err != nil {
 		return err
 	}
 
-	if app.testHookConfigService != nil {
-		app.SetConfigService(app.testHookConfigService)
+	if app.testSeams.ConfigService != nil {
+		app.SetConfigService(app.testSeams.ConfigService)
 	} else {
 		app.SetConfigService(config.NewService(app.dbRwPool, app.dbRoPool))
 	}
-	app.moduleStateService = modulestate.NewService(app.dbRwPool)
-	app.authService = auth.NewService(app)
+	app.SubsystemManager.moduleStateService = modulestate.NewService(app.dbRwPool)
+	app.SessionAuthFacade.authService = auth.NewService(app)
 
 	if app.cacheMW != nil {
 		app.cacheMW.UpdatePool(app.dbRwPool)
 	}
-	if app.authHandlers != nil {
+	if app.HandlerManager.authHandlers != nil {
 		if err := app.buildHandlers(web.FS); err != nil {
 			return fmt.Errorf("rebuild handlers: %w", err)
 		}

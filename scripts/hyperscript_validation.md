@@ -8,10 +8,10 @@ Validate a single file or an entire directory:
 
 ```bash
 # Validate a single template file
-go run ./scripts/validate-hyperscript.go web/templates/config-modal.html.tmpl
+go run ./scripts/validate-hyperscript/ web/templates/config-modal.html.tmpl
 
 # Validate all templates recursively
-go run ./scripts/validate-hyperscript.go web/templates
+go run ./scripts/validate-hyperscript/ web/templates
 ```
 
 Exit codes:
@@ -30,13 +30,13 @@ Examples:
 
 ```bash
 # JSON output for tooling
-go run ./scripts/validate-hyperscript.go -json web/templates
+go run ./scripts/validate-hyperscript/ -json web/templates
 
 # Use a local hyperscript.js file
-go run ./scripts/validate-hyperscript.go -hyperscript=third_party/_hyperscript.min.js web/templates
+go run ./scripts/validate-hyperscript/ -hyperscript=third_party/_hyperscript.min.js web/templates
 
 # Scan multiple paths with custom extensions
-go run ./scripts/validate-hyperscript.go -ext=".html,.tmpl" web/templates zarchive
+go run ./scripts/validate-hyperscript/ -ext=".html,.tmpl" web/templates zarchive
 ```
 
 ## What It Validates
@@ -130,7 +130,7 @@ Example warning output:
 
   ```make
   validate-hyperscript:
-  go run ./scripts/validate-hyperscript.go web/templates
+  go run ./scripts/validate-hyperscript/ web/templates
   ```
 
 - Use `-quiet` in CI to only show failures.

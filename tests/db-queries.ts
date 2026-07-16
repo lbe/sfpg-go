@@ -37,8 +37,7 @@ export function openDB(): Database.Database {
 export function getFirstFolderID(): number | null {
   const db = getDB();
   const row = db.prepare("SELECT id FROM folders ORDER BY id LIMIT 1").get() as
-    | { id: number }
-    | undefined;
+    { id: number } | undefined;
   db.close();
   return row?.id ?? null;
 }
@@ -46,8 +45,7 @@ export function getFirstFolderID(): number | null {
 export function getFirstFileID(): number | null {
   const db = getDB();
   const row = db.prepare("SELECT id FROM files ORDER BY id LIMIT 1").get() as
-    | { id: number }
-    | undefined;
+    { id: number } | undefined;
   db.close();
   return row?.id ?? null;
 }

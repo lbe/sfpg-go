@@ -1,10 +1,11 @@
 package handlers
 
 import (
+	"log/slog"
 	"net/http"
 	"slices"
 
-	"github.com/lbe/sfpg-go/internal/server/interfaces"
+	"github.com/lbe/sfpg-go/internal/server/config"
 	"github.com/lbe/sfpg-go/internal/server/ui"
 )
 
@@ -16,17 +17,30 @@ const ThemeCookieMaxAge = 365 * 24 * 60 * 60
 
 // ThemeHandlers holds dependencies for theme-related HTTP handlers.
 type ThemeHandlers struct {
-	deps interfaces.ServerDeps
+	sessionManager        SessionManager
+	getConfig             func() *config.Config
+	AddCommonTemplateData func(w http.ResponseWriter, r *http.Request, data map[string]any, fullPage bool) map[string]any
+	ServerError           func(w http.ResponseWriter, r *http.Request, err error)
 }
 
 // NewThemeHandlers creates a new ThemeHandlers with the given dependencies.
-func NewThemeHandlers(deps interfaces.ServerDeps) *ThemeHandlers {
-	return &ThemeHandlers{deps: deps}
+func NewThemeHandlers(
+	sessionManager SessionManager,
+	getConfig func() *config.Config,
+	addCommonTemplateData func(w http.ResponseWriter, r *http.Request, data map[string]any, fullPage bool) map[string]any,
+	serverError func(w http.ResponseWriter, r *http.Request, err error),
+) *ThemeHandlers {
+	return &ThemeHandlers{
+		sessionManager:        sessionManager,
+		getConfig:             getConfig,
+		AddCommonTemplateData: addCommonTemplateData,
+		ServerError:           serverError,
+	}
 }
 
 // ThemeModalHandler returns the theme selector modal.
 func (h *ThemeHandlers) ThemeModalHandler(w http.ResponseWriter, r *http.Request) {
-	cfg := h.deps.GetConfig()
+	cfg := h.getConfig()
 	if cfg == nil {
 		http.Error(w, "Configuration not loaded", http.StatusInternalServerError)
 		return
@@ -39,18 +53,25 @@ func (h *ThemeHandlers) ThemeModalHandler(w http.ResponseWriter, r *http.Request
 		"CurrentTheme": currentTheme,
 	}
 
-	data = h.deps.AddCommonTemplateData(w, r, data, true)
+	data = h.AddCommonTemplateData(w, r, data, true)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
 	if err := ui.RenderTemplate(w, "theme-modal.html.tmpl", data); err != nil {
-		h.deps.ServerError(w, r, err)
+		h.ServerError(w, r, err)
 		return
 	}
 }
 
 // ThemePostHandler handles theme selection from the modal.
 func (h *ThemeHandlers) ThemePostHandler(w http.ResponseWriter, r *http.Request) {
+	// Validate CSRF token
+	if !h.sessionManager.ValidateCSRFToken(r) {
+		slog.Warn("CSRF validation failed for theme post", "remote_addr", r.RemoteAddr)
+		http.Error(w, "Forbidden - CSRF token invalid", http.StatusForbidden)
+		return
+	}
+
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "Invalid form data", http.StatusBadRequest)
 		return
@@ -62,7 +83,7 @@ func (h *ThemeHandlers) ThemePostHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	cfg := h.deps.GetConfig()
+	cfg := h.getConfig()
 	if cfg == nil {
 		http.Error(w, "Configuration not loaded", http.StatusInternalServerError)
 		return
@@ -91,7 +112,7 @@ func (h *ThemeHandlers) ThemePostHandler(w http.ResponseWriter, r *http.Request)
 // GetEffectiveTheme returns the effective theme for a request.
 // Priority: 1) Cookie (if valid), 2) Server default.
 func (h *ThemeHandlers) GetEffectiveTheme(r *http.Request) string {
-	cfg := h.deps.GetConfig()
+	cfg := h.getConfig()
 	if cfg == nil {
 		return "dark"
 	}

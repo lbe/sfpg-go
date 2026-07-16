@@ -41,14 +41,10 @@ type RuntimeManager struct {
 	galleryStatsAt         int64
 	staleCacheDropInFlight atomic.Bool
 
-	// Test seams (nil in production).
-	testHookExecutable   func() (string, error)
-	testHookExecCommand  func(path string, args []string, env []string) error
-	testHookExit         func(code int)
-	testHookBeforeListen func()
-	testHookShutdown     func(ctx context.Context) error
+	testSeams RuntimeManagerTestSeams
 }
 
+// NewRuntimeManager constructs a runtime manager with a cancellable child context.
 func NewRuntimeManager(parent context.Context) *RuntimeManager {
 	ctx, cancel := context.WithCancel(parent)
 	return &RuntimeManager{
@@ -60,9 +56,10 @@ func NewRuntimeManager(parent context.Context) *RuntimeManager {
 
 // ─── Serve ──────────────────────────────────────────────────────────
 
+// Serve starts the HTTP server and blocks until shutdown, error, or context cancellation.
 func (m *RuntimeManager) Serve(handler http.Handler, addr string) error {
-	if m.testHookBeforeListen != nil {
-		m.testHookBeforeListen()
+	if m.testSeams.BeforeListen != nil {
+		m.testSeams.BeforeListen()
 	}
 
 	m.httpServerMu.Lock()
@@ -103,19 +100,24 @@ func (m *RuntimeManager) Serve(handler http.Handler, addr string) error {
 }
 
 func (m *RuntimeManager) shutdownServer(ctx context.Context, srv *http.Server) error {
-	if m.testHookShutdown != nil {
-		return m.testHookShutdown(ctx)
+	if m.testSeams.Shutdown != nil {
+		return m.testSeams.Shutdown(ctx)
 	}
 	return srv.Shutdown(ctx)
 }
 
 // ─── Restart ────────────────────────────────────────────────────────
 
+// SetRestartRequired records whether a configuration change requires process restart.
 func (m *RuntimeManager) SetRestartRequired(b bool) { m.restartRequired.Store(b) }
-func (m *RuntimeManager) IsRestartRequested() bool  { return m.restartRequested.Load() }
 
+// IsRestartRequested reports whether a process restart has been requested.
+func (m *RuntimeManager) IsRestartRequested() bool { return m.restartRequested.Load() }
+
+// RestartRequired reports whether configuration changes require a restart.
 func (m *RuntimeManager) RestartRequired() bool { return m.restartRequired.Load() }
 
+// TriggerRestart gracefully shuts down the HTTP server to prepare for exec restart.
 func (m *RuntimeManager) TriggerRestart() {
 	slog.Info("process restart requested")
 	m.restartRequested.Store(true)
@@ -133,10 +135,11 @@ func (m *RuntimeManager) TriggerRestart() {
 	}
 }
 
+// ExecRestart replaces the current process image with a fresh instance.
 func (m *RuntimeManager) ExecRestart() {
 	exe, err := os.Executable()
-	if m.testHookExecutable != nil {
-		exe, err = m.testHookExecutable()
+	if m.testSeams.Executable != nil {
+		exe, err = m.testSeams.Executable()
 	}
 	if err != nil {
 		slog.Error("failed to get executable path", "err", err)
@@ -145,8 +148,8 @@ func (m *RuntimeManager) ExecRestart() {
 	}
 	slog.Info("re-executing process", "exe", exe, "args", os.Args)
 	execCmd := m.execCommand
-	if m.testHookExecCommand != nil {
-		execCmd = m.testHookExecCommand
+	if m.testSeams.ExecCommand != nil {
+		execCmd = m.testSeams.ExecCommand
 	}
 	if execCmd == nil {
 		execCmd = syscall.Exec
@@ -159,8 +162,8 @@ func (m *RuntimeManager) ExecRestart() {
 }
 
 func (m *RuntimeManager) exit(code int) {
-	if m.testHookExit != nil {
-		m.testHookExit(code)
+	if m.testSeams.Exit != nil {
+		m.testSeams.Exit(code)
 		return
 	}
 	osExit(code)
@@ -168,6 +171,7 @@ func (m *RuntimeManager) exit(code int) {
 
 // ─── Gallery stats ──────────────────────────────────────────────────
 
+// GetGalleryStatsCached returns cached gallery stats when still valid for the given discovery timestamp.
 func (m *RuntimeManager) GetGalleryStatsCached(discoveryLastStartedAt int64) *GalleryStats {
 	m.galleryStatsMu.RLock()
 	defer m.galleryStatsMu.RUnlock()
@@ -178,6 +182,7 @@ func (m *RuntimeManager) GetGalleryStatsCached(discoveryLastStartedAt int64) *Ga
 	return &c
 }
 
+// SetGalleryStatsCache stores gallery stats with the discovery timestamp used for invalidation.
 func (m *RuntimeManager) SetGalleryStatsCache(stats *GalleryStats, at int64) {
 	m.galleryStatsMu.Lock()
 	m.galleryStatsCache = stats

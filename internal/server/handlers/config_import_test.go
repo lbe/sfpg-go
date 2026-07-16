@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"golang.org/x/net/html"
+
 	"github.com/lbe/sfpg-go/internal/server/config"
 	"github.com/lbe/sfpg-go/internal/server/ui"
 	"github.com/lbe/sfpg-go/internal/testutil"
@@ -32,6 +34,25 @@ func TestConfigHandlers_ImportPreview_MissingYAML(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("expected status 400, got %d", w.Code)
+	}
+}
+
+func TestConfigHandlers_ImportPreview_InvalidCSRF(t *testing.T) {
+	if err := ui.ParseTemplates(web.FS); err != nil {
+		t.Fatalf("ParseTemplates failed: %v", err)
+	}
+
+	ch := setupTestConfigHandlers(t, &mockConfigServiceForConfig{}, &mockAuthServiceForConfig{})
+	ch.SessionManager = &mockSessionManagerAuthenticatedInvalidCSRF{}
+
+	req := httptest.NewRequest(http.MethodPost, "/config/import/preview", strings.NewReader("yaml=site_name: Test"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+
+	ch.ImportConfigPreviewHandler(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected status 403, got %d", w.Code)
 	}
 }
 
@@ -62,7 +83,7 @@ func TestConfigHandlers_ImportCommit_Success(t *testing.T) {
 	var updateConfigCalled bool
 	mockSvc := &mockConfigServiceForConfig{}
 	ch := setupTestConfigHandlers(t, mockSvc, &mockAuthServiceForConfig{})
-	_ = updateConfigCalled // removed: through deps
+	_ = updateConfigCalled
 	ch.SessionManager.(*mockSessionManagerAuth).authenticated = true
 
 	req := httptest.NewRequest(http.MethodPost, "/config/import/commit", strings.NewReader("yaml=site_name: Test"))
@@ -128,8 +149,8 @@ func TestConfigHandlers_ImportPreview_InvalidYAML(t *testing.T) {
 		t.Errorf("expected status 400, got %d", w.Code)
 	}
 	body := strings.TrimSpace(w.Body.String())
-	if !strings.HasPrefix(body, "Invalid YAML:") {
-		t.Errorf("expected Invalid YAML error, got %s", body)
+	if !strings.HasPrefix(body, "Invalid YAML content") {
+		t.Errorf("expected Invalid YAML content error, got %s", body)
 	}
 }
 
@@ -175,7 +196,7 @@ func TestConfigHandlers_ImportCommit_ImportError(t *testing.T) {
 		t.Errorf("expected status 400, got %d", w.Code)
 	}
 	body := strings.TrimSpace(w.Body.String())
-	if !strings.HasPrefix(body, "Import failed:") {
+	if body != "Import failed" {
 		t.Errorf("expected Import failed error, got %s", body)
 	}
 }
@@ -311,6 +332,37 @@ func TestConfigHandlers_ImportPreview_MultipartSuccess(t *testing.T) {
 	if testutil.FindElementByID(doc, "import-yaml-content") == nil {
 		t.Fatal("missing #import-yaml-content")
 	}
+
+	// Verify modal-box element exists (import preview is rendered in a modal)
+	modalBox := testutil.FindElementByClass(doc, "modal-box")
+	if modalBox == nil {
+		t.Error("response should contain modal-box element")
+	}
+
+	// Verify diff content headings exist
+	h4Elements := testutil.FindAllElements(doc, func(n *html.Node) bool {
+		return n.Type == html.ElementNode && n.Data == "h4"
+	})
+	if len(h4Elements) < 2 {
+		t.Error("expected at least 2 h4 headings in preview modal")
+	} else {
+		foundCurrent := false
+		foundImported := false
+		for _, h4 := range h4Elements {
+			if testutil.GetTextContent(h4) == "Current Configuration" {
+				foundCurrent = true
+			}
+			if testutil.GetTextContent(h4) == "Imported Configuration" {
+				foundImported = true
+			}
+		}
+		if !foundCurrent {
+			t.Error("response should contain 'Current Configuration' heading")
+		}
+		if !foundImported {
+			t.Error("response should contain 'Imported Configuration' heading")
+		}
+	}
 }
 
 func TestConfigHandlers_ImportCommit_ApplyValidationError(t *testing.T) {
@@ -336,7 +388,7 @@ func TestConfigHandlers_ImportCommit_ApplyValidationError(t *testing.T) {
 		t.Errorf("expected status 400, got %d", w.Code)
 	}
 	body := strings.TrimSpace(w.Body.String())
-	if !strings.HasPrefix(body, "Import failed:") {
+	if body != "Import failed" {
 		t.Errorf("expected Import failed error, got %s", body)
 	}
 }
@@ -367,7 +419,7 @@ func TestConfigHandlers_ImportCommit_ApplyError(t *testing.T) {
 		t.Errorf("expected status 500, got %d", w.Code)
 	}
 	body := strings.TrimSpace(w.Body.String())
-	if !strings.Contains(body, "Import failed: unable to persist config") {
+	if body != "Import failed: unable to persist config" {
 		t.Errorf("expected persist error, got %s", body)
 	}
 }

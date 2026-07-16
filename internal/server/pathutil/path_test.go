@@ -52,8 +52,9 @@ func TestRemoveImagesDirPrefix(t *testing.T) {
 			name:          "path outside images dir",
 			normalizedDir: "/var/images",
 			path:          "/other/path/file.jpg",
-			want:          "/other/path/file.jpg",
-			wantErr:       false,
+			want:          "",
+			wantErr:       true,
+			errContains:   "outside images directory",
 		},
 		{
 			name:          "path with double slashes",
@@ -87,8 +88,9 @@ func TestRemoveImagesDirPrefix(t *testing.T) {
 			name:          "mixed slashes in path",
 			normalizedDir: normalizedImagesDir,
 			path:          "/var/images\\folder/subfolder\\file.jpg",
-			want:          "/var/images\\folder/subfolder\\file.jpg", // Prefix doesn't match due to backslash
-			wantErr:       false,
+			want:          "",
+			wantErr:       true,
+			errContains:   "outside images directory",
 		},
 		{
 			name:          "file with same name as directory",
@@ -142,11 +144,12 @@ func TestRemoveImagesDirPrefix(t *testing.T) {
 			wantErr:       false,
 		},
 		{
-			name:          "absolute path without prefix",
-			normalizedDir: "/data/images",
+			name:          "reject /tmp/other.jpg",
+			normalizedDir: "/var/images",
 			path:          "/tmp/other.jpg",
-			want:          "/tmp/other.jpg",
-			wantErr:       false,
+			want:          "",
+			wantErr:       true,
+			errContains:   "outside images directory",
 		},
 	}
 
@@ -221,17 +224,14 @@ func TestRemoveImagesDirPrefix_EdgeCases(t *testing.T) {
 	})
 
 	t.Run("normalized dir with trailing slash", func(t *testing.T) {
-		// The function expects normalized dir without trailing slash
-		// This test documents current behavior
+		// The function handles trailing slash by stripping it before matching.
 		got, err := RemoveImagesDirPrefix("/var/images/", "/var/images/file.jpg")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		// With trailing slash in normalized dir, it won't match correctly
-		// /var/images/ + / = /var/images// which doesn't match /var/images/
-		want := "/var/images/file.jpg" // Path not modified since prefix doesn't match
+		want := "file.jpg"
 		if got != want {
-			t.Errorf("got %q, want %q (note: normalized dir should not have trailing slash)", got, want)
+			t.Errorf("got %q, want %q", got, want)
 		}
 	})
 }

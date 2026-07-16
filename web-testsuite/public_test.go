@@ -68,11 +68,6 @@ func TestPublicRoutes(t *testing.T) {
 		{
 			num: 5, name: "gallery-folder", method: "GET",
 			expected: http.StatusOK,
-			check: func(t *testing.T, resp *http.Response) {
-				if ct := resp.Header.Get("Content-Type"); ct != "" && ct != "text/html; charset=utf-8" {
-					// Just verify it's HTML
-				}
-			},
 		},
 		// #6: GET /gallery/0 → 404
 		{
@@ -140,7 +135,7 @@ func TestPublicRoutes(t *testing.T) {
 			num: 14, name: "theme-modal", method: "GET", path: "/theme/modal",
 			expected: http.StatusOK,
 		},
-		// #15: POST /theme → 200 (no CSRF needed, sets theme cookie)
+		// #15: POST /theme → 200 (requires CSRF after WP-12)
 		{
 			num: 15, name: "theme-post", method: "POST", path: "/theme",
 			body:     url.Values{"theme": {"dark"}},
@@ -202,26 +197,34 @@ func TestPublicRoutes(t *testing.T) {
 				path = "/login"
 			}
 
-			// For login tests, extract CSRF from gallery page first
-			if rt.num == 16 || rt.num == 17 {
-				csrfResp, err := client.Get(serverURL + "/gallery/1")
+			// For login and theme tests, extract CSRF from login form (uncached)
+			if rt.num == 15 || rt.num == 16 || rt.num == 17 {
+				csrfResp, err := client.Get(serverURL + "/login-form")
 				if err != nil {
-					t.Fatalf("GET /gallery/1 failed: %v", err)
+					t.Fatalf("GET /login-form failed: %v", err)
 				}
 				csrfToken := extractCSRFFromBody(t, csrfResp.Body)
 				csrfResp.Body.Close()
 				if csrfToken == "" {
-					t.Fatal("could not extract CSRF token for login test")
+					t.Fatal("could not extract CSRF token for login/theme test")
 				}
 
-				pwd := "admin"
-				if rt.num == 16 {
-					pwd = "wrong"
-				}
-				rt.body = url.Values{
-					"username":   {"admin"},
-					"password":   {pwd},
-					"csrf_token": {csrfToken},
+				if rt.num == 15 {
+					rt.body = url.Values{
+						"csrf_token": {csrfToken},
+						"theme":      {"dark"},
+					}
+				} else {
+
+					pwd := "admin"
+					if rt.num == 16 {
+						pwd = "wrong"
+					}
+					rt.body = url.Values{
+						"username":   {"admin"},
+						"password":   {pwd},
+						"csrf_token": {csrfToken},
+					}
 				}
 			}
 

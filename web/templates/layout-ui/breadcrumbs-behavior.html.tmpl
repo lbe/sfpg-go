@@ -1,0 +1,10 @@
+<script type="text/hyperscript">
+  behavior BreadcrumbLinks
+    on click from me.querySelectorAll('a')
+      if target.tagName is 'A' and target@href exists and not target@hx-get exists
+        halt the event
+        set location.href to target@href
+      end
+    end
+  end
+</script>

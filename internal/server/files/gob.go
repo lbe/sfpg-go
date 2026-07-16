@@ -20,7 +20,7 @@ type fileWire struct {
 	ThumbnailBytes      []byte // nil if no thumbnail (replaces *bytes.Buffer)
 	Exif                gallerydb.UpsertExifParams
 	Itpc                gallerydb.UpsertIPTCParams
-	XmpProp             gallerydb.UpsertXMPPropertyParams
+	XmpProps            []gallerydb.UpsertXMPPropertyParams
 	XmpRaw              gallerydb.UpsertXMPRawParams
 	HasValidJpegMarkers bool
 }
@@ -36,7 +36,7 @@ func (f File) GobEncode() ([]byte, error) {
 		File:                f.File,
 		Exif:                f.Exif,
 		Itpc:                f.Itpc,
-		XmpProp:             f.XmpProp,
+		XmpProps:            append([]gallerydb.UpsertXMPPropertyParams(nil), f.XmpProps...),
 		XmpRaw:              f.XmpRaw,
 		HasValidJpegMarkers: f.HasValidJpegMarkers,
 	}
@@ -73,7 +73,7 @@ func (f *File) GobDecode(data []byte) error {
 	}
 	f.Exif = w.Exif
 	f.Itpc = w.Itpc
-	f.XmpProp = w.XmpProp
+	f.XmpProps = append([]gallerydb.UpsertXMPPropertyParams(nil), w.XmpProps...)
 	f.XmpRaw = w.XmpRaw
 	f.HasValidJpegMarkers = w.HasValidJpegMarkers
 

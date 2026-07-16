@@ -1,0 +1,20 @@
+<!-- Mobile Info Modal (no drawer pattern) -->
+<input id="mobile_info_modal" type="checkbox" class="modal-toggle" />
+<div class="modal" role="dialog">
+  <div id="mobile_info_modal_box" class="modal-box relative p-2">
+    <div
+      id="box_info_mobile"
+      class="min-h-[16rem] w-full overflow-y-auto rounded-[6px] border border-base-300 bg-base-200 shadow-md"
+    >
+      <!-- Content mirrored from #box_info -->
+    </div>
+
+    <div
+      id="info_box_spinner_mobile"
+      class="htmx-indicator invisible absolute inset-0 z-10 flex items-center justify-center rounded-md [&.htmx-request]:visible"
+    >
+      <span class="loading loading-spinner loading-md"></span>
+    </div>
+  </div>
+  <label class="modal-backdrop" for="mobile_info_modal">Close</label>
+</div>

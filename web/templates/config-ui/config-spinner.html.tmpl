@@ -1,0 +1,20 @@
+{{ define "config-spinner.html.tmpl" }}
+  <!--
+    clearConfigSpinner: Hyperscript function that resets the config modal
+    spinner and HTMX request state. Called after HTMX events to ensure
+    the spinner is hidden and the form is no longer marked as in-progress.
+  -->
+  <script type="text/hyperscript">
+    def clearConfigSpinner()
+      if #config-form exists
+        remove .htmx-request from #config-form
+      end
+      if body matches .htmx-request
+        remove .htmx-request from body
+      end
+      if #config-spinner exists
+        add .hidden to #config-spinner
+      end
+    end
+  </script>
+{{ end }}

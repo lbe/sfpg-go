@@ -16,6 +16,7 @@ import (
 	"github.com/lbe/sfpg-go/internal/dbconnpool"
 	"github.com/lbe/sfpg-go/internal/gallerydb"
 	"github.com/lbe/sfpg-go/internal/queue"
+	"github.com/lbe/sfpg-go/internal/server/metrics"
 	"github.com/lbe/sfpg-go/internal/thumbnail"
 	"github.com/lbe/sfpg-go/internal/workerpool"
 )
@@ -37,6 +38,17 @@ func (s *ProcessingStats) Reset() {
 	s.NewlyInserted.Store(0)
 	s.SkippedInvalid.Store(0)
 	s.InFlight.Store(0)
+}
+
+// GetStats returns the current file-processing counters in the shape used by the metrics dashboard.
+func (s *ProcessingStats) GetStats() metrics.FileProcessingMetrics {
+	return metrics.FileProcessingMetrics{
+		TotalFound:      s.TotalFound.Load(),
+		AlreadyExisting: s.AlreadyExisting.Load(),
+		NewlyInserted:   s.NewlyInserted.Load(),
+		SkippedInvalid:  s.SkippedInvalid.Load(),
+		InFlight:        s.InFlight.Load(),
+	}
 }
 
 // getFileByPathFunc is used by checkIfFileModifiedCore to fetch a file from the DB.

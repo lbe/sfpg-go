@@ -46,7 +46,7 @@ func TestCalculateLockout(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := CalculateLockout(tt.failedAttempts, now, 3600)
+			got := CalculateLockout(tt.failedAttempts, now, 3600, 3)
 			if got.Valid != tt.wantValid {
 				t.Errorf("CalculateLockout() Valid = %v, want %v", got.Valid, tt.wantValid)
 			}
@@ -233,5 +233,63 @@ func TestFormatLockoutDuration(t *testing.T) {
 func TestLockoutThreshold(t *testing.T) {
 	if LockoutThreshold != 3 {
 		t.Errorf("LockoutThreshold = %v, want 3", LockoutThreshold)
+	}
+}
+
+func TestCalculateLockout_CustomThreshold(t *testing.T) {
+	now := int64(1000000)
+
+	tests := []struct {
+		name           string
+		failedAttempts int64
+		threshold      int64
+		wantValid      bool
+	}{
+		{
+			name:           "below custom threshold (1 < 5)",
+			failedAttempts: 1,
+			threshold:      5,
+			wantValid:      false,
+		},
+		{
+			name:           "at custom threshold (5 >= 5)",
+			failedAttempts: 5,
+			threshold:      5,
+			wantValid:      true,
+		},
+		{
+			name:           "below custom threshold (2 < 2) — exclusive",
+			failedAttempts: 1,
+			threshold:      2,
+			wantValid:      false,
+		},
+		{
+			name:           "at custom threshold (2 >= 2)",
+			failedAttempts: 2,
+			threshold:      2,
+			wantValid:      true,
+		},
+		{
+			name:           "threshold zero falls back to default (3)",
+			failedAttempts: 3,
+			threshold:      0,
+			wantValid:      true,
+		},
+		{
+			name:           "threshold negative falls back to default (3)",
+			failedAttempts: 3,
+			threshold:      -1,
+			wantValid:      true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := CalculateLockout(tt.failedAttempts, now, 3600, tt.threshold)
+			if got.Valid != tt.wantValid {
+				t.Errorf("CalculateLockout() Valid = %v, want %v (failedAttempts=%d, threshold=%d)",
+					got.Valid, tt.wantValid, tt.failedAttempts, tt.threshold)
+			}
+		})
 	}
 }

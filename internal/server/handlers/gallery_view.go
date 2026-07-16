@@ -16,7 +16,7 @@ func (h *GalleryHandlers) GalleryByID(w http.ResponseWriter, r *http.Request) {
 	idStr := r.PathValue("id")
 	folderID, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		h.deps.ServerError(w, r, fmt.Errorf("invalid folder id: %s", idStr))
+		h.ServerError(w, r, fmt.Errorf("invalid folder id: %s", idStr))
 		return
 	}
 
@@ -25,7 +25,7 @@ func (h *GalleryHandlers) GalleryByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	etagVersion := h.deps.GetETagVersion()
+	etagVersion := h.galleryOps.GetETagVersion()
 	// Get theme from cookie for ETag - theme changes must invalidate cache
 	theme := "dark" // default
 	if cookie, err := r.Cookie("theme"); err == nil && cookie.Value != "" {
@@ -58,9 +58,9 @@ func (h *GalleryHandlers) GalleryByID(w http.ResponseWriter, r *http.Request) {
 		"IsImageView": gd.IsImageView,
 		"Thumbs":      gd.Thumbs,
 	}
-	data = h.deps.AddCommonTemplateData(w, r, data, isHTMX)
+	data = h.AddCommonTemplateData(w, r, data, isHTMX)
 	if err := ui.RenderPage(w, "gallery", data, isHTMX); err != nil {
-		h.deps.ServerError(w, r, err)
+		h.ServerError(w, r, err)
 		return
 	}
 

@@ -135,4 +135,25 @@ func TestDiscoveryEnabled_ByDefault(t *testing.T) {
 	}
 }
 
+func TestDefaultConfig_CacheEnabledByDefault(t *testing.T) {
+	cfg := DefaultConfig()
+	if !cfg.EnableHTTPCache {
+		t.Fatal("Expected EnableHTTPCache=true in default config")
+	}
+}
+
+func TestDefaultConfig_CacheMaxEntrySizePositive(t *testing.T) {
+	cfg := DefaultConfig()
+	if cfg.CacheMaxEntrySize <= 0 {
+		t.Fatal("Expected CacheMaxEntrySize > 0 in default config")
+	}
+}
+
+func TestDefaultConfig_CacheMaxSizePositive(t *testing.T) {
+	cfg := DefaultConfig()
+	if cfg.CacheMaxSize <= 0 {
+		t.Fatal("Expected CacheMaxSize > 0 in default config")
+	}
+}
+
 // TestConfigExport_ToFile_ShowsDiff verifies that exporting to file shows current vs new YAML content.

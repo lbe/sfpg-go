@@ -1,3 +1,4 @@
+// Package testutil provides shared test helpers for HTML parsing and assertions.
 package testutil
 
 import (

@@ -1,0 +1,132 @@
+{{ define "config-server-tab" }}
+  <div class="form-control mb-4">
+    <label class="label">
+      <span class="label-text font-semibold">
+        Listener Address
+        {{ if index .HelpText "listener_address" }}
+          <div
+            class="tooltip tooltip-right"
+            data-tip="{{ index .HelpText "listener_address" }}"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke-width="1.5"
+              stroke="currentColor"
+              class="ml-1 inline h-4 w-4 cursor-help"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 5.25h.008v.008H12v-.008Z"
+              />
+            </svg>
+          </div>
+        {{ end }}
+      </span>
+    </label>
+    <input
+      type="text"
+      name="listener_address"
+      data-requires-restart="true"
+      placeholder="0.0.0.0"
+      class="input input-bordered w-64"
+      value="{{ if .Config }}{{ .Config.ListenerAddress }}{{ end }}"
+    />
+    <label class="label">
+      <span class="label-text-alt">
+        {{ if index .HelpText "listener_address" }}
+          {{ index .HelpText "listener_address" }}
+          {{ if index .ExampleValue "listener_address" }}
+            (Example: {{ index .ExampleValue "listener_address" }})
+          {{ end }}
+        {{ else if index .ExampleValue "listener_address" }}
+          Example:
+          {{ index .ExampleValue "listener_address" }}
+        {{ else }}
+          IP address or hostname to bind to (e.g., 0.0.0.0 for all interfaces).
+          Restart required.
+        {{ end }}
+      </span>
+    </label>
+  </div>
+
+  <div class="form-control mb-4">
+    <label class="label">
+      <span class="label-text font-semibold">
+        Listener Port
+        {{ if index .HelpText "listener_port" }}
+          <div
+            class="tooltip tooltip-right"
+            data-tip="{{ index .HelpText "listener_port" }}"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke-width="1.5"
+              stroke="currentColor"
+              class="ml-1 inline h-4 w-4 cursor-help"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 5.25h.008v.008H12v-.008Z"
+              />
+            </svg>
+          </div>
+        {{ end }}
+      </span>
+    </label>
+    <input
+      type="number"
+      name="listener_port"
+      data-requires-restart="true"
+      placeholder="8081"
+      class="input input-bordered w-32"
+      min="1"
+      max="65535"
+      value="{{ if .Config }}{{ .Config.ListenerPort }}{{ end }}"
+      required
+    />
+    <label class="label">
+      <span class="label-text-alt">
+        {{ if index .HelpText "listener_port" }}
+          {{ index .HelpText "listener_port" }}
+          {{ if index .ExampleValue "listener_port" }}
+            (Example: {{ index .ExampleValue "listener_port" }})
+          {{ end }}
+        {{ else if index .ExampleValue "listener_port" }}
+          Example:
+          {{ index .ExampleValue "listener_port" }}
+        {{ else }}
+          TCP port number (1-65535). Restart required.
+        {{ end }}
+      </span>
+    </label>
+  </div>
+
+  <div class="form-control mb-4">
+    <label class="label">
+      <span class="label-text font-semibold">Server Compression</span>
+    </label>
+    <label class="label cursor-pointer justify-start gap-4">
+      <input
+        type="checkbox"
+        name="server_compression_enable"
+        data-requires-restart="true"
+        class="checkbox-primary checkbox"
+        {{ if and .Config .Config.ServerCompressionEnable }}checked{{ end }}
+      />
+      <span class="label-text">Enable gzip/brotli compression</span>
+    </label>
+    <label class="label">
+      <span class="label-text-alt"
+        >Enable HTTP compression. Restart required.</span
+      >
+    </label>
+  </div>
+
+  {{ template "config-etag-field.html.tmpl" . }}
+{{ end }}

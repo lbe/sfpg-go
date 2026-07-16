@@ -56,7 +56,8 @@ func SafeImagePath(imagesDir, filePath string) (string, error) {
 
 // RemoveImagesDirPrefix removes images dir prefix with path traversal check.
 // normalizedImagesDir should be the pre-normalized result of filepath.ToSlash(imagesDir).
-// Returns an error if the resulting path contains path traversal sequences (..).
+// Returns an error if the resulting path contains path traversal sequences (..)
+// or if an absolute path lies outside the images directory.
 func RemoveImagesDirPrefix(normalizedImagesDir, path string) (string, error) {
 	// Normalize path to forward slashes for consistent database storage
 	normalizedPath := filepath.ToSlash(path)
@@ -72,7 +73,20 @@ func RemoveImagesDirPrefix(normalizedImagesDir, path string) (string, error) {
 		return normalizedPath, nil
 	}
 
-	result := strings.TrimPrefix(normalizedPath, normalizedImagesDir+"/")
+	// Strip trailing slash so prefix matching is consistent regardless of
+	// whether the caller passed a trailing slash or not.
+	cleanDir := strings.TrimSuffix(normalizedImagesDir, "/")
+
+	// Reject absolute paths that are not under the images directory.
+	// Relative paths are implicitly under the images dir (they will be
+	// resolved relative to it at processing time).
+	if filepath.IsAbs(normalizedPath) &&
+		normalizedPath != cleanDir &&
+		!strings.HasPrefix(normalizedPath, cleanDir+"/") {
+		return "", fmt.Errorf("invalid path: %q is outside images directory %q", path, normalizedImagesDir)
+	}
+
+	result := strings.TrimPrefix(normalizedPath, cleanDir+"/")
 
 	return result, nil
 }

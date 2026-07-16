@@ -118,7 +118,8 @@ func NeedsFolderTileUpdate(ctx context.Context, cpcRo *dbconnpool.CpConn, folder
 
 // WriteFileInTx performs all database writes for a single processed file within
 // the provided transaction. It handles: UpsertPathChain, DeleteInvalidFileByPath,
-// UpsertExif, UpsertThumbnail (if needed), and UpdateFolderTileChain.
+// UpsertExif, UpsertXMP (raw + properties, if captured), UpsertThumbnail (if
+// needed), and UpdateFolderTileChain.
 //
 // The caller (FlushFunc) manages BeginTx/Commit/Rollback. This function only
 // executes SQL statements within the provided tx.
@@ -161,6 +162,9 @@ func WriteFileInTx(ctx context.Context, imp *gallerylib.Importer, f *File) error
 			slog.Error("upsert exif", "path", f.Path, "err", upsertErr)
 		}
 	}
+
+	// 3b. Upsert XMP if captured (non-fatal)
+	upsertFileXMP(ctx, q, f)
 
 	// 4. Check if thumbnail needed.
 	// When !f.Exists the file row is new (it did not exist before UpsertPathChain

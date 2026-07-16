@@ -43,6 +43,91 @@ func (p *testConnPool) DB() *sql.DB             { return nil }
 func (p *testConnPool) NumIdleConnections() int { return 0 }
 func (p *testConnPool) NumConnections() int64   { return 0 }
 
+// --- Fake ConfigSaver ---
+
+// fakeConfigSaver implements config.ConfigSaver for handler and config package tests.
+// It stores all saved key-value pairs in memory, enabling verification of what
+// was persisted without requiring a real database connection.
+type fakeConfigSaver struct {
+	Saved    map[string]string
+	SaveErr  error
+	SaveFunc func(ctx context.Context, key, value string) error
+}
+
+// NewFakeConfigSaver returns a ready-to-use fakeConfigSaver with an initialized map.
+func NewFakeConfigSaver() *fakeConfigSaver {
+	return &fakeConfigSaver{
+		Saved: make(map[string]string),
+	}
+}
+
+// UpsertConfigValueOnly implements config.ConfigSaver.
+func (f *fakeConfigSaver) UpsertConfigValueOnly(ctx context.Context, arg gallerydb.UpsertConfigValueOnlyParams) error {
+	if f.SaveErr != nil {
+		return f.SaveErr
+	}
+	if f.SaveFunc != nil {
+		return f.SaveFunc(ctx, arg.Key, arg.Value)
+	}
+	f.Saved[arg.Key] = arg.Value
+	return nil
+}
+
+// --- Fake CredentialStore ---
+
+// fakeCredentialStore is a narrow fake implementation of interfaces.CredentialStore
+// for auth handler tests. All methods return safe zero values unless overridden.
+type fakeCredentialStore struct {
+	checkAccountLockoutFunc      func(ctx context.Context, username string) (bool, error)
+	getUserFunc                  func(ctx context.Context, username string) (*session.User, error)
+	recordFailedLoginAttemptFunc func(ctx context.Context, username string) error
+	clearLoginAttemptsFunc       func(ctx context.Context, username string) error
+	updateUsernameFunc           func(ctx context.Context, username string) error
+	updatePasswordFunc           func(ctx context.Context, passwordHash string) error
+}
+
+func (f *fakeCredentialStore) CheckAccountLockout(ctx context.Context, username string) (bool, error) {
+	if f.checkAccountLockoutFunc != nil {
+		return f.checkAccountLockoutFunc(ctx, username)
+	}
+	return false, nil
+}
+
+func (f *fakeCredentialStore) GetUser(ctx context.Context, username string) (*session.User, error) {
+	if f.getUserFunc != nil {
+		return f.getUserFunc(ctx, username)
+	}
+	return nil, sql.ErrNoRows
+}
+
+func (f *fakeCredentialStore) RecordFailedLoginAttempt(ctx context.Context, username string) error {
+	if f.recordFailedLoginAttemptFunc != nil {
+		return f.recordFailedLoginAttemptFunc(ctx, username)
+	}
+	return nil
+}
+
+func (f *fakeCredentialStore) ClearLoginAttempts(ctx context.Context, username string) error {
+	if f.clearLoginAttemptsFunc != nil {
+		return f.clearLoginAttemptsFunc(ctx, username)
+	}
+	return nil
+}
+
+func (f *fakeCredentialStore) UpdateUsername(ctx context.Context, username string) error {
+	if f.updateUsernameFunc != nil {
+		return f.updateUsernameFunc(ctx, username)
+	}
+	return nil
+}
+
+func (f *fakeCredentialStore) UpdatePassword(ctx context.Context, passwordHash string) error {
+	if f.updatePasswordFunc != nil {
+		return f.updatePasswordFunc(ctx, passwordHash)
+	}
+	return nil
+}
+
 // --- Fake HandlerQueries ---
 
 // fakeHandlerQueries is a fake implementation of interfaces.HandlerQueries for testing.
@@ -152,76 +237,75 @@ func (l lightboxList) GetFileViewsByFolderIDOrderByFileName(ctx context.Context,
 	return l.images, nil
 }
 
-// --- Metadata Queries Mocks ---
+// --- Per-group narrow mocks ---
 
-// mockServerDeps implements interfaces.ServerDeps for handler unit tests.
-// All methods return safe zero values; override fields for specific test behavior.
-type mockServerDeps struct {
+// mockConfigOps is a narrow fake implementation of interfaces.ConfigOps for
+// config handler tests. It also implements GetConfig() so it can be used where
+// a ServerDeps-style config accessor is required.
+type mockConfigOps struct {
+	Cfg                       *config.Config
+	InvalidateHTTPCacheCalled bool
+}
+
+func (m *mockConfigOps) UpdateConfigWithPrecedence(cfg *config.Config, changedFields []string) {
+	m.Cfg = cfg
+}
+func (m *mockConfigOps) ApplyConfig()                   {}
+func (m *mockConfigOps) InvalidateHTTPCache()           { m.InvalidateHTTPCacheCalled = true }
+func (m *mockConfigOps) SetPreloadEnabled(enabled bool) {}
+func (m *mockConfigOps) SetRestartRequired(b bool)      {}
+func (m *mockConfigOps) TriggerRestart()                {}
+func (m *mockConfigOps) GetConfig() *config.Config      { return m.Cfg }
+
+// mockGalleryOps is a narrow fake implementation of interfaces.GalleryOps for
+// gallery handler tests.
+type mockGalleryOps struct {
 	HQ            interfaces.HandlerQueries
 	MQ            interfaces.MetadataQueries
 	ConfigQueries config.ConfigQueries
-	Cfg           *config.Config
-	ImgDir        string
 	ETag          string
-	BatchLoad     interfaces.StartCacheBatchLoadResult
-	BatchErr      error
-	CSRFToken     string
-	Authed        bool
-	User          *session.User
-	LockedOut     bool
-	LockoutErr    error
+	ImgDir        string
 }
 
-func (m *mockServerDeps) CheckAccountLockout(ctx context.Context, username string) (bool, error) {
-	return m.LockedOut, m.LockoutErr
-}
-func (m *mockServerDeps) GetUser(ctx context.Context, username string) (*session.User, error) {
-	return m.User, nil
-}
-func (m *mockServerDeps) RecordFailedLoginAttempt(ctx context.Context, username string) error {
-	return nil
-}
-func (m *mockServerDeps) ClearLoginAttempts(ctx context.Context, username string) error { return nil }
-func (m *mockServerDeps) UpdateUsername(ctx context.Context, username string) error     { return nil }
-func (m *mockServerDeps) UpdatePassword(ctx context.Context, passwordHash string) error { return nil }
-
-func (m *mockServerDeps) UpdateConfigWithPrecedence(cfg *config.Config, changedFields []string) {
-	m.Cfg = cfg
-}
-func (m *mockServerDeps) ApplyConfig()                   {}
-func (m *mockServerDeps) InvalidateHTTPCache()           {}
-func (m *mockServerDeps) SetPreloadEnabled(enabled bool) {}
-func (m *mockServerDeps) SetRestartRequired(b bool)      {}
-func (m *mockServerDeps) TriggerRestart()                {}
-
-func (m *mockServerDeps) GetHandlerQueries(cpc *dbconnpool.CpConn) interfaces.HandlerQueries {
+func (m *mockGalleryOps) GetHandlerQueries(cpc *dbconnpool.CpConn) interfaces.HandlerQueries {
 	return m.HQ
 }
-func (m *mockServerDeps) GetMetadataQueries(cpc *dbconnpool.CpConn) interfaces.MetadataQueries {
+func (m *mockGalleryOps) GetMetadataQueries(cpc *dbconnpool.CpConn) interfaces.MetadataQueries {
 	if m.MQ != nil {
 		return m.MQ
 	}
 	return mockMetadataQueries{}
 }
-func (m *mockServerDeps) GetConfigQueries(cpc *dbconnpool.CpConn) config.ConfigQueries {
+func (m *mockGalleryOps) GetConfigQueries(cpc *dbconnpool.CpConn) config.ConfigQueries {
 	if m.ConfigQueries != nil {
 		return m.ConfigQueries
 	}
 	return cpc.Queries
 }
-func (m *mockServerDeps) GetETagVersion() string { return m.ETag }
-func (m *mockServerDeps) ImagesDir() string      { return m.ImgDir }
+func (m *mockGalleryOps) GetETagVersion() string { return m.ETag }
+func (m *mockGalleryOps) ImagesDir() string      { return m.ImgDir }
 
-func (m *mockServerDeps) Shutdown()         {}
-func (m *mockServerDeps) TriggerDiscovery() {}
-func (m *mockServerDeps) ResetStats()       {}
-func (m *mockServerDeps) StartCacheBatchLoad() (interfaces.StartCacheBatchLoadResult, error) {
+// mockServerControl is a narrow fake implementation of interfaces.ServerControl
+// for server handler tests.
+type mockServerControl struct {
+	BatchLoad interfaces.StartCacheBatchLoadResult
+	BatchErr  error
+}
+
+func (m *mockServerControl) Shutdown()         {}
+func (m *mockServerControl) TriggerDiscovery() {}
+func (m *mockServerControl) ResetStats()       {}
+func (m *mockServerControl) StartCacheBatchLoad() (interfaces.StartCacheBatchLoadResult, error) {
 	return m.BatchLoad, m.BatchErr
 }
 
-func (m *mockServerDeps) GetConfig() *config.Config { return m.Cfg }
+// mockTemplateHelpers provides AddCommonTemplateData and ServerError for tests.
+type mockTemplateHelpers struct {
+	CSRFToken string
+	Authed    bool
+}
 
-func (m *mockServerDeps) AddCommonTemplateData(w http.ResponseWriter, r *http.Request, data map[string]any, fullPage bool) map[string]any {
+func (m *mockTemplateHelpers) AddCommonTemplateData(w http.ResponseWriter, r *http.Request, data map[string]any, fullPage bool) map[string]any {
 	if data == nil {
 		data = make(map[string]any)
 	}
@@ -229,9 +313,11 @@ func (m *mockServerDeps) AddCommonTemplateData(w http.ResponseWriter, r *http.Re
 	data["IsAuthenticated"] = m.Authed
 	return data
 }
-func (m *mockServerDeps) ServerError(w http.ResponseWriter, r *http.Request, err error) {
+func (m *mockTemplateHelpers) ServerError(w http.ResponseWriter, r *http.Request, err error) {
 	http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 }
+
+// --- Metadata Queries Mocks ---
 
 // mockMetadataQueries returns sql.ErrNoRows for all metadata queries.
 type mockMetadataQueries struct{}
@@ -295,17 +381,21 @@ func setupTestGalleryHandlers(t *testing.T, hq interfaces.HandlerQueries) *Galle
 	}
 
 	imagesDir := t.TempDir()
-	deps := &mockServerDeps{
-		HQ:        hq,
-		ImgDir:    imagesDir,
-		ETag:      "test-etag",
+	galleryOps := &mockGalleryOps{
+		HQ:     hq,
+		ImgDir: imagesDir,
+		ETag:   "test-etag",
+	}
+	helper := &mockTemplateHelpers{
 		CSRFToken: "test-csrf-token",
 		Authed:    true,
 	}
 	gh := NewGalleryHandlers(
 		errConnPool{getErr: errors.New("no db")},
 		context.Background(),
-		deps,
+		galleryOps,
+		helper.AddCommonTemplateData,
+		helper.ServerError,
 	)
 
 	gh.DBRoPool = &testConnPool{}

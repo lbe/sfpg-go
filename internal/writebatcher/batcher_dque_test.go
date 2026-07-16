@@ -968,6 +968,59 @@ func TestSubmit_Overflow_SendsDqNotify(t *testing.T) {
 	}
 }
 
+// TestSubmit_ErrQuotaExceeded verifies that when MaxDiskBytes is set and the
+// dque disk usage already meets or exceeds the quota, Submit returns
+// ErrQuotaExceeded instead of overflowing to disk.
+func TestSubmit_ErrQuotaExceeded(t *testing.T) {
+	gate := newFlushGate()
+	mq := &mockDQue[int]{
+		diskBytesFn: func() int64 { return 5000 },
+		enqueueFn: func(item *int) error {
+			t.Error("Enqueue should not be called when quota is exceeded")
+			return nil
+		},
+	}
+
+	db := testDB(t)
+	cfg := Config[int]{
+		BeginTx:      testBeginTx(db),
+		Flush:        blockFlush[int](gate),
+		MaxBatchSize: 1,
+		ChannelSize:  1,
+		MaxDiskBytes: 4096,
+		testQueue:    mq,
+	}
+
+	wb, err := New(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer func() {
+		gate.cleanup()
+		wb.Close()
+	}()
+
+	// Submit first item — worker picks it up and blocks in FlushFunc.
+	err = wb.Submit(1)
+	if err != nil {
+		t.Fatalf("Submit(1): %v", err)
+	}
+	gate.wait()
+
+	// Fill the channel (size 1).
+	err = wb.Submit(2)
+	if err != nil {
+		t.Fatalf("Submit(2): %v", err)
+	}
+
+	// Submit third item — channel full, overflows to dque path.
+	// diskBytesFn returns 5000 >= MaxDiskBytes (4096) → ErrQuotaExceeded.
+	err = wb.Submit(3)
+	if !errors.Is(err, ErrQuotaExceeded) {
+		t.Errorf("expected ErrQuotaExceeded, got %v", err)
+	}
+}
+
 // TestClose_DrainsDQue verifies that Close drains all items from both the
 // channel and the dque overflow queue before returning. It forces overflow
 // by blocking the worker, then calls Close and checks that every submitted
@@ -1487,6 +1540,68 @@ func TestGetStats_WithDQue(t *testing.T) {
 	}
 }
 
+// TestGetStats_DiskBytesFields verifies that GetStats reports DiskBytes and
+// MaxDiskBytes from the mock dque.
+func TestGetStats_DiskBytesFields(t *testing.T) {
+	mq := &mockDQue[int]{
+		sizeFn:      func() int { return 0 },
+		diskBytesFn: func() int64 { return 4096 },
+	}
+
+	db := testDB(t)
+	cfg := Config[int]{
+		BeginTx:      testBeginTx(db),
+		Flush:        func(ctx context.Context, tx *sql.Tx, batch []int) error { return nil },
+		MaxBatchSize: 100,
+		MaxDiskBytes: 10240,
+		testQueue:    mq,
+	}
+
+	wb, err := New(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer wb.Close()
+
+	stats := wb.GetStats()
+	if stats.DiskBytes != 4096 {
+		t.Errorf("expected DiskBytes = 4096, got %d", stats.DiskBytes)
+	}
+	if stats.MaxDiskBytes != 10240 {
+		t.Errorf("expected MaxDiskBytes = 10240, got %d", stats.MaxDiskBytes)
+	}
+	if !stats.DQueEnabled {
+		t.Error("expected DQueEnabled = true")
+	}
+	if stats.DQueSize != 0 {
+		t.Errorf("expected DQueSize = 0, got %d", stats.DQueSize)
+	}
+
+	// Also verify DiskBytes is 0 when diskBytesFn is not set (nil check).
+	mq2 := &mockDQue[int]{
+		sizeFn: func() int { return 0 },
+	}
+	cfg2 := Config[int]{
+		BeginTx:      testBeginTx(db),
+		Flush:        func(ctx context.Context, tx *sql.Tx, batch []int) error { return nil },
+		MaxBatchSize: 100,
+		testQueue:    mq2,
+	}
+	wb2, err := New(context.Background(), cfg2)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer wb2.Close()
+
+	stats2 := wb2.GetStats()
+	if stats2.DiskBytes != 0 {
+		t.Errorf("expected DiskBytes = 0 without diskBytesFn, got %d", stats2.DiskBytes)
+	}
+	if stats2.MaxDiskBytes != 0 {
+		t.Errorf("expected MaxDiskBytes = 0 without config, got %d", stats2.MaxDiskBytes)
+	}
+}
+
 // TestGetStats_DQueSize_AfterFlush verifies that DQueSize reports 0 after
 // overflowing items and flushing all of them.
 func TestGetStats_DQueSize_AfterFlush(t *testing.T) {
@@ -1879,12 +1994,13 @@ func TestReconfigure_CloseOldFirst(t *testing.T) {
 
 // mockDQue is a deterministic dqueQueue implementation for tests.
 type mockDQue[T any] struct {
-	sizeFn     func() int
-	dequeueFn  func() (*T, error)
-	enqueueFn  func(*T) error
-	turboOnFn  func() error
-	closeFn    func() error
-	enqueueLog []*T
+	sizeFn      func() int
+	diskBytesFn func() int64
+	dequeueFn   func() (*T, error)
+	enqueueFn   func(*T) error
+	turboOnFn   func() error
+	closeFn     func() error
+	enqueueLog  []*T
 }
 
 func (m *mockDQue[T]) Size() int {
@@ -1907,6 +2023,13 @@ func (m *mockDQue[T]) Enqueue(item *T) error {
 		return m.enqueueFn(item)
 	}
 	return nil
+}
+
+func (m *mockDQue[T]) DiskBytes() int64 {
+	if m.diskBytesFn != nil {
+		return m.diskBytesFn()
+	}
+	return 0
 }
 
 func (m *mockDQue[T]) TurboOn() error {

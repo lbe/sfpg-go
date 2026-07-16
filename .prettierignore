@@ -1,4 +1,5 @@
 # Folders to skip
+.agents/
 node_modules/
 bin/
 tmp/

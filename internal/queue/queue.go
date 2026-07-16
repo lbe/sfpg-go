@@ -22,10 +22,13 @@ var (
 	ErrEmptyQueue = errors.New("queue is empty")
 	// ErrClosedQueue is returned when operating on a closed queue.
 	ErrClosedQueue = errors.New("queue is closed")
+	// ErrQueueFull is returned when attempting to Enqueue or AddFront on a queue
+	// that has reached its maximum capacity.
+	ErrQueueFull = errors.New("queue is full")
 )
 
 // Queue is a generic, thread-safe, dynamically resizing double-ended queue (deque).
-// Use NewQueue to create a queue. All methods are safe for concurrent use.
+// Use NewQueue or NewBoundedQueue to create a queue. All methods are safe for concurrent use.
 type Queue[T any] struct {
 	mu            sync.Mutex // Mutex to protect access to the queue's internal state.
 	buf           []T        // The underlying circular buffer.
@@ -37,6 +40,7 @@ type Queue[T any] struct {
 	tail          int        // Index where the next element will be added to the back.
 	size          int        // Current number of elements in the queue.
 	closed        bool       // Flag indicating if the queue has been closed.
+	maxCap        int        // Maximum capacity (0 = unlimited).
 }
 
 // QueueStats holds various statistics about the queue's current state.
@@ -47,6 +51,7 @@ type QueueStats struct {
 	CtRemoveFront int  // Total number of RemoveFront operations.
 	Size          int  // Current number of items in the queue.
 	Capacity      int  // Current capacity of the queue's internal buffer.
+	MaxCapacity   int  // Maximum capacity (0 = unlimited).
 	HeadIndex     int  // Current head index of the internal buffer.
 	TailIndex     int  // Current tail index of the internal buffer.
 	IsClosed      bool // Whether the queue is closed.
@@ -54,9 +59,25 @@ type QueueStats struct {
 
 // NewQueue creates a new queue with at least initialCap capacity.
 // The actual capacity will be the next power of two greater than or equal to initialCap.
+// The queue is unbounded (no maximum capacity).
 func NewQueue[T any](initialCap int) *Queue[T] {
+	return newQueue[T](initialCap, 0)
+}
+
+// NewBoundedQueue creates a new queue with at least initialCap capacity and a
+// maximum capacity of maxCap. Once the queue reaches maxCap items, Enqueue/AddBack
+// and AddFront return ErrQueueFull. A maxCap of 0 (or less than initialCap) means
+// the queue is unbounded.
+func NewBoundedQueue[T any](initialCap int, maxCap int) *Queue[T] {
+	return newQueue[T](initialCap, maxCap)
+}
+
+func newQueue[T any](initialCap int, maxCap int) *Queue[T] {
 	if initialCap < minCapacity {
 		initialCap = minCapacity
+	}
+	if maxCap > 0 && maxCap < initialCap {
+		initialCap = maxCap
 	}
 	// Ensure power of two
 	cap := minCapacity
@@ -69,6 +90,7 @@ func NewQueue[T any](initialCap int) *Queue[T] {
 		tail:   0,
 		size:   0,
 		closed: false,
+		maxCap: maxCap,
 	}
 }
 
@@ -83,6 +105,7 @@ func (q *Queue[T]) Stats() QueueStats {
 		CtRemoveFront: q.ctRemoveFront,
 		Size:          q.size,
 		Capacity:      len(q.buf),
+		MaxCapacity:   q.maxCap,
 		HeadIndex:     q.head,
 		TailIndex:     q.tail,
 		IsClosed:      q.closed,
@@ -96,11 +119,19 @@ func (q *Queue[T]) Len() int {
 	return q.size
 }
 
-// Cap returns the current capacity of the queue.
+// Cap returns the current capacity of the queue (internal buffer size).
 func (q *Queue[T]) Cap() int {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	return len(q.buf)
+}
+
+// MaxCap returns the maximum capacity of the queue.
+// Returns 0 if the queue is unbounded.
+func (q *Queue[T]) MaxCap() int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.maxCap
 }
 
 // IsEmpty returns true if the queue is empty.
@@ -141,11 +172,15 @@ func (q *Queue[T]) Push(item T) error {
 
 // AddBack adds an item to the back of the queue.
 // Returns ErrClosedQueue if the queue is closed.
+// Returns ErrQueueFull if the queue has reached its maximum capacity.
 func (q *Queue[T]) AddBack(item T) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if q.closed {
 		return ErrClosedQueue
+	}
+	if q.maxCap > 0 && q.size >= q.maxCap {
+		return ErrQueueFull
 	}
 	if q.size == len(q.buf) {
 		q.resize(len(q.buf) << 1)
@@ -159,13 +194,15 @@ func (q *Queue[T]) AddBack(item T) error {
 
 // AddFront adds an item to the front of the queue.
 // Returns ErrClosedQueue if the queue is closed.
+// Returns ErrQueueFull if the queue has reached its maximum capacity.
 func (q *Queue[T]) AddFront(item T) error {
 	q.mu.Lock()
-	defer func() {
-		q.mu.Unlock()
-	}()
+	defer q.mu.Unlock()
 	if q.closed {
 		return ErrClosedQueue
+	}
+	if q.maxCap > 0 && q.size >= q.maxCap {
+		return ErrQueueFull
 	}
 	if q.size == len(q.buf) {
 		q.resize(len(q.buf) << 1)

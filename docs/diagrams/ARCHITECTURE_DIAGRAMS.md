@@ -449,8 +449,8 @@ graph TD
         Router[router.go: Routes]
         BatchWrite[batched_write.go: BatchedWrite]
         BatchFlush[batched_write_flush.go: flushBatchedWrites]
-        BatchAdapter[batcher_adapter.go: Adapter]
-        CacheSubmit[cache_submit.go: submitCacheWrite]
+        BatchWiring[batcher_wiring.go: fileBatcher]
+        CacheSubmit[infrastructure_service.go: submitCacheWrite]
     end
 
     subgraph "Handler Groups"
@@ -514,7 +514,7 @@ graph TD
     App --> AuthSvc
     App --> BatchWrite
     App --> BatchFlush
-    App --> BatchAdapter
+    App --> BatchWiring
     App --> CacheBatch
     App --> CachePreload
     App --> ModuleState
@@ -537,8 +537,8 @@ graph TD
     Router --> LogMW
 
     CacheMW --> CacheSubmit
-    CacheSubmit --> BatchAdapter
-    BatchAdapter --> WriteBatch
+    CacheSubmit --> WriteBatch
+    BatchWiring --> WriteBatch
     WriteBatch --> DQue
     DQue --> Flock
 
@@ -547,7 +547,7 @@ graph TD
     ConfigH --> TemplateData
     AuthSvc --> Security
 
-    FileProc --> BatchAdapter
+    FileProc --> BatchWiring
     FileProc --> PathUtil
     FileProc --> GalleryLib
 
@@ -562,7 +562,7 @@ graph TD
     style SessionMgr fill:#9cf
     style BatchWrite fill:#e1e1ff
     style BatchFlush fill:#e1e1ff
-    style BatchAdapter fill:#e1e1ff
+    style BatchWiring fill:#e1e1ff
     style DQue fill:#e1f1ff
     style Flock fill:#e1f1ff
     style GalleryLib fill:#e1f5e1

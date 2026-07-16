@@ -1,0 +1,23 @@
+<!-- Server Restart Overlay -->
+<div
+  id="restart-overlay"
+  class="fixed inset-0 z-[9999] flex hidden flex-col items-center justify-center bg-base-300/95"
+  _="install RestartOverlay"
+>
+  <div
+    class="loading loading-spinner loading-lg mb-8 h-24 w-24 text-primary"
+  ></div>
+  <h2 class="mb-4 text-3xl font-bold">Restarting Server</h2>
+  <p class="mb-2 text-lg text-base-content/70">
+    Please wait while the server restarts...
+  </p>
+  <p class="text-xl"><span id="restart-counter">0</span> seconds</p>
+  <!-- HTMX polling for health check - only polls when restartStartTime is set -->
+  <div
+    id="restart-poller"
+    hx-get="/health"
+    hx-trigger="every 1s [window.restartStartTime !== null]"
+    hx-swap="none"
+    _="install RestartPoller"
+  ></div>
+</div>
