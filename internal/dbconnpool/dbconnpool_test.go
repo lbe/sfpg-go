@@ -826,7 +826,7 @@ func TestPragmaOptimize(t *testing.T) {
 	}
 
 	// Should not panic or error
-	cpc.PragmaOptimize(ctx)
+	cpc.PragmaOptimize(ctx, PragmaOptimizeDefault)
 
 	pool.Put(cpc)
 }
@@ -1329,7 +1329,7 @@ func TestPragmaOptimize_Error(t *testing.T) {
 	}
 
 	// Should not panic despite the closed connection.
-	cpc.PragmaOptimize(ctx)
+	cpc.PragmaOptimize(ctx, PragmaOptimizeDefault)
 
 	pool.Put(cpc)
 }

@@ -224,13 +224,20 @@ func (app *App) authMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// AddCommonTemplateData adds common template data (auth state, CSRF token, theme, and gallery statistics) to template data map.
+// AddCommonTemplateData adds common template data (auth state, theme, and gallery statistics) to template data map.
 // When partial is true, skips GalleryStats (expensive getGalleryStatistics) since partials (HTMX swaps, modals, toasts)
 // don't include the about modal. Full pages need GalleryStats for the about modal in the layout.
 func (app *App) AddCommonTemplateData(w http.ResponseWriter, r *http.Request, data map[string]any, partial bool) map[string]any {
 	authenticated := app.IsAuthenticated(w, r)
-	data = template.AddCommonData(data, authenticated, app.CSRFTokenForPage(w, r, authenticated))
-	data["Theme"] = app.getEffectiveTheme(r)
+	data = template.AddCommonData(data, authenticated)
+	// Theme: use site default (CurrentTheme) for SSR; client cookie overrides via hyperscript.
+	// Do NOT use getEffectiveTheme(r) which reads the request cookie — that would vary cached
+	// HTML per-user. The cookie is applied client-side in body-behavior.html.tmpl.
+	currentTheme := "dark"
+	if cfg := app.GetConfig(); cfg != nil && cfg.CurrentTheme != "" {
+		currentTheme = cfg.CurrentTheme
+	}
+	data["Theme"] = currentTheme
 	data["Version"] = app.RuntimeManager.version
 
 	if !partial {
@@ -288,19 +295,6 @@ func (app *App) AddCommonTemplateData(w http.ResponseWriter, r *http.Request, da
 	}
 
 	return data
-}
-
-// getEffectiveTheme returns the effective theme for a request.
-// Priority: 1) Cookie (if valid), 2) Server default.
-func (app *App) getEffectiveTheme(r *http.Request) string {
-	cfg := app.GetConfig()
-	themes := []string{}
-	defaultTheme := "dark"
-	if cfg != nil {
-		themes = cfg.Themes
-		defaultTheme = cfg.CurrentTheme
-	}
-	return app.GetEffectiveTheme(r, func() []string { return themes }, defaultTheme)
 }
 
 // GalleryStats holds statistics about the gallery for display in the about modal.
@@ -399,6 +393,9 @@ func (app *App) unlockAccountFromTask(ctx context.Context, username string) erro
 // Updates module_state for "discovery" so batch load can guard against concurrent discovery.
 func (app *App) TriggerDiscovery() {
 	ctx := app.getCtx()
+
+	app.discoveryRunning.Store(true)
+	defer app.discoveryRunning.Store(false)
 
 	if app.SubsystemManager.moduleStateService != nil {
 		if err := app.SubsystemManager.moduleStateService.SetActive(ctx, "discovery", true); err != nil {

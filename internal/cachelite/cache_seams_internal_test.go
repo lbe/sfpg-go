@@ -4,16 +4,17 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/lbe/sfpg-go/internal/dbconnpool"
 )
 
-func TestGetCacheSizeBytes_NilResult(t *testing.T) {
+func TestGetCacheSizeBytes_NullResult(t *testing.T) {
 	orig := getHttpCacheSizeBytes
-	getHttpCacheSizeBytes = func(ctx context.Context, cpc *dbconnpool.CpConn) (interface{}, error) {
-		return nil, nil
+	getHttpCacheSizeBytes = func(ctx context.Context, cpc *dbconnpool.CpConn) (int64, error) {
+		return 0, nil
 	}
 	t.Cleanup(func() { getHttpCacheSizeBytes = orig })
 
@@ -26,19 +27,19 @@ func TestGetCacheSizeBytes_NilResult(t *testing.T) {
 	}
 }
 
-func TestGetCacheSizeBytes_UnexpectedType(t *testing.T) {
+func TestGetCacheSizeBytes_HookError(t *testing.T) {
 	orig := getHttpCacheSizeBytes
-	getHttpCacheSizeBytes = func(ctx context.Context, cpc *dbconnpool.CpConn) (interface{}, error) {
-		return "not-an-int", nil
+	getHttpCacheSizeBytes = func(ctx context.Context, cpc *dbconnpool.CpConn) (int64, error) {
+		return 0, fmt.Errorf("hook error: simulated database failure")
 	}
 	t.Cleanup(func() { getHttpCacheSizeBytes = orig })
 
 	_, err := GetCacheSizeBytes(context.Background(), createTestDBPoolInternal(t))
 	if err == nil {
-		t.Fatal("expected error for unexpected type")
+		t.Fatal("expected error from hook")
 	}
-	if !strings.Contains(err.Error(), "unexpected type from GetHttpCacheSizeBytes: string") {
-		t.Fatalf("expected error containing 'unexpected type from GetHttpCacheSizeBytes: string', got %v", err)
+	if !strings.Contains(err.Error(), "hook error: simulated database failure") {
+		t.Fatalf("expected error containing 'hook error: simulated database failure', got %v", err)
 	}
 }
 

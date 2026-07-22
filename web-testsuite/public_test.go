@@ -135,7 +135,7 @@ func TestPublicRoutes(t *testing.T) {
 			num: 14, name: "theme-modal", method: "GET", path: "/theme/modal",
 			expected: http.StatusOK,
 		},
-		// #15: POST /theme → 200 (requires CSRF after WP-12)
+		// #15: POST /theme → 200 (same-origin COP)
 		{
 			num: 15, name: "theme-post", method: "POST", path: "/theme",
 			body:     url.Values{"theme": {"dark"}},
@@ -197,34 +197,20 @@ func TestPublicRoutes(t *testing.T) {
 				path = "/login"
 			}
 
-			// For login and theme tests, extract CSRF from login form (uncached)
-			if rt.num == 15 || rt.num == 16 || rt.num == 17 {
-				csrfResp, err := client.Get(serverURL + "/login-form")
-				if err != nil {
-					t.Fatalf("GET /login-form failed: %v", err)
+			// For login and theme tests, set form values directly
+			// (CrossOriginProtection handles request forgery at the router level).
+			if rt.num == 15 {
+				rt.body = url.Values{
+					"theme": {"dark"},
 				}
-				csrfToken := extractCSRFFromBody(t, csrfResp.Body)
-				csrfResp.Body.Close()
-				if csrfToken == "" {
-					t.Fatal("could not extract CSRF token for login/theme test")
+			} else if rt.num == 16 || rt.num == 17 {
+				pwd := "admin"
+				if rt.num == 16 {
+					pwd = "wrong"
 				}
-
-				if rt.num == 15 {
-					rt.body = url.Values{
-						"csrf_token": {csrfToken},
-						"theme":      {"dark"},
-					}
-				} else {
-
-					pwd := "admin"
-					if rt.num == 16 {
-						pwd = "wrong"
-					}
-					rt.body = url.Values{
-						"username":   {"admin"},
-						"password":   {pwd},
-						"csrf_token": {csrfToken},
-					}
+				rt.body = url.Values{
+					"username": {"admin"},
+					"password": {pwd},
 				}
 			}
 

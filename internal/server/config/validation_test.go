@@ -648,6 +648,32 @@ func TestValidateSetting_Comprehensive(t *testing.T) {
 			value:   "1",
 			wantErr: false,
 		},
+		// http_cache_body_codec validation
+		{
+			name:    "valid codec zstd-1",
+			key:     "http_cache_body_codec",
+			value:   "zstd-1",
+			wantErr: false,
+		},
+		{
+			name:    "valid codec gzip-6",
+			key:     "http_cache_body_codec",
+			value:   "gzip-6",
+			wantErr: false,
+		},
+		{
+			name:    "valid codec identity",
+			key:     "http_cache_body_codec",
+			value:   "identity",
+			wantErr: false,
+		},
+		{
+			name:    "invalid codec bogus",
+			key:     "http_cache_body_codec",
+			value:   "bogus",
+			wantErr: true,
+			errMsg:  "invalid http cache body codec",
+		},
 		// unknown key (should not error)
 		{
 			name:    "unknown key",
@@ -726,7 +752,6 @@ func TestSetValueFromString_Comprehensive(t *testing.T) {
 		{"session_http_only_invalid", "session_http_only", "not-a-bool", true, "invalid session http only", nil},
 		{"session_secure_true", "session_secure", "true", false, "", func(c *Config) bool { return c.SessionSecure == true }},
 		{"session_secure_false", "session_secure", "false", false, "", func(c *Config) bool { return c.SessionSecure == false }},
-		{"server_compression_enable_true", "server_compression_enable", "true", false, "", func(c *Config) bool { return c.ServerCompressionEnable == true }},
 		{"enable_http_cache_false", "enable_http_cache", "false", false, "", func(c *Config) bool { return c.EnableHTTPCache == false }},
 		{"enable_cache_preload_true", "enable_cache_preload", "true", false, "", func(c *Config) bool { return c.EnableCachePreload == true }},
 		{"enable_cache_preload_false", "enable_cache_preload", "false", false, "", func(c *Config) bool { return c.EnableCachePreload == false }},

@@ -112,6 +112,44 @@
         >
       </label>
     </div>
+
+    <div class="form-control mb-4">
+      <label class="label">
+        <span class="label-text font-semibold">HTTP Cache Body Codec</span>
+      </label>
+      <select name="http_cache_body_codec" class="select select-bordered w-64">
+        <option
+          value="zstd-1"
+          {{ if and .Config (eq .Config.HTTPCacheBodyCodec "zstd-1") }}
+            selected
+          {{ end }}
+        >
+          ZSTD Level 1 (default, recommended)
+        </option>
+        <option
+          value="gzip-6"
+          {{ if and .Config (eq .Config.HTTPCacheBodyCodec "gzip-6") }}
+            selected
+          {{ end }}
+        >
+          Gzip Level 6 (legacy baseline)
+        </option>
+        <option
+          value="identity"
+          {{ if and .Config (eq .Config.HTTPCacheBodyCodec "identity") }}
+            selected
+          {{ end }}
+        >
+          None (store uncompressed)
+        </option>
+      </select>
+      <label class="label">
+        <span class="label-text-alt"
+          >Changing codec affects new cache writes only; existing entries decode
+          automatically.</span
+        >
+      </label>
+    </div>
   </fieldset>
 
   <fieldset

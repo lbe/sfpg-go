@@ -17,25 +17,6 @@ import (
 	"golang.org/x/net/html"
 )
 
-func TestConfigHandlers_ConfigPost_InvalidCSRF(t *testing.T) {
-	if err := ui.ParseTemplates(web.FS); err != nil {
-		t.Fatalf("ParseTemplates failed: %v", err)
-	}
-
-	ch := setupTestConfigHandlers(t, &mockConfigServiceForConfig{}, &mockAuthServiceForConfig{})
-	ch.SessionManager = &mockSessionManagerAuthenticatedInvalidCSRF{}
-
-	req := httptest.NewRequest(http.MethodPost, "/config", strings.NewReader("site_name=Test"))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	w := httptest.NewRecorder()
-
-	ch.ConfigPost(w, req)
-
-	if w.Code != http.StatusForbidden {
-		t.Errorf("expected status 403, got %d", w.Code)
-	}
-}
-
 func TestConfigHandlers_ConfigPost_WithThemesInPayload(t *testing.T) {
 	if err := ui.ParseTemplates(web.FS); err != nil {
 		t.Fatalf("ParseTemplates failed: %v", err)
@@ -59,7 +40,7 @@ func TestConfigHandlers_ConfigPost_WithThemesInPayload(t *testing.T) {
 	ch := setupTestConfigHandlers(t, mockSvc, &mockAuthServiceForConfig{})
 	ch.SessionManager.(*mockSessionManagerAuth).authenticated = true
 
-	body := "site_name=Test&themes=light&themes=dark&csrf_token=valid"
+	body := "site_name=Test&themes=light&themes=dark"
 	req := httptest.NewRequest(http.MethodPost, "/config", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
@@ -116,7 +97,7 @@ func TestConfigHandlers_ConfigPost_ThemesPersisted(t *testing.T) {
 	ch.SessionManager.(*mockSessionManagerAuth).authenticated = true
 
 	// Submit new themes via the form — includes a theme NOT in the old config.
-	body := "themes=light&themes=dark&themes=coffee&csrf_token=valid"
+	body := "themes=light&themes=dark&themes=coffee"
 	req := httptest.NewRequest(http.MethodPost, "/config", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
@@ -293,10 +274,10 @@ func TestConfigHandlers_ConfigPost_UncheckedCheckboxes(t *testing.T) {
 	// SetPreloadEnabled removed; handled by deps
 	ch.SessionManager.(*mockSessionManagerAuth).authenticated = true
 
-	// POST with only csrf_token — no config fields. Should NOT trigger any field
+	// POST with empty body — no config fields. Should NOT trigger any field
 	// processing because missing checkboxes are only defaulted when the form
 	// contains actual config fields.
-	req := httptest.NewRequest(http.MethodPost, "/config", strings.NewReader("csrf_token=valid"))
+	req := httptest.NewRequest(http.MethodPost, "/config", nil)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 
@@ -323,7 +304,7 @@ func TestConfigHandlers_ConfigPost_CredentialValidationErrors(t *testing.T) {
 	ch := setupTestConfigHandlers(t, &mockConfigServiceForConfig{}, mockAuthSvc)
 	ch.SessionManager.(*mockSessionManagerAuth).authenticated = true
 
-	req := httptest.NewRequest(http.MethodPost, "/config", strings.NewReader("csrf_token=valid"))
+	req := httptest.NewRequest(http.MethodPost, "/config", nil)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 
@@ -469,7 +450,7 @@ func TestConfigHandlers_ConfigPost_UpdateCredentialsError(t *testing.T) {
 	ch := setupTestConfigHandlers(t, &mockConfigServiceForConfig{}, mockAuthSvc)
 	ch.SessionManager.(*mockSessionManagerAuth).authenticated = true
 
-	req := httptest.NewRequest(http.MethodPost, "/config", strings.NewReader("csrf_token=valid"))
+	req := httptest.NewRequest(http.MethodPost, "/config", nil)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 
@@ -606,7 +587,7 @@ func TestConfigPostRejectsInvalidImageDirectory(t *testing.T) {
 			ch := setupTestConfigHandlers(t, mockSvc, &mockAuthServiceForConfig{})
 			ch.SessionManager.(*mockSessionManagerAuth).authenticated = true
 
-			body := "image_directory=" + tt.imageDir + "&csrf_token=valid"
+			body := "image_directory=" + tt.imageDir
 			req := httptest.NewRequest(http.MethodPost, "/config", strings.NewReader(body))
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 			w := httptest.NewRecorder()
@@ -775,7 +756,7 @@ func TestConfigHandlers_ConfigPost_WrongCurrentPassword(t *testing.T) {
 	ch := setupTestConfigHandlers(t, &mockConfigServiceForConfig{}, mockAuthSvc)
 	ch.SessionManager.(*mockSessionManagerAuth).authenticated = true
 
-	body := "admin_username=admin&admin_current_password=wrongpassword&admin_new_password=NewPass1!&admin_confirm_password=NewPass1!&csrf_token=valid"
+	body := "admin_username=admin&admin_current_password=wrongpassword&admin_new_password=NewPass1!&admin_confirm_password=NewPass1!"
 	req := httptest.NewRequest(http.MethodPost, "/config", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()

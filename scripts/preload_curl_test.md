@@ -52,6 +52,15 @@ Expected: one row per file (image) in folder 1; columns match `file_view`; order
 
 ## 3. Curl command to retrieve gallery/1
 
+**Cache key format (v3):** `METHOD:/path?query|Variant=<variant>`
+
+| Variant           | When                                                               |
+| ----------------- | ------------------------------------------------------------------ |
+| `full`            | Gallery full page (non-partial)                                    |
+| `gallery-content` | HTMX gallery folder-tile partial                                   |
+| `box_info`        | `/info/folder/`, `/info/image/` (any request style)                |
+| `lightbox-ui`     | `/lightbox/` (all HX-Target values collapse via NormalizedVariant) |
+
 **Full-page (no HTMX)** — same as browser loading `/gallery/1`:
 
 ```bash
@@ -59,7 +68,9 @@ curl -s -w "\nHTTP_CODE:%{http_code}\n" \
   "http://localhost:8081/gallery/1?v=20260202-04"
 ```
 
-Optional: use the app’s current ETag version for `v=` (check response header `Etag` or app config). If omitted, the server may redirect or serve; the `v` query matches cache keys.
+Cache key: `GET:/gallery/1?v=20260202-04|Variant=full`
+
+Optional: use the app's current ETag version for `v=` (check response header `Etag` or app config). If omitted, the server may redirect or serve; the `v` query matches cache keys.
 
 **HTMX partial (folder tile)** — same as clicking a folder tile:
 
@@ -70,6 +81,8 @@ curl -s -w "\nHTTP_CODE:%{http_code}\n" \
   -H "Accept-Encoding: gzip" \
   "http://localhost:8081/gallery/1?v=20260202-04"
 ```
+
+Cache key: `GET:/gallery/1?v=20260202-04|Variant=gallery-content`
 
 **Expected (both)**:
 
@@ -101,26 +114,28 @@ While gallery routes are currently public, administrative routes (like `/config`
 
 Use these against a running server (e.g. `localhost:8081`) and compare with SQL expectations and response headers.
 
+Cache keys use v3 format: `METHOD:/path?query|Variant=<name>`.
+
 ```bash
-# Full-page gallery/1
+# Full-page gallery/1 → |Variant=full
 curl -s -o /tmp/gallery1_full.html -w "HTTP_CODE:%{http_code}\n" \
   "http://localhost:8081/gallery/1?v=20260202-04"
 
-# HTMX partial gallery/1 (preload variant)
+# HTMX partial gallery/1 → |Variant=gallery-content
 curl -s -o /tmp/gallery1_partial.html -w "HTTP_CODE:%{http_code}\n" \
   -H "HX-Request: true" \
   -H "HX-Target: gallery-content" \
   -H "Accept-Encoding: gzip" \
   "http://localhost:8081/gallery/1?v=20260202-04"
 
-# Info folder (e.g. folder 9) — preload variant
+# Info folder (e.g. folder 9) → |Variant=box_info
 curl -s -o /tmp/info_folder_9.html -w "HTTP_CODE:%{http_code}\n" \
   -H "HX-Request: true" \
   -H "HX-Target: box_info" \
   -H "Accept-Encoding: gzip" \
   "http://localhost:8081/info/folder/9?v=20260202-04"
 
-# Lightbox (e.g. image 12)
+# Lightbox (e.g. image 12) → |Variant=lightbox-ui
 curl -s -o /tmp/lightbox_12.html -w "HTTP_CODE:%{http_code}\n" \
   -H "HX-Request: true" \
   -H "HX-Target: lightbox_content" \
@@ -128,4 +143,6 @@ curl -s -o /tmp/lightbox_12.html -w "HTTP_CODE:%{http_code}\n" \
   "http://localhost:8081/lightbox/12?v=20260202-04"
 ```
 
-Expected for each: `HTTP_CODE:200`. After preload, repeat the same curl and expect `X-Cache: HIT` in the response headers (check with `-D -` or `-v` and inspect headers).
+Expected for each: `HTTP_CODE:200`. Cache keys: gallery full → `|Variant=full`; gallery HTMX → `|Variant=gallery-content`; info → `|Variant=box_info`; lightbox → `|Variant=lightbox-ui`. After preload, repeat the same curl and expect `X-Cache: HIT` in the response headers (check with `-D -` or `-v` and inspect headers).
+
+For a full-gallery sweep with SQL summary, use `scripts/verify_http_cache_keys.sh` (requires running server + `SFPG_DB` pointing at `sfpg.db`).

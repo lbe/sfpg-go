@@ -3,7 +3,7 @@
  *
  * Mirrors the approach in web-testsuite/helpers_test.go:
  * - snapshot: GET /config/export/download (auth required) → store YAML
- * - restore: POST /config/import/commit with csrf_token + yaml (auth required)
+ * - restore: POST /config/import/commit with yaml (auth required)
  *
  * Use in test beforeAll/afterAll to isolate config-mutating tests.
  */
@@ -15,7 +15,7 @@ const BASE_URL = "http://localhost:8083";
 /**
  * Poll /health until the server is accepting requests, or timeout.
  */
-async function waitForServerHealth(
+export async function waitForServerHealth(
   request: APIRequestContext,
   timeoutMs = 30000,
 ): Promise<void> {
@@ -34,6 +34,73 @@ async function waitForServerHealth(
   throw new Error("Server did not become healthy in time");
 }
 
+function isConnectionRefused(err: unknown): boolean {
+  if (!(err instanceof Error)) {
+    return false;
+  }
+  const msg = err.message.toLowerCase();
+  return msg.includes("connection refused") || msg.includes("econnrefused");
+}
+
+/**
+ * Poll GET /gallery/1 until the server stops accepting connections.
+ * Mirrors web-testsuite waitForServerDown: call after a restart POST so the
+ * next waitForServer sees the new process, not the dying old one.
+ */
+export async function waitForServerDown(
+  request: APIRequestContext,
+  timeoutMs = 15000,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      await request.get("/gallery/1", { timeout: 2000 });
+    } catch (err) {
+      if (isConnectionRefused(err)) {
+        return true;
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  return false;
+}
+
+/**
+ * Poll GET /gallery/1 until the server responds with 200.
+ */
+export async function waitForServer(
+  request: APIRequestContext,
+  timeoutMs = 15000,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const resp = await request.get("/gallery/1", { timeout: 2000 });
+      if (resp.status() === 200) {
+        return true;
+      }
+    } catch {
+      // Server still restarting
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  return false;
+}
+
+/**
+ * Wait for a config-triggered restart to complete (down then up).
+ */
+export async function waitForServerRestart(
+  request: APIRequestContext,
+): Promise<void> {
+  await waitForServerDown(request);
+  const recovered = await waitForServer(request, 30000);
+  if (!recovered) {
+    throw new Error("Server did not recover after restart");
+  }
+  await new Promise((resolve) => setTimeout(resolve, 500));
+}
+
 /**
  * Create an authenticated API context (separate cookie jar from UI tests).
  * Logs in via POST /login to establish a session.
@@ -41,14 +108,6 @@ async function waitForServerHealth(
 export async function authenticatedAPIContext(
   request: APIRequestContext,
 ): Promise<APIRequestContext> {
-  // Get a CSRF token from the uncached login-form endpoint
-  const loginFormResp = await request.get("/login-form");
-  const loginFormBody = await loginFormResp.text();
-  const csrfMatch = loginFormBody.match(/csrf_token"\s*value="([a-f0-9]+)"/);
-  if (!csrfMatch) throw new Error("CSRF token not found in /login-form");
-  const csrfToken = csrfMatch[1];
-
-  // Login to get a session cookie (Origin header required by middleware)
   const loginResp = await request.post("/login", {
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
@@ -57,7 +116,6 @@ export async function authenticatedAPIContext(
     form: {
       username: "admin",
       password: "admin",
-      csrf_token: csrfToken,
     },
   });
   if (!loginResp.ok()) {
@@ -80,15 +138,6 @@ export async function exportConfig(
 }
 
 /**
- * Extract a CSRF token from an HTML response body.
- */
-function extractCsrfToken(htmlBody: string): string {
-  const csrfMatch = htmlBody.match(/csrf_token"\s*value="([a-f0-9]+)"/);
-  if (!csrfMatch) throw new Error("CSRF token not found");
-  return csrfMatch[1];
-}
-
-/**
  * Import a YAML config string via /config/import/commit.
  * Returns true when the server reports that a restart is required for the
  * imported changes to take effect.
@@ -97,17 +146,12 @@ export async function importConfig(
   request: APIRequestContext,
   yamlContent: string,
 ): Promise<boolean> {
-  // Get CSRF token from config page
-  const configResp = await request.get("/config");
-  const csrfToken = extractCsrfToken(await configResp.text());
-
   const resp = await request.post("/config/import/commit", {
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
       Origin: BASE_URL,
     },
     form: {
-      csrf_token: csrfToken,
       yaml: yamlContent,
     },
   });
@@ -118,6 +162,34 @@ export async function importConfig(
 
   // The server returns the save-restart alert when RestartRequired is true.
   return body.includes("Server restart required for changes to take effect.");
+}
+
+/**
+ * Disable per-IP login rate limiting for the Playwright run (mirrors e2eweb
+ * TestMain ensureLoginRateLimitDisabled). Parallel UI tests perform many
+ * POST /login calls from one IP against the shared dev server on :8083.
+ */
+export async function disableLoginRateLimit(
+  request: APIRequestContext,
+): Promise<void> {
+  const api = await authenticatedAPIContext(request);
+  let yaml = await exportConfig(api);
+  if (!/^login-rate-limit-per-ip:\s*0\s*$/m.test(yaml)) {
+    if (/^login-rate-limit-per-ip:/m.test(yaml)) {
+      yaml = yaml.replace(
+        /^login-rate-limit-per-ip:.*$/m,
+        "login-rate-limit-per-ip: 0",
+      );
+    } else {
+      yaml = `${yaml.trimEnd()}\nlogin-rate-limit-per-ip: 0\n`;
+    }
+  }
+  // Always commit so ApplyConfig runs SyncLoginRateLimitMax and clears history.
+  // DB may already show 0 while the in-memory limiter is still enforcing.
+  const restartRequired = await importConfig(api, yaml);
+  if (restartRequired) {
+    await restartServer(api);
+  }
 }
 
 /**
@@ -141,20 +213,14 @@ export async function enableHTTPCache(
 }
 
 /**
- * Request a server restart via POST /config/restart and poll /health until
- * the server has recovered.
+ * Request a server restart via POST /config/restart and wait until the new
+ * process is serving /gallery/1.
  */
 export async function restartServer(request: APIRequestContext): Promise<void> {
-  const configResp = await request.get("/config");
-  const csrfToken = extractCsrfToken(await configResp.text());
-
   const resp = await request.post("/config/restart", {
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
       Origin: BASE_URL,
-    },
-    form: {
-      csrf_token: csrfToken,
     },
   });
   if (!resp.ok()) {
@@ -162,28 +228,7 @@ export async function restartServer(request: APIRequestContext): Promise<void> {
     throw new Error(`Config restart request failed: ${resp.status()}: ${body}`);
   }
 
-  // Poll /health until the server process has restarted and is accepting
-  // traffic again. The restart goroutine sleeps 500ms before triggering.
-  let recovered = false;
-  for (let i = 0; i < 30; i++) {
-    try {
-      const healthResp = await request.get("/health", { timeout: 2000 });
-      if (healthResp.status() === 200) {
-        recovered = true;
-        break;
-      }
-    } catch {
-      // Server still restarting
-    }
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-  }
-  if (!recovered) {
-    throw new Error("Server did not recover after restart request");
-  }
-
-  // Wait briefly so the new process can finish initializing before the caller
-  // proceeds with the next test.
-  await new Promise((resolve) => setTimeout(resolve, 1500));
+  await waitForServerRestart(request);
 }
 
 /**

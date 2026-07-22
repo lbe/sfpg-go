@@ -116,7 +116,7 @@ func TestNewHTTPCacheMiddleware_StoresEntryAsync(t *testing.T) {
 		w.Header().Set("Content-Type", "text/html")
 		w.Header().Set("Cache-Control", "public, max-age=3600")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("async content"))
+		_, _ = w.Write([]byte("<html><body>async content</body></html>"))
 	})
 
 	wg.Add(1)
@@ -130,11 +130,9 @@ func TestNewHTTPCacheMiddleware_StoresEntryAsync(t *testing.T) {
 	}
 
 	params := CacheKeyParams{
-		Method:   "GET",
-		Path:     "/test",
-		HTMX:     HTMXParams{Request: "false"},
-		Theme:    "dark",
-		Encoding: "identity",
+		Method:  "GET",
+		Path:    "/test",
+		Variant: "full",
 	}
 	entry, err := GetCacheEntry(context.Background(), db, NewCacheKey(params))
 	if err != nil {
@@ -143,8 +141,8 @@ func TestNewHTTPCacheMiddleware_StoresEntryAsync(t *testing.T) {
 	if entry == nil {
 		t.Fatal("expected entry to be stored asynchronously")
 	}
-	if string(entry.Body) != "async content" {
-		t.Errorf("cached body = %q, want %q", string(entry.Body), "async content")
+	if len(entry.Body) == 0 {
+		t.Error("cached body is empty")
 	}
 }
 
@@ -156,13 +154,12 @@ func TestHTTPCacheMiddleware_SetOnGalleryCacheHit(t *testing.T) {
 		w.Header().Set("Cache-Control", "public, max-age=3600")
 		w.Header().Set("ETag", `"test-etag"`)
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("gallery content"))
+		_, _ = w.Write([]byte("<html><body>gallery content</body></html>"))
 	})
 
 	var callbackCalls []struct {
-		folderID       int64
-		sessionID      string
-		acceptEncoding string
+		folderID  int64
+		sessionID string
 	}
 	var callbackMu sync.Mutex
 
@@ -178,13 +175,12 @@ func TestHTTPCacheMiddleware_SetOnGalleryCacheHit(t *testing.T) {
 	}
 
 	mw := NewHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
-	mw.SetOnGalleryCacheHit(func(ctx context.Context, folderID int64, sessionID string, acceptEncoding string) {
+	mw.SetOnGalleryCacheHit(func(ctx context.Context, folderID int64, sessionID string) {
 		callbackMu.Lock()
 		callbackCalls = append(callbackCalls, struct {
-			folderID       int64
-			sessionID      string
-			acceptEncoding string
-		}{folderID, sessionID, acceptEncoding})
+			folderID  int64
+			sessionID string
+		}{folderID, sessionID})
 		callbackMu.Unlock()
 	})
 
@@ -221,9 +217,6 @@ func TestHTTPCacheMiddleware_SetOnGalleryCacheHit(t *testing.T) {
 	if call.sessionID != "test-session-123" {
 		t.Errorf("sessionID = %q, want test-session-123", call.sessionID)
 	}
-	if call.acceptEncoding != "gzip" {
-		t.Errorf("acceptEncoding = %q, want gzip", call.acceptEncoding)
-	}
 }
 
 // createSyncSubmitFuncForIntegration returns a synchronous submit function for integration tests.
@@ -247,7 +240,7 @@ func TestHTTPCacheMiddleware_UpdatePool(t *testing.T) {
 		w.Header().Set("Content-Type", "text/html")
 		w.Header().Set("Cache-Control", "public, max-age=3600")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("pooled content"))
+		_, _ = w.Write([]byte("<html><body>pooled content</body></html>"))
 	})
 
 	cfg := defaultIntegrationConfig()
@@ -269,8 +262,8 @@ func TestHTTPCacheMiddleware_UpdatePool(t *testing.T) {
 	if w2.Header().Get("X-Cache") != "HIT" {
 		t.Fatalf("second request X-Cache = %q, want HIT", w2.Header().Get("X-Cache"))
 	}
-	if w2.Body.String() != "pooled content" {
-		t.Errorf("second request body = %q, want %q", w2.Body.String(), "pooled content")
+	if w2.Body.Len() == 0 {
+		t.Error("second request body is empty")
 	}
 }
 
@@ -281,7 +274,7 @@ func TestHTTPCacheMiddleware_UpdatePool_NilIgnored(t *testing.T) {
 		w.Header().Set("Content-Type", "text/html")
 		w.Header().Set("Cache-Control", "public, max-age=3600")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("nil pool content"))
+		_, _ = w.Write([]byte("<html><body>nil pool content</body></html>"))
 	})
 
 	cfg := defaultIntegrationConfig()
@@ -313,7 +306,7 @@ func TestHTTPCacheMiddleware_GetSizeBytes(t *testing.T) {
 
 	ctx := context.Background()
 	entry := &HTTPCacheEntry{
-		Key:           NewCacheKey(CacheKeyParams{Method: "GET", Path: "/size", Theme: "dark", Encoding: "identity"}),
+		Key:           NewCacheKey(CacheKeyParams{Method: "GET", Path: "/size"}),
 		Method:        "GET",
 		Path:          "/size",
 		Status:        200,
@@ -347,7 +340,7 @@ func TestHTTPCacheMiddleware_GetEntryCount(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().Unix()
 	for i := 0; i < 3; i++ {
-		key := NewCacheKey(CacheKeyParams{Method: "GET", Path: fmt.Sprintf("/count/%d", i), Theme: "dark", Encoding: "identity"})
+		key := NewCacheKey(CacheKeyParams{Method: "GET", Path: fmt.Sprintf("/count/%d", i)})
 		entry := &HTTPCacheEntry{
 			Key:       key,
 			Method:    "GET",

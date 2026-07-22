@@ -72,17 +72,16 @@ func isCacheablePath(path string, routes []string) bool {
 // FolderPreloadTask checks a folder's contents and schedules individual preload tasks.
 // It respects CacheableRoutes and uses TaskTracker for deduplication.
 type FolderPreloadTask struct {
-	FolderID          int64                     // folder to preload (direct children only)
-	SessionID         string                    // for task cancellation when user navigates away
-	ETagVersion       string                    // cache-busting query (e.g. "v=20260201-01")
-	PreferredEncoding string                    // from triggering request's Accept-Encoding (normalized); HTMX preloads use it so keys match that client
-	CacheableRoutes   []string                  // route prefixes that are cacheable (e.g. "/gallery/", "/info/")
-	DBRoPool          *dbconnpool.DbSQLConnPool // read-only pool for GetPreloadRoutesByFolderID
-	TaskTracker       *TaskTracker              // deduplication; TryClaimTask before scheduling
-	Scheduler         *scheduler.Scheduler      // schedules per-path PreloadTask
-	RequestConfig     InternalRequestConfig     // handler and ETag version for internal requests
-	Metrics           *PreloadMetrics           // optional; records skipped/scheduled
-	GetQueries        func(*dbconnpool.CpConn) interfaces.HandlerQueries
+	FolderID        int64                     // folder to preload (direct children only)
+	SessionID       string                    // for task cancellation when user navigates away
+	ETagVersion     string                    // cache-busting query (e.g. "v=20260201-01")
+	CacheableRoutes []string                  // route prefixes that are cacheable (e.g. "/gallery/", "/info/")
+	DBRoPool        *dbconnpool.DbSQLConnPool // read-only pool for GetPreloadRoutesByFolderID
+	TaskTracker     *TaskTracker              // deduplication; TryClaimTask before scheduling
+	Scheduler       *scheduler.Scheduler      // schedules per-path PreloadTask
+	RequestConfig   InternalRequestConfig     // handler and ETag version for internal requests
+	Metrics         *PreloadMetrics           // optional; records skipped/scheduled
+	GetQueries      func(*dbconnpool.CpConn) interfaces.HandlerQueries
 }
 
 // Run implements scheduler.Task.
@@ -124,15 +123,11 @@ func (t *FolderPreloadTask) Run(ctx context.Context) error {
 }
 
 // schedulePreload checks cache existence and TaskTracker, then schedules a PreloadTask if needed.
-// For HTMX paths the encoding comes from PreferredEncoding (triggering request's
-// Accept-Encoding); otherwise from cachelite.VariantForPath. Returns true if a task was scheduled.
+// Encoding is no longer part of the cache key — all requests share one entry.
+// Returns true if a task was scheduled.
 func (t *FolderPreloadTask) schedulePreload(ctx context.Context, path, query string, queries *gallerydb.CustomQueries) bool {
-	hxTarget, defaultEncoding := cachelite.VariantForPath(path)
-	encoding := defaultEncoding
-	if hxTarget != "" && t.PreferredEncoding != "" {
-		encoding = t.PreferredEncoding
-	}
-	params := cachelite.NewCacheKeyForPreload(path, query, encoding, "", hxTarget != "")
+	hxTarget := cachelite.PreloadVariantForPath(path)
+	params := cachelite.NewCacheKeyForPreload(path, query, hxTarget)
 	cacheKey := cachelite.NewCacheKey(params)
 
 	// Check if cache entry already exists (lightweight check, no body loaded)
@@ -156,7 +151,6 @@ func (t *FolderPreloadTask) schedulePreload(ctx context.Context, path, query str
 	preloadTask.CacheKey = cacheKey
 	preloadTask.Path = path
 	preloadTask.HXTarget = hxTarget
-	preloadTask.Encoding = encoding
 	preloadTask.TaskTracker = t.TaskTracker
 	// Make a deep copy of RequestConfig to avoid data races with shared struct
 	preloadTask.RequestConfig = InternalRequestConfig{

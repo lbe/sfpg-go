@@ -11,8 +11,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/gorilla/sessions"
-
 	"github.com/lbe/sfpg-go/internal/server/auth"
 	"github.com/lbe/sfpg-go/internal/server/config"
 	"github.com/lbe/sfpg-go/internal/server/session"
@@ -67,42 +65,6 @@ func (m *mockAuthServiceForConfig) UpdateCredentials(ctx context.Context, opts a
 		return m.updateCredentialsFunc(ctx, opts, store)
 	}
 	return &auth.CredentialUpdateResult{}, nil
-}
-
-type mockSessionManagerAuthenticatedInvalidCSRF struct{}
-
-func (m *mockSessionManagerAuthenticatedInvalidCSRF) GetOptions() *sessions.Options {
-	return &sessions.Options{}
-}
-
-func (m *mockSessionManagerAuthenticatedInvalidCSRF) EnsureCSRFToken(w http.ResponseWriter, r *http.Request) string {
-	return "test-csrf-token"
-}
-
-func (m *mockSessionManagerAuthenticatedInvalidCSRF) ValidateCSRFToken(r *http.Request) bool {
-	return false
-}
-
-func (m *mockSessionManagerAuthenticatedInvalidCSRF) ClearSession(w http.ResponseWriter, r *http.Request) {
-}
-
-func (m *mockSessionManagerAuthenticatedInvalidCSRF) GetSession(w http.ResponseWriter, r *http.Request) (*sessions.Session, error) {
-	sess := sessions.NewSession(nil, session.SessionName)
-	sess.IsNew = false
-	sess.Values["csrf_token"] = "existing-csrf-token"
-	return sess, nil
-}
-
-func (m *mockSessionManagerAuthenticatedInvalidCSRF) SaveSession(w http.ResponseWriter, r *http.Request, sess *sessions.Session) error {
-	return nil
-}
-
-func (m *mockSessionManagerAuthenticatedInvalidCSRF) IsAuthenticated(w http.ResponseWriter, r *http.Request) bool {
-	return true
-}
-
-func (m *mockSessionManagerAuthenticatedInvalidCSRF) SetAuthenticated(w http.ResponseWriter, r *http.Request, authenticated bool) error {
-	return nil
 }
 
 type mockConfigServiceForConfig struct {

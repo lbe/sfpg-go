@@ -23,8 +23,17 @@ Common flags/variables:
 - `-port` (`SFG_PORT`): HTTP listen port (effective default `8081`).
 - `-discover` (`SFG_DISCOVER`): Run file discovery on startup (effective default `true`; CLI flag zero-value is `false`).
 - `-cache-preload` (`SFG_CACHE_PRELOAD`): Enable cache preloading when folders are opened (effective default `true`).
-- `-compression` (`SFG_COMPRESSION`): Enable gzip/brotli response compression (effective default `true`).
 - `-http-cache` (`SFG_HTTP_CACHE`): Enable SQLite HTTP response cache (effective default `true`).
+
+> **Upgrade note:** On first startup after an upgrade, the HTTP cache is invalidated
+> to prevent serving stale entries from a previous key format. This is a one-time
+> cold-cache event; HTML responses may be slightly slower for the first request or
+> two until the cache repopulates.
+>
+> **v3 key format (v0.9.50+):** The cache key format changed from `|HX=|HXTarget=|IsVariant=`
+> to normalized `|Variant=`. Info/lightbox entries collapsed to one key per path;
+> gallery keeps two distinct keys. The v3 upgrade cold-caches all HTML briefly.
+
 - `-unlock-account` (`SFG_UNLOCK_ACCOUNT`): Unlock a locked account by username (e.g. `admin`).
 - `-restore-last-known-good` (`SFG_RESTORE_LAST_KNOWN_GOOD`): Restore last known good configuration from DB on startup (default `false`).
 - `-debug-delay-ms` (`SFG_DEBUG_DELAY_MS`): Artificial handler delay (default `0`).
@@ -64,7 +73,7 @@ Example:
   - Controls the `SameSite` attribute for CSRF protection.
   - `Lax` (recommended): Strong CSRF protection with good user experience.
   - `Strict`: Maximum CSRF protection; users following external links won't be logged in.
-  - `None`: Disables SameSite protection; only use with `Secure=true` and explicit CSRF tokens.
+  - `None`: Disables SameSite protection; only use with `Secure=true` and COP (HTTPS/HSTS recommended).
 
 Notes:
 
@@ -102,17 +111,13 @@ The `HttpOnly: false` flag means the theme cookie is accessible to JavaScript ru
 - The theme cookie contains only a theme name (one of the configured themes, e.g., `"dark"` or `"light"`), **not** a session token or any sensitive data.
 - An attacker who can read the cookie gains no access to user sessions, credentials, or gallery content.
 - The session cookie (`session`) remains `HttpOnly: true` (default) and is never exposed to client-side JavaScript.
-- The CSRF-protected `ThemePostHandler` requires a valid CSRF token to change the theme.
+- The `ThemePostHandler` is protected by the `CrossOriginProtection` middleware, ensuring only same-origin requests can change the theme.
 
 ### Hardening (Future Work)
 
 If client-side theme switching is no longer required (e.g., theme is always server-rendered), the `HttpOnly` flag can be set to `true` and the Hyperscript cookie read removed from the templates. This would eliminate the cookie's client-side exposure entirely.
 
-## Ephemeral CSRF Tokens on Unauthenticated Pages (Accepted Risk)
-
-Public read-only pages such as the gallery, image view, and lightbox are served with long-term HTTP caching and do not require authentication. The CSRF token rendered in the base layout for unauthenticated visitors is intentionally ephemeral: when no session cookie exists, the application emits a fresh random token without saving it to a session cookie. This avoids setting a session cookie on cacheable public responses, which would either prevent caching or cause cached responses to carry session identifiers.
-
-State-changing endpoints (login, logout, configuration, server controls, and theme selection) issue their own session-bound CSRF token via `EnsureCSRFToken` when the form or modal is rendered, and validate that token on POST. Unsafe HTTP methods are additionally protected by the same-origin middleware. Because unauthenticated public pages are read-only and do not perform server-side mutations, the lack of a session-bound CSRF token on those pages is a known and accepted risk.
+> **Note:** Changing the default theme in the admin config invalidates the HTTP cache, so page loads will be briefly uncached while the cache is repopulated. This is expected — subsequent visits after the theme change will be served from the warmed cache.
 
 ## Symlink Trust Model
 
@@ -139,18 +144,46 @@ The `/raw-image/{id}` endpoint serves full-resolution image files **without auth
 
 ## Reverse Proxy Expectations
 
-The server enforces same-origin protection for unsafe HTTP methods (POST/PUT/PATCH/DELETE) by checking that the request `Origin` (or `Referer` as a fallback) matches the request `Host`. The `Origin` header is authoritative when present; the `Referer` header is used only as a fallback when `Origin` is absent. Behind a reverse proxy:
+The server uses Go's `http.CrossOriginProtection` middleware to protect unsafe HTTP methods (POST/PUT/PATCH/DELETE) against cross-site request forgery. The middleware inspects browser-sent `Sec-Fetch-Site` and `Origin` headers: same-origin requests (`Sec-Fetch-Site: same-origin` or matching `Origin`) are allowed, while cross-site requests are rejected.
+
+**Fail-open behavior:** If an unsafe request arrives with **neither** `Sec-Fetch-Site` **nor** `Origin`, the standard library allows it. That is intentional for non-browser clients (e.g., `curl`, monitoring probes) but is also what happens when a reverse proxy **strips** both headers from browser traffic. In that misconfiguration, cross-site POSTs to `/login`, `/config/*`, `/server/shutdown`, `/theme`, and other unsafe routes are **not** blocked by COP. Browsers normally send at least one of these headers on form POSTs; the risk is proxy configuration, not typical browser behavior.
+
+HTTPS with HSTS is recommended so browsers send the required security headers. Behind a reverse proxy:
 
 - Terminate TLS at the proxy and forward HTTP to the backend.
-- Preserve the original `Host` header when proxying to the backend; the same-origin check compares the request `Host` to the `Origin` or `Referer` header and does not consume `X-Forwarded-*` headers.
-- Serve the application on a single origin (domain + port) to satisfy the same-origin checks.
+- Preserve the original `Host` header when proxying to the backend; the middleware compares the request `Host` to the `Origin` header and does not consume `X-Forwarded-*` headers.
+- **Forward `Sec-Fetch-Site` and `Origin` unchanged** from the client. Do not strip, rewrite, or replace them unless you fully understand the COP implications above.
+- Serve the application on a single origin (domain + port) so that same-origin requests match correctly.
 
-Required headers to pass:
+Required headers to pass through to the backend:
 
 - `Host` (must match the public origin)
-- `Referer` should also be preserved for correct operation when browsers do not send `Origin` on same-origin requests.
+- `Sec-Fetch-Site` (when sent by the browser)
+- `Origin` (when sent by the browser)
+
+Most reverse proxies (Nginx, Caddy, Traefik) pass these through by default. Verify your deployment if you use a CDN, WAF, or custom `proxy_set_header` / `header_up` rules that might remove client headers.
 
 You may also pass standard proxy headers such as `X-Forwarded-Proto` and `X-Forwarded-For` for logging or upstream use, but they are not used by the application's security checks.
+
+**Verify header forwarding** (replace the URL with your public origin):
+
+```bash
+# Browser-like POST with Origin should reach the backend (200 for valid login body, not 403 from COP)
+curl -s -o /dev/null -w "%{http_code}" -X POST https://gallery.example.com/login \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -H "Origin: https://gallery.example.com" \
+  -H "Sec-Fetch-Site: same-origin" \
+  -d "username=admin" -d "password=admin"
+# Expected: 200 (or 429 if rate-limited), not 403
+
+# Cross-site Origin should be rejected by COP (403)
+curl -s -o /dev/null -w "%{http_code}" -X POST https://gallery.example.com/login \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -H "Origin: https://evil.example" \
+  -H "Sec-Fetch-Site: cross-site" \
+  -d "username=admin" -d "password=admin"
+# Expected: 403
+```
 
 ### Example: Nginx
 
@@ -170,6 +203,7 @@ server {
 
     location / {
         proxy_set_header Host $host;                # REQUIRED: preserve host for Origin checks
+        # Sec-Fetch-Site and Origin pass through by default; do not proxy_hide_header them
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_http_version 1.1;
@@ -186,13 +220,42 @@ server {
 }
 
 gallery.example.com {
+  header Strict-Transport-Security "max-age=31536000; includeSubDomains"
   encode zstd gzip
   reverse_proxy 127.0.0.1:8081 {
     header_up Host {host}
+    # Sec-Fetch-Site and Origin pass through by default; do not strip client headers
     header_up X-Forwarded-Proto {scheme}
     header_up X-Forwarded-For {remote}
   }
 }
+```
+
+## App-direct development vs Caddy production
+
+- **Development:** Browser → `air` on `:8083`. No reverse proxy required.
+- **Production with Caddy:** Browser → Caddy (TLS) → Go backend on `localhost:8081`. Caddy preserves the original `Host` header for same-origin checks, forwards client `Sec-Fetch-Site` and `Origin` by default, and HSTS is enabled via `Strict-Transport-Security`.
+
+### Phase 3 smoke checklist (Caddy)
+
+After deploying behind Caddy with the configuration above, run these manual
+checks to verify edge offload is working correctly:
+
+```bash
+# 1. Gallery page loads with 200
+curl -s -o /dev/null -w "%{http_code}" https://gallery.example.com/gallery/1
+# Expected: 200
+
+# 2. Login POST succeeds
+curl -s -X POST https://gallery.example.com/login \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "username=admin" -d "password=admin" \
+  -c /tmp/caddy-test-cookies.txt -o /dev/null -w "%{http_code}"
+# Expected: 200
+
+# 3. HSTS header is present
+curl -s -I https://gallery.example.com/gallery/1 | grep -i strict-transport
+# Expected: Strict-Transport-Security: max-age=31536000; includeSubDomains
 ```
 
 ## Systemd Service (Optional)
@@ -237,6 +300,8 @@ WantedBy=multi-user.target
 - Network & Proxy
   - [ ] Expose only port 443 on the proxy; firewall backend port
   - [ ] Preserve `Host` header; pass `X-Forwarded-*` headers
+  - [ ] Ensure the proxy forwards client `Sec-Fetch-Site` and `Origin` to the backend (do not strip them)
+  - [ ] Run the [COP header verification](#reverse-proxy-expectations) curls after deploy (same-origin 200, cross-site 403)
 - Filesystem & Data
   - [ ] Run as a dedicated, least-privileged user
   - [ ] Ensure `DB/` and `Images/` directories exist and are writable by the service user
@@ -255,15 +320,15 @@ WantedBy=multi-user.target
 - Security Hardening
   - [ ] Review the [Symlink Trust Model](#symlink-trust-model) and apply filesystem hardening if needed
   - [ ] Review the [Public Image URLs](#public-image-urls-capability-url-model) capability-URL model and assess risk for your content
-  - [ ] Pprof is disabled by default; enable only if you need runtime profiling. When enabled, pprof endpoints (`/debug/pprof/`) are protected behind authentication
-  - [ ] Consider restricting pprof access further via reverse-proxy rules (e.g., allow only localhost or internal IP ranges) if enabled
+  - [ ] Pprof is enabled by default; disable via `enable_pprof: false` if you do not need runtime profiling. Pprof endpoints (`/debug/pprof/`) are protected behind authentication
+  - [ ] Consider restricting pprof access further via reverse-proxy rules (e.g., allow only localhost or internal IP ranges)
 
 ## Local Development vs Production
 
 - Local dev/test:
   - May set `SEPG_SESSION_HTTPONLY=false SEPG_SESSION_SECURE=false` when serving over plain HTTP.
   - Can use extended `SEPG_SESSION_MAX_AGE` for convenience (e.g., 30 days).
-  - Tests use these overrides plus an `Origin` header on unsafe requests.
+  - Tests use these overrides for local development without a reverse proxy.
 - Production:
   - Keep defaults (`true` for HttpOnly and Secure, `Lax` for SameSite, `604800` for MaxAge).
   - Serve exclusively over HTTPS with a reverse proxy and enable HSTS.
@@ -343,9 +408,9 @@ curl -f -H "Host: gallery.example.com" \
 
 The application exposes Go's standard `net/http/pprof` debugging endpoints under `/debug/pprof/`.
 
-**Default: disabled.** Pprof is disabled by default (`enable_pprof: false`). To enable it, set `enable_pprof: true` in the config file or database (via the Config UI) and restart the application.
+**Default: enabled.** Pprof is enabled by default (`enable_pprof: true`). To disable it, set `enable_pprof: false` in the config file or database (via the Config UI) and restart the application.
 
-**Security:** When enabled, all pprof routes are protected behind the application's authentication middleware — only authenticated admin sessions can access them.
+**Security:** All pprof routes are protected behind the application's authentication middleware — only authenticated admin sessions can access them.
 
 **Hardening (optional):** For defence-in-depth, you can restrict pprof access further at the reverse-proxy level:
 

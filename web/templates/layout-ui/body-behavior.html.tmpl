@@ -1,6 +1,12 @@
 <script type="text/hyperscript">
   behavior BodyKeyHandler
     init
+      -- Apply theme cookie override: set @data-theme on <html/> from cookie value.
+      -- SSR uses site default (CurrentTheme); user cookie overrides client-side.
+      if cookies.theme exists
+        set @data-theme of <html/> to cookies.theme
+      end
+
       -- Hide info-box on dashboard (no sidebar needed there)
       if #dashboard-container exists
         add .hidden to #box_info_wrapper

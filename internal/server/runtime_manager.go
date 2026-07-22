@@ -42,6 +42,7 @@ type RuntimeManager struct {
 	staleCacheDropInFlight atomic.Bool
 
 	testSeams RuntimeManagerTestSeams
+	onListen  func()
 }
 
 // NewRuntimeManager constructs a runtime manager with a cancellable child context.
@@ -52,6 +53,11 @@ func NewRuntimeManager(parent context.Context) *RuntimeManager {
 		cancel:      cancel,
 		execCommand: syscall.Exec,
 	}
+}
+
+// SetOnListen registers a callback invoked after the HTTP server begins listening.
+func (m *RuntimeManager) SetOnListen(fn func()) {
+	m.onListen = fn
 }
 
 // ─── Serve ──────────────────────────────────────────────────────────
@@ -76,6 +82,10 @@ func (m *RuntimeManager) Serve(handler http.Handler, addr string) error {
 		}
 		close(serverErr)
 	}()
+
+	if m.onListen != nil {
+		m.onListen()
+	}
 
 	select {
 	case err := <-serverErr:

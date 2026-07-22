@@ -31,12 +31,6 @@ func (app *App) setDB() {
 	}
 }
 
-// walCheckpointAfterCommit is called by writebatcher after each successful commit
-// and by the maintenance timer (every 5 minutes).
-// It checks WAL file size and checkpoints if > 2GB or if 5 minutes have elapsed.
-// It also runs PRAGMA optimize every 1 hour.
-// This runs in the writebatcher's worker goroutine, ensuring no active transactions.
-
 // reconfigurePoolsFromConfig recreates database pools with settings from the
 // given config and reinitializes dependent services. Returns an error if the
 // pool recreation itself fails (non-nil errors from dependent reinit are logged).
@@ -47,6 +41,8 @@ func (app *App) reconfigurePoolsFromConfig() error {
 	if cfg == nil {
 		return nil
 	}
+
+	app.setDBOptimizeInterval(cfg.DBOptimizeInterval)
 
 	if err := app.ReconfigurePools(app.RuntimeManager.ctx, cfg); err != nil {
 		return err

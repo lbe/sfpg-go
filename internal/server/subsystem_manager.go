@@ -28,7 +28,7 @@ type preloadManager interface {
 	SetEnabled(enabled bool)
 	Shutdown()
 	GetScheduler() *scheduler.Scheduler
-	ScheduleFolderPreload(ctx context.Context, folderID int64, sessionID, acceptEncoding string)
+	ScheduleFolderPreload(ctx context.Context, folderID int64, sessionID string)
 	GetMetrics() cachepreload.PreloadMetricsSnapshot
 }
 
@@ -117,9 +117,9 @@ func (m *SubsystemManager) Start(
 	}
 
 	// Wire OnGalleryCacheHit
-	m.infra.SetCacheOnGalleryHit(func(ctx context.Context, folderID int64, sessionID, acceptEncoding string) {
+	m.infra.SetCacheOnGalleryHit(func(ctx context.Context, folderID int64, sessionID string) {
 		if m.preloadManager != nil {
-			m.preloadManager.ScheduleFolderPreload(ctx, folderID, sessionID, acceptEncoding)
+			m.preloadManager.ScheduleFolderPreload(ctx, folderID, sessionID)
 		}
 	})
 

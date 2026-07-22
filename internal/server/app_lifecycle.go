@@ -42,6 +42,11 @@ func (app *App) Shutdown() {
 			}
 		}
 
+		// Run PRAGMA optimize before closing pools (after batcher is closed).
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		app.runShutdownPragmaOptimize(ctx)
+
 		if app.dbRoPool != nil {
 			if err := app.dbRoPool.Close(); err != nil {
 				slog.Error("error closing read-only pool", "err", err)
@@ -101,16 +106,6 @@ func (app *App) EnsureSession(getOptionsConfig func() *session.OptionsConfig) {
 // IsAuthenticated reports whether the request has a valid authenticated session.
 func (app *App) IsAuthenticated(w http.ResponseWriter, r *http.Request) bool {
 	return app.SessionAuthFacade.IsAuthenticated(w, r)
-}
-
-// EnsureCSRFToken ensures a CSRF token exists in the session and returns it.
-func (app *App) EnsureCSRFToken(w http.ResponseWriter, r *http.Request) string {
-	return app.SessionAuthFacade.EnsureCSRFToken(w, r)
-}
-
-// CSRFTokenForPage returns a CSRF token for template rendering.
-func (app *App) CSRFTokenForPage(w http.ResponseWriter, r *http.Request, authenticated bool) string {
-	return app.SessionAuthFacade.CSRFTokenForPage(w, r, authenticated)
 }
 
 // GetEffectiveTheme returns the effective theme for a request.

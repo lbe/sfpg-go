@@ -88,6 +88,8 @@ func (app *App) InitForBatchLoad(opt getopt.Opt) error {
 	if err := app.reconfigurePoolsFromConfig(); err != nil {
 		return fmt.Errorf("reconfigure pools: %w", err)
 	}
+	app.StartWriteBatcher(app.RuntimeManager.ctx, false)
+	app.CalibrateCacheSizeNow(app.RuntimeManager.ctx)
 	app.ApplyConfig()
 	app.initializeHTTPCache()
 

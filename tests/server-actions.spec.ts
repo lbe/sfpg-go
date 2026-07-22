@@ -1,12 +1,15 @@
 import { test, expect } from "@playwright/test";
 import { loginViaUI, openMenu, menu } from "./helpers";
-import { enableHTTPCache } from "./config-helpers";
+import { enableHTTPCache, waitForServerRestart } from "./config-helpers";
 
 test.describe.configure({ timeout: 120000 });
 
 // Server actions trigger background processing — use serial to avoid conflicts.
 test.describe.serial("Server Actions", () => {
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page }, testInfo) => {
+    if (testInfo.title.startsWith("8:")) {
+      return;
+    }
     await loginViaUI(page);
   });
 
@@ -113,7 +116,7 @@ test.describe.serial("Server Actions", () => {
 
   test("7: Server restart", async ({ page, request }) => {
     // Server restart is non-destructive — the process restarts in <10s.
-    // We trigger restart via the UI (HTMX handles CSRF automatically).
+    // We trigger restart via the UI (same-origin HTMX POST; COP at router).
     // The finally block restores the original config so the server is left
     // in a clean state.
 
@@ -138,24 +141,7 @@ test.describe.serial("Server Actions", () => {
       await expect(restartModalBtn).toBeVisible({ timeout: 5000 });
       await restartModalBtn.click({ force: true });
 
-      // Wait for restart to begin
-      await page.waitForTimeout(1500);
-
-      // Poll health endpoint until server recovers (up to 20s)
-      let recovered = false;
-      for (let i = 0; i < 20; i++) {
-        try {
-          const resp = await page.request.get("/health", { timeout: 2000 });
-          if (resp.status() === 200) {
-            recovered = true;
-            break;
-          }
-        } catch {
-          // Server still restarting
-        }
-        await page.waitForTimeout(1000);
-      }
-      expect(recovered).toBeTruthy();
+      await waitForServerRestart(page.request);
 
       // Verify the app is fully functional after restart
       await page.goto("/gallery/1");

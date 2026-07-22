@@ -107,23 +107,21 @@ func fullyPopulatedFilesFile() *files.File {
 
 func fullyPopulatedCacheEntry() *cachelite.HTTPCacheEntry {
 	return &cachelite.HTTPCacheEntry{
-		ID:              99,
-		Key:             "sha256:abcdef1234567890",
-		Method:          "GET",
-		Path:            "/gallery/42",
-		QueryString:     sql.NullString{String: "page=1", Valid: true},
-		Encoding:        "br",
-		Status:          200,
-		ContentType:     sql.NullString{String: "text/html; charset=utf-8", Valid: true},
-		ContentEncoding: sql.NullString{String: "br", Valid: true},
-		CacheControl:    sql.NullString{String: "max-age=3600", Valid: true},
-		ETag:            sql.NullString{String: "\"etag-42\"", Valid: true},
-		LastModified:    sql.NullString{String: "Mon, 01 Jan 2024 00:00:00 GMT", Valid: true},
-		Vary:            sql.NullString{String: "Accept-Encoding", Valid: true},
-		Body:            []byte("<html>gallery page</html>"),
-		ContentLength:   sql.NullInt64{Int64: 1234, Valid: true},
-		CreatedAt:       1_700_000_003,
-		ExpiresAt:       sql.NullInt64{Int64: 1_700_003_603, Valid: true},
+		ID:            99,
+		Key:           "sha256:abcdef1234567890",
+		Method:        "GET",
+		Path:          "/gallery/42",
+		QueryString:   sql.NullString{String: "page=1", Valid: true},
+		Status:        200,
+		ContentType:   sql.NullString{String: "text/html; charset=utf-8", Valid: true},
+		CacheControl:  sql.NullString{String: "max-age=3600", Valid: true},
+		ETag:          sql.NullString{String: "\"etag-42\"", Valid: true},
+		LastModified:  sql.NullString{String: "Mon, 01 Jan 2024 00:00:00 GMT", Valid: true},
+		Vary:          sql.NullString{String: "Accept-Encoding", Valid: true},
+		Body:          []byte("<html>gallery page</html>"),
+		ContentLength: sql.NullInt64{Int64: 1234, Valid: true},
+		CreatedAt:     1_700_000_003,
+		ExpiresAt:     sql.NullInt64{Int64: 1_700_003_603, Valid: true},
 	}
 }
 
@@ -345,18 +343,14 @@ func assertHTTPCacheEntryEqual(t *testing.T, context string, a, b *cachelite.HTT
 	if a.QueryString != b.QueryString {
 		t.Errorf("%s: QueryString: got %+v, want %+v", context, b.QueryString, a.QueryString)
 	}
-	if a.Encoding != b.Encoding {
-		t.Errorf("%s: Encoding: got %q, want %q", context, b.Encoding, a.Encoding)
-	}
+
 	if a.Status != b.Status {
 		t.Errorf("%s: Status: got %d, want %d", context, b.Status, a.Status)
 	}
 	if a.ContentType != b.ContentType {
 		t.Errorf("%s: ContentType: got %+v, want %+v", context, b.ContentType, a.ContentType)
 	}
-	if a.ContentEncoding != b.ContentEncoding {
-		t.Errorf("%s: ContentEncoding: got %+v, want %+v", context, b.ContentEncoding, a.ContentEncoding)
-	}
+
 	if a.CacheControl != b.CacheControl {
 		t.Errorf("%s: CacheControl: got %+v, want %+v", context, b.CacheControl, a.CacheControl)
 	}

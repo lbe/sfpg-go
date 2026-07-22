@@ -26,20 +26,13 @@ func (h *GalleryHandlers) GalleryByID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	etagVersion := h.galleryOps.GetETagVersion()
-	// Get theme from cookie for ETag - theme changes must invalidate cache
-	theme := "dark" // default
-	if cookie, err := r.Cookie("theme"); err == nil && cookie.Value != "" {
-		theme = cookie.Value
-	}
-	etag := fmt.Sprintf("\"%s-%d-%s\"", etagVersion, folderID, theme)
+	etag := fmt.Sprintf("\"%s-%d\"", etagVersion, folderID)
 	h.setCacheHeaders(w, etag)
 	w.Header().Set("HX-Push-URL", fmt.Sprintf("/gallery/%d?v=%s", folderID, etagVersion))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	// Vary on HTMX headers so the browser does not serve a cached partial for a full page request (e.g. breadcrumb).
-	// Vary on Cookie because theme affects the rendered page (data-theme attribute on body).
 	w.Header().Add("Vary", "HX-Request")
 	w.Header().Add("Vary", "HX-Target")
-	w.Header().Add("Vary", "Cookie")
 
 	hxRequest := r.Header.Get("HX-Request") == "true"
 	hxTarget := r.Header.Get("HX-Target")
@@ -68,7 +61,6 @@ func (h *GalleryHandlers) GalleryByID(w http.ResponseWriter, r *http.Request) {
 	// Skip when this request is from our own internal preload to avoid cascading preloads.
 	if h.PreloadService != nil && r.Header.Get(cachepreload.InternalPreloadHeader) != "true" {
 		sessionID := getSessionIDForPreload(r)
-		acceptEncoding := r.Header.Get("Accept-Encoding")
-		go h.PreloadService.ScheduleFolderPreload(r.Context(), folderID, sessionID, acceptEncoding)
+		go h.PreloadService.ScheduleFolderPreload(r.Context(), folderID, sessionID)
 	}
 }

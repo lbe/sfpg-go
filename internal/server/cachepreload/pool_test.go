@@ -21,7 +21,6 @@ func TestPreloadTaskPool_ResetClearsAllFields(t *testing.T) {
 	task.CacheKey = "test-key"
 	task.Path = "/test"
 	task.HXTarget = "gallery-content"
-	task.Encoding = "gzip"
 	task.TaskTracker = &TaskTracker{}
 	task.RequestConfig = InternalRequestConfig{
 		Handler:     http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}),

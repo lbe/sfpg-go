@@ -24,8 +24,23 @@ const (
 )
 
 var (
-	// makeInternalRequest is a testable hook for cachepreload.MakeInternalRequestWithVariant.
-	makeInternalRequest = cachepreload.MakeInternalRequestWithVariant
+	// runBatchWarm is a testable hook for warming a single cache entry.
+	// It dispatches to MakeInternalRequest (full variant, no HX headers) or
+	// MakeInternalRequestWithHXTarget (HTMX variants) based on the variant name.
+	runBatchWarm = func(ctx context.Context, cfg cachepreload.InternalRequestConfig, path, variant string) error {
+		switch variant {
+		case "full":
+			return cachepreload.MakeInternalRequest(ctx, cfg, path)
+		case "gallery-content":
+			return cachepreload.MakeInternalRequestWithHXTarget(ctx, cfg, path, "gallery-content")
+		case "box_info":
+			return cachepreload.MakeInternalRequestWithHXTarget(ctx, cfg, path, "box_info")
+		case "lightbox-ui":
+			return cachepreload.MakeInternalRequestWithHXTarget(ctx, cfg, path, "lightbox-ui")
+		default:
+			return cachepreload.MakeInternalRequestWithHXTarget(ctx, cfg, path, variant)
+		}
+	}
 
 	// numCPU is a testable hook for runtime.NumCPU.
 	numCPU = runtime.NumCPU
@@ -164,16 +179,10 @@ func (m *Manager) Run(ctx context.Context) error {
 		}
 
 		params := cachelite.CacheKeyParams{
-			Method: "GET",
-			Path:   t.Path,
-			Query:  queryStr,
-			HTMX: cachelite.HTMXParams{
-				Request:   t.Htmx,
-				Target:    t.HxTarget,
-				IsVariant: t.Htmx != "false",
-			},
-			Theme:    "dark", // Default theme for batch load
-			Encoding: t.Encoding,
+			Method:  "GET",
+			Path:    t.Path,
+			Query:   queryStr,
+			Variant: t.Variant,
 		}
 		cacheKey := cachelite.NewCacheKey(params)
 		exists, err := queries.HttpCacheExistsByKey(ctx, cacheKey)
@@ -208,7 +217,7 @@ type job struct {
 }
 
 func (m *Manager) runJob(ctx context.Context, j job, queries BatchLoadQueries, cfg cachepreload.InternalRequestConfig, metrics *Metrics) {
-	err := makeInternalRequest(ctx, cfg, j.target.Path, j.target.HxTarget, j.target.Encoding)
+	err := runBatchWarm(ctx, cfg, j.target.Path, j.target.Variant)
 	if err != nil {
 		metrics.RecordFailed()
 		if slog.Default().Enabled(ctx, slog.LevelDebug) {

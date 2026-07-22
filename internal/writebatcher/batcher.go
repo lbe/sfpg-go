@@ -36,7 +36,9 @@
 //	    // ErrFull (channel at capacity) or ErrClosed (batcher shut down)
 //	}
 //
-// Close flushes remaining items and releases resources:
+// Close stops the worker and releases resources. In-memory channel items are
+// flushed best-effort; the dque overflow queue is left on disk for recovery on
+// the next process start (Close does not drain dque):
 //
 //	wb.Close()
 //
@@ -155,6 +157,10 @@ type Config[T any] struct {
 	// ErrQuotaExceeded instead of overflowing to disk. 0 means unlimited.
 	MaxDiskBytes int64
 
+	// DeferDQueDrain when true keeps persisted dque items on disk until
+	// StartDQueDrain is called. Channel submits and flushes work normally.
+	DeferDQueDrain bool
+
 	// testQueue is an optional override for the durable queue. When nil,
 	// openDQue creates a real *dque.DQue[T]. Tests set this to inject
 	// deterministic errors without touching the filesystem.
@@ -184,8 +190,9 @@ type WriteBatcher[T any] struct {
 	overflowCount atomic.Int64
 	overflowWG    sync.WaitGroup // tracks in-flight overflow Submits for Close barrier
 
-	dq       dqueQueue[T]
-	dqNotify chan struct{}
+	dq               dqueQueue[T]
+	dqNotify         chan struct{}
+	dqueDrainEnabled atomic.Bool
 }
 
 // Stats holds statistics about the WriteBatcher.
@@ -297,16 +304,41 @@ func New[T any](ctx context.Context, cfg Config[T]) (*WriteBatcher[T], error) {
 
 		sz := dq.Size()
 		if sz > 0 {
-			slog.Info("writebatcher: recovering items from dque",
-				"count", sz)
+			if cfg.DeferDQueDrain {
+				slog.Info("writebatcher: dque backlog pending drain",
+					"count", sz)
+			} else {
+				slog.Info("writebatcher: recovering items from dque",
+					"count", sz)
+			}
+		}
+		if !cfg.DeferDQueDrain {
+			wb.dqueDrainEnabled.Store(true)
 		}
 	}
 
-	// Start worker. The worker's drainDQueAll loop handles draining
-	// dque items into batches on its first iteration.
+	// Start worker. When DeferDQueDrain is set, dque recovery waits for StartDQueDrain.
 	go wb.worker()
 
 	return wb, nil
+}
+
+// StartDQueDrain begins draining persisted dque overflow items into batches.
+// It is a no-op when dque is disabled or draining was not deferred.
+func (wb *WriteBatcher[T]) StartDQueDrain() {
+	if wb.dq == nil {
+		return
+	}
+	if wb.dqueDrainEnabled.Swap(true) {
+		return
+	}
+	if sz := wb.dq.Size(); sz > 0 {
+		slog.Info("writebatcher: starting dque recovery drain", "count", sz)
+	}
+	select {
+	case wb.dqNotify <- struct{}{}:
+	default:
+	}
 }
 
 // openDQue creates or opens a dque at the configured path for crash recovery.
@@ -407,7 +439,7 @@ func (wb *WriteBatcher[T]) worker() {
 		// Phase 1: Drain dque (non-blocking) before blocking on main select.
 		// This runs after every channel receive or dqNotify wake, interleaving
 		// non-blocking channel receives to prevent channel fill (death spiral prevention).
-		if wb.dq != nil {
+		if wb.dq != nil && wb.dqueDrainEnabled.Load() {
 			exit := wb.drainDQueAll(&batch, &batchBytes, flushTimer)
 			if exit {
 				return
@@ -417,8 +449,7 @@ func (wb *WriteBatcher[T]) worker() {
 		select {
 		case item, ok := <-wb.ch:
 			if !ok {
-				// Channel closed: drain remaining dque items, flush batch, then exit.
-				wb.drainRemaining(&batch, &batchBytes, "close", flushTimer)
+				wb.flushChannelAndExit(&batch, &batchBytes, "close", flushTimer)
 				return
 			}
 			batch, batchBytes = wb.appendAndManageTimer(wb.ctx, batch, batchBytes, item, flushTimer)
@@ -450,8 +481,7 @@ func (wb *WriteBatcher[T]) worker() {
 			// will drain dque items before blocking on select.
 
 		case <-wb.ctx.Done():
-			// Context cancelled: drain remaining items (dque + channel) and exit.
-			wb.drainRemaining(&batch, &batchBytes, "shutdown", flushTimer)
+			wb.flushChannelAndExit(&batch, &batchBytes, "shutdown", flushTimer)
 			return
 		}
 	}
@@ -476,10 +506,14 @@ func (wb *WriteBatcher[T]) drainDQueAll(batch *[]T, batchBytes *int64, flushTime
 		}
 	}()
 	for {
+		if wb.closed.Load() {
+			return false
+		}
+
 		// Check context cancellation
 		select {
 		case <-wb.ctx.Done():
-			wb.drainRemaining(batch, batchBytes, "shutdown", flushTimer)
+			wb.flushChannelAndExit(batch, batchBytes, "shutdown", flushTimer)
 			return true
 		default:
 		}
@@ -499,8 +533,7 @@ func (wb *WriteBatcher[T]) drainDQueAll(batch *[]T, batchBytes *int64, flushTime
 		select {
 		case item, ok := <-wb.ch:
 			if !ok {
-				// Channel closed — drain remaining dque items and exit
-				wb.drainRemaining(batch, batchBytes, "close", flushTimer)
+				wb.flushChannelAndExit(batch, batchBytes, "close", flushTimer)
 				return true
 			}
 			*batch, *batchBytes = wb.appendAndManageTimer(wb.ctx, *batch, *batchBytes, item, flushTimer)
@@ -538,75 +571,65 @@ func (wb *WriteBatcher[T]) drainDQueAll(batch *[]T, batchBytes *int64, flushTime
 	}
 }
 
-// drainRemaining best-effort drains dque + channel on context cancellation or
-// channel close. It first drains all dque items, then any remaining channel items,
-// flushing the final batch before returning. Unlike the normal path, it does not
-// manage the flush timer (timer resets are dead code during a tight drain loop).
-// Uses a 10-second drain-specific timeout to ensure faster shutdown than the
-// default 30-second flush timeout.
-func (wb *WriteBatcher[T]) drainRemaining(batch *[]T, batchBytes *int64, reason string, flushTimer *time.Timer) {
-	flushCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+// flushChannelAndExit flushes in-memory channel items and returns without
+// draining dque. Persisted overflow items remain on disk for the next startup.
+func (wb *WriteBatcher[T]) flushChannelAndExit(batch *[]T, batchBytes *int64, reason string, flushTimer *time.Timer) {
+	wb.stopFlushTimer(flushTimer)
 
-	drained := 0
-
-	// Drain dque items first
 	if wb.dq != nil {
-		for wb.dq.Size() > 0 {
-			item, err := wb.dq.Dequeue()
-			if err != nil {
-				if errors.Is(err, dque.ErrEmpty) {
-					continue
-				}
-				break
-			}
-			wb.overflowCount.Add(-1)
-			drained++
-			slog.Debug("writebatcher: drainRemaining dque dequeue",
-				"drained", drained,
-				"remaining", wb.dq.Size(),
-				"overflow_total", wb.overflowCount.Load())
-			*batch = append(*batch, *item)
-			if wb.cfg.SizeFunc != nil {
-				*batchBytes += wb.cfg.SizeFunc(*item)
-			}
-			if len(*batch) >= wb.cfg.MaxBatchSize || (wb.cfg.MaxBatchBytes > 0 && *batchBytes >= wb.cfg.MaxBatchBytes) {
-				wb.flush(flushCtx, *batch, *batchBytes, reason)
-				*batch = (*batch)[:0]
-				*batchBytes = 0
-			}
+		if remaining := wb.dq.Size(); remaining > 0 {
+			slog.Info("writebatcher: shutdown preserving dque items on disk",
+				"remaining", remaining,
+				"overflow_total", wb.overflowCount.Load(),
+				"reason", reason)
 		}
 	}
 
-	// Then drain any remaining items from channel
-	for {
-		select {
-		case item, ok := <-wb.ch:
-			if !ok {
-				if len(*batch) > 0 {
+	flushCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	drainChannel := func() {
+		if reason == "close" {
+			for {
+				item, ok := <-wb.ch
+				if !ok {
+					return
+				}
+				*batch = append(*batch, item)
+				if wb.cfg.SizeFunc != nil {
+					*batchBytes += wb.cfg.SizeFunc(item)
+				}
+				if len(*batch) >= wb.cfg.MaxBatchSize || (wb.cfg.MaxBatchBytes > 0 && *batchBytes >= wb.cfg.MaxBatchBytes) {
 					wb.flush(flushCtx, *batch, *batchBytes, reason)
 					*batch = (*batch)[:0]
 					*batchBytes = 0
 				}
+			}
+		}
+		for {
+			select {
+			case item, ok := <-wb.ch:
+				if !ok {
+					return
+				}
+				*batch = append(*batch, item)
+				if wb.cfg.SizeFunc != nil {
+					*batchBytes += wb.cfg.SizeFunc(item)
+				}
+				if len(*batch) >= wb.cfg.MaxBatchSize || (wb.cfg.MaxBatchBytes > 0 && *batchBytes >= wb.cfg.MaxBatchBytes) {
+					wb.flush(flushCtx, *batch, *batchBytes, reason)
+					*batch = (*batch)[:0]
+					*batchBytes = 0
+				}
+			default:
 				return
 			}
-			*batch = append(*batch, item)
-			if wb.cfg.SizeFunc != nil {
-				*batchBytes += wb.cfg.SizeFunc(item)
-			}
-			if len(*batch) >= wb.cfg.MaxBatchSize || (wb.cfg.MaxBatchBytes > 0 && *batchBytes >= wb.cfg.MaxBatchBytes) {
-				wb.flush(flushCtx, *batch, *batchBytes, reason)
-				*batch = (*batch)[:0]
-				*batchBytes = 0
-			}
-		default:
-			if len(*batch) > 0 {
-				wb.flush(flushCtx, *batch, *batchBytes, reason)
-				*batch = (*batch)[:0]
-				*batchBytes = 0
-			}
-			return
 		}
+	}
+
+	drainChannel()
+	if len(*batch) > 0 {
+		wb.flush(flushCtx, *batch, *batchBytes, reason)
 	}
 }
 
@@ -625,12 +648,12 @@ func (wb *WriteBatcher[T]) flush(ctx context.Context, batch []T, batchBytes int6
 	tx, err := wb.cfg.BeginTx(flushCtx)
 	if err != nil {
 		wb.totalErrors.Add(1)
-		wb.reEnqueueBatch(batch)
 		if wb.cfg.OnError != nil {
 			wb.cfg.OnError(err, copyBatch(batch))
 		} else {
 			slog.Error("writebatcher flush: BeginTx failed", "err", err, "batch_size", len(batch))
 		}
+		wb.reEnqueueBatch(batch)
 		return
 	}
 
@@ -641,12 +664,12 @@ func (wb *WriteBatcher[T]) flush(ctx context.Context, batch []T, batchBytes int6
 				slog.Warn("writebatcher flush: rollback after FlushFunc error", "err", rbErr)
 			}
 		}
-		wb.reEnqueueBatch(batch)
 		if wb.cfg.OnError != nil {
 			wb.cfg.OnError(err, copyBatch(batch))
 		} else {
 			slog.Error("writebatcher flush: FlushFunc failed", "err", err, "batch_size", len(batch))
 		}
+		wb.reEnqueueBatch(batch)
 		return
 	}
 
@@ -656,12 +679,12 @@ func (wb *WriteBatcher[T]) flush(ctx context.Context, batch []T, batchBytes int6
 			if rbErr := rollbackTx(tx); rbErr != nil {
 				slog.Warn("writebatcher flush: rollback after Commit error", "err", rbErr)
 			}
-			wb.reEnqueueBatch(batch)
 			if wb.cfg.OnError != nil {
 				wb.cfg.OnError(err, copyBatch(batch))
 			} else {
 				slog.Error("writebatcher flush: Commit failed", "err", err, "batch_size", len(batch))
 			}
+			wb.reEnqueueBatch(batch)
 			return
 		}
 	}
@@ -805,8 +828,8 @@ func (wb *WriteBatcher[T]) PendingCount() int64 {
 }
 
 // Close signals shutdown: it closes the input channel, waits for the worker to
-// drain and flush any remaining items, cancels the context, then closes the
-// dque overflow queue (if configured) and returns.
+// flush in-memory channel items and exit, cancels the context, then closes the
+// dque handle (if configured) without draining persisted overflow items.
 // After Close returns, all subsequent Submit calls return ErrClosed.
 //
 // Close is safe to call multiple times; after the first call it returns nil

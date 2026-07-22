@@ -29,6 +29,8 @@ func newIntegratedService(t *testing.T, ctx context.Context, cfg *config.Config)
 	infra := NewInfrastructureService()
 	infra.rootDir = rootDir
 	infra.SetupDB(ctx, cfg)
+	infra.CalibrateCacheSizeNow(ctx)
+	infra.StartWriteBatcher(ctx, true)
 	return infra
 }
 
@@ -238,13 +240,15 @@ func TestInfrastructureService_buildWriteBatcher_OnSuccessCacheEntry(t *testing.
 	infra := newIntegratedService(t, ctx, cfg)
 	defer infra.Shutdown()
 
+	// Use Body length 40 with ContentLength 100 to prove the counter uses
+	// len(Body) (stored bytes) rather than ContentLength (uncompressed).
 	entry := &cachelite.HTTPCacheEntry{
 		Key:           "key",
 		Path:          "/gallery/1",
 		Method:        "GET",
 		Status:        200,
-		ContentLength: sql.NullInt64{Int64: 50, Valid: true},
-		Body:          bytes.Repeat([]byte("b"), 50),
+		ContentLength: sql.NullInt64{Int64: 100, Valid: true},
+		Body:          bytes.Repeat([]byte("b"), 40),
 	}
 	if err := infra.writeBatcher.Submit(BatchedWrite{CacheEntry: entry}); err != nil {
 		t.Fatalf("submit: %v", err)
@@ -263,8 +267,10 @@ func TestInfrastructureService_buildWriteBatcher_OnSuccessCacheEntry(t *testing.
 		t.Fatal("timeout waiting for batcher")
 	}
 
-	if infra.cacheSizeBytes.Load() != 50 {
-		t.Fatalf("cacheSizeBytes = %d, want 50", infra.cacheSizeBytes.Load())
+	// Counter must use len(Body) = 40, not ContentLength = 100
+	if infra.cacheSizeBytes.Load() != 40 {
+		t.Fatalf("cacheSizeBytes = %d, want 40 (len(Body), not ContentLength 100)",
+			infra.cacheSizeBytes.Load())
 	}
 }
 
@@ -429,15 +435,17 @@ func TestInfrastructureService_walCheckpointAfterCommit_FiveMinuteRealCheckpoint
 	}
 }
 
-func TestInfrastructureService_walCheckpointAfterCommit_RealOptimize(t *testing.T) {
+func TestInfrastructureService_MaybeRunPeriodicOptimize_RealOptimize(t *testing.T) {
 	ctx := context.Background()
 	infra := newIntegratedService(t, ctx, config.DefaultConfig())
 	defer infra.Shutdown()
+	infra.lastPragmaOptimizeRun.Store(time.Now().Add(-65 * time.Minute))
+	infra.dbOptimizeInterval.Store(int64(time.Hour))
 
 	logs := withLogCapture(t, slog.LevelInfo, func() {
-		infra.walCheckpointAfterCommit(ctx, time.Now(), time.Now().Add(-65*time.Minute), 0)
+		infra.maybeRunPeriodicOptimize(ctx)
 	})
-	if !strings.Contains(logs, "PRAGMA optimize: 1 hour elapsed") {
+	if !strings.Contains(logs, "PRAGMA optimize: interval elapsed") {
 		t.Errorf("expected optimize log, got: %s", logs)
 	}
 }

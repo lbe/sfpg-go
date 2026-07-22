@@ -15,7 +15,7 @@ func TestPreloadTask_Run_Success(t *testing.T) {
 	})
 	tt := &TaskTracker{}
 	metrics := &PreloadMetrics{}
-	key := "GET:/gallery/1?v=x|identity"
+	key := "GET:/gallery/1?v=x"
 	tt.RegisterTask(key, "sess", "task1")
 
 	task := &PreloadTask{
@@ -46,7 +46,7 @@ func TestPreloadTask_Run_UnregistersOnError(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	})
 	tt := &TaskTracker{}
-	key := "GET:/gallery/1?v=x|identity"
+	key := "GET:/gallery/1?v=x"
 	tt.RegisterTask(key, "sess", "task1")
 
 	task := &PreloadTask{
@@ -72,7 +72,7 @@ func TestPreloadTask_Run_RecordsFailure(t *testing.T) {
 	})
 	tt := &TaskTracker{}
 	metrics := &PreloadMetrics{}
-	key := "GET:/gallery/1?v=x|identity"
+	key := "GET:/gallery/1?v=x"
 	tt.RegisterTask(key, "sess", "task1")
 
 	task := &PreloadTask{
@@ -97,7 +97,7 @@ func TestPreloadTask_SchedulerIntegration(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 	tt := &TaskTracker{}
-	key := "GET:/test?v=x|identity"
+	key := "GET:/test?v=x"
 	tt.RegisterTask(key, "sess", "task1")
 
 	task := &PreloadTask{
@@ -133,7 +133,7 @@ func TestPreloadTask_UnregistersAfterRun(t *testing.T) {
 	tracker := &TaskTracker{}
 	metrics := &PreloadMetrics{}
 
-	cacheKey := "GET:/test/1?v=test|HX=false|HXTarget=|identity"
+	cacheKey := "GET:/test/1?v=test"
 	tracker.RegisterTask(cacheKey, "session-1", "task-1")
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -168,7 +168,7 @@ func TestPreloadTask_Run_WithPooledTask(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 	tt := &TaskTracker{}
-	key := "GET:/pooled?v=x|identity"
+	key := "GET:/pooled?v=x"
 	tt.RegisterTask(key, "sess", "task1")
 
 	task := GetPreloadTask()
@@ -203,14 +203,13 @@ func TestPreloadTask_Run_WithVariant(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 	tt := &TaskTracker{}
-	key := "GET:/info/image/1?v=x|identity"
+	key := "GET:/info/image/1?v=x"
 	tt.RegisterTask(key, "sess", "task1")
 
 	task := &PreloadTask{
 		CacheKey:      key,
 		Path:          "/info/image/1",
 		HXTarget:      "box_info",
-		Encoding:      "gzip",
 		TaskTracker:   tt,
 		RequestConfig: InternalRequestConfig{Handler: handler, ETagVersion: "x"},
 		Metrics:       &PreloadMetrics{},

@@ -41,15 +41,26 @@ func (s *InfrastructureService) InitializeHTTPCache(config *config.Config) {
 		return
 	}
 
+	// Configure body codec at startup (empty OK — ConfigureBodyCodec maps "" → "zstd-1").
+	codec := config.HTTPCacheBodyCodec
+	if err := cachelite.ConfigureBodyCodec(codec); err != nil {
+		slog.Error("invalid http_cache_body_codec", "codec", codec, "err", err)
+	}
+
 	cfg := cachelite.CacheConfig{
 		Enabled:      true,
 		MaxEntrySize: config.CacheMaxEntrySize,
 		MaxTotalSize: config.CacheMaxSize,
 		DefaultTTL:   config.CacheMaxTime,
+
+		// CacheableRoutes lists the only paths whose responses are stored in the
+		// HTTP cache. The bodycodec decode path is content-type-agnostic, but the
+		// cached routes are all text/html; keep this list in sync with the actual
+		// response types served by the handlers.
 		CacheableRoutes: []string{
 			"/gallery/", "/lightbox/", "/info/folder/", "/info/image/",
 		},
-		OnGalleryCacheHit: func(ctx context.Context, folderID int64, sessionID string, acceptEncoding string) {
+		OnGalleryCacheHit: func(ctx context.Context, folderID int64, sessionID string) {
 			// preloadManager callback set later via SetCacheOnGalleryHit
 		},
 		SessionCookieName:     session.SessionName,
@@ -66,7 +77,7 @@ func (s *InfrastructureService) InitializeHTTPCache(config *config.Config) {
 
 // SetCacheOnGalleryHit replaces the OnGalleryCacheHit callback (wired by
 // SubsystemManager after preloadManager is created).
-func (s *InfrastructureService) SetCacheOnGalleryHit(fn func(ctx context.Context, folderID int64, sessionID, acceptEncoding string)) {
+func (s *InfrastructureService) SetCacheOnGalleryHit(fn func(ctx context.Context, folderID int64, sessionID string)) {
 	if s.cacheMW != nil {
 		s.cacheMW.SetOnGalleryCacheHit(fn)
 	}
@@ -82,6 +93,7 @@ func (s *InfrastructureService) InvalidateHTTPCache() {
 		return
 	}
 	s.cacheSizeBytes.Store(0)
+	s.cacheSizeCalibrated.Store(true)
 }
 
 func (s *InfrastructureService) submitCacheWrite(entry *cachelite.HTTPCacheEntry) {
@@ -90,6 +102,7 @@ func (s *InfrastructureService) submitCacheWrite(entry *cachelite.HTTPCacheEntry
 		cachelite.PutHTTPCacheEntry(entry)
 		return
 	}
+
 	err := s.writeBatcher.Submit(BatchedWrite{CacheEntry: entry})
 	if errors.Is(err, writebatcher.ErrFull) {
 		slog.Warn("unified batcher full, dropping cache write",
@@ -119,15 +132,11 @@ func (s *InfrastructureService) maybeEvictCacheEntries(batch []BatchedWrite) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	currentSize, err := s.testSeams.GetCacheSizeBytes(ctx, s.dbRwPool)
-	if err != nil {
-		slog.Warn("failed to get cache size for eviction check", "err", err)
-		return
-	}
+	currentSize := s.cacheSizeBytes.Load()
 	if currentSize > cfg.MaxTotalSize {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
 		targetFree := currentSize - cfg.MaxTotalSize + cfg.MaxTotalSize/10
 		freed, evErr := s.testSeams.EvictLRU(ctx, s.dbRwPool, targetFree)
 		if evErr != nil {

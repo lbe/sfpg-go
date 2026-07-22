@@ -48,43 +48,6 @@ func TestConfigHandlers_RestoreLastKnownGood_PreviewDBError(t *testing.T) {
 	}
 }
 
-func TestConfigHandlers_RestoreLastKnownGood_PreviewInvalidCSRF(t *testing.T) {
-	if err := ui.ParseTemplates(web.FS); err != nil {
-		t.Fatalf("ParseTemplates failed: %v", err)
-	}
-
-	ch := setupTestConfigHandlers(t, &mockConfigServiceForConfig{}, &mockAuthServiceForConfig{})
-	ch.SessionManager = &mockSessionManagerAuthenticatedInvalidCSRF{}
-
-	req := httptest.NewRequest(http.MethodPost, "/config/restore-last-known-good?action=preview", nil)
-	w := httptest.NewRecorder()
-
-	ch.RestoreLastKnownGoodHandler(w, req)
-
-	if w.Code != http.StatusForbidden {
-		t.Errorf("expected status 403, got %d", w.Code)
-	}
-}
-
-func TestConfigHandlers_RestoreLastKnownGood_CommitInvalidCSRF(t *testing.T) {
-	if err := ui.ParseTemplates(web.FS); err != nil {
-		t.Fatalf("ParseTemplates failed: %v", err)
-	}
-
-	ch := setupTestConfigHandlers(t, &mockConfigServiceForConfig{}, &mockAuthServiceForConfig{})
-	ch.DBRwPool = errConnPool{getErr: errors.New("no db")}
-	ch.SessionManager = &mockSessionManagerAuthenticatedInvalidCSRF{}
-
-	req := httptest.NewRequest(http.MethodPost, "/config/restore-last-known-good?action=commit", nil)
-	w := httptest.NewRecorder()
-
-	ch.RestoreLastKnownGoodHandler(w, req)
-
-	if w.Code != http.StatusForbidden {
-		t.Errorf("expected status 403, got %d", w.Code)
-	}
-}
-
 func TestConfigHandlers_RestoreLastKnownGood_InvalidAction(t *testing.T) {
 	if err := ui.ParseTemplates(web.FS); err != nil {
 		t.Fatalf("ParseTemplates failed: %v", err)
@@ -116,7 +79,7 @@ func TestConfigHandlers_RestoreLastKnownGood_CommitRestoreError(t *testing.T) {
 	ch := setupTestConfigHandlers(t, mockSvc, &mockAuthServiceForConfig{})
 	ch.SessionManager.(*mockSessionManagerAuth).authenticated = true
 
-	req := httptest.NewRequest(http.MethodPost, "/config/restore-last-known-good?action=commit", strings.NewReader("csrf_token=valid"))
+	req := httptest.NewRequest(http.MethodPost, "/config/restore-last-known-good?action=commit", nil)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 
@@ -160,7 +123,7 @@ func TestConfigHandlers_RestoreLastKnownGood_CommitRestartRequired(t *testing.T)
 	// SetRestartRequired removed; handled by deps
 	ch.SessionManager.(*mockSessionManagerAuth).authenticated = true
 
-	req := httptest.NewRequest(http.MethodPost, "/config/restore-last-known-good?action=commit", strings.NewReader("csrf_token=valid"))
+	req := httptest.NewRequest(http.MethodPost, "/config/restore-last-known-good?action=commit", nil)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 
@@ -201,7 +164,7 @@ func TestConfigHandlers_RestoreLastKnownGood_CommitValidateError(t *testing.T) {
 	ch := setupTestConfigHandlers(t, mockSvc, &mockAuthServiceForConfig{})
 	ch.SessionManager.(*mockSessionManagerAuth).authenticated = true
 
-	req := httptest.NewRequest(http.MethodPost, "/config/restore-last-known-good?action=commit", strings.NewReader("csrf_token=valid"))
+	req := httptest.NewRequest(http.MethodPost, "/config/restore-last-known-good?action=commit", nil)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 
@@ -236,7 +199,7 @@ func TestConfigHandlers_RestoreLastKnownGood_CommitSaveError(t *testing.T) {
 	ch := setupTestConfigHandlers(t, mockSvc, &mockAuthServiceForConfig{})
 	ch.SessionManager.(*mockSessionManagerAuth).authenticated = true
 
-	req := httptest.NewRequest(http.MethodPost, "/config/restore-last-known-good?action=commit", strings.NewReader("csrf_token=valid"))
+	req := httptest.NewRequest(http.MethodPost, "/config/restore-last-known-good?action=commit", nil)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 
@@ -273,7 +236,7 @@ func TestConfigHandlers_RestoreLastKnownGood_CommitNoRestartRequired(t *testing.
 	// SetRestartRequired removed; handled by deps
 	ch.SessionManager.(*mockSessionManagerAuth).authenticated = true
 
-	req := httptest.NewRequest(http.MethodPost, "/config/restore-last-known-good?action=commit", strings.NewReader("csrf_token=valid"))
+	req := httptest.NewRequest(http.MethodPost, "/config/restore-last-known-good?action=commit", nil)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 
@@ -417,7 +380,7 @@ func TestConfigHandlers_RestoreLastKnownGood_CommitLoadError(t *testing.T) {
 	ch := setupTestConfigHandlers(t, mockSvc, &mockAuthServiceForConfig{})
 	ch.SessionManager.(*mockSessionManagerAuth).authenticated = true
 
-	req := httptest.NewRequest(http.MethodPost, "/config/restore-last-known-good?action=commit", strings.NewReader("csrf_token=valid"))
+	req := httptest.NewRequest(http.MethodPost, "/config/restore-last-known-good?action=commit", nil)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 

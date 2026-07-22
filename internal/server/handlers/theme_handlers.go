@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"log/slog"
 	"net/http"
 	"slices"
 
@@ -65,13 +64,6 @@ func (h *ThemeHandlers) ThemeModalHandler(w http.ResponseWriter, r *http.Request
 
 // ThemePostHandler handles theme selection from the modal.
 func (h *ThemeHandlers) ThemePostHandler(w http.ResponseWriter, r *http.Request) {
-	// Validate CSRF token
-	if !h.sessionManager.ValidateCSRFToken(r) {
-		slog.Warn("CSRF validation failed for theme post", "remote_addr", r.RemoteAddr)
-		http.Error(w, "Forbidden - CSRF token invalid", http.StatusForbidden)
-		return
-	}
-
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "Invalid form data", http.StatusBadRequest)
 		return
@@ -101,7 +93,7 @@ func (h *ThemeHandlers) ThemePostHandler(w http.ResponseWriter, r *http.Request)
 		MaxAge:   ThemeCookieMaxAge,
 		HttpOnly: false,
 		SameSite: http.SameSiteLaxMode,
-		Secure:   r.TLS != nil,
+		Secure:   cfg.SessionSecure,
 	})
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

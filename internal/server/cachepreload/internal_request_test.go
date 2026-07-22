@@ -21,12 +21,12 @@ func TestMakeInternalRequest_NilHandlerReturnsError(t *testing.T) {
 	}
 }
 
-func TestMakeInternalRequestWithVariant_NilHandlerReturnsError(t *testing.T) {
+func TestMakeInternalRequestWithHXTarget_NilHandlerReturnsError(t *testing.T) {
 	cfg := InternalRequestConfig{
 		Handler:     nil,
 		ETagVersion: "v1",
 	}
-	err := MakeInternalRequestWithVariant(context.Background(), cfg, "/gallery/1", "", "identity")
+	err := MakeInternalRequestWithHXTarget(context.Background(), cfg, "/gallery/1", "")
 	if err == nil {
 		t.Fatal("expected error when Handler is nil")
 	}
@@ -109,12 +109,12 @@ func TestMakeInternalRequest_ReturnsErrorOn5xx(t *testing.T) {
 	}
 }
 
-func TestMakeInternalRequestWithVariant_ReturnsErrorOn4xx(t *testing.T) {
+func TestMakeInternalRequestWithHXTarget_ReturnsErrorOn4xx(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	})
 	cfg := InternalRequestConfig{Handler: handler, ETagVersion: "v1"}
-	err := MakeInternalRequestWithVariant(context.Background(), cfg, "/test", "", "identity")
+	err := MakeInternalRequestWithHXTarget(context.Background(), cfg, "/test", "")
 	if err == nil {
 		t.Fatal("expected error when handler returns 404")
 	}
@@ -134,28 +134,23 @@ func TestMakeInternalRequest_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	err := MakeInternalRequest(ctx, cfg, "/test")
-	// Cancelled context may or may not error depending on timing
 	_ = err
 }
 
-// TestMakeInternalRequestWithVariant_SetsHXAndEncoding verifies that when preloading
-// for browser HTMX requests (info box, lightbox), we set HX-Request, HX-Target, and
-// Accept-Encoding so the stored cache key matches real browser requests.
-func TestMakeInternalRequestWithVariant_SetsHXAndEncoding(t *testing.T) {
-	var gotHX, gotTarget, gotEncoding string
+func TestMakeInternalRequestWithHXTarget_SetsHXHeaders(t *testing.T) {
+	var gotHX, gotTarget string
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotHX = r.Header.Get("HX-Request")
 		gotTarget = r.Header.Get("HX-Target")
-		gotEncoding = r.Header.Get("Accept-Encoding")
 		w.WriteHeader(http.StatusOK)
 	})
 	cfg := InternalRequestConfig{
 		Handler:     handler,
 		ETagVersion: "v1",
 	}
-	err := MakeInternalRequestWithVariant(context.Background(), cfg, "/info/image/12", "box_info", "gzip")
+	err := MakeInternalRequestWithHXTarget(context.Background(), cfg, "/info/image/12", "box_info")
 	if err != nil {
-		t.Fatalf("MakeInternalRequestWithVariant: %v", err)
+		t.Fatalf("MakeInternalRequestWithHXTarget: %v", err)
 	}
 	if gotHX != "true" {
 		t.Errorf("HX-Request = %q, want true", gotHX)
@@ -163,32 +158,23 @@ func TestMakeInternalRequestWithVariant_SetsHXAndEncoding(t *testing.T) {
 	if gotTarget != "box_info" {
 		t.Errorf("HX-Target = %q, want box_info", gotTarget)
 	}
-	if gotEncoding != "gzip" {
-		t.Errorf("Accept-Encoding = %q, want gzip", gotEncoding)
-	}
 }
 
-// TestMakeInternalRequestWithVariant_EmptyTarget_BehavesLikeFullPage verifies that
-// empty hxTarget does not set HX headers (full-page style).
-func TestMakeInternalRequestWithVariant_EmptyTarget_BehavesLikeFullPage(t *testing.T) {
-	var gotHX, gotEncoding string
+func TestMakeInternalRequestWithHXTarget_EmptyTarget_BehavesLikeFullPage(t *testing.T) {
+	var gotHX string
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotHX = r.Header.Get("HX-Request")
-		gotEncoding = r.Header.Get("Accept-Encoding")
 		w.WriteHeader(http.StatusOK)
 	})
 	cfg := InternalRequestConfig{
 		Handler:     handler,
 		ETagVersion: "v1",
 	}
-	err := MakeInternalRequestWithVariant(context.Background(), cfg, "/gallery/1", "", "identity")
+	err := MakeInternalRequestWithHXTarget(context.Background(), cfg, "/gallery/1", "")
 	if err != nil {
-		t.Fatalf("MakeInternalRequestWithVariant: %v", err)
+		t.Fatalf("MakeInternalRequestWithHXTarget: %v", err)
 	}
 	if gotHX != "" {
 		t.Errorf("HX-Request = %q, want empty (full page)", gotHX)
-	}
-	if gotEncoding != "identity" {
-		t.Errorf("Accept-Encoding = %q, want identity", gotEncoding)
 	}
 }

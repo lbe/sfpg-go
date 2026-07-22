@@ -16,7 +16,6 @@ func resetEnv() {
 	os.Unsetenv("SFG_DISCOVER")
 	os.Unsetenv("SFG_DEBUG_DELAY_MS")
 	os.Unsetenv("SFG_PROFILE")
-	os.Unsetenv("SFG_COMPRESSION")
 	os.Unsetenv("SFG_HTTP_CACHE")
 	os.Unsetenv("SFG_CACHE_PRELOAD")
 	os.Unsetenv("SEPG_SESSION_SECRET")
@@ -42,42 +41,6 @@ func TestParse_NegativeDelayCoerced(t *testing.T) {
 	opt := Parse()
 	if opt.DebugDelayMS.Int != 0 {
 		t.Fatalf("expected coerced debugDelayMS 0, got %d", opt.DebugDelayMS.Int)
-	}
-}
-
-func TestParse_CompressionDefault(t *testing.T) {
-	resetEnv()
-	resetFlags()
-	os.Setenv("SEPG_SESSION_SECRET", validTestSecret)
-	opt := Parse()
-	// No defaults - should be zero value (false) and not set
-	if opt.EnableCompression.Bool != false {
-		t.Fatalf("expected zero value compression false, got %v", opt.EnableCompression.Bool)
-	}
-	if opt.EnableCompression.IsSet != false {
-		t.Fatalf("expected EnableCompression.IsSet=false, got %v", opt.EnableCompression.IsSet)
-	}
-}
-
-func TestParse_CompressionEnvVar(t *testing.T) {
-	resetEnv()
-	resetFlags()
-	os.Setenv("SEPG_SESSION_SECRET", validTestSecret)
-	os.Setenv("SFG_COMPRESSION", "false")
-	opt := Parse()
-	if opt.EnableCompression.Bool != false {
-		t.Fatalf("expected compression false from env, got %v", opt.EnableCompression.Bool)
-	}
-}
-
-func TestParse_CompressionFlag(t *testing.T) {
-	resetEnv()
-	resetFlags()
-	os.Setenv("SEPG_SESSION_SECRET", validTestSecret)
-	os.Args = []string{"cmd", "-compression=false"}
-	opt := Parse()
-	if opt.EnableCompression.Bool != false {
-		t.Fatalf("expected compression false from flag, got %v", opt.EnableCompression.Bool)
 	}
 }
 
@@ -486,7 +449,6 @@ func TestApplyEnvVars_AllSet(t *testing.T) {
 	t.Setenv("SFG_DISCOVER", "false")
 	t.Setenv("SFG_DEBUG_DELAY_MS", "50")
 	t.Setenv("SFG_PROFILE", "cpu")
-	t.Setenv("SFG_COMPRESSION", "false")
 	t.Setenv("SFG_HTTP_CACHE", "true")
 
 	opt := defaultOpt()
@@ -503,9 +465,6 @@ func TestApplyEnvVars_AllSet(t *testing.T) {
 	}
 	if opt.Profile.String != "cpu" {
 		t.Errorf("expected profile cpu, got %q", opt.Profile.String)
-	}
-	if opt.EnableCompression.Bool != false {
-		t.Errorf("expected compression false, got %v", opt.EnableCompression.Bool)
 	}
 	if opt.EnableHTTPCache.Bool != true {
 		t.Errorf("expected http-cache true, got %v", opt.EnableHTTPCache.Bool)
@@ -532,7 +491,7 @@ func TestApplyCLIFlags_AllSet(t *testing.T) {
 
 	oldArgs := os.Args
 	t.Cleanup(func() { os.Args = oldArgs })
-	os.Args = []string{"prog", "-port", "9200", "-discover=false", "-debug-delay-ms", "75", "-profile", "cpu", "-compression=false", "-http-cache=false"}
+	os.Args = []string{"prog", "-port", "9200", "-discover=false", "-debug-delay-ms", "75", "-profile", "cpu", "-http-cache=false"}
 
 	opt := defaultOpt()
 	if err := applyCLIFlags(&opt); err != nil {
@@ -550,9 +509,6 @@ func TestApplyCLIFlags_AllSet(t *testing.T) {
 	}
 	if opt.Profile.String != "cpu" {
 		t.Errorf("expected profile cpu, got %q", opt.Profile.String)
-	}
-	if opt.EnableCompression.Bool != false {
-		t.Errorf("expected compression false, got %v", opt.EnableCompression.Bool)
 	}
 	if opt.EnableHTTPCache.Bool != false {
 		t.Errorf("expected http-cache false, got %v", opt.EnableHTTPCache.Bool)
@@ -852,10 +808,7 @@ func TestApplyEnvVars_InvalidValues(t *testing.T) {
 			name: "invalid SFG_DEBUG_DELAY_MS",
 			env:  map[string]string{"SFG_DEBUG_DELAY_MS": "not-an-int"},
 		},
-		{
-			name: "invalid SFG_COMPRESSION",
-			env:  map[string]string{"SFG_COMPRESSION": "not-a-bool"},
-		},
+
 		{
 			name: "invalid SFG_HTTP_CACHE",
 			env:  map[string]string{"SFG_HTTP_CACHE": "not-a-bool"},

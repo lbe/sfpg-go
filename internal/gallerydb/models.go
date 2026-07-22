@@ -110,23 +110,21 @@ type FolderView struct {
 }
 
 type HttpCache struct {
-	ID              int64
-	Key             string
-	Method          string
-	Path            string
-	QueryString     sql.NullString
-	Encoding        string
-	Status          int64
-	ContentType     sql.NullString
-	CacheControl    sql.NullString
-	Etag            sql.NullString
-	LastModified    sql.NullString
-	Vary            sql.NullString
-	Body            []byte
-	ContentLength   sql.NullInt64
-	CreatedAt       int64
-	ExpiresAt       sql.NullInt64
-	ContentEncoding sql.NullString
+	ID            int64
+	Key           string
+	Method        string
+	Path          string
+	QueryString   sql.NullString
+	Status        int64
+	ContentType   sql.NullString
+	CacheControl  sql.NullString
+	Etag          sql.NullString
+	LastModified  sql.NullString
+	Vary          sql.NullString
+	Body          []byte
+	ContentLength sql.NullInt64
+	CreatedAt     int64
+	ExpiresAt     sql.NullInt64
 }
 
 type InvalidFile struct {

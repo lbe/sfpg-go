@@ -8,7 +8,7 @@
       on htmx:beforeSwap
         remove .populated from me
       on mouseleave
-        if not document.querySelector('body[info-pinned]') and me matches .populated
+        if body does not match .info-pinned and me matches .populated
           set the innerHTML of #box_info to ''
         end
       on htmx:afterSwap from #box_info

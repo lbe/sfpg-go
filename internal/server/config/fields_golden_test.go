@@ -31,7 +31,6 @@ func TestGoldenBaseline(t *testing.T) {
 		SessionHttpOnly:                       false,
 		SessionSecure:                         false,
 		SessionSameSite:                       "Strict",
-		ServerCompressionEnable:               false,
 		EnableHTTPCache:                       false,
 		CacheMaxSize:                          9999999999,
 		CacheMaxTime:                          42 * time.Minute,
@@ -47,6 +46,7 @@ func TestGoldenBaseline(t *testing.T) {
 		QueueSize:                             12345,
 		EnableCachePreload:                    false,
 		MaxHTTPCacheEntryInsertPerTransaction: 77,
+		HTTPCacheBodyCodec:                    "zstd-1",
 		LockoutDuration:                       7200,
 		LockoutThreshold:                      5,
 		LoginRateLimitPerIP:                   20,
@@ -75,7 +75,6 @@ func TestGoldenBaseline(t *testing.T) {
 		SessionHttpOnly:                       true,
 		SessionSecure:                         true,
 		SessionSameSite:                       "Lax",
-		ServerCompressionEnable:               true,
 		EnableHTTPCache:                       true,
 		CacheMaxSize:                          1111111111,
 		CacheMaxTime:                          10 * time.Minute,
@@ -91,6 +90,7 @@ func TestGoldenBaseline(t *testing.T) {
 		QueueSize:                             99999,
 		EnableCachePreload:                    true,
 		MaxHTTPCacheEntryInsertPerTransaction: 33,
+		HTTPCacheBodyCodec:                    "gzip-6",
 		LockoutDuration:                       7777,
 		LockoutThreshold:                      99,
 		LoginRateLimitPerIP:                   50,
@@ -117,7 +117,6 @@ func TestGoldenBaseline(t *testing.T) {
 			"session_http_only":         "false",
 			"session_secure":            "false",
 			"session_same_site":         "Strict",
-			"server_compression_enable": "false",
 			"enable_http_cache":         "false",
 			"cache_max_size":            "9999999999",
 			"cache_max_time":            "42m0s",
@@ -133,6 +132,7 @@ func TestGoldenBaseline(t *testing.T) {
 			"queue_size":                "12345",
 			"enable_cache_preload":      "false",
 			"max_http_cache_entry_insert_per_transaction": "77",
+			"http_cache_body_codec":                       "zstd-1",
 			"lockout_duration":                            "7200",
 			"lockout_threshold":                           "5",
 			"login_rate_limit_per_ip":                     "20",
@@ -183,7 +183,6 @@ func TestGoldenBaseline(t *testing.T) {
 			"session-http-only":         false,
 			"session-secure":            false,
 			"session-same-site":         "Strict",
-			"compression":               false,
 			"http-cache":                false,
 			"cache-max-size":            9999999999,
 			"cache-max-time":            "42m0s",
@@ -199,6 +198,7 @@ func TestGoldenBaseline(t *testing.T) {
 			"queue-size":                12345,
 			"enable-cache-preload":      false,
 			"max-http-cache-entry-insert-per-transaction": 77,
+			"http-cache-body-codec":                       "zstd-1",
 			"lockout-duration":                            7200,
 			"lockout-threshold":                           5,
 			"login-rate-limit-per-ip":                     20,
@@ -227,10 +227,10 @@ func TestGoldenBaseline(t *testing.T) {
 	t.Run("IdentifyChanges", func(t *testing.T) {
 		got := goldenConfig.IdentifyChanges(otherConfig)
 		slices.Sort(got)
-		// Post-refactor: all 32 yamlKeys including "themes".
+		// Post-refactor: all yamlKeys including "themes".
 		want := []string{
 			"cache-cleanup-interval", "cache-max-entry-size", "cache-max-size",
-			"cache-max-time", "compression", "current-theme",
+			"cache-max-time", "current-theme",
 			"db-max-pool-size", "db-min-idle-connections", "db-optimize-interval",
 			"db-pool-monitor-interval", "discover", "enable-cache-preload",
 			"enable-pprof",
@@ -242,6 +242,7 @@ func TestGoldenBaseline(t *testing.T) {
 			"session-http-only", "session-max-age", "session-same-site",
 			"session-secure", "site-name", "themes", "worker-pool-max",
 			"worker-pool-max-idle-time", "worker-pool-min-idle",
+			"http-cache-body-codec",
 		}
 		slices.Sort(want)
 		if !reflect.DeepEqual(got, want) {
@@ -252,7 +253,7 @@ func TestGoldenBaseline(t *testing.T) {
 	t.Run("restartRequiredKeys", func(t *testing.T) {
 		got := restartRequiredKeys(goldenConfig, otherConfig)
 		slices.Sort(got)
-		// 26 restart-required dbKeys from the design block.
+		// 25 restart-required dbKeys from the design block.
 		want := []string{
 			"cache_cleanup_interval", "cache_max_entry_size", "cache_max_size",
 			"cache_max_time", "db_max_pool_size", "db_min_idle_connections",
@@ -260,7 +261,7 @@ func TestGoldenBaseline(t *testing.T) {
 			"enable_http_cache", "enable_pprof", "image_directory",
 			"listener_address", "listener_port", "log_directory", "log_level",
 			"log_retention_count", "log_rollover", "queue_size",
-			"server_compression_enable", "session_http_only", "session_max_age",
+			"session_http_only", "session_max_age",
 			"session_same_site", "session_secure", "worker_pool_max",
 			"worker_pool_max_idle_time", "worker_pool_min_idle",
 		}
@@ -353,6 +354,9 @@ func TestGoldenBaseline(t *testing.T) {
 		if zeroConfig.MaxHTTPCacheEntryInsertPerTransaction != def.MaxHTTPCacheEntryInsertPerTransaction {
 			t.Errorf("MaxHTTPCacheEntryInsertPerTransaction = %d, want %d", zeroConfig.MaxHTTPCacheEntryInsertPerTransaction, def.MaxHTTPCacheEntryInsertPerTransaction)
 		}
+		if zeroConfig.HTTPCacheBodyCodec != def.HTTPCacheBodyCodec {
+			t.Errorf("HTTPCacheBodyCodec = %q, want %q", zeroConfig.HTTPCacheBodyCodec, def.HTTPCacheBodyCodec)
+		}
 		if zeroConfig.LockoutDuration != def.LockoutDuration {
 			t.Errorf("LockoutDuration = %d, want %d", zeroConfig.LockoutDuration, def.LockoutDuration)
 		}
@@ -369,9 +373,6 @@ func TestGoldenBaseline(t *testing.T) {
 		}
 		if zeroConfig.SessionSecure != false {
 			t.Errorf("SessionSecure = %v, want false", zeroConfig.SessionSecure)
-		}
-		if zeroConfig.ServerCompressionEnable != false {
-			t.Errorf("ServerCompressionEnable = %v, want false", zeroConfig.ServerCompressionEnable)
 		}
 		if zeroConfig.EnableHTTPCache != false {
 			t.Errorf("EnableHTTPCache = %v, want false", zeroConfig.EnableHTTPCache)
@@ -441,9 +442,6 @@ func TestGoldenBaseline(t *testing.T) {
 		if zeroConfig.SessionSameSite != def.SessionSameSite {
 			t.Errorf("SessionSameSite = %q, want %q", zeroConfig.SessionSameSite, def.SessionSameSite)
 		}
-		if zeroConfig.ServerCompressionEnable != def.ServerCompressionEnable {
-			t.Errorf("ServerCompressionEnable = %v, want %v", zeroConfig.ServerCompressionEnable, def.ServerCompressionEnable)
-		}
 		if zeroConfig.EnableHTTPCache != def.EnableHTTPCache {
 			t.Errorf("EnableHTTPCache = %v, want %v", zeroConfig.EnableHTTPCache, def.EnableHTTPCache)
 		}
@@ -488,6 +486,9 @@ func TestGoldenBaseline(t *testing.T) {
 		}
 		if zeroConfig.MaxHTTPCacheEntryInsertPerTransaction != def.MaxHTTPCacheEntryInsertPerTransaction {
 			t.Errorf("MaxHTTPCacheEntryInsertPerTransaction = %d, want %d", zeroConfig.MaxHTTPCacheEntryInsertPerTransaction, def.MaxHTTPCacheEntryInsertPerTransaction)
+		}
+		if zeroConfig.HTTPCacheBodyCodec != def.HTTPCacheBodyCodec {
+			t.Errorf("HTTPCacheBodyCodec = %q, want %q", zeroConfig.HTTPCacheBodyCodec, def.HTTPCacheBodyCodec)
 		}
 		if zeroConfig.LockoutDuration != def.LockoutDuration {
 			t.Errorf("LockoutDuration = %d, want %d", zeroConfig.LockoutDuration, def.LockoutDuration)

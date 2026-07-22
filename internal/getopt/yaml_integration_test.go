@@ -30,7 +30,6 @@ session-max-age: 86400
 session-http-only: false
 session-secure: false
 session-same-site: "Strict"
-compression: false
 http-cache: false
 cache-max-size: 1048576000
 cache-max-time: "24h"
@@ -83,7 +82,6 @@ session-max-age: 3600
 session-http-only: true
 session-secure: true
 session-same-site: "None"
-compression: true
 http-cache: true
 cache-max-size: 2000000000
 cache-max-time: "48h"
@@ -167,7 +165,6 @@ func TestYAMLPrecedence_OverridesDefaults(t *testing.T) {
 	// YAML with non-default values
 	yamlContent := `port: 9999
 discover: false
-compression: false
 `
 
 	err := os.WriteFile(yamlFile, []byte(yamlContent), 0644)
@@ -189,9 +186,6 @@ compression: false
 	}
 	if opt.RunFileDiscovery != false {
 		t.Errorf("Expected discover false from YAML, got %v", opt.RunFileDiscovery)
-	}
-	if opt.EnableCompression != false {
-		t.Errorf("Expected compression false from YAML, got %v", opt.EnableCompression)
 	}
 }
 

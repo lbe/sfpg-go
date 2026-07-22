@@ -145,12 +145,12 @@
             class="btn btn-primary"
             _="on click
                  set selectedTheme to #theme-selected-value.value
-                 set bodyStr to 'theme=' + selectedTheme + '&csrf_token={{ .CSRFToken }}'
+                 set bodyStr to 'theme=' + selectedTheme
                  fetch /theme with method:'POST', headers:{'Content-Type': 'application/x-www-form-urlencoded'}, body:bodyStr
+                 set @data-theme of <html/> to selectedTheme
                  set #theme_modal.checked to false
                  wait 300ms
-                 remove #theme-modal-container from body
-                 js location.reload(true) end"
+                 remove #theme-modal-container from body"
           >
             Apply Theme
           </button>

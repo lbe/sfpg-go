@@ -50,8 +50,7 @@ func (h *AuthHandlers) SyncLoginRateLimitMax(max int) {
 // On failed authentication, it renders the login form with an appropriate error message
 // and returns HTTP 200.
 func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
-	// Per-IP rate limit runs before CSRF validation so rejected attempts still
-	// count toward the cap (see security.IPRateLimiter).
+	// Per-IP rate limit runs before processing login attempts.
 	if h.rateLimiter != nil {
 		ip := security.RateLimitFromRequestKey(r.RemoteAddr)
 		if !h.rateLimiter.Allow(ip) {
@@ -59,13 +58,6 @@ func (h *AuthHandlers) Login(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Too many login attempts. Please try again later.", http.StatusTooManyRequests)
 			return
 		}
-	}
-
-	// Validate CSRF token
-	if !h.SessionManager.ValidateCSRFToken(r) {
-		slog.Warn("CSRF validation failed for login", "remote_addr", r.RemoteAddr)
-		http.Error(w, "Forbidden - CSRF token invalid", http.StatusForbidden)
-		return
 	}
 
 	username := r.FormValue("username")
@@ -105,19 +97,15 @@ func (h *AuthHandlers) renderLoginForm(w http.ResponseWriter, r *http.Request, u
 	if err := ui.RenderTemplate(w, "login-form.html.tmpl", map[string]any{
 		"ErrorMessage": errorMessage,
 		"Username":     username,
-		"CSRFToken":    h.SessionManager.EnsureCSRFToken(w, r),
 	}); err != nil {
 		slog.Error("failed to render login form", "err", err)
 	}
 }
 
-// LoginFormHandler handles GET /login-form and returns the login form HTML with a
-// fresh CSRF token from an uncached endpoint. This prevents 403 failures caused by
-// stale CSRF tokens baked into the 30-day cached gallery page.
+// LoginFormHandler handles GET /login-form and returns the login form HTML.
 func (h *AuthHandlers) LoginFormHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
 	if err := ui.RenderTemplate(w, "login-form-inner.html.tmpl", map[string]any{
-		"CSRFToken":    h.SessionManager.EnsureCSRFToken(w, r),
 		"ErrorMessage": "",
 		"Username":     "",
 	}); err != nil {
@@ -126,14 +114,10 @@ func (h *AuthHandlers) LoginFormHandler(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
-// LogoutFormHandler handles GET /logout-form and returns the logout form HTML with a
-// fresh CSRF token from an uncached endpoint. This prevents 403 failures caused by
-// stale CSRF tokens baked into the 30-day cached gallery page.
+// LogoutFormHandler handles GET /logout-form and returns the logout form HTML.
 func (h *AuthHandlers) LogoutFormHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
-	if err := ui.RenderTemplate(w, "logout-form-inner.html.tmpl", map[string]any{
-		"CSRFToken": h.SessionManager.EnsureCSRFToken(w, r),
-	}); err != nil {
+	if err := ui.RenderTemplate(w, "logout-form-inner.html.tmpl", map[string]any{}); err != nil {
 		slog.Error("failed to render logout form", "err", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 	}
@@ -142,12 +126,6 @@ func (h *AuthHandlers) LogoutFormHandler(w http.ResponseWriter, r *http.Request)
 // Logout handles POST /logout, destroying the session and triggering the auth-changed event
 // to refresh the hamburger menu via the /hamburger-menu endpoint.
 func (h *AuthHandlers) Logout(w http.ResponseWriter, r *http.Request) {
-	// Validate CSRF token
-	if !h.SessionManager.ValidateCSRFToken(r) {
-		slog.Warn("CSRF validation failed for logout", "remote_addr", r.RemoteAddr)
-		http.Error(w, "Forbidden - CSRF token invalid", http.StatusForbidden)
-		return
-	}
 
 	// Clear the session via SessionManager
 	if err := h.SessionManager.SetAuthenticated(w, r, false); err != nil {

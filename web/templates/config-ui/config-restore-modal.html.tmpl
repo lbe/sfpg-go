@@ -9,12 +9,6 @@
   </p>
   <textarea name="yaml" id="restore-yaml-content" class="hidden">
 {{ .BackupYAML }}</textarea>
-  <input
-    type="hidden"
-    name="csrf_token"
-    id="restore-csrf-token"
-    value="{{ .CSRFToken }}"
-  />
   <div class="mb-4 grid grid-cols-2 gap-4">
     <div>
       <h4 class="mb-2 font-semibold">Current Configuration</h4>
@@ -37,7 +31,7 @@
       class="btn btn-primary"
       hx-post="/config/restore/commit"
       hx-swap="none"
-      hx-include="#restore-yaml-content,#restore-csrf-token"
+      hx-include="#restore-yaml-content"
     >
       Restore
     </button>

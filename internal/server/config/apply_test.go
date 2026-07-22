@@ -222,7 +222,6 @@ func TestImportPreservesLiveValues_OnlyOverridesYAMLFields(t *testing.T) {
 	base := DefaultConfig()
 	base.SessionHttpOnly = true
 	base.SessionSecure = false
-	base.ServerCompressionEnable = false
 	base.LogLevel = "debug"
 	base.SiteName = "Old Site"
 
@@ -246,9 +245,6 @@ log-level: error
 	// Fields absent from YAML preserve their live (base) value.
 	if imported.SessionSecure {
 		t.Errorf("expected omitted session-secure to preserve live value false, got true")
-	}
-	if imported.ServerCompressionEnable {
-		t.Errorf("expected omitted compression to preserve live value false, got true")
 	}
 	if imported.SiteName != "Old Site" {
 		t.Errorf("expected omitted site-name to preserve live value %q, got %q", "Old Site", imported.SiteName)

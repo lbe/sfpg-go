@@ -7,7 +7,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -16,12 +15,14 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/net/html"
+
 	"github.com/lbe/sfpg-go/internal/cachelite"
+	"github.com/lbe/sfpg-go/internal/gallerydb"
 	"github.com/lbe/sfpg-go/internal/getopt"
 	"github.com/lbe/sfpg-go/internal/server/config"
 	"github.com/lbe/sfpg-go/internal/server/session"
 	"github.com/lbe/sfpg-go/internal/server/ui"
-	"golang.org/x/net/html"
 )
 
 // --- merged from middleware_wiring_integration_test.go ---
@@ -70,64 +71,9 @@ func createAppWithContext(t testing.TB) (*App, context.Context) {
 	return app, ctx
 }
 
-func TestGetRouter_CompressionMiddlewareWired(t *testing.T) {
-	opt := getopt.Opt{
-		EnableCompression: getopt.OptBool{Bool: true, IsSet: true},
-		EnableHTTPCache:   getopt.OptBool{Bool: false, IsSet: true},
-	}
-	app, router := createAppWithRouter(t, WithGetoptOpt(opt))
-	defer app.Shutdown()
-
-	req := httptest.NewRequest(http.MethodGet, "/gallery/1", nil)
-	req.Header.Set("Accept-Encoding", "gzip")
-	cookie := MakeAuthCookie(t, app)
-	req.AddCookie(cookie)
-
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	varyHeaders := w.Header().Values("Vary")
-	hasAcceptEncoding := false
-	for _, v := range varyHeaders {
-		if contains(v, "Accept-Encoding") {
-			hasAcceptEncoding = true
-			break
-		}
-	}
-	if !hasAcceptEncoding {
-		t.Errorf("Expected 'Accept-Encoding' in Vary header when compression enabled, got: %v", varyHeaders)
-	}
-}
-
-func TestGetRouter_CompressionMiddlewareNotWired(t *testing.T) {
-	opt := getopt.Opt{
-		EnableCompression: getopt.OptBool{Bool: false, IsSet: true},
-		EnableHTTPCache:   getopt.OptBool{Bool: false, IsSet: true},
-	}
-	app, router := createAppWithRouter(t, WithGetoptOpt(opt))
-	defer app.Shutdown()
-
-	req := httptest.NewRequest(http.MethodGet, "/gallery/1", nil)
-	req.Header.Set("Accept-Encoding", "gzip")
-	cookie := MakeAuthCookie(t, app)
-	req.AddCookie(cookie)
-
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	varyHeaders := w.Header().Values("Vary")
-	for _, v := range varyHeaders {
-		if contains(v, "Accept-Encoding") {
-			t.Errorf("Expected no 'Accept-Encoding' in Vary header when compression disabled, got: %v", varyHeaders)
-			break
-		}
-	}
-}
-
 func TestGetRouter_ConditionalMiddlewareWired(t *testing.T) {
 	opt := getopt.Opt{
-		EnableCompression: getopt.OptBool{Bool: false, IsSet: true},
-		EnableHTTPCache:   getopt.OptBool{Bool: false, IsSet: true},
+		EnableHTTPCache: getopt.OptBool{Bool: false, IsSet: true},
 	}
 	app, router := createAppWithRouter(t, WithGetoptOpt(opt))
 	defer app.Shutdown()
@@ -151,8 +97,7 @@ func TestGetRouter_ConditionalMiddlewareWired(t *testing.T) {
 
 func TestGetRouter_HTTPCacheMiddlewareWired(t *testing.T) {
 	opt := getopt.Opt{
-		EnableCompression: getopt.OptBool{Bool: false, IsSet: true},
-		EnableHTTPCache:   getopt.OptBool{Bool: true, IsSet: true},
+		EnableHTTPCache: getopt.OptBool{Bool: true, IsSet: true},
 	}
 	app, router := createAppWithRouter(t, WithGetoptOpt(opt))
 	defer app.Shutdown()
@@ -171,8 +116,7 @@ func TestGetRouter_HTTPCacheMiddlewareWired(t *testing.T) {
 
 func TestGetRouter_HTTPCacheMiddlewareNotWired(t *testing.T) {
 	opt := getopt.Opt{
-		EnableCompression: getopt.OptBool{Bool: false, IsSet: true},
-		EnableHTTPCache:   getopt.OptBool{Bool: false, IsSet: true},
+		EnableHTTPCache: getopt.OptBool{Bool: false, IsSet: true},
 	}
 	app, router := createAppWithRouter(t, WithGetoptOpt(opt))
 	defer app.Shutdown()
@@ -191,14 +135,12 @@ func TestGetRouter_HTTPCacheMiddlewareNotWired(t *testing.T) {
 
 func TestGetRouter_MiddlewareOrdering(t *testing.T) {
 	opt := getopt.Opt{
-		EnableCompression: getopt.OptBool{Bool: true, IsSet: true},
-		EnableHTTPCache:   getopt.OptBool{Bool: true, IsSet: true},
+		EnableHTTPCache: getopt.OptBool{Bool: true, IsSet: true},
 	}
 	app, router := createAppWithRouter(t, WithGetoptOpt(opt))
 	defer app.Shutdown()
 
 	req := httptest.NewRequest(http.MethodGet, "/gallery/1", nil)
-	req.Header.Set("Accept-Encoding", "gzip")
 	cookie := MakeAuthCookie(t, app)
 	req.AddCookie(cookie)
 
@@ -210,105 +152,85 @@ func TestGetRouter_MiddlewareOrdering(t *testing.T) {
 	}
 }
 
-// --- moved from server_e2e_test.go (config → router wiring) ---
-func TestIntegration_ConfigCompression_ServerUsesConfig(t *testing.T) {
+// TestIntegration_GalleryCache_AnonymousDoesNotReceiveAuthBody verifies that an HTTP cache
+// HIT on /gallery/1 does not replay authenticated admin chrome to an anonymous client.
+// Gallery full-page HTML must stay auth-agnostic; admin links load only via HTMX hamburger.
+func TestIntegration_GalleryCache_AnonymousDoesNotReceiveAuthBody(t *testing.T) {
 	setenvForTest(t, "SEPG_SESSION_SECURE", "false")
-	app := CreateApp(t)
+	opt := getopt.Opt{}
+	opt.SessionSecret.String = "gallery-cache-auth-isolation-test-secret-32b"
+	opt.SessionSecret.IsSet = true
+	opt.EnableHTTPCache = getopt.OptBool{Bool: true, IsSet: true}
+	app := CreateApp(t, WithGetoptOpt(opt))
 	defer app.Shutdown()
 
-	// Set initial config with compression enabled
-	t.Parallel()
 	app.ConfigManager.ConfigMu.Lock()
-	app.ConfigManager.Config = config.DefaultConfig()
-	app.ConfigManager.Config.ServerCompressionEnable = true
+	if app.ConfigManager.Config == nil {
+		app.ConfigManager.Config = config.DefaultConfig()
+	}
+	app.ConfigManager.Config.EnableHTTPCache = true
 	app.ConfigManager.ConfigMu.Unlock()
-
-	// Set app.opt to different value (simulating old CLI/env value)
-	app.opt.EnableCompression = getopt.OptBool{Bool: true, IsSet: true}
-
-	ts := httptest.NewServer(app.getRouter())
-	defer ts.Close()
-
-	jar, err := cookiejar.New(nil)
-	if err != nil {
-		t.Fatalf("failed to create cookie jar: %v", err)
+	app.StartWriteBatcher(app.RuntimeManager.ctx, true)
+	app.initializeHTTPCache()
+	if app.cacheMW == nil {
+		t.Fatal("expected cacheMW to be initialized")
 	}
-	client := &http.Client{Jar: jar}
-	loginAsAdmin(t, client, ts.URL)
 
-	// Verify initial state: compression enabled
+	router := app.getRouter()
+	authCookie := MakeAuthCookie(t, app)
+
 	req1 := httptest.NewRequest(http.MethodGet, "/gallery/1", nil)
-	req1.Header.Set("Accept-Encoding", "gzip")
-	cookie := MakeAuthCookie(t, app)
-	req1.AddCookie(cookie)
+	req1.AddCookie(authCookie)
 	w1 := httptest.NewRecorder()
-	app.getRouter().ServeHTTP(w1, req1)
-
-	if w1.Header().Get("Content-Encoding") != "gzip" {
-		t.Error("initial state: expected compression to be enabled (Content-Encoding: gzip)")
+	router.ServeHTTP(w1, req1)
+	if w1.Code != http.StatusOK {
+		t.Fatalf("authenticated gallery: status %d, want 200", w1.Code)
+	}
+	if w1.Header().Get("X-Cache") != "MISS" {
+		t.Fatalf("authenticated gallery: X-Cache %q, want MISS", w1.Header().Get("X-Cache"))
 	}
 
-	// Update config to disable compression
-	csrfToken := extractCSRFTokenFromConfig(t, client, ts.URL)
-	formData := url.Values{}
-	formData.Set("csrf_token", csrfToken)
-	// Include with empty value to signal presence of config fields
-	formData.Set("server_compression_enable", "")
-
-	req, err := http.NewRequest(http.MethodPost, ts.URL+"/config", strings.NewReader(formData.Encode()))
-	if err != nil {
-		t.Fatalf("failed to create request: %v", err)
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Origin", ts.URL)
-
-	resp, err := client.Do(req)
-	if err != nil {
-		t.Fatalf("POST /config failed: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200, got %d", resp.StatusCode)
-	}
-
-	// Verify config was updated
-	app.ConfigManager.ConfigMu.RLock()
-	compressionEnabled := app.ConfigManager.Config.ServerCompressionEnable
-	app.ConfigManager.ConfigMu.RUnlock()
-
-	if compressionEnabled {
-		t.Error("expected compression to be disabled in config after update")
-	}
-
-	// Verify getRouter() uses app.ConfigManager.Config, not app.opt
-	// Set app.opt to enabled (old value) - if getRouter() uses app.opt, compression would still be enabled
-	app.opt.EnableCompression = getopt.OptBool{Bool: true, IsSet: true}
+	// Cache writes are async via WriteBatcher; allow flush before anonymous replay check.
+	time.Sleep(100 * time.Millisecond)
 
 	req2 := httptest.NewRequest(http.MethodGet, "/gallery/1", nil)
-	req2.Header.Set("Accept-Encoding", "gzip")
-	req2.AddCookie(cookie)
 	w2 := httptest.NewRecorder()
-	app.getRouter().ServeHTTP(w2, req2)
-
-	// If getRouter() uses app.ConfigManager.Config (correct), compression should be disabled
-	// If getRouter() uses app.opt (wrong), compression would be enabled
-	if w2.Header().Get("Content-Encoding") == "gzip" {
-		t.Error("after config update, compression should be disabled (per app.ConfigManager.Config), but getRouter() appears to be using app.opt")
+	router.ServeHTTP(w2, req2)
+	if w2.Code != http.StatusOK {
+		t.Fatalf("anonymous gallery: status %d, want 200", w2.Code)
+	}
+	if w2.Header().Get("X-Cache") != "HIT" {
+		t.Fatalf("anonymous gallery: X-Cache %q, want HIT", w2.Header().Get("X-Cache"))
 	}
 
-	// Verify Vary header doesn't include Accept-Encoding when compression is disabled
-	varyHeaders := w2.Header().Values("Vary")
-	hasAcceptEncoding := false
-	for _, v := range varyHeaders {
-		if strings.Contains(v, "Accept-Encoding") {
-			hasAcceptEncoding = true
-			break
+	doc, err := html.Parse(strings.NewReader(w2.Body.String()))
+	if err != nil {
+		t.Fatalf("parse anonymous gallery HTML: %v", err)
+	}
+	for _, href := range []string{"/dashboard", "/config"} {
+		if integrationTestHasAnchorHref(doc, href) {
+			t.Errorf("anonymous cached gallery must not contain admin link %q", href)
 		}
 	}
-	if hasAcceptEncoding {
-		t.Error("after disabling compression, Vary header should not include Accept-Encoding")
+}
+
+func integrationTestHasAnchorHref(n *html.Node, href string) bool {
+	if n == nil {
+		return false
 	}
+	if n.Type == html.ElementNode && n.Data == "a" {
+		for _, a := range n.Attr {
+			if a.Key == "href" && a.Val == href {
+				return true
+			}
+		}
+	}
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if integrationTestHasAnchorHref(c, href) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestIntegration_ConfigCache_ServerUsesConfig(t *testing.T) {
@@ -361,9 +283,7 @@ func TestIntegration_ConfigCache_ServerUsesConfig(t *testing.T) {
 	}
 
 	// Update config to disable cache
-	csrfToken := extractCSRFTokenFromConfig(t, client, ts.URL)
 	formData := url.Values{}
-	formData.Set("csrf_token", csrfToken)
 	// Include with empty value to signal presence of config fields
 	formData.Set("enable_http_cache", "")
 
@@ -427,6 +347,7 @@ func TestCrossOriginProtection_UnsafeMethodsFull(t *testing.T) {
 		},
 	}
 
+	// COP allows unsafe methods without Origin/Sec-Fetch-Site (non-browser / curl).
 	for _, method := range unsafeMethods {
 		t.Run("NoOrigin_"+method, func(t *testing.T) {
 			req, _ := http.NewRequest(method, server.URL+"/config", nil)
@@ -438,8 +359,10 @@ func TestCrossOriginProtection_UnsafeMethodsFull(t *testing.T) {
 			}
 			defer resp.Body.Close()
 
-			if resp.StatusCode != http.StatusForbidden {
-				t.Errorf("Expected 403 Forbidden for %s without Origin, got %d", method, resp.StatusCode)
+			// COP allows requests without Origin/Sec-Fetch-Site (non-browser curl).
+			// The request should NOT be rejected with 403.
+			if resp.StatusCode == http.StatusForbidden {
+				t.Errorf("Expected non-403 for %s without Origin (non-browser allowed by COP), got %d", method, resp.StatusCode)
 			}
 		})
 	}
@@ -460,6 +383,22 @@ func TestCrossOriginProtection_UnsafeMethodsFull(t *testing.T) {
 		}
 	})
 
+	t.Run("CrossSiteSecFetchSite_POST", func(t *testing.T) {
+		req, _ := http.NewRequest(http.MethodPost, server.URL+"/login", nil)
+		req.Header.Set("Sec-Fetch-Site", "cross-site")
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("Request failed: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusForbidden {
+			t.Errorf("Expected 403 Forbidden for POST with Sec-Fetch-Site: cross-site, got %d", resp.StatusCode)
+		}
+	})
+
 	t.Run("ValidOrigin_POST", func(t *testing.T) {
 		serverURL, _ := url.Parse(server.URL)
 		validOrigin := fmt.Sprintf("http://%s", serverURL.Host)
@@ -472,6 +411,7 @@ func TestCrossOriginProtection_UnsafeMethodsFull(t *testing.T) {
 			return http.ErrUseLastResponse
 		}}
 
+		// GET /config to populate session cookie
 		reqLogin, _ := http.NewRequest(http.MethodGet, server.URL+"/config", nil)
 		reqLogin.Header.Set("Origin", validOrigin)
 		reqLogin.AddCookie(MakeAuthCookie(t, app))
@@ -479,55 +419,12 @@ func TestCrossOriginProtection_UnsafeMethodsFull(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GET /config failed: %v", err)
 		}
-		defer respLogin.Body.Close()
-
-		doc, err := html.Parse(respLogin.Body)
-		if err != nil {
-			t.Fatalf("Failed to parse config page HTML: %v", err)
-		}
-		var formNode *html.Node
-		var findForm func(*html.Node)
-		findForm = func(n *html.Node) {
-			if n.Type == html.ElementNode && n.Data == "form" {
-				formNode = n
-				return
-			}
-			for c := n.FirstChild; c != nil; c = c.NextSibling {
-				findForm(c)
-			}
-		}
-		findForm(doc)
-		if formNode == nil {
-			t.Fatal("config form not found on config page")
-		}
-		var csrf string
-		for c := formNode.FirstChild; c != nil; c = c.NextSibling {
-			if c.Type == html.ElementNode && c.Data == "input" {
-				var isCSRF bool
-				var val string
-				for _, a := range c.Attr {
-					if a.Key == "name" && a.Val == "csrf_token" {
-						isCSRF = true
-					}
-					if a.Key == "value" {
-						val = a.Val
-					}
-				}
-				if isCSRF {
-					csrf = val
-					break
-				}
-			}
-		}
-		if csrf == "" {
-			t.Fatal("CSRF token not found in config form")
-		}
+		respLogin.Body.Close()
 
 		formData := url.Values{}
 		formData.Set("username", "testuser")
 		formData.Set("password", "testpass")
 		formData.Set("password-confirm", "testpass")
-		formData.Set("csrf_token", csrf)
 
 		req, _ := http.NewRequest(http.MethodPost, server.URL+"/config", strings.NewReader(formData.Encode()))
 		req.Header.Set("Origin", validOrigin)
@@ -541,6 +438,22 @@ func TestCrossOriginProtection_UnsafeMethodsFull(t *testing.T) {
 
 		if resp.StatusCode == http.StatusForbidden {
 			t.Errorf("Expected non-403 status for POST with valid Origin, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("SameOriginSecFetchSite_POST", func(t *testing.T) {
+		req, _ := http.NewRequest(http.MethodPost, server.URL+"/login", nil)
+		req.Header.Set("Sec-Fetch-Site", "same-origin")
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("Request failed: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode == http.StatusForbidden {
+			t.Errorf("Expected non-403 for POST with Sec-Fetch-Site: same-origin, got %d", resp.StatusCode)
 		}
 	})
 }
@@ -594,28 +507,10 @@ func TestSessionSecurity_HttpOnly(t *testing.T) {
 		t.Fatalf("GET /login-form failed: %v", err)
 	}
 	defer respGet.Body.Close()
-	bodyBytes, _ := io.ReadAll(respGet.Body)
-	body := string(bodyBytes)
-	var csrf string
-	idx := strings.Index(body, `name="csrf_token"`)
-	if idx != -1 {
-		valIdx := strings.Index(body[idx:], `value="`)
-		if valIdx != -1 {
-			valStart := idx + valIdx + len(`value="`)
-			valEnd := strings.Index(body[valStart:], `"`)
-			if valEnd != -1 {
-				csrf = body[valStart : valStart+valEnd]
-			}
-		}
-	}
-	if csrf == "" {
-		t.Fatal("CSRF token not found in login modal")
-	}
 
 	formData := url.Values{}
 	formData.Set("username", "admin")
 	formData.Set("password", "admin")
-	formData.Set("csrf_token", csrf)
 
 	loginURL := server.URL + "/login"
 	req, _ := http.NewRequest("POST", loginURL, strings.NewReader(formData.Encode()))
@@ -667,28 +562,10 @@ func TestSessionSecurity_Secure(t *testing.T) {
 		t.Fatalf("GET /login-form failed: %v", err)
 	}
 	defer respGet.Body.Close()
-	bodyBytes, _ := io.ReadAll(respGet.Body)
-	body := string(bodyBytes)
-	var csrf string
-	idx := strings.Index(body, `name="csrf_token"`)
-	if idx != -1 {
-		valIdx := strings.Index(body[idx:], `value="`)
-		if valIdx != -1 {
-			valStart := idx + valIdx + len(`value="`)
-			valEnd := strings.Index(body[valStart:], `"`)
-			if valEnd != -1 {
-				csrf = body[valStart : valStart+valEnd]
-			}
-		}
-	}
-	if csrf == "" {
-		t.Fatal("CSRF token not found in login modal")
-	}
 
 	formData := url.Values{}
 	formData.Set("username", "admin")
 	formData.Set("password", "admin")
-	formData.Set("csrf_token", csrf)
 
 	loginURL := server.URL + "/login"
 	req, _ := http.NewRequest("POST", loginURL, strings.NewReader(formData.Encode()))
@@ -725,60 +602,9 @@ func TestSessionSecurity_Secure(t *testing.T) {
 		serverURL, _ := url.Parse(server.URL)
 		validOrigin := fmt.Sprintf("http://%s", serverURL.Host)
 
-		respLogin, err := client2.Get(server.URL + "/login")
-		if err != nil {
-			t.Fatalf("GET /login failed: %v", err)
-		}
-		defer respLogin.Body.Close()
-		docLogin, err := html.Parse(respLogin.Body)
-		if err != nil {
-			t.Fatalf("Failed to parse login page HTML: %v", err)
-		}
-		var loginFormNode *html.Node
-		var findLoginForm func(*html.Node)
-		findLoginForm = func(n *html.Node) {
-			if n.Type == html.ElementNode && n.Data == "form" {
-				for _, a := range n.Attr {
-					if a.Key == "id" && a.Val == "login-form" {
-						loginFormNode = n
-						return
-					}
-				}
-			}
-			for c := n.FirstChild; c != nil; c = c.NextSibling {
-				findLoginForm(c)
-			}
-		}
-		findLoginForm(docLogin)
-		if loginFormNode == nil {
-			t.Fatal("login form not found on login page")
-		}
-		var loginCSRF string
-		for c := loginFormNode.FirstChild; c != nil; c = c.NextSibling {
-			if c.Type == html.ElementNode && c.Data == "input" {
-				var isCSRF bool
-				var val string
-				for _, a := range c.Attr {
-					if a.Key == "name" && a.Val == "csrf_token" {
-						isCSRF = true
-					}
-					if a.Key == "value" {
-						val = a.Val
-					}
-				}
-				if isCSRF {
-					loginCSRF = val
-					break
-				}
-			}
-		}
-		if loginCSRF == "" {
-			t.Fatal("CSRF token not found in login form")
-		}
 		loginForm := url.Values{}
 		loginForm.Add("username", "admin")
 		loginForm.Add("password", "admin")
-		loginForm.Add("csrf_token", loginCSRF)
 		reqLogin, _ := http.NewRequest("POST", server.URL+"/login", strings.NewReader(loginForm.Encode()))
 		reqLogin.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		reqLogin.Header.Set("Origin", validOrigin)
@@ -920,14 +746,14 @@ func TestETagIncrement_InvalidatesHTTPCache(t *testing.T) {
 	// Populate HTTP cache with an entry
 	now := time.Now().Unix()
 	entry := &cachelite.HTTPCacheEntry{
-		Key:       cachelite.NewCacheKey(cachelite.CacheKeyParams{Method: "GET", Path: "/gallery/test", Encoding: "identity"}),
+		Key:       cachelite.NewCacheKey(cachelite.CacheKeyParams{Method: "GET", Path: "/gallery/test", Variant: "full"}),
 		Method:    "GET",
 		Path:      "/gallery/test",
-		Encoding:  "identity",
 		Status:    200,
-		Body:      []byte("cached content before etag increment"),
+		Body:      []byte("<html><body>cached content before etag increment</body></html>"),
 		CreatedAt: now,
 	}
+	entry.ContentLength = sql.NullInt64{Int64: int64(len(entry.Body)), Valid: true}
 	if err := cachelite.StoreCacheEntry(ctx, app.dbRwPool, entry); err != nil {
 		t.Fatalf("StoreCacheEntry: %v", err)
 	}
@@ -943,8 +769,7 @@ func TestETagIncrement_InvalidatesHTTPCache(t *testing.T) {
 	if h == nil {
 		t.Fatal("app.HandlerManager.configETagHandler is nil")
 	}
-	formData := strings.NewReader("csrf_token=valid-token")
-	req := httptest.NewRequest("POST", "/config/increment-etag", formData)
+	req := httptest.NewRequest("POST", "/config/increment-etag", nil)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 
@@ -991,14 +816,14 @@ func TestApplyConfig_InvalidatesCacheWhenETagChanges(t *testing.T) {
 	// Populate HTTP cache
 	now := time.Now().Unix()
 	entry := &cachelite.HTTPCacheEntry{
-		Key:       cachelite.NewCacheKey(cachelite.CacheKeyParams{Method: "GET", Path: "/gallery/x", Encoding: "identity"}),
+		Key:       cachelite.NewCacheKey(cachelite.CacheKeyParams{Method: "GET", Path: "/gallery/x", Variant: "full"}),
 		Method:    "GET",
 		Path:      "/gallery/x",
-		Encoding:  "identity",
 		Status:    200,
-		Body:      []byte("stale content"),
+		Body:      []byte("<html><body>stale content</body></html>"),
 		CreatedAt: now,
 	}
+	entry.ContentLength = sql.NullInt64{Int64: int64(len(entry.Body)), Valid: true}
 	if err := cachelite.StoreCacheEntry(ctx, app.dbRwPool, entry); err != nil {
 		t.Fatalf("StoreCacheEntry: %v", err)
 	}
@@ -1043,14 +868,14 @@ func TestApplyConfig_DoesNotInvalidateWhenETagUnchanged(t *testing.T) {
 
 	now := time.Now().Unix()
 	entry := &cachelite.HTTPCacheEntry{
-		Key:       cachelite.NewCacheKey(cachelite.CacheKeyParams{Method: "GET", Path: "/gallery/y", Encoding: "identity"}),
+		Key:       cachelite.NewCacheKey(cachelite.CacheKeyParams{Method: "GET", Path: "/gallery/y", Variant: "full"}),
 		Method:    "GET",
 		Path:      "/gallery/y",
-		Encoding:  "identity",
 		Status:    200,
-		Body:      []byte("valid content"),
+		Body:      []byte("<html><body>valid content</body></html>"),
 		CreatedAt: now,
 	}
+	entry.ContentLength = sql.NullInt64{Int64: int64(len(entry.Body)), Valid: true}
 	if err := cachelite.StoreCacheEntry(ctx, app.dbRwPool, entry); err != nil {
 		t.Fatalf("StoreCacheEntry: %v", err)
 	}
@@ -1080,14 +905,14 @@ func TestApplyConfig_DoesNotInvalidateOnStartup(t *testing.T) {
 	// Populate HTTP cache (e.g. from previous run)
 	now := time.Now().Unix()
 	entry := &cachelite.HTTPCacheEntry{
-		Key:       cachelite.NewCacheKey(cachelite.CacheKeyParams{Method: "GET", Path: "/gallery/z", Encoding: "identity"}),
+		Key:       cachelite.NewCacheKey(cachelite.CacheKeyParams{Method: "GET", Path: "/gallery/z", Variant: "full"}),
 		Method:    "GET",
 		Path:      "/gallery/z",
-		Encoding:  "identity",
 		Status:    200,
-		Body:      []byte("cached from before reboot"),
+		Body:      []byte("<html><body>cached from before reboot</body></html>"),
 		CreatedAt: now,
 	}
+	entry.ContentLength = sql.NullInt64{Int64: int64(len(entry.Body)), Valid: true}
 	if err := cachelite.StoreCacheEntry(ctx, app.dbRwPool, entry); err != nil {
 		t.Fatalf("StoreCacheEntry: %v", err)
 	}
@@ -1103,6 +928,130 @@ func TestApplyConfig_DoesNotInvalidateOnStartup(t *testing.T) {
 	}
 }
 
+func TestIntegration_CacheKeyFormatUpgrade_InvalidatesLegacyRows(t *testing.T) {
+	app, ctx := createAppWithContext(t)
+	defer app.Shutdown()
+
+	// Pre-seed stored format version = 2 so the hook detects an upgrade is needed.
+	now := time.Now().Unix()
+	cpcRw, err := app.dbRwPool.Get()
+	if err != nil {
+		t.Fatalf("failed to get RW connection: %v", err)
+	}
+	err = cpcRw.Queries.UpsertConfigValueOnly(ctx, gallerydb.UpsertConfigValueOnlyParams{
+		Key:       "http_cache_key_format_version",
+		Value:     "2",
+		CreatedAt: now,
+		UpdatedAt: now,
+	})
+	app.dbRwPool.Put(cpcRw)
+	if err != nil {
+		t.Fatalf("failed to seed config version 2: %v", err)
+	}
+
+	// Seed a v2-style cache entry (|HX=false suffix, no |Variant=).
+	v2Key := "GET:/gallery/test-v2-upgrade?|HX=false"
+	entry := &cachelite.HTTPCacheEntry{
+		Key:       v2Key,
+		Method:    "GET",
+		Path:      "/gallery/test-v2-upgrade",
+		Status:    200,
+		Body:      []byte("<html><body>v2 cached response</body></html>"),
+		CreatedAt: now,
+	}
+	entry.ContentLength = sql.NullInt64{Int64: int64(len(entry.Body)), Valid: true}
+	if err := cachelite.StoreCacheEntry(ctx, app.dbRwPool, entry); err != nil {
+		t.Fatalf("StoreCacheEntry (v2): %v", err)
+	}
+
+	// Verify the v2 entry exists before calling the hook.
+	storedBefore, err := cachelite.GetCacheEntry(ctx, app.dbRwPool, v2Key)
+	if err != nil {
+		t.Fatalf("GetCacheEntry before hook: %v", err)
+	}
+	if storedBefore == nil {
+		t.Fatal("expected v2 cache entry before hook call")
+	}
+
+	// Call the format check hook — stored version 2 < current 3, so it invalidates.
+	app.ensureHTTPCacheKeyFormatCurrent()
+
+	// Verify the v2 entry is gone (cache was rotated and v2 key not re-created).
+	storedAfter, err := cachelite.GetCacheEntry(ctx, app.dbRwPool, v2Key)
+	if !errors.Is(err, sql.ErrNoRows) {
+		if err == nil {
+			t.Error("expected v2 cache entry to be invalidated, but it still exists")
+		} else {
+			t.Errorf("unexpected error after invalidation: %v", err)
+		}
+	}
+	_ = storedAfter
+
+	// Verify the config version was persisted.
+	cpcRo, err := app.dbRoPool.Get()
+	if err != nil {
+		t.Fatalf("failed to get RO connection: %v", err)
+	}
+	defer app.dbRoPool.Put(cpcRo)
+
+	persisted, err := cpcRo.Queries.GetConfigValueByKey(ctx, "http_cache_key_format_version")
+	if err != nil {
+		t.Fatalf("GetConfigValueByKey: %v", err)
+	}
+	if persisted != cachelite.CacheKeyFormatVersionString {
+		t.Errorf("persisted format version = %q, want %q", persisted, cachelite.CacheKeyFormatVersionString)
+	}
+}
+
+func TestIntegration_CacheKeyFormat_CurrentVersionPreservesCache(t *testing.T) {
+	app, ctx := createAppWithContext(t)
+	defer app.Shutdown()
+
+	// Pre-seed the config so the hook sees the current version (3).
+	now := time.Now().Unix()
+	cpcRw, err := app.dbRwPool.Get()
+	if err != nil {
+		t.Fatalf("failed to get RW connection: %v", err)
+	}
+	err = cpcRw.Queries.UpsertConfigValueOnly(ctx, gallerydb.UpsertConfigValueOnlyParams{
+		Key:       "http_cache_key_format_version",
+		Value:     cachelite.CacheKeyFormatVersionString,
+		CreatedAt: now,
+		UpdatedAt: now,
+	})
+	app.dbRwPool.Put(cpcRw)
+	if err != nil {
+		t.Fatalf("failed to seed config version: %v", err)
+	}
+
+	// Seed a v3-style cache entry (|Variant=full suffix).
+	v3Key := "GET:/gallery/test-current-version?|Variant=full"
+	entry := &cachelite.HTTPCacheEntry{
+		Key:       v3Key,
+		Method:    "GET",
+		Path:      "/gallery/test-current-version",
+		Status:    200,
+		Body:      []byte("<html><body>v3 cached response</body></html>"),
+		CreatedAt: now,
+	}
+	entry.ContentLength = sql.NullInt64{Int64: int64(len(entry.Body)), Valid: true}
+	if err := cachelite.StoreCacheEntry(ctx, app.dbRwPool, entry); err != nil {
+		t.Fatalf("StoreCacheEntry (v3): %v", err)
+	}
+
+	// Call the hook — with current version (3 >= 3), should NOT invalidate.
+	app.ensureHTTPCacheKeyFormatCurrent()
+
+	// Verify the entry is still there.
+	storedAfter, err := cachelite.GetCacheEntry(ctx, app.dbRwPool, v3Key)
+	if errors.Is(err, sql.ErrNoRows) || storedAfter == nil {
+		t.Error("expected v3 cache entry to survive format check with current version")
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("GetCacheEntry after hook: %v", err)
+	}
+}
+
 func TestETagIncrementIntegration(t *testing.T) {
 	app, ctx := createAppWithContext(t)
 	defer app.Shutdown()
@@ -1110,12 +1059,11 @@ func TestETagIncrementIntegration(t *testing.T) {
 	// Pre-populate cache with an entry (simulating a cached response)
 	now := time.Now().Unix()
 	entry := &cachelite.HTTPCacheEntry{
-		Key:       cachelite.NewCacheKey(cachelite.CacheKeyParams{Method: "GET", Path: "/gallery/1", Encoding: "identity"}),
+		Key:       cachelite.NewCacheKey(cachelite.CacheKeyParams{Method: "GET", Path: "/gallery/1", Variant: "full"}),
 		Method:    "GET",
 		Path:      "/gallery/1",
-		Encoding:  "identity",
 		Status:    200,
-		Body:      []byte("cached content before etag increment"),
+		Body:      []byte("<html><body>cached content before etag increment</body></html>"),
 		CreatedAt: now,
 	}
 	if err := cachelite.StoreCacheEntry(ctx, app.dbRwPool, entry); err != nil {
@@ -1220,9 +1168,7 @@ func TestLoginRateLimitPerIP_Returns429AfterLimit(t *testing.T) {
 	// Register restore before mutating (use the still-authenticated client —
 	// never re-login after the burst exhausts the limit).
 	defer func() {
-		csrf := extractCSRFTokenFromConfig(t, client, ts.URL)
 		formData := url.Values{}
-		formData.Set("csrf_token", csrf)
 		formData.Set("login_rate_limit_per_ip", originalLimit)
 		req, err := http.NewRequest(http.MethodPost, ts.URL+"/config", strings.NewReader(formData.Encode()))
 		if err != nil {
@@ -1242,9 +1188,7 @@ func TestLoginRateLimitPerIP_Returns429AfterLimit(t *testing.T) {
 		}
 	}()
 
-	csrfToken := extractCSRFTokenFromConfig(t, client, ts.URL)
 	formData := url.Values{}
-	formData.Set("csrf_token", csrfToken)
 	formData.Set("login_rate_limit_per_ip", "2")
 
 	req, err := http.NewRequest(http.MethodPost, ts.URL+"/config", strings.NewReader(formData.Encode()))
@@ -1271,11 +1215,9 @@ func TestLoginRateLimitPerIP_Returns429AfterLimit(t *testing.T) {
 	client2 := &http.Client{Jar: jar2}
 
 	for attempt := 1; attempt <= 3; attempt++ {
-		token := extractCSRFTokenFromLogin(t, client2, ts.URL)
 		loginData := url.Values{}
 		loginData.Set("username", "wronguser") // non-admin: avoid account lockout side effects
 		loginData.Set("password", "wrong")
-		loginData.Set("csrf_token", token)
 		loginReq, err := http.NewRequest(http.MethodPost, ts.URL+"/login", strings.NewReader(loginData.Encode()))
 		if err != nil {
 			t.Fatalf("attempt %d: create request: %v", attempt, err)

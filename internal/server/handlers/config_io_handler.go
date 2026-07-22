@@ -56,13 +56,8 @@ func (h *ConfigHandlers) ExportConfigDownloadHandler(w http.ResponseWriter, r *h
 // It parses the uploaded YAML config (either via file upload or text area),
 // calculates the diff against current config, and returns a preview modal.
 // Response: HTML modal (bufferable, caching disabled).
-// Authentication and CSRF protection are required.
+// Authentication is required.
 func (h *ConfigHandlers) ImportConfigPreviewHandler(w http.ResponseWriter, r *http.Request) {
-	if !h.validateCsrf(r) {
-		slog.Warn("CSRF validation failed for config import preview", "remote_addr", r.RemoteAddr)
-		http.Error(w, "Forbidden - CSRF token invalid", http.StatusForbidden)
-		return
-	}
 
 	var yamlContent string
 	var err error
@@ -130,16 +125,13 @@ func (h *ConfigHandlers) ImportConfigPreviewHandler(w http.ResponseWriter, r *ht
 	}
 
 	escapedYaml := html.EscapeString(yamlContent)
-	csrfToken := h.ensureCsrf(w, r)
 
 	data := struct {
 		ImportedYAML string
-		CSRFToken    string
 		CurrentYAML  string
 		NewYAML      string
 	}{
 		ImportedYAML: escapedYaml,
-		CSRFToken:    html.EscapeString(csrfToken),
 		CurrentYAML:  html.EscapeString(diff.CurrentYAML),
 		NewYAML:      html.EscapeString(diff.NewYAML),
 	}
@@ -150,14 +142,8 @@ func (h *ConfigHandlers) ImportConfigPreviewHandler(w http.ResponseWriter, r *ht
 // ImportConfigCommitHandler handles POST /config/import/commit requests.
 // It applies the imported YAML configuration to the system.
 // Response: HTML success alert (bufferable, caching disabled).
-// Authentication and CSRF protection are required.
+// Authentication is required.
 func (h *ConfigHandlers) ImportConfigCommitHandler(w http.ResponseWriter, r *http.Request) {
-	if !h.validateCsrf(r) {
-		slog.Warn("CSRF validation failed for config import commit", "remote_addr", r.RemoteAddr)
-		http.Error(w, "Forbidden - CSRF token invalid", http.StatusForbidden)
-		return
-	}
-
 	if err := r.ParseForm(); err != nil {
 		slog.Warn("failed to parse form for config import", "err", err)
 		http.Error(w, "Invalid form data", http.StatusBadRequest)
@@ -215,16 +201,10 @@ func (h *ConfigHandlers) ImportConfigCommitHandler(w http.ResponseWriter, r *htt
 // Supports 'preview' (returns diff modal) and 'commit' (restores previous config)
 // actions via query parameter.
 // Response: HTML modal or success alert (bufferable, caching disabled).
-// Authentication and CSRF protection are required.
+// Authentication is required.
 func (h *ConfigHandlers) RestoreLastKnownGoodHandler(w http.ResponseWriter, r *http.Request) {
 	action := r.URL.Query().Get("action")
 	if action == "preview" || action == "" {
-		if !h.validateCsrf(r) {
-			slog.Warn("CSRF validation failed for config restore preview", "remote_addr", r.RemoteAddr)
-			http.Error(w, "Forbidden - CSRF token invalid", http.StatusForbidden)
-			return
-		}
-
 		// Preview: return diff
 		cpcRw, err := h.DBRwPool.Get()
 		if err != nil {
@@ -252,11 +232,9 @@ func (h *ConfigHandlers) RestoreLastKnownGoodHandler(w http.ResponseWriter, r *h
 
 		data := struct {
 			BackupYAML  string
-			CSRFToken   string
 			CurrentYAML string
 		}{
 			BackupYAML:  html.EscapeString(diff.NewYAML),
-			CSRFToken:   html.EscapeString(h.ensureCsrf(w, r)),
 			CurrentYAML: html.EscapeString(diff.CurrentYAML),
 		}
 		w.WriteHeader(http.StatusOK)
@@ -271,12 +249,6 @@ func (h *ConfigHandlers) RestoreLastKnownGoodHandler(w http.ResponseWriter, r *h
 
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "Bad Request", http.StatusBadRequest)
-		return
-	}
-
-	if !h.validateCsrf(r) {
-		slog.Warn("CSRF validation failed for restore last known good", "remote_addr", r.RemoteAddr)
-		http.Error(w, "Forbidden - CSRF token invalid", http.StatusForbidden)
 		return
 	}
 

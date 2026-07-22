@@ -107,26 +107,5 @@
     </label>
   </div>
 
-  <div class="form-control mb-4">
-    <label class="label">
-      <span class="label-text font-semibold">Server Compression</span>
-    </label>
-    <label class="label cursor-pointer justify-start gap-4">
-      <input
-        type="checkbox"
-        name="server_compression_enable"
-        data-requires-restart="true"
-        class="checkbox-primary checkbox"
-        {{ if and .Config .Config.ServerCompressionEnable }}checked{{ end }}
-      />
-      <span class="label-text">Enable gzip/brotli compression</span>
-    </label>
-    <label class="label">
-      <span class="label-text-alt"
-        >Enable HTTP compression. Restart required.</span
-      >
-    </label>
-  </div>
-
   {{ template "config-etag-field.html.tmpl" . }}
 {{ end }}

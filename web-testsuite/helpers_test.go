@@ -12,7 +12,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -135,37 +134,16 @@ func doRequest(t *testing.T, client *http.Client, method, path string, body url.
 // login logs in with admin/admin credentials and stores the session cookie
 // in the client's jar.
 //
-//  1. GET /login-form -> extract CSRF token from the login form
-//     (input[name="csrf_token"] value)
-//  2. POST /login with username=admin&password=admin&csrf_token=<token>
-//  3. Verify HX-Trigger: auth-changed header is present
-//
-// /login-form is used instead of /gallery/1 because the gallery page is
-// HTTP-cached (up to 30 days), which can serve a stale CSRF token.
+// It POSTs /login with username=admin&password=admin and verifies the
+// HX-Trigger: auth-changed response header.
+// CrossOriginProtection is satisfied by setting Origin header automatically
+// in doRequest.
 func login(t *testing.T, client *http.Client) {
 	t.Helper()
 
-	// Step 1: GET login form and extract CSRF token
-	resp, err := client.Get(serverURL + "/login-form")
-	if err != nil {
-		t.Fatalf("GET /login-form failed: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("GET /login-form expected 200, got %d", resp.StatusCode)
-	}
-
-	csrfToken := extractCSRFFromBody(t, resp.Body)
-	if csrfToken == "" {
-		t.Fatal("could not extract CSRF token from /login-form")
-	}
-
-	// Step 2: POST login
 	form := url.Values{
-		"username":   {"admin"},
-		"password":   {"admin"},
-		"csrf_token": {csrfToken},
+		"username": {"admin"},
+		"password": {"admin"},
 	}
 
 	loginResp := doRequest(t, client, http.MethodPost, "/login", form, false)
@@ -176,39 +154,11 @@ func login(t *testing.T, client *http.Client) {
 		t.Fatalf("POST /login expected 200, got %d. Body: %s", loginResp.StatusCode, string(body))
 	}
 
-	// Step 3: Verify HX-Trigger header
+	// Verify HX-Trigger header
 	if loginResp.Header.Get("Hx-Trigger") != "auth-changed" {
 		t.Errorf("POST /login: expected Hx-Trigger: auth-changed, got %q",
 			loginResp.Header.Get("Hx-Trigger"))
 	}
-}
-
-// csrfTokenFromConfig fetches GET /config and extracts the CSRF token
-// from the hidden input (input[name="csrf_token"]).
-// The client must be authenticated (logged in) already.
-//
-// IMPORTANT: The GET /config response includes a Set-Cookie header that
-// updates the session cookie. The http.Client's CookieJar handles this
-// automatically, ensuring subsequent POST requests use the updated session.
-func csrfTokenFromConfig(t *testing.T, client *http.Client) string {
-	t.Helper()
-
-	resp, err := client.Get(serverURL + "/config")
-	if err != nil {
-		t.Fatalf("GET /config failed: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		t.Fatalf("GET /config expected 200, got %d. Body: %s", resp.StatusCode, string(body))
-	}
-
-	token := extractCSRFFromBody(t, resp.Body)
-	if token == "" {
-		t.Fatal("could not extract CSRF token from /config page")
-	}
-	return token
 }
 
 // ---------------------------------------------------------------------------
@@ -311,37 +261,6 @@ func GetTextContent(n *html.Node) string {
 	return sb.String()
 }
 
-// extractCSRFFromBody finds the CSRF token from an HTML response body.
-// It looks for: name="csrf_token" value="<hex>" in the HTML.
-func extractCSRFFromBody(t *testing.T, body io.Reader) string {
-	t.Helper()
-
-	bodyBytes, err := io.ReadAll(body)
-	if err != nil {
-		t.Fatalf("failed to read response body: %v", err)
-	}
-
-	// Try regex first (faster for smoke tests)
-	re := regexp.MustCompile(`csrf_token"\s*value="([a-f0-9]+)"`)
-	matches := re.FindStringSubmatch(string(bodyBytes))
-	if len(matches) >= 2 {
-		return matches[1]
-	}
-
-	// Fallback: parse HTML and find the input element
-	doc, err := html.Parse(strings.NewReader(string(bodyBytes)))
-	if err != nil {
-		return ""
-	}
-	input := FindElement(doc, func(n *html.Node) bool {
-		return n.Type == html.ElementNode && n.Data == "input" && GetAttr(n, "name") == "csrf_token"
-	})
-	if input == nil {
-		return ""
-	}
-	return GetAttr(input, "value")
-}
-
 // ---------------------------------------------------------------------------
 // Config Snapshot / Restore (used by TestMain for test isolation)
 // ---------------------------------------------------------------------------
@@ -353,29 +272,9 @@ var configSnapshotYAML string
 // loginRaw logs in with admin/admin and returns the session cookie jar.
 // Unlike login(), this does not use *testing.T and returns errors directly.
 func loginRaw(client *http.Client) error {
-	// GET login form to extract CSRF token (uncached, unlike /gallery/1)
-	resp, err := client.Get(serverURL + "/login-form")
-	if err != nil {
-		return fmt.Errorf("GET /login-form: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("read /login-form: %w", err)
-	}
-
-	re := regexp.MustCompile(`csrf_token"\s*value="([a-f0-9]+)"`)
-	matches := re.FindStringSubmatch(string(body))
-	if len(matches) < 2 {
-		return fmt.Errorf("CSRF token not found in /login-form")
-	}
-	csrfToken := matches[1]
-
 	form := url.Values{
-		"username":   {"admin"},
-		"password":   {"admin"},
-		"csrf_token": {csrfToken},
+		"username": {"admin"},
+		"password": {"admin"},
 	}
 
 	// POST login with proper headers (PostForm doesn't set Origin)
@@ -423,32 +322,11 @@ func exportConfigRaw(client *http.Client) (string, error) {
 }
 
 // importConfigRaw imports a YAML config string into the server.
-// Requires an authenticated client. Extracts a fresh CSRF token
-// from the config page before posting.
+// Requires an authenticated client.
 func importConfigRaw(client *http.Client, yamlContent string) error {
-	// GET /config to extract CSRF token
-	resp, err := client.Get(serverURL + "/config")
-	if err != nil {
-		return fmt.Errorf("GET /config: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("read /config: %w", err)
-	}
-
-	re := regexp.MustCompile(`csrf_token"\s*value="([a-f0-9]+)"`)
-	matches := re.FindStringSubmatch(string(body))
-	if len(matches) < 2 {
-		return fmt.Errorf("CSRF token not found in /config")
-	}
-	csrfToken := matches[1]
-
 	// POST /config/import/commit
 	form := url.Values{
-		"csrf_token": {csrfToken},
-		"yaml":       {yamlContent},
+		"yaml": {yamlContent},
 	}
 
 	// POST /config/import/commit with Origin header
@@ -527,7 +405,7 @@ func ensureLoginRateLimitDisabled() {
 		fmt.Fprintf(os.Stderr, "⚠️  Disable login rate limit: login failed: %v\n", err)
 		return
 	}
-	values, csrfToken, err := parseConfigFormRaw(client)
+	values, err := parseConfigFormRaw(client)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "⚠️  Disable login rate limit: %v\n", err)
 		return
@@ -544,7 +422,6 @@ func ensureLoginRateLimitDisabled() {
 	for _, key := range []string{"admin_current_password", "admin_new_password", "admin_confirm_password", "yaml"} {
 		values.Del(key)
 	}
-	values.Set("csrf_token", csrfToken)
 
 	req, err := http.NewRequest(http.MethodPost, serverURL+"/config", strings.NewReader(values.Encode()))
 	if err != nil {

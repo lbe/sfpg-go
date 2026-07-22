@@ -34,26 +34,6 @@ func TestConfigHandlers_UpdateThemesHandler_ParseFormError(t *testing.T) {
 	}
 }
 
-func TestConfigHandlers_UpdateThemesHandler_CSRFFailed(t *testing.T) {
-	if err := ui.ParseTemplates(web.FS); err != nil {
-		t.Fatalf("ParseTemplates failed: %v", err)
-	}
-
-	ch := setupTestConfigHandlers(t, &mockConfigServiceForConfig{}, &mockAuthServiceForConfig{})
-	th := NewConfigThemesHandler(ch)
-	ch.SessionManager = &mockSessionManagerAuthenticatedInvalidCSRF{}
-
-	req := httptest.NewRequest(http.MethodPost, "/config/themes", strings.NewReader("themes=light"))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	w := httptest.NewRecorder()
-
-	th.UpdateThemesHandler(w, req)
-
-	if w.Code != http.StatusForbidden {
-		t.Errorf("expected status 403, got %d", w.Code)
-	}
-}
-
 func TestConfigHandlers_UpdateThemesHandler_LoadError(t *testing.T) {
 	if err := ui.ParseTemplates(web.FS); err != nil {
 		t.Fatalf("ParseTemplates failed: %v", err)

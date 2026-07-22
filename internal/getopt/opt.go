@@ -37,7 +37,6 @@ type Opt struct {
 	RunFileDiscovery     OptBool   // Whether to run discovery on startup
 	DebugDelayMS         OptInt    // Optional artificial delay for debug/testing
 	Profile              OptString // Profiling mode: "", "cpu", "mem", "block", etc.
-	EnableCompression    OptBool   // Enable gzip/brotli compression
 	EnableHTTPCache      OptBool   // Enable SQLite HTTP response caching
 	EnableCachePreload   OptBool   // Enable cache preloading when folders are opened
 	SessionSecret        OptString // Secret key for session cookie signing (required)
@@ -261,14 +260,6 @@ func applyEnvVars(opt *Opt) {
 		opt.Profile.String = v
 		opt.Profile.IsSet = true
 	}
-	if v := strings.TrimSpace(os.Getenv("SFG_COMPRESSION")); v != "" {
-		if b, err := parseBoolEnv(v); err == nil {
-			opt.EnableCompression.Bool = b
-			opt.EnableCompression.IsSet = true
-		} else {
-			usageExit(fmt.Sprintf("invalid SFG_COMPRESSION: %v", err))
-		}
-	}
 	if v := strings.TrimSpace(os.Getenv("SFG_HTTP_CACHE")); v != "" {
 		if b, err := parseBoolEnv(v); err == nil {
 			opt.EnableHTTPCache.Bool = b
@@ -351,7 +342,6 @@ func applyCLIFlags(opt *Opt) error {
 	restoreLastKnownGood := fs.Bool("restore-last-known-good", false, "Restore last known good configuration from database on startup")
 	debugDelay := fs.Int("debug-delay-ms", 0, "Artificial debug delay in milliseconds")
 	profile := fs.String("profile", "", "Profiling mode: '', 'cpu', 'mem', 'block', etc.")
-	compression := fs.Bool("compression", false, "Enable gzip/brotli compression")
 	httpCache := fs.Bool("http-cache", false, "Enable SQLite HTTP response caching")
 	cachePreload := fs.Bool("cache-preload", false, "Enable cache preloading when folders are opened")
 	unlockAccount := fs.String("unlock-account", "", "Unlock a locked account by username")
@@ -381,9 +371,6 @@ func applyCLIFlags(opt *Opt) error {
 		case "profile":
 			opt.Profile.String = *profile
 			opt.Profile.IsSet = true
-		case "compression":
-			opt.EnableCompression.Bool = *compression
-			opt.EnableCompression.IsSet = true
 		case "http-cache":
 			opt.EnableHTTPCache.Bool = *httpCache
 			opt.EnableHTTPCache.IsSet = true

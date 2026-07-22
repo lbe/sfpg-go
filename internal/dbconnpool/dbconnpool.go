@@ -138,10 +138,11 @@ func (cpc *CpConn) Close() error {
 	return nil
 }
 
-// PragmaOptimize runs SQLite PRAGMA optimize on the connection.
-func (cpc *CpConn) PragmaOptimize(ctx context.Context) {
-	if _, err := cpc.Conn.ExecContext(ctx, `PRAGMA optimize;`); err != nil {
-		slog.Debug("PRAGMA Optimize", "err", err)
+// PragmaOptimize runs SQLite PRAGMA optimize on the connection with the
+// given mask. Delegates to RunPragmaOptimize.
+func (cpc *CpConn) PragmaOptimize(ctx context.Context, mask int) {
+	if err := RunPragmaOptimize(ctx, cpc.Conn, mask); err != nil {
+		slog.Debug("PRAGMA optimize via CpConn", "err", err)
 	}
 }
 

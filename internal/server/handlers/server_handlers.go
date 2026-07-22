@@ -31,22 +31,11 @@ func NewServerHandlers(
 	}
 }
 
-// validateCsrf returns true if CSRF validation passes, false otherwise.
-func (h *ServerHandlers) validateCsrf(r *http.Request) bool {
-	return h.sessionManager.ValidateCSRFToken(r)
-}
-
 // ServerShutdownPost handles POST /server/shutdown requests.
-// Requires authentication and valid CSRF token. Triggers graceful server shutdown.
+// Requires authentication. Triggers graceful server shutdown.
 func (h *ServerHandlers) ServerShutdownPost(w http.ResponseWriter, r *http.Request) {
 	if !h.sessionManager.IsAuthenticated(w, r) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	if !h.validateCsrf(r) {
-		slog.Warn("CSRF validation failed for shutdown", "remote_addr", r.RemoteAddr)
-		http.Error(w, "Forbidden - CSRF token invalid", http.StatusForbidden)
 		return
 	}
 
@@ -74,16 +63,10 @@ func (h *ServerHandlers) ServerShutdownPost(w http.ResponseWriter, r *http.Reque
 }
 
 // ServerDiscoveryPost handles POST /server/discovery requests.
-// Requires authentication and valid CSRF token. Triggers file discovery.
+// Requires authentication. Triggers file discovery.
 func (h *ServerHandlers) ServerDiscoveryPost(w http.ResponseWriter, r *http.Request) {
 	if !h.sessionManager.IsAuthenticated(w, r) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	if !h.validateCsrf(r) {
-		slog.Warn("CSRF validation failed for discovery", "remote_addr", r.RemoteAddr)
-		http.Error(w, "Forbidden - CSRF token invalid", http.StatusForbidden)
 		return
 	}
 
@@ -112,17 +95,11 @@ func (h *ServerHandlers) ServerDiscoveryPost(w http.ResponseWriter, r *http.Requ
 }
 
 // ServerCacheBatchLoadPost handles POST /server/cache-batch-load requests.
-// Requires authentication and valid CSRF token. Blocks if discovery is active (returns 409). Otherwise
+// Requires authentication. Blocks if discovery is active (returns 409). Otherwise
 // starts batch load in a goroutine and returns success toast.
 func (h *ServerHandlers) ServerCacheBatchLoadPost(w http.ResponseWriter, r *http.Request) {
 	if !h.sessionManager.IsAuthenticated(w, r) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	if !h.validateCsrf(r) {
-		slog.Warn("CSRF validation failed for cache batch load", "remote_addr", r.RemoteAddr)
-		http.Error(w, "Forbidden - CSRF token invalid", http.StatusForbidden)
 		return
 	}
 

@@ -28,9 +28,10 @@ func TestStoreCacheEntryInTx_Commits(t *testing.T) {
 		Method:    "GET",
 		Path:      "/tx",
 		Status:    200,
-		Body:      []byte("ok"),
+		Body:      []byte("<html><body>ok</body></html>"),
 		CreatedAt: time.Now().Unix(),
 	}
+	entry.ContentLength = sql.NullInt64{Int64: int64(len(entry.Body)), Valid: true}
 	if err = StoreCacheEntryInTx(ctx, tx, entry); err != nil {
 		if rbErr := tx.Rollback(); rbErr != nil {
 			t.Logf("rollback error: %v", rbErr)
@@ -155,7 +156,7 @@ func TestCleanupExpired_RemovesOnlyExpired(t *testing.T) {
 		Method:    "GET",
 		Path:      "/expired",
 		Status:    200,
-		Body:      []byte("old"),
+		Body:      []byte("<html><body>old</body></html>"),
 		CreatedAt: now,
 		ExpiresAt: sql.NullInt64{Int64: now - 10, Valid: true},
 	}
@@ -164,10 +165,12 @@ func TestCleanupExpired_RemovesOnlyExpired(t *testing.T) {
 		Method:    "GET",
 		Path:      "/live",
 		Status:    200,
-		Body:      []byte("new"),
+		Body:      []byte("<html><body>new</body></html>"),
 		CreatedAt: now,
 		ExpiresAt: sql.NullInt64{Int64: now + 3600, Valid: true},
 	}
+	expired.ContentLength = sql.NullInt64{Int64: int64(len(expired.Body)), Valid: true}
+	live.ContentLength = sql.NullInt64{Int64: int64(len(live.Body)), Valid: true}
 	if err := StoreCacheEntry(ctx, db, expired); err != nil {
 		t.Fatalf("StoreCacheEntry expired: %v", err)
 	}
@@ -260,8 +263,8 @@ func TestMaybeTriggerGalleryPreload(t *testing.T) {
 		SessionCookieName:     "session",
 		SkipPreloadWhenHeader: "X-Internal",
 		SkipPreloadWhenValue:  "1",
-		OnGalleryCacheHit: func(ctx context.Context, folderID int64, sessionID string, acceptEncoding string) {
-			if folderID == 42 && sessionID == "sess" && acceptEncoding == "gzip" {
+		OnGalleryCacheHit: func(ctx context.Context, folderID int64, sessionID string) {
+			if folderID == 42 && sessionID == "sess" {
 				called <- struct{}{}
 			}
 		},
@@ -329,14 +332,14 @@ func TestSQLiteCacheStore_Wrappers(t *testing.T) {
 
 	store := NewSQLiteCacheStore(db)
 	entry := &HTTPCacheEntry{
-		Key:           "wrapper-key",
-		Method:        "GET",
-		Path:          "/wrap",
-		Status:        200,
-		Body:          []byte("wrap"),
-		ContentLength: sql.NullInt64{Int64: 4, Valid: true},
-		CreatedAt:     time.Now().Unix(),
+		Key:       "wrapper-key",
+		Method:    "GET",
+		Path:      "/wrap",
+		Status:    200,
+		Body:      []byte("<html><body>wrap</body></html>"),
+		CreatedAt: time.Now().Unix(),
 	}
+	entry.ContentLength = sql.NullInt64{Int64: int64(len(entry.Body)), Valid: true}
 
 	if err := store.Store(ctx, entry); err != nil {
 		t.Fatalf("Store: %v", err)

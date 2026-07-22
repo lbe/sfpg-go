@@ -134,20 +134,19 @@ func TestNew_WithDQueDirPath_CrashRecovery(t *testing.T) {
 		t.Errorf("expected pendingCount 5 from crash recovery, got %d", pc)
 	}
 
-	// Submit more items, then close; verify all get flushed
+	// Submit more items, then close without draining persisted overflow.
 	for i := range 3 {
 		if err := wb.Submit(100 + i); err != nil {
 			t.Fatalf("Submit(%d): %v", i, err)
 		}
 	}
-	wb.Close()
-
-	// Total flushed should be 8 (5 recovered + 3 new)
-	mu.Lock()
-	if flushed != 8 {
-		t.Errorf("expected 8 items flushed (5 recovered + 3 submitted), got %d", flushed)
+	if err := wb.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
 	}
-	mu.Unlock()
+
+	if got := persistedDQueSize(t, dir); got != 5 {
+		t.Errorf("persisted dque size after Close = %d, want 5 recovered items on disk", got)
+	}
 }
 
 func TestNew_WithInvalidDQueDirPath(t *testing.T) {
@@ -513,24 +512,32 @@ func TestWorker_DqNotify_Wake(t *testing.T) {
 func TestWorker_ContextCancel_DuringDrain(t *testing.T) {
 	dir := t.TempDir()
 
-	var mu sync.Mutex
-	var flushed []int
-
 	ctx, cancel := context.WithCancel(context.Background())
 
 	db := testDB(t)
 	cfg := Config[int]{
-		BeginTx: testBeginTx(db),
-		Flush: func(ctx context.Context, tx *sql.Tx, batch []int) error {
-			mu.Lock()
-			flushed = append(flushed, batch...)
-			mu.Unlock()
-			return nil
-		},
+		BeginTx:       testBeginTx(db),
+		Flush:         func(ctx context.Context, tx *sql.Tx, batch []int) error { return nil },
 		MaxBatchSize:  100,
 		FlushInterval: 10 * time.Second,
 		ChannelSize:   10,
 		DQueDirPath:   dir,
+	}
+
+	// Pre-seed dque before the worker starts so cancel can arrive during recovery.
+	dq, err := dque.New[int]("writebatcher", dir, 250)
+	if err != nil {
+		t.Fatalf("dque.New: %v", err)
+	}
+	const numItems = 15
+	for i := range numItems {
+		val := i
+		if err = dq.Enqueue(&val); err != nil {
+			t.Fatalf("dque enqueue %d: %v", i, err)
+		}
+	}
+	if err = dq.Close(); err != nil {
+		t.Fatalf("dque.Close: %v", err)
 	}
 
 	wb, err := New(ctx, cfg)
@@ -539,23 +546,6 @@ func TestWorker_ContextCancel_DuringDrain(t *testing.T) {
 	}
 	defer wb.Close()
 
-	// Pre-seed dque with >10 items
-	const numItems = 15
-	for i := range numItems {
-		val := i
-		if err := wb.dq.Enqueue(&val); err != nil {
-			t.Fatalf("dque enqueue %d: %v", i, err)
-		}
-	}
-	wb.pendingCount.Add(numItems)
-	wb.overflowCount.Add(numItems)
-
-	select {
-	case wb.dqNotify <- struct{}{}:
-	default:
-	}
-
-	// Cancel context and measure exit time
 	cancel()
 
 	exitTimer := time.NewTimer(2 * time.Second)
@@ -563,18 +553,8 @@ func TestWorker_ContextCancel_DuringDrain(t *testing.T) {
 
 	select {
 	case <-wb.done:
-		// Worker exited within 2 seconds
 	case <-exitTimer.C:
 		t.Fatal("worker did not exit within 2 seconds of context cancellation")
-	}
-
-	mu.Lock()
-	defer mu.Unlock()
-
-	// Old code exits without draining dque — flushed will be empty.
-	// New code drains dque before exit.
-	if len(flushed) != numItems {
-		t.Errorf("expected %d dque items flushed on context cancel, got %d: %v", numItems, len(flushed), flushed)
 	}
 }
 
@@ -663,28 +643,19 @@ func TestWorker_FlushTimerDuringDrain(t *testing.T) {
 	}
 }
 
-// TestWorker_ChannelClose_DrainsDQue verifies that when the channel is
-// closed while the dque still has items, the worker drains all dque items
-// and flushes them before exiting.
+// TestWorker_ChannelClose_DrainsDQue verifies channel close does not drain dque overflow.
 func TestWorker_ChannelClose_DrainsDQue(t *testing.T) {
 	dir := t.TempDir()
 
-	var mu sync.Mutex
-	var flushed []int
-
 	db := testDB(t)
 	cfg := Config[int]{
-		BeginTx: testBeginTx(db),
-		Flush: func(ctx context.Context, tx *sql.Tx, batch []int) error {
-			mu.Lock()
-			flushed = append(flushed, batch...)
-			mu.Unlock()
-			return nil
-		},
-		MaxBatchSize:  100,
-		FlushInterval: 10 * time.Second,
-		ChannelSize:   10,
-		DQueDirPath:   dir,
+		BeginTx:        testBeginTx(db),
+		Flush:          func(ctx context.Context, tx *sql.Tx, batch []int) error { return nil },
+		MaxBatchSize:   10000,
+		FlushInterval:  10 * time.Second,
+		ChannelSize:    10,
+		DQueDirPath:    dir,
+		DeferDQueDrain: true,
 	}
 
 	wb, err := New(context.Background(), cfg)
@@ -692,7 +663,6 @@ func TestWorker_ChannelClose_DrainsDQue(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	// Pre-seed dque with items
 	for _, v := range []int{1, 2, 3} {
 		val := v
 		if err := wb.dq.Enqueue(&val); err != nil {
@@ -702,16 +672,12 @@ func TestWorker_ChannelClose_DrainsDQue(t *testing.T) {
 	wb.pendingCount.Add(3)
 	wb.overflowCount.Add(3)
 
-	// Close the batcher — this closes the channel.
-	// Old code: worker exits without draining dque.
-	// New code: worker drains dque before exit.
-	wb.Close()
+	if err := wb.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
 
-	mu.Lock()
-	defer mu.Unlock()
-
-	if len(flushed) != 3 {
-		t.Errorf("expected 3 dque items flushed after channel close, got %d: %v", len(flushed), flushed)
+	if got := persistedDQueSize(t, dir); got != 3 {
+		t.Errorf("persisted dque size = %d, want 3", got)
 	}
 }
 
@@ -1021,21 +987,13 @@ func TestSubmit_ErrQuotaExceeded(t *testing.T) {
 	}
 }
 
-// TestClose_DrainsDQue verifies that Close drains all items from both the
-// channel and the dque overflow queue before returning. It forces overflow
-// by blocking the worker, then calls Close and checks that every submitted
-// item was flushed, pendingCount is zero, and the dque is empty.
+// TestClose_DrainsDQue verifies Close returns promptly and preserves dque overflow on disk.
 func TestClose_DrainsDQue(t *testing.T) {
 	dir := t.TempDir()
 
 	type drainItem struct {
 		Val int
 	}
-
-	var (
-		mu      sync.Mutex
-		flushed []int
-	)
 
 	gate := newFlushGate()
 
@@ -1045,11 +1003,6 @@ func TestClose_DrainsDQue(t *testing.T) {
 		Flush: func(ctx context.Context, tx *sql.Tx, batch []drainItem) error {
 			gate.startOnce.Do(func() { close(gate.started) })
 			<-gate.proceed
-			mu.Lock()
-			for _, item := range batch {
-				flushed = append(flushed, item.Val)
-			}
-			mu.Unlock()
 			return nil
 		},
 		MaxBatchSize:  1,
@@ -1064,43 +1017,32 @@ func TestClose_DrainsDQue(t *testing.T) {
 	}
 	defer gate.cleanup()
 
-	// Submit item 1 — worker picks it up and blocks in FlushFunc.
 	if err := wb.Submit(drainItem{Val: 1}); err != nil {
 		t.Fatalf("Submit 1: %v", err)
 	}
 	gate.wait()
 
-	// Submit more items — item 2 fills the channel, items 3-7 overflow to dque.
-	if err := wb.Submit(drainItem{Val: 2}); err != nil {
-		t.Fatalf("Submit 2: %v", err)
-	}
-	for i := 3; i <= 7; i++ {
+	for i := 2; i <= 7; i++ {
 		if err := wb.Submit(drainItem{Val: i}); err != nil {
 			t.Fatalf("Submit %d: %v", i, err)
 		}
 	}
 
-	// Unblock the worker and call Close.
-	gate.unblock()
-	if err := wb.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
+	done := make(chan struct{})
+	go func() {
+		gate.unblock()
+		_ = wb.Close()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close blocked with dque overflow backlog")
 	}
 
-	// Verify all items were flushed.
-	mu.Lock()
-	flushedCount := len(flushed)
-	mu.Unlock()
-
-	if flushedCount != 7 {
-		t.Errorf("expected 7 items flushed, got %d", flushedCount)
-	}
-
-	if cnt := wb.PendingCount(); cnt != 0 {
-		t.Errorf("expected PendingCount() = 0 after Close, got %d", cnt)
-	}
-
-	if wb.dq != nil && wb.dq.Size() != 0 {
-		t.Errorf("expected dque.Size() = 0 after Close, got %d", wb.dq.Size())
+	if got := persistedDQueSizeFor[drainItem](t, dir); got == 0 {
+		t.Fatal("persisted dque empty after Close")
 	}
 }
 
@@ -1191,8 +1133,12 @@ func TestClose_WithOverflowInFlight(t *testing.T) {
 
 	totalSubmitted := int(atomic.LoadInt64(&successfulSubmit)) + 7 // 7 pre-Close items
 
-	if flushedCount != totalSubmitted {
-		t.Errorf("expected %d items flushed, got %d — items were lost", totalSubmitted, flushedCount)
+	if flushedCount > totalSubmitted {
+		t.Errorf("flushed %d items but only %d submitted successfully", flushedCount, totalSubmitted)
+	}
+	persisted := persistedDQueSizeFor[inflightItem](t, dir)
+	if flushedCount+persisted < totalSubmitted {
+		t.Errorf("lost items: flushed=%d persisted=%d submitted=%d", flushedCount, persisted, totalSubmitted)
 	}
 }
 
@@ -1401,18 +1347,10 @@ func TestPendingCount_CrashRecovery(t *testing.T) {
 	}
 
 	// Step 2: Create a batcher with the same directory (simulates restart).
-	var (
-		mu      sync.Mutex
-		flushed []crashItem
-	)
-
 	db := testDB(t)
 	cfg := Config[crashItem]{
 		BeginTx: testBeginTx(db),
 		Flush: func(ctx context.Context, tx *sql.Tx, batch []crashItem) error {
-			mu.Lock()
-			flushed = append(flushed, batch...)
-			mu.Unlock()
 			return nil
 		},
 		MaxBatchSize:        10000,
@@ -1432,22 +1370,13 @@ func TestPendingCount_CrashRecovery(t *testing.T) {
 		t.Errorf("expected PendingCount() = %d at startup, got %d", numItems, cnt)
 	}
 
-	// Step 4: Close triggers drain + flush of all recovered items.
+	// Step 4: Close returns promptly; recovered items remain on disk.
 	if err := wb.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
 
-	// Step 5: Verify all items were flushed and pendingCount is 0.
-	mu.Lock()
-	flushedCount := len(flushed)
-	mu.Unlock()
-
-	if flushedCount != numItems {
-		t.Errorf("expected %d items flushed after crash recovery, got %d", numItems, flushedCount)
-	}
-
-	if cnt := wb.PendingCount(); cnt != 0 {
-		t.Errorf("expected PendingCount() = 0 after Close, got %d", cnt)
+	if got := persistedDQueSizeFor[crashItem](t, dir); got != numItems {
+		t.Errorf("persisted dque size after Close = %d, want %d recovered items on disk", got, numItems)
 	}
 }
 
@@ -1776,18 +1705,10 @@ func Test_E2E_CrashRecovery(t *testing.T) {
 	}
 
 	// Step 2: Create a batcher with the same directory (simulates post-crash restart).
-	var (
-		mu      sync.Mutex
-		flushed []recoveryItem
-	)
-
 	db := testDB(t)
 	cfg := Config[recoveryItem]{
 		BeginTx: testBeginTx(db),
 		Flush: func(ctx context.Context, tx *sql.Tx, batch []recoveryItem) error {
-			mu.Lock()
-			flushed = append(flushed, batch...)
-			mu.Unlock()
 			return nil
 		},
 		MaxBatchSize:        100,
@@ -1806,22 +1727,13 @@ func Test_E2E_CrashRecovery(t *testing.T) {
 		t.Errorf("expected PendingCount() = %d at startup (matching dque size), got %d", numItems, cnt)
 	}
 
-	// Step 4: Close triggers drain + flush of all recovered items.
+	// Step 4: Close returns promptly; recovered items remain on disk.
 	if err := wb.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
 
-	// Step 5: Verify all items were flushed and pendingCount is 0.
-	mu.Lock()
-	flushedCount := len(flushed)
-	mu.Unlock()
-
-	if flushedCount != numItems {
-		t.Errorf("expected %d items flushed after crash recovery, got %d", numItems, flushedCount)
-	}
-
-	if cnt := wb.PendingCount(); cnt != 0 {
-		t.Errorf("expected PendingCount() = 0 after Close, got %d", cnt)
+	if got := persistedDQueSizeFor[recoveryItem](t, dir); got != numItems {
+		t.Errorf("persisted dque size after Close = %d, want %d recovered items on disk", got, numItems)
 	}
 }
 
@@ -1859,18 +1771,10 @@ func Test_E2E_CrashRecovery_OverCapacity(t *testing.T) {
 		t.Fatalf("dque.Close: %v", closeErr)
 	}
 
-	var (
-		mu      sync.Mutex
-		flushed []capItem
-	)
-
 	db := testDB(t)
 	cfg := Config[capItem]{
 		BeginTx: testBeginTx(db),
 		Flush: func(ctx context.Context, tx *sql.Tx, batch []capItem) error {
-			mu.Lock()
-			flushed = append(flushed, batch...)
-			mu.Unlock()
 			return nil
 		},
 		MaxBatchSize: 100,
@@ -1886,24 +1790,17 @@ func Test_E2E_CrashRecovery_OverCapacity(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	// PendingCount might already be decremented by the time we check
-	// (worker is running and flushing), so we only verify it eventually
-	// reaches 0. The real assertion is that all items are flushed.
-
+	// Close must return promptly even when dque exceeds channel capacity.
+	closeStart := time.Now()
 	if err := wb.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
-
-	mu.Lock()
-	flushedCount := len(flushed)
-	mu.Unlock()
-
-	if flushedCount != numItems {
-		t.Errorf("expected %d items flushed, got %d", numItems, flushedCount)
+	if elapsed := time.Since(closeStart); elapsed > 2*time.Second {
+		t.Errorf("Close took %v, want under 2s (non-blocking dque shutdown)", elapsed)
 	}
 
-	if cnt := wb.PendingCount(); cnt != 0 {
-		t.Errorf("expected PendingCount() = 0 after Close, got %d", cnt)
+	if got := persistedDQueSizeFor[capItem](t, dir); got != numItems {
+		t.Errorf("persisted dque size after Close = %d, want %d recovered items on disk", got, numItems)
 	}
 }
 
@@ -2155,7 +2052,7 @@ func TestDrainDQueAll_DQueDequeueError(t *testing.T) {
 	}
 }
 
-func TestDrainRemaining_ChannelEmptyFlushesBatch(t *testing.T) {
+func TestFlushChannelExit_ChannelEmptyFlushesBatch(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	mq := &mockDQue[int]{
@@ -2208,7 +2105,7 @@ func TestDrainRemaining_ChannelEmptyFlushesBatch(t *testing.T) {
 	}
 }
 
-func TestDrainRemaining_DQueDequeueError(t *testing.T) {
+func TestFlushChannelExit_DQueDequeueError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	var mMu sync.Mutex
@@ -2255,6 +2152,8 @@ func TestDrainRemaining_DQueDequeueError(t *testing.T) {
 	mMu.Lock()
 	dqueSize = 1
 	mMu.Unlock()
+	wb.pendingCount.Add(1)
+	wb.overflowCount.Add(1)
 
 	cancel()
 
@@ -2269,7 +2168,7 @@ func TestDrainRemaining_DQueDequeueError(t *testing.T) {
 	if len(flushed) != 3 {
 		t.Errorf("expected 3 channel items flushed, got %d: %v", len(flushed), flushed)
 	}
-	if wb.PendingCount() != 0 {
-		t.Errorf("expected PendingCount() = 0, got %d", wb.PendingCount())
+	if wb.PendingCount() != 1 {
+		t.Errorf("expected PendingCount() = 1 (dque item preserved), got %d", wb.PendingCount())
 	}
 }

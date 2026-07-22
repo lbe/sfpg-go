@@ -1,0 +1,3 @@
+-- Down migration: no-op
+-- Encoding columns were removed as part of platform cleanup.
+-- Adding them back is not supported; restore from backup if needed.

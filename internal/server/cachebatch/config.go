@@ -19,7 +19,7 @@ type Config struct {
 	GetQueries func() (BatchLoadQueries, func())
 
 	// GetHandler returns the HTTP handler wrapped with full middleware chain
-	// (cache middleware, compression middleware, etc.)
+	// (cache middleware, etc.)
 	GetHandler func() http.Handler
 
 	// GetETagVersion returns the current ETag version for cache keys.

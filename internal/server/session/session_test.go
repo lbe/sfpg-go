@@ -1,10 +1,8 @@
 package session
 
 import (
-	"errors"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/gorilla/sessions"
@@ -231,106 +229,6 @@ func TestClearSessionCookie_DomainHandling(t *testing.T) {
 	})
 }
 
-func TestEnsureCsrfToken_InvalidCookie(t *testing.T) {
-	store := sessions.NewCookieStore([]byte("test-secret"))
-	store.Options = &sessions.Options{Path: "/", MaxAge: 3600}
-
-	req := httptest.NewRequest(http.MethodGet, "http://example.com/", nil)
-	req.Host = "example.com"
-	req.AddCookie(&http.Cookie{Name: SessionName, Value: "bad"})
-	rec := httptest.NewRecorder()
-
-	token := EnsureCsrfToken(store, rec, req)
-	if token == "" {
-		t.Fatal("expected non-empty CSRF token")
-	}
-
-	var cleared bool
-	for _, c := range rec.Result().Cookies() {
-		if c.Name == SessionName && c.MaxAge == -1 {
-			cleared = true
-			break
-		}
-	}
-	if !cleared {
-		t.Error("expected session cookie to be cleared")
-	}
-}
-
-func TestValidateCsrfToken_MissingValues(t *testing.T) {
-	store := sessions.NewCookieStore([]byte("test-secret"))
-	mgr := NewManager(store, func() *OptionsConfig { return &OptionsConfig{} })
-
-	// Missing session token
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("csrf_token=token"))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	if mgr.ValidateCSRFToken(req) {
-		t.Error("expected validation to fail when session token is missing")
-	}
-
-	// Missing form token
-	reqWithSession := httptest.NewRequest(http.MethodGet, "/", nil)
-	rec := httptest.NewRecorder()
-	sess, _ := store.Get(reqWithSession, SessionName)
-	sess.Values["csrf_token"] = "token"
-	if err := sess.Save(reqWithSession, rec); err != nil {
-		t.Fatalf("failed to save session: %v", err)
-	}
-	reqMissingForm := httptest.NewRequest(http.MethodPost, "/", nil)
-	for _, c := range rec.Result().Cookies() {
-		reqMissingForm.AddCookie(c)
-	}
-	if mgr.ValidateCSRFToken(reqMissingForm) {
-		t.Error("expected validation to fail when form token is missing")
-	}
-}
-
-func TestValidateCsrfToken_Success(t *testing.T) {
-	store := sessions.NewCookieStore([]byte("test-secret"))
-	mgr := NewManager(store, func() *OptionsConfig { return &OptionsConfig{} })
-
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	rec := httptest.NewRecorder()
-	sess, _ := store.Get(req, SessionName)
-	sess.Values["csrf_token"] = "token"
-	if err := sess.Save(req, rec); err != nil {
-		t.Fatalf("failed to save session: %v", err)
-	}
-
-	post := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("csrf_token=token"))
-	post.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	for _, c := range rec.Result().Cookies() {
-		post.AddCookie(c)
-	}
-
-	if !mgr.ValidateCSRFToken(post) {
-		t.Error("expected validation to succeed when tokens match")
-	}
-}
-
-func TestEnsureCsrfToken_ExistingToken(t *testing.T) {
-	store := sessions.NewCookieStore([]byte("test-secret"))
-
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	rec := httptest.NewRecorder()
-	sess, _ := store.Get(req, SessionName)
-	sess.Values["csrf_token"] = "existing-token"
-	if err := sess.Save(req, rec); err != nil {
-		t.Fatalf("failed to save session: %v", err)
-	}
-
-	reqWithCookie := httptest.NewRequest(http.MethodGet, "/", nil)
-	for _, c := range rec.Result().Cookies() {
-		reqWithCookie.AddCookie(c)
-	}
-	newRec := httptest.NewRecorder()
-
-	token := EnsureCsrfToken(store, newRec, reqWithCookie)
-	if token != "existing-token" {
-		t.Errorf("token = %q, want %q", token, "existing-token")
-	}
-}
-
 func TestManagerGetSession_InvalidCookie(t *testing.T) {
 	store := sessions.NewCookieStore([]byte("test-secret"))
 	mgr := NewManager(store, func() *OptionsConfig { return &OptionsConfig{} })
@@ -361,29 +259,6 @@ func TestManagerGetSession_InvalidCookie(t *testing.T) {
 	}
 	if !cleared {
 		t.Error("expected Set-Cookie with MaxAge=-1 to clear invalid session cookie")
-	}
-}
-
-func TestValidateCsrfToken_Mismatch(t *testing.T) {
-	store := sessions.NewCookieStore([]byte("test-secret"))
-	mgr := NewManager(store, func() *OptionsConfig { return &OptionsConfig{} })
-
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	rec := httptest.NewRecorder()
-	sess, _ := store.Get(req, SessionName)
-	sess.Values["csrf_token"] = "token"
-	if err := sess.Save(req, rec); err != nil {
-		t.Fatalf("failed to save session: %v", err)
-	}
-
-	post := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("csrf_token=other"))
-	post.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	for _, c := range rec.Result().Cookies() {
-		post.AddCookie(c)
-	}
-
-	if mgr.ValidateCSRFToken(post) {
-		t.Error("expected validation to fail when tokens do not match")
 	}
 }
 
@@ -486,11 +361,10 @@ func TestManagerSetAuthenticated_RotatesSessionOnLogin(t *testing.T) {
 	store := sessions.NewCookieStore([]byte("test-secret"))
 	mgr := NewManager(store, func() *OptionsConfig { return &OptionsConfig{} })
 
-	// Create an unauthenticated session with a CSRF token.
+	// Create an unauthenticated session.
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rec := httptest.NewRecorder()
 	sess, _ := store.Get(req, SessionName)
-	sess.Values["csrf_token"] = "test-token"
 	if err := sess.Save(req, rec); err != nil {
 		t.Fatalf("failed to save initial session: %v", err)
 	}
@@ -517,40 +391,6 @@ func TestManagerSetAuthenticated_RotatesSessionOnLogin(t *testing.T) {
 	}
 	if cookies2[0].Value == oldValue {
 		t.Error("expected session cookie value to change on login")
-	}
-}
-
-func TestManagerSetAuthenticated_PreservesCSRFTokenOnRotation(t *testing.T) {
-	store := sessions.NewCookieStore([]byte("test-secret"))
-	mgr := NewManager(store, func() *OptionsConfig { return &OptionsConfig{} })
-
-	// Create an unauthenticated session with a CSRF token.
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	rec := httptest.NewRecorder()
-	sess, _ := store.Get(req, SessionName)
-	sess.Values["csrf_token"] = "preserved-token"
-	if err := sess.Save(req, rec); err != nil {
-		t.Fatalf("failed to save initial session: %v", err)
-	}
-
-	// Login.
-	req2 := httptest.NewRequest(http.MethodPost, "/", nil)
-	for _, c := range rec.Result().Cookies() {
-		req2.AddCookie(c)
-	}
-	rec2 := httptest.NewRecorder()
-	if err := mgr.SetAuthenticated(rec2, req2, true); err != nil {
-		t.Fatalf("SetAuthenticated error = %v", err)
-	}
-
-	// Verify the CSRF token is preserved in the rotated session.
-	req3 := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("csrf_token=preserved-token"))
-	req3.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	for _, c := range rec2.Result().Cookies() {
-		req3.AddCookie(c)
-	}
-	if !mgr.ValidateCSRFToken(req3) {
-		t.Error("expected CSRF token to be preserved after session rotation")
 	}
 }
 
@@ -652,179 +492,6 @@ func TestIsAuthenticated_PackageLevel(t *testing.T) {
 			t.Error("expected invalid session cookie to be cleared")
 		}
 	})
-}
-
-func TestGenerateCSRFToken(t *testing.T) {
-	token := GenerateCSRFToken()
-	if token == "" {
-		t.Fatal("GenerateCSRFToken() returned empty token")
-	}
-	if len(token) != 64 {
-		t.Errorf("token length = %d, want 64", len(token))
-	}
-	isHex := func(r rune) bool {
-		return (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')
-	}
-	for _, r := range token {
-		if !isHex(r) {
-			t.Errorf("token contains non-hex character: %q", r)
-			break
-		}
-	}
-
-	token2 := GenerateCSRFToken()
-	if token == token2 {
-		t.Error("two generated tokens are equal, expected different values")
-	}
-}
-
-func TestManagerEnsureCSRFToken(t *testing.T) {
-	store := sessions.NewCookieStore([]byte("test-secret"))
-	mgr := NewManager(store, func() *OptionsConfig { return &OptionsConfig{} })
-
-	t.Run("existing token", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/", nil)
-		rec := httptest.NewRecorder()
-		sess, _ := store.Get(req, SessionName)
-		sess.Values["csrf_token"] = "existing-token"
-		if err := sess.Save(req, rec); err != nil {
-			t.Fatalf("failed to save session: %v", err)
-		}
-
-		req2 := httptest.NewRequest(http.MethodGet, "/", nil)
-		for _, c := range rec.Result().Cookies() {
-			req2.AddCookie(c)
-		}
-		rec2 := httptest.NewRecorder()
-
-		token := mgr.EnsureCSRFToken(rec2, req2)
-		if token != "existing-token" {
-			t.Errorf("token = %q, want %q", token, "existing-token")
-		}
-		if len(rec2.Result().Cookies()) != 0 {
-			t.Error("expected no new cookie when token already exists")
-		}
-	})
-
-	t.Run("new token", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/", nil)
-		rec := httptest.NewRecorder()
-
-		token := mgr.EnsureCSRFToken(rec, req)
-		if token == "" {
-			t.Fatal("expected non-empty token")
-		}
-		if len(token) != 64 {
-			t.Errorf("token length = %d, want 64", len(token))
-		}
-
-		cookies := rec.Result().Cookies()
-		if len(cookies) == 0 {
-			t.Fatal("expected session cookie to be set")
-		}
-	})
-
-	t.Run("invalid cookie", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/", nil)
-		req.AddCookie(&http.Cookie{Name: SessionName, Value: "bad"})
-		rec := httptest.NewRecorder()
-
-		token := mgr.EnsureCSRFToken(rec, req)
-		if token == "" {
-			t.Fatal("expected non-empty token")
-		}
-
-		var cleared bool
-		for _, c := range rec.Result().Cookies() {
-			if c.Name == SessionName && c.MaxAge == -1 {
-				cleared = true
-				break
-			}
-		}
-		if !cleared {
-			t.Error("expected invalid session cookie to be cleared")
-		}
-	})
-}
-
-func TestManagerValidateCSRFToken(t *testing.T) {
-	store := sessions.NewCookieStore([]byte("test-secret"))
-	mgr := NewManager(store, func() *OptionsConfig { return &OptionsConfig{} })
-
-	t.Run("missing session token", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("csrf_token=token"))
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		if mgr.ValidateCSRFToken(req) {
-			t.Error("expected validation to fail when session token is missing")
-		}
-	})
-
-	t.Run("missing form token", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/", nil)
-		rec := httptest.NewRecorder()
-		sess, _ := store.Get(req, SessionName)
-		sess.Values["csrf_token"] = "token"
-		if err := sess.Save(req, rec); err != nil {
-			t.Fatalf("failed to save session: %v", err)
-		}
-
-		req2 := httptest.NewRequest(http.MethodPost, "/", nil)
-		for _, c := range rec.Result().Cookies() {
-			req2.AddCookie(c)
-		}
-		if mgr.ValidateCSRFToken(req2) {
-			t.Error("expected validation to fail when form token is missing")
-		}
-	})
-
-	t.Run("mismatch", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/", nil)
-		rec := httptest.NewRecorder()
-		sess, _ := store.Get(req, SessionName)
-		sess.Values["csrf_token"] = "token"
-		if err := sess.Save(req, rec); err != nil {
-			t.Fatalf("failed to save session: %v", err)
-		}
-
-		req2 := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("csrf_token=other"))
-		req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		for _, c := range rec.Result().Cookies() {
-			req2.AddCookie(c)
-		}
-		if mgr.ValidateCSRFToken(req2) {
-			t.Error("expected validation to fail when tokens do not match")
-		}
-	})
-
-	t.Run("success", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/", nil)
-		rec := httptest.NewRecorder()
-		sess, _ := store.Get(req, SessionName)
-		sess.Values["csrf_token"] = "token"
-		if err := sess.Save(req, rec); err != nil {
-			t.Fatalf("failed to save session: %v", err)
-		}
-
-		req2 := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("csrf_token=token"))
-		req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		for _, c := range rec.Result().Cookies() {
-			req2.AddCookie(c)
-		}
-		if !mgr.ValidateCSRFToken(req2) {
-			t.Error("expected validation to succeed when tokens match")
-		}
-	})
-}
-
-func TestGenerateCSRFToken_RandReadFails(t *testing.T) {
-	oldRandRead := randRead
-	randRead = func(b []byte) (int, error) { return 0, errors.New("rand denied") }
-	t.Cleanup(func() { randRead = oldRandRead })
-
-	token := GenerateCSRFToken()
-	if token != "" {
-		t.Errorf("token = %q, want empty", token)
-	}
 }
 
 func TestManagerIsAuthenticated_InvalidCookie(t *testing.T) {

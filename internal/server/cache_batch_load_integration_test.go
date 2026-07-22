@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -98,10 +97,7 @@ func TestIntegration_CacheBatchLoad_HTTP_BlockedWhenDiscoveryActive(t *testing.T
 	client := &http.Client{Jar: jar}
 	loginAsAdmin(t, client, ts.URL)
 
-	// Extract CSRF token after login
-	csrfToken := extractCSRFTokenFromConfig(t, client, ts.URL)
-
-	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/server/cache-batch-load", strings.NewReader("csrf_token="+url.QueryEscape(csrfToken)))
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/server/cache-batch-load", nil)
 	req.Header.Set("Origin", ts.URL)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := client.Do(req)
@@ -139,11 +135,8 @@ func TestIntegration_CacheBatchLoad_HTTP_StartsWhenIdle(t *testing.T) {
 	client := &http.Client{Jar: jar}
 	loginAsAdmin(t, client, ts.URL)
 
-	// Extract CSRF token after login
-	csrfToken := extractCSRFTokenFromConfig(t, client, ts.URL)
-
-	// POST to trigger cache batch load with CSRF token
-	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/server/cache-batch-load", strings.NewReader("csrf_token="+url.QueryEscape(csrfToken)))
+	// POST to trigger cache batch load
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/server/cache-batch-load", nil)
 	req.Header.Set("Origin", ts.URL)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := client.Do(req)
@@ -463,11 +456,12 @@ func TestIntegration_CacheBatchLoad_ShutdownNoFlushErrors(t *testing.T) {
 		}
 	}
 
-	// Run batch load then shutdown; WriteBatcher must drain before Shutdown cancels context
+	// Run batch load then shutdown; WriteBatcher flushes in-memory items best-effort
+	// without blocking on dque drain (overflow persists on disk for next start).
 	_ = app.RunCacheBatchLoad()
 	app.Shutdown()
 
 	if cap.hasFlushError() {
-		t.Error("slog captured flush/connection errors during Shutdown; WriteBatcher must drain before context cancellation")
+		t.Error("slog captured flush/connection errors during Shutdown")
 	}
 }

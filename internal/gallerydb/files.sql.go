@@ -79,7 +79,7 @@ func (q *Queries) GetFileViewsByFolderIDOrderByFileName(ctx context.Context, fol
 	if err != nil {
 		return nil, err
 	}
-	defer rowsCloseFn(rows)
+	defer rows.Close()
 	var items []FileView
 	for rows.Next() {
 		var i FileView
@@ -103,10 +103,10 @@ func (q *Queries) GetFileViewsByFolderIDOrderByFileName(ctx context.Context, fol
 		}
 		items = append(items, i)
 	}
-	if err := rowsCloseFn(rows); err != nil {
+	if err := rows.Close(); err != nil {
 		return nil, err
 	}
-	if err := rowsErrFn(rows); err != nil {
+	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	return items, nil

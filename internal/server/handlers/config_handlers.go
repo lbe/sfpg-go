@@ -90,21 +90,12 @@ func (h *ConfigHandlers) disableConfigCaching(w http.ResponseWriter) {
 
 // ConfigAuthMiddleware wraps config handlers with cache-disabling headers.
 // Authentication is enforced by the router-level authMiddleware, so per-handler
-// IsAuthenticated checks are not needed. CSRF validation remains handler-specific
-// because the restore-preview action is a POST that does not require CSRF.
+// IsAuthenticated checks are not needed.
 func (h *ConfigHandlers) ConfigAuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		h.disableConfigCaching(w)
 		next(w, r)
 	}
-}
-
-func (h *ConfigHandlers) ensureCsrf(w http.ResponseWriter, r *http.Request) string {
-	return h.SessionManager.EnsureCSRFToken(w, r)
-}
-
-func (h *ConfigHandlers) validateCsrf(r *http.Request) bool {
-	return h.SessionManager.ValidateCSRFToken(r)
 }
 
 func (h *ConfigHandlers) executeConfigTemplate(w http.ResponseWriter, tmpl *template.Template, templateName string, data any) {
@@ -166,7 +157,7 @@ func (h *ConfigHandlers) ConfigGet(w http.ResponseWriter, r *http.Request) {
 }
 
 // ConfigPost handles POST /config requests and processes configuration setting updates.
-// It validates the CSRF token, parses the form data, and applies configuration changes.
+// It parses the form data and applies configuration changes.
 // If changes affect runtime properties (listener address, port, log settings), it marks
 // the restart as required. Authentication is required via the authMiddleware.
 func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
@@ -181,12 +172,6 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 			slog.Error("failed to render generic error template", "err", err)
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		}
-		return
-	}
-
-	if !h.validateCsrf(r) {
-		slog.Warn("CSRF validation failed for config update", "remote_addr", r.RemoteAddr)
-		http.Error(w, "Forbidden - CSRF token invalid", http.StatusForbidden)
 		return
 	}
 
@@ -226,12 +211,12 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 	// Create a copy to modify
 	newConfig := *oldConfig
 
-	// Check if the form contains actual config fields beyond csrf_token.
+	// Check if the form contains actual config fields.
 	// Only default unchecked checkboxes to false for genuine config updates,
-	// not for partial or empty submissions (e.g. themes-only or bare csrf).
+	// not for partial or empty submissions.
 	hasConfigFields := false
-	for key := range r.Form {
-		if key != "csrf_token" {
+	for _, f := range config.Fields() {
+		if _, inForm := r.Form[f.DBKey]; inForm {
 			hasConfigFields = true
 			break
 		}
@@ -335,6 +320,12 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 
 	h.cfgOps.UpdateConfigWithPrecedence(applyResult.Config, applyResult.RestartRequiredKeys)
 	h.cfgOps.ApplyConfig()
+
+	// Invalidate HTTP cache if current theme changed — stale cached pages would
+	// have the old SSR data-theme value.
+	if oldConfig.CurrentTheme != applyResult.Config.CurrentTheme {
+		h.cfgOps.InvalidateHTTPCache()
+	}
 
 	// Set restart required flag if any restart-required fields changed
 	if applyResult.RestartRequired {

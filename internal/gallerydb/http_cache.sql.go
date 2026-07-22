@@ -59,7 +59,7 @@ func (q *Queries) DeleteHttpCacheExpired(ctx context.Context) error {
 }
 
 const getHttpCacheByKey = `-- name: GetHttpCacheByKey :one
-SELECT id, "key", method, path, query_string, encoding, status, content_type, cache_control, etag, last_modified, vary, body, content_length, created_at, expires_at, content_encoding FROM http_cache 
+SELECT id, "key", method, path, query_string, status, content_type, cache_control, etag, last_modified, vary, body, content_length, created_at, expires_at FROM http_cache 
 WHERE key = ? AND (expires_at IS NULL OR expires_at > unixepoch())
 LIMIT 1
 `
@@ -74,7 +74,6 @@ func (q *Queries) GetHttpCacheByKey(ctx context.Context, key string) (HttpCache,
 		&i.Method,
 		&i.Path,
 		&i.QueryString,
-		&i.Encoding,
 		&i.Status,
 		&i.ContentType,
 		&i.CacheControl,
@@ -85,21 +84,21 @@ func (q *Queries) GetHttpCacheByKey(ctx context.Context, key string) (HttpCache,
 		&i.ContentLength,
 		&i.CreatedAt,
 		&i.ExpiresAt,
-		&i.ContentEncoding,
 	)
 	return i, err
 }
 
 const getHttpCacheOldestCreated = `-- name: GetHttpCacheOldestCreated :many
-SELECT id, created_at, content_length FROM http_cache 
+SELECT id, created_at, LENGTH(body) AS stored_length
+FROM http_cache 
 ORDER BY created_at ASC 
 LIMIT ?
 `
 
 type GetHttpCacheOldestCreatedRow struct {
-	ID            int64
-	CreatedAt     int64
-	ContentLength sql.NullInt64
+	ID           int64
+	CreatedAt    int64
+	StoredLength sql.NullInt64
 }
 
 func (q *Queries) GetHttpCacheOldestCreated(ctx context.Context, limit int64) ([]GetHttpCacheOldestCreatedRow, error) {
@@ -107,31 +106,32 @@ func (q *Queries) GetHttpCacheOldestCreated(ctx context.Context, limit int64) ([
 	if err != nil {
 		return nil, err
 	}
-	defer rowsCloseFn(rows)
+	defer rows.Close()
 	var items []GetHttpCacheOldestCreatedRow
 	for rows.Next() {
 		var i GetHttpCacheOldestCreatedRow
-		if err := rows.Scan(&i.ID, &i.CreatedAt, &i.ContentLength); err != nil {
+		if err := rows.Scan(&i.ID, &i.CreatedAt, &i.StoredLength); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
 	}
-	if err := rowsCloseFn(rows); err != nil {
+	if err := rows.Close(); err != nil {
 		return nil, err
 	}
-	if err := rowsErrFn(rows); err != nil {
+	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	return items, nil
 }
 
 const getHttpCacheSizeBytes = `-- name: GetHttpCacheSizeBytes :one
-SELECT COALESCE(SUM(content_length), 0) as total_bytes FROM http_cache
+SELECT CAST(COALESCE(SUM(LENGTH(body)), 0) AS INTEGER) as total_bytes 
+  FROM http_cache
 `
 
-func (q *Queries) GetHttpCacheSizeBytes(ctx context.Context) (interface{}, error) {
+func (q *Queries) GetHttpCacheSizeBytes(ctx context.Context) (int64, error) {
 	row := q.queryRow(ctx, q.getHttpCacheSizeBytesStmt, getHttpCacheSizeBytes)
-	var total_bytes interface{}
+	var total_bytes int64
 	err := row.Scan(&total_bytes)
 	return total_bytes, err
 }
@@ -152,35 +152,38 @@ func (q *Queries) HttpCacheExistsByKey(ctx context.Context, key string) (bool, e
 
 const upsertHttpCache = `-- name: UpsertHttpCache :exec
 INSERT INTO http_cache (
-  key, method, path, query_string, encoding, status, 
-  content_type, content_encoding, cache_control, etag, last_modified, vary, 
+  key, method, path, query_string, status, 
+  content_type, cache_control, etag, last_modified, vary, 
   body, content_length, created_at, expires_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT(key) DO UPDATE SET 
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(key) DO UPDATE SET
   status=excluded.status,
+  content_type=excluded.content_type,
+  cache_control=excluded.cache_control,
+  etag=excluded.etag,
+  last_modified=excluded.last_modified,
+  vary=excluded.vary,
   body=excluded.body,
   content_length=excluded.content_length,
   expires_at=excluded.expires_at
 `
 
 type UpsertHttpCacheParams struct {
-	Key             string
-	Method          string
-	Path            string
-	QueryString     sql.NullString
-	Encoding        string
-	Status          int64
-	ContentType     sql.NullString
-	ContentEncoding sql.NullString
-	CacheControl    sql.NullString
-	Etag            sql.NullString
-	LastModified    sql.NullString
-	Vary            sql.NullString
-	Body            []byte
-	ContentLength   sql.NullInt64
-	CreatedAt       int64
-	ExpiresAt       sql.NullInt64
+	Key           string
+	Method        string
+	Path          string
+	QueryString   sql.NullString
+	Status        int64
+	ContentType   sql.NullString
+	CacheControl  sql.NullString
+	Etag          sql.NullString
+	LastModified  sql.NullString
+	Vary          sql.NullString
+	Body          []byte
+	ContentLength sql.NullInt64
+	CreatedAt     int64
+	ExpiresAt     sql.NullInt64
 }
 
 func (q *Queries) UpsertHttpCache(ctx context.Context, arg UpsertHttpCacheParams) error {
@@ -189,10 +192,8 @@ func (q *Queries) UpsertHttpCache(ctx context.Context, arg UpsertHttpCacheParams
 		arg.Method,
 		arg.Path,
 		arg.QueryString,
-		arg.Encoding,
 		arg.Status,
 		arg.ContentType,
-		arg.ContentEncoding,
 		arg.CacheControl,
 		arg.Etag,
 		arg.LastModified,

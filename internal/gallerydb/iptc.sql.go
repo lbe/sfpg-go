@@ -58,7 +58,7 @@ func (q *Queries) GetIPTCKeywords(ctx context.Context, fileID int64) ([]IptcKeyw
 	if err != nil {
 		return nil, err
 	}
-	defer rowsCloseFn(rows)
+	defer rows.Close()
 	var items []IptcKeyword
 	for rows.Next() {
 		var i IptcKeyword
@@ -67,10 +67,10 @@ func (q *Queries) GetIPTCKeywords(ctx context.Context, fileID int64) ([]IptcKeyw
 		}
 		items = append(items, i)
 	}
-	if err := rowsCloseFn(rows); err != nil {
+	if err := rows.Close(); err != nil {
 		return nil, err
 	}
-	if err := rowsErrFn(rows); err != nil {
+	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	return items, nil

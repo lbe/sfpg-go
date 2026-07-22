@@ -7,31 +7,6 @@ import (
 	cachelite "github.com/lbe/sfpg-go/internal/cachelite"
 )
 
-// TestNormalizeAcceptEncoding verifies browser Accept-Encoding values normalize to
-// canonical encoding for cache keys so preload keys (e.g. "gzip") match browser requests.
-func TestNormalizeAcceptEncoding(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-		want  string
-	}{
-		{"empty", "", "identity"},
-		{"gzip only", "gzip", "gzip"},
-		{"gzip, deflate, br", "gzip, deflate, br", "gzip"},
-		{"br, gzip", "br, gzip", "br"},
-		{"identity", "identity", "identity"},
-		{"gzip with q", "gzip;q=0.9", "gzip"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := cachelite.NormalizeAcceptEncoding(tt.input)
-			if got != tt.want {
-				t.Errorf("NormalizeAcceptEncoding(%q) = %q, want %q", tt.input, got, tt.want)
-			}
-		})
-	}
-}
-
 // TestNewCacheKey tests the cache key generation
 func TestNewCacheKey(t *testing.T) {
 	tests := []struct {
@@ -40,40 +15,34 @@ func TestNewCacheKey(t *testing.T) {
 		want   string
 	}{
 		{
-			name: "GET request with gzip",
+			name: "GET request",
 			params: cachelite.CacheKeyParams{
-				Method:   "GET",
-				Path:     "/api/data",
-				Query:    "id=1",
-				HTMX:     cachelite.HTMXParams{},
-				Theme:    "dark",
-				Encoding: "gzip",
+				Method:  "GET",
+				Path:    "/api/data",
+				Query:   "id=1",
+				Variant: "full",
 			},
-			want: "GET:/api/data?id=1|Theme=dark|gzip",
+			want: "GET:/api/data?id=1|Variant=full",
 		},
 		{
-			name: "POST request with brotli",
+			name: "POST request",
 			params: cachelite.CacheKeyParams{
-				Method:   "POST",
-				Path:     "/upload",
-				Query:    "",
-				HTMX:     cachelite.HTMXParams{},
-				Theme:    "dark",
-				Encoding: "br",
+				Method:  "POST",
+				Path:    "/upload",
+				Query:   "",
+				Variant: "full",
 			},
-			want: "POST:/upload?|Theme=dark|br",
+			want: "POST:/upload?|Variant=full",
 		},
 		{
-			name: "HEAD request no encoding",
+			name: "HEAD request",
 			params: cachelite.CacheKeyParams{
-				Method:   "HEAD",
-				Path:     "/status",
-				Query:    "v=2",
-				HTMX:     cachelite.HTMXParams{},
-				Theme:    "dark",
-				Encoding: "identity",
+				Method:  "HEAD",
+				Path:    "/status",
+				Query:   "v=2",
+				Variant: "full",
 			},
-			want: "HEAD:/status?v=2|Theme=dark|identity",
+			want: "HEAD:/status?v=2|Variant=full",
 		},
 	}
 
@@ -175,7 +144,6 @@ func TestHTTPCacheEntry_StructLayout(t *testing.T) {
 		Method:        "GET",
 		Path:          "/test",
 		QueryString:   sql.NullString{String: "id=1", Valid: true},
-		Encoding:      "gzip",
 		Status:        200,
 		ContentType:   sql.NullString{String: "text/html", Valid: true},
 		CacheControl:  sql.NullString{String: "max-age=3600", Valid: true},

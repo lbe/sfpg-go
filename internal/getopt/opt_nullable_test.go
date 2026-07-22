@@ -46,13 +46,6 @@ func TestParse_NoDefaults_AllUnset(t *testing.T) {
 		t.Errorf("expected Profile.IsSet=false, got %v", opt.Profile.IsSet)
 	}
 
-	if opt.EnableCompression.Bool != false {
-		t.Errorf("expected EnableCompression.Bool=false (zero value), got %v", opt.EnableCompression.Bool)
-	}
-	if opt.EnableCompression.IsSet != false {
-		t.Errorf("expected EnableCompression.IsSet=false, got %v", opt.EnableCompression.IsSet)
-	}
-
 	if opt.EnableHTTPCache.Bool != false {
 		t.Errorf("expected EnableHTTPCache.Bool=false (zero value), got %v", opt.EnableHTTPCache.Bool)
 	}
@@ -89,7 +82,6 @@ func TestParse_EnvVarSetsIsSet(t *testing.T) {
 	os.Setenv("SEPG_SESSION_SECRET", validTestSecret)
 	os.Setenv("SFG_PORT", "9090")
 	os.Setenv("SFG_DISCOVER", "true")
-	os.Setenv("SFG_COMPRESSION", "false")
 
 	opt := Parse()
 
@@ -107,12 +99,6 @@ func TestParse_EnvVarSetsIsSet(t *testing.T) {
 		t.Errorf("expected RunFileDiscovery.IsSet=true (set via env), got %v", opt.RunFileDiscovery.IsSet)
 	}
 
-	if opt.EnableCompression.Bool != false {
-		t.Errorf("expected EnableCompression.Bool=false, got %v", opt.EnableCompression.Bool)
-	}
-	if opt.EnableCompression.IsSet != true {
-		t.Errorf("expected EnableCompression.IsSet=true (set via env), got %v", opt.EnableCompression.IsSet)
-	}
 }
 
 // TestParse_CLIFlagSetsIsSet tests that CLI flags set IsSet=true
@@ -120,7 +106,7 @@ func TestParse_CLIFlagSetsIsSet(t *testing.T) {
 	resetEnv()
 	resetFlags()
 	os.Setenv("SEPG_SESSION_SECRET", validTestSecret)
-	os.Args = []string{"cmd", "-port=7777", "-discover=false", "-compression=true"}
+	os.Args = []string{"cmd", "-port=7777", "-discover=false"}
 
 	opt := Parse()
 
@@ -136,13 +122,6 @@ func TestParse_CLIFlagSetsIsSet(t *testing.T) {
 	}
 	if opt.RunFileDiscovery.IsSet != true {
 		t.Errorf("expected RunFileDiscovery.IsSet=true (set via CLI), got %v", opt.RunFileDiscovery.IsSet)
-	}
-
-	if opt.EnableCompression.Bool != true {
-		t.Errorf("expected EnableCompression.Bool=true, got %v", opt.EnableCompression.Bool)
-	}
-	if opt.EnableCompression.IsSet != true {
-		t.Errorf("expected EnableCompression.IsSet=true (set via CLI), got %v", opt.EnableCompression.IsSet)
 	}
 }
 

@@ -70,15 +70,18 @@ func TestFileBatcher_SubmitFile(t *testing.T) {
 	})
 
 	t.Run("returns error when batcher is full", func(t *testing.T) {
-		// Block the flush so the worker cannot drain the channel.
+		// Block flush until the worker has consumed item 1, then fill the channel.
 		var blockMu sync.Mutex
 		blockMu.Lock()
+		flushEntered := make(chan struct{})
+		var flushOnce sync.Once
 
 		db := testDB(t)
 		wb, err := writebatcher.New[BatchedWrite](context.Background(), writebatcher.Config[BatchedWrite]{
 			BeginTx: testBeginTx(db),
 			Flush: func(ctx context.Context, tx *sql.Tx, batch []BatchedWrite) error {
-				blockMu.Lock() // blocks until test unblocks
+				flushOnce.Do(func() { close(flushEntered) })
+				blockMu.Lock()
 				_ = len(batch)
 				blockMu.Unlock()
 				return nil
@@ -90,20 +93,23 @@ func TestFileBatcher_SubmitFile(t *testing.T) {
 			t.Fatalf("New writebatcher: %v", err)
 		}
 		t.Cleanup(func() {
-			blockMu.Unlock() // unblock worker so Close can complete
+			blockMu.Unlock()
 			wb.Close()
 		})
 		fb := newFileBatcher(wb)
 
-		// First submit: worker picks it up, batch reaches MaxBatchSize=1,
-		// flush begins but blocks in FlushFunc on blockMu.
 		err = fb.SubmitFile(makeTestFile("/test/1.jpg", "1.jpg"))
 		if err != nil {
 			t.Fatalf("first SubmitFile failed: %v", err)
 		}
+		<-flushEntered
 
-		// Second submit should find the channel full and return ErrFull.
 		err = fb.SubmitFile(makeTestFile("/test/2.jpg", "2.jpg"))
+		if err != nil {
+			t.Fatalf("second SubmitFile failed: %v", err)
+		}
+
+		err = fb.SubmitFile(makeTestFile("/test/3.jpg", "3.jpg"))
 		if !errors.Is(err, writebatcher.ErrFull) {
 			t.Errorf("expected ErrFull, got %v", err)
 		}

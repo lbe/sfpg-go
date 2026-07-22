@@ -17,7 +17,7 @@ import (
 
 var (
 	// getHttpCacheSizeBytes is a testable hook for the SUM query used by GetCacheSizeBytes.
-	getHttpCacheSizeBytes = func(ctx context.Context, cpc *dbconnpool.CpConn) (interface{}, error) {
+	getHttpCacheSizeBytes = func(ctx context.Context, cpc *dbconnpool.CpConn) (int64, error) {
 		return cpc.Queries.GetHttpCacheSizeBytes(ctx)
 	}
 
@@ -34,7 +34,6 @@ var (
 var httpCacheIndexDropStatements = []string{
 	"DROP INDEX IF EXISTS idx_http_cache_key",
 	"DROP INDEX IF EXISTS idx_http_cache_path",
-	"DROP INDEX IF EXISTS idx_http_cache_encoding",
 	"DROP INDEX IF EXISTS idx_http_cache_created",
 	"DROP INDEX IF EXISTS idx_http_cache_expires",
 	"DROP INDEX IF EXISTS idx_http_cache_content_length",
@@ -43,7 +42,6 @@ var httpCacheIndexDropStatements = []string{
 var httpCacheIndexCreateStatements = []string{
 	"CREATE INDEX IF NOT EXISTS idx_http_cache_key ON http_cache(key)",
 	"CREATE INDEX IF NOT EXISTS idx_http_cache_path ON http_cache(path)",
-	"CREATE INDEX IF NOT EXISTS idx_http_cache_encoding ON http_cache(encoding)",
 	"CREATE INDEX IF NOT EXISTS idx_http_cache_created ON http_cache(created_at)",
 	"CREATE INDEX IF NOT EXISTS idx_http_cache_expires ON http_cache(expires_at)",
 	"CREATE INDEX IF NOT EXISTS idx_http_cache_content_length ON http_cache(content_length)",
@@ -58,7 +56,6 @@ CREATE TABLE IF NOT EXISTS http_cache (
   method              TEXT NOT NULL,
   path                TEXT NOT NULL,
   query_string        TEXT,
-  encoding            TEXT NOT NULL,
   status              INTEGER NOT NULL,
   content_type        TEXT,
   cache_control       TEXT,
@@ -68,29 +65,26 @@ CREATE TABLE IF NOT EXISTS http_cache (
   body                BLOB NOT NULL,
   content_length      INTEGER,
   created_at          INTEGER NOT NULL,
-  expires_at          INTEGER,
-  content_encoding    TEXT
+  expires_at          INTEGER
 )`
 
 // HTTPCacheEntry represents a cached HTTP response.
 type HTTPCacheEntry struct {
-	ID              int64
-	Key             string
-	Method          string
-	Path            string
-	QueryString     sql.NullString
-	Encoding        string
-	Status          int64
-	ContentType     sql.NullString
-	ContentEncoding sql.NullString
-	CacheControl    sql.NullString
-	ETag            sql.NullString
-	LastModified    sql.NullString
-	Vary            sql.NullString
-	Body            []byte
-	ContentLength   sql.NullInt64
-	CreatedAt       int64
-	ExpiresAt       sql.NullInt64
+	ID            int64
+	Key           string
+	Method        string
+	Path          string
+	QueryString   sql.NullString
+	Status        int64
+	ContentType   sql.NullString
+	CacheControl  sql.NullString
+	ETag          sql.NullString
+	LastModified  sql.NullString
+	Vary          sql.NullString
+	Body          []byte
+	ContentLength sql.NullInt64
+	CreatedAt     int64
+	ExpiresAt     sql.NullInt64
 }
 
 // CacheConfig holds configuration for the HTTP cache.
@@ -102,12 +96,12 @@ type CacheConfig struct {
 	CacheableRoutes []string // Only these routes are cacheable; empty = all
 
 	// OnGalleryCacheHit is an optional callback invoked when serving a cache HIT
-	// for a gallery path (/gallery/{id}). Called with folderID parsed from path,
-	// sessionID from cookie (if SessionCookieName is set) or RemoteAddr, and
-	// acceptEncoding from request header. Called in a goroutine (fire-and-forget).
+	// for a gallery path (/gallery/{id}). Called with folderID parsed from path and
+	// sessionID from cookie (if SessionCookieName is set) or RemoteAddr.
+	// Called in a goroutine (fire-and-forget).
 	// If SkipPreloadWhenHeader is set and matches the request header, this callback
 	// is not invoked (e.g., to avoid cascading preloads from internal requests).
-	OnGalleryCacheHit func(ctx context.Context, folderID int64, sessionID string, acceptEncoding string)
+	OnGalleryCacheHit func(ctx context.Context, folderID int64, sessionID string)
 
 	// SessionCookieName is the cookie name used to extract sessionID for OnGalleryCacheHit.
 	// If set and cookie is present, its value is used as sessionID; otherwise RemoteAddr is used.
@@ -133,30 +127,10 @@ func (cfg *CacheConfig) IsCacheablePath(path string) bool {
 	return false
 }
 
-// NormalizeAcceptEncoding returns a canonical encoding for cache key use so that
-// browser values like "gzip, deflate, br" match preload keys like "gzip". Uses the
-// same preference as server compression: first of br, gzip in the header, else identity.
-func NormalizeAcceptEncoding(acceptEncoding string) string {
-	if acceptEncoding == "" {
-		return "identity"
-	}
-	for part := range strings.SplitSeq(acceptEncoding, ",") {
-		enc := strings.TrimSpace(part)
-		if i := strings.Index(enc, ";"); i > 0 {
-			enc = strings.TrimSpace(enc[:i])
-		}
-		switch enc {
-		case "br":
-			return "br"
-		case "gzip":
-			return "gzip"
-		}
-	}
-	return "identity"
-}
-
 // GetCacheEntry retrieves a cache entry by key from the database.
 // Returns nil if not found or expired (query already filters expired).
+// The returned Body is always uncompressed; decoding is performed
+// automatically based on the stored format's magic prefix.
 func GetCacheEntry(ctx context.Context, db *dbconnpool.DbSQLConnPool, key string) (*HTTPCacheEntry, error) {
 	cpc, err := db.Get()
 	if err != nil {
@@ -166,32 +140,43 @@ func GetCacheEntry(ctx context.Context, db *dbconnpool.DbSQLConnPool, key string
 
 	result, err := cpc.Queries.GetHttpCacheByKey(ctx, key)
 	if err != nil {
-		return nil, err
+		return nil, err // sql.ErrNoRows passes through; middleware treats as MISS
+	}
+
+	uncompressedLen := 0
+	if result.ContentLength.Valid {
+		uncompressedLen = int(result.ContentLength.Int64)
+	}
+	plain, err := decodeCacheBodyForServe(result.Body, uncompressedLen)
+	if err != nil {
+		return nil, err // includes ErrUnrecognizedCacheBody → MISS
 	}
 
 	return &HTTPCacheEntry{
-		ID:              result.ID,
-		Key:             result.Key,
-		Method:          result.Method,
-		Path:            result.Path,
-		QueryString:     result.QueryString,
-		Encoding:        result.Encoding,
-		Status:          result.Status,
-		ContentType:     result.ContentType,
-		ContentEncoding: result.ContentEncoding,
-		CacheControl:    result.CacheControl,
-		ETag:            result.Etag,
-		LastModified:    result.LastModified,
-		Vary:            result.Vary,
-		Body:            result.Body,
-		ContentLength:   result.ContentLength,
-		CreatedAt:       result.CreatedAt,
-		ExpiresAt:       result.ExpiresAt,
+		ID:            result.ID,
+		Key:           result.Key,
+		Method:        result.Method,
+		Path:          result.Path,
+		QueryString:   result.QueryString,
+		Status:        result.Status,
+		ContentType:   result.ContentType,
+		CacheControl:  result.CacheControl,
+		ETag:          result.Etag,
+		LastModified:  result.LastModified,
+		Vary:          result.Vary,
+		Body:          plain,
+		ContentLength: result.ContentLength,
+		CreatedAt:     result.CreatedAt,
+		ExpiresAt:     result.ExpiresAt,
 	}, nil
 }
 
 // StoreCacheEntry inserts or updates a cache entry in the database.
 func StoreCacheEntry(ctx context.Context, db *dbconnpool.DbSQLConnPool, entry *HTTPCacheEntry) error {
+	if err := FinalizeForStorage(entry); err != nil {
+		return err
+	}
+
 	cpc, err := db.Get()
 	if err != nil {
 		return fmt.Errorf("failed to get connection: %w", err)
@@ -199,22 +184,20 @@ func StoreCacheEntry(ctx context.Context, db *dbconnpool.DbSQLConnPool, entry *H
 	defer db.Put(cpc)
 
 	return cpc.Queries.UpsertHttpCache(ctx, gallerydb.UpsertHttpCacheParams{
-		Key:             entry.Key,
-		Method:          entry.Method,
-		Path:            entry.Path,
-		QueryString:     entry.QueryString,
-		Encoding:        entry.Encoding,
-		Status:          entry.Status,
-		ContentType:     entry.ContentType,
-		ContentEncoding: entry.ContentEncoding,
-		CacheControl:    entry.CacheControl,
-		Etag:            entry.ETag,
-		LastModified:    entry.LastModified,
-		Vary:            entry.Vary,
-		Body:            entry.Body,
-		ContentLength:   entry.ContentLength,
-		CreatedAt:       entry.CreatedAt,
-		ExpiresAt:       entry.ExpiresAt,
+		Key:           entry.Key,
+		Method:        entry.Method,
+		Path:          entry.Path,
+		QueryString:   entry.QueryString,
+		Status:        entry.Status,
+		ContentType:   entry.ContentType,
+		CacheControl:  entry.CacheControl,
+		Etag:          entry.ETag,
+		LastModified:  entry.LastModified,
+		Vary:          entry.Vary,
+		Body:          entry.Body,
+		ContentLength: entry.ContentLength,
+		CreatedAt:     entry.CreatedAt,
+		ExpiresAt:     entry.ExpiresAt,
 	})
 }
 
@@ -225,25 +208,27 @@ func StoreCacheEntryInTx(ctx context.Context, tx *sql.Tx, entry *HTTPCacheEntry)
 		return nil
 	}
 
+	if err := FinalizeForStorage(entry); err != nil {
+		return err
+	}
+
 	q := gallerydb.New(tx)
 
 	return q.UpsertHttpCache(ctx, gallerydb.UpsertHttpCacheParams{
-		Key:             entry.Key,
-		Method:          entry.Method,
-		Path:            entry.Path,
-		QueryString:     entry.QueryString,
-		Encoding:        entry.Encoding,
-		Status:          entry.Status,
-		ContentType:     entry.ContentType,
-		ContentEncoding: entry.ContentEncoding,
-		CacheControl:    entry.CacheControl,
-		Etag:            entry.ETag,
-		LastModified:    entry.LastModified,
-		Vary:            entry.Vary,
-		Body:            entry.Body,
-		ContentLength:   entry.ContentLength,
-		CreatedAt:       entry.CreatedAt,
-		ExpiresAt:       entry.ExpiresAt,
+		Key:           entry.Key,
+		Method:        entry.Method,
+		Path:          entry.Path,
+		QueryString:   entry.QueryString,
+		Status:        entry.Status,
+		ContentType:   entry.ContentType,
+		CacheControl:  entry.CacheControl,
+		Etag:          entry.ETag,
+		LastModified:  entry.LastModified,
+		Vary:          entry.Vary,
+		Body:          entry.Body,
+		ContentLength: entry.ContentLength,
+		CreatedAt:     entry.CreatedAt,
+		ExpiresAt:     entry.ExpiresAt,
 	})
 }
 
@@ -367,9 +352,9 @@ func EvictLRU(ctx context.Context, db *dbconnpool.DbSQLConnPool, targetFreeBytes
 			return freedBytes, fmt.Errorf("DeleteHttpCacheByID failed: %w", err)
 		}
 
-		// Add actual content length (handle NULL as 0)
-		if row.ContentLength.Valid {
-			freedBytes += row.ContentLength.Int64
+		// Add actual stored length from LENGTH(body) (handle NULL as 0)
+		if row.StoredLength.Valid {
+			freedBytes += row.StoredLength.Int64
 		}
 	}
 
@@ -389,19 +374,7 @@ func GetCacheSizeBytes(ctx context.Context, db *dbconnpool.DbSQLConnPool) (int64
 	}
 	defer db.Put(cpc)
 
-	result, err := getHttpCacheSizeBytes(ctx, cpc)
-	if err != nil {
-		return 0, err
-	}
-
-	switch v := result.(type) {
-	case int64:
-		return v, nil
-	case nil:
-		return 0, nil
-	default:
-		return 0, fmt.Errorf("unexpected type from GetHttpCacheSizeBytes: %T", v)
-	}
+	return getHttpCacheSizeBytes(ctx, cpc)
 }
 
 // CountCacheEntries returns the number of entries in the cache.

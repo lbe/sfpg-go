@@ -19,13 +19,8 @@ func NewConfigRestartHandler(h *ConfigHandlers) *ConfigRestartHandler {
 // RestartHandler handles POST /config/restart and POST /server/restart requests.
 // It renders the restart-initiated alert, flushes the response, and then triggers
 // an asynchronous process restart.
-// Authentication and CSRF protection are required.
+// Authentication is required.
 func (h *ConfigRestartHandler) RestartHandler(w http.ResponseWriter, r *http.Request) {
-	if !h.validateCsrf(r) {
-		slog.Warn("CSRF validation failed for restart", "remote_addr", r.RemoteAddr)
-		http.Error(w, "Forbidden - CSRF token invalid", http.StatusForbidden)
-		return
-	}
 
 	w.WriteHeader(http.StatusOK)
 	h.executeConfigTemplate(w, h.Templates.RestartInitiatedAlert, "config-restart-initiated-alert.html.tmpl", nil)

@@ -37,35 +37,17 @@ func execCmd(t *testing.T, cmd tea.Cmd) tea.Msg {
 	}
 }
 
-// galleryPageWithCSRF returns a minimal gallery page HTML containing a CSRF token.
-func galleryPageWithCSRF(token string) string {
-	return fmt.Sprintf(`<!DOCTYPE html>
-<html><body>
-<input type="hidden" name="csrf_token" value="%s" />
-</body></html>`, token)
-}
-
 // loginTestServer creates an httptest server that simulates the login flow.
 func loginTestServer(success bool) *httptest.Server {
-	csrfToken := "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/login-form" && r.Method == http.MethodGet:
-			w.Header().Set("Content-Type", "text/html")
-			w.WriteHeader(http.StatusOK)
-			fmt.Fprint(w, galleryPageWithCSRF(csrfToken))
-		case r.URL.Path == "/login" && r.Method == http.MethodPost:
-			if r.FormValue("csrf_token") != csrfToken {
-				w.WriteHeader(http.StatusForbidden)
-				return
-			}
+		if r.URL.Path == "/login" && r.Method == http.MethodPost {
 			if success {
 				w.Header().Set("Hx-Trigger", "auth-changed")
 			}
 			w.WriteHeader(http.StatusOK)
-		default:
-			w.WriteHeader(http.StatusNotFound)
+			return
 		}
+		w.WriteHeader(http.StatusNotFound)
 	}))
 }
 

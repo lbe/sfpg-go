@@ -3,7 +3,7 @@
 //
 // The client automatically manages:
 //   - Session cookies via an embedded cookie jar
-//   - CSRF protection by sending the Origin header with requests
+//   - Same-origin COP by sending the Origin header with requests
 //   - Error detection for unauthorized and network errors
 //
 // Example usage:

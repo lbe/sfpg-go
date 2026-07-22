@@ -1,0 +1,2 @@
+-- Down migration: irreversible cache wipe
+-- Restore from backup if needed.

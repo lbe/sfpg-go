@@ -91,7 +91,7 @@ func (p *recordingPreloadManager) Configure(cfg cachepreload.PreloadConfig) {}
 func (p *recordingPreloadManager) IsEnabled() bool                          { return false }
 func (p *recordingPreloadManager) SetEnabled(enabled bool)                  {}
 func (p *recordingPreloadManager) GetScheduler() *scheduler.Scheduler       { return nil }
-func (p *recordingPreloadManager) ScheduleFolderPreload(ctx context.Context, folderID int64, sessionID, acceptEncoding string) {
+func (p *recordingPreloadManager) ScheduleFolderPreload(ctx context.Context, folderID int64, sessionID string) {
 }
 func (p *recordingPreloadManager) GetMetrics() cachepreload.PreloadMetricsSnapshot {
 	return cachepreload.PreloadMetricsSnapshot{}

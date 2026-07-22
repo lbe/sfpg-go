@@ -129,11 +129,3 @@ type mockMenuSessionManager struct {
 func (m *mockMenuSessionManager) IsAuthenticated(w http.ResponseWriter, r *http.Request) bool {
 	return m.authenticated
 }
-
-func (m *mockMenuSessionManager) ValidateCSRFToken(r *http.Request) bool {
-	return true
-}
-
-func (m *mockMenuSessionManager) EnsureCSRFToken(w http.ResponseWriter, r *http.Request) string {
-	return "mock-csrf-token"
-}

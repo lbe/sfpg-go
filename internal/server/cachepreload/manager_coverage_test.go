@@ -181,7 +181,7 @@ func TestPreloadManager_ConfigureAndSchedule(t *testing.T) {
 		pm.Configure(cfg)
 
 		// Should not panic when called with incomplete config
-		pm.ScheduleFolderPreload(context.Background(), 1, "session-1", "gzip")
+		pm.ScheduleFolderPreload(context.Background(), 1, "session-1")
 	})
 }
 
@@ -270,7 +270,7 @@ func TestScheduleFolderPreload_MissingDeps(t *testing.T) {
 			tc.configure(&cfg)
 			pm.Configure(cfg)
 
-			pm.ScheduleFolderPreload(context.Background(), 1, "session-1", "gzip")
+			pm.ScheduleFolderPreload(context.Background(), 1, "session-1")
 
 			if len(addedTasks) != 0 {
 				t.Errorf("expected no tasks scheduled when %s, got %d", tc.name, len(addedTasks))
@@ -303,7 +303,7 @@ func TestScheduleFolderPreload_NilHandler(t *testing.T) {
 	}
 	pm.Configure(cfg)
 
-	pm.ScheduleFolderPreload(context.Background(), 1, "session-1", "gzip")
+	pm.ScheduleFolderPreload(context.Background(), 1, "session-1")
 
 	if len(addedTasks) != 0 {
 		t.Errorf("expected no tasks scheduled when handler is nil, got %d", len(addedTasks))
@@ -345,8 +345,8 @@ func TestScheduleFolderPreload_CancelPreviousTasks(t *testing.T) {
 		GetETagVersion: func() string { return "v1" },
 	})
 
-	pm.ScheduleFolderPreload(context.Background(), 1, sessionID, "gzip")
-	pm.ScheduleFolderPreload(context.Background(), 2, sessionID, "gzip")
+	pm.ScheduleFolderPreload(context.Background(), 1, sessionID)
+	pm.ScheduleFolderPreload(context.Background(), 2, sessionID)
 
 	found := false
 	for _, id := range removedIDs {
@@ -394,8 +394,8 @@ func TestScheduleFolderPreload_CancelRemoveTaskError(t *testing.T) {
 	})
 
 	// Should not panic despite the remove error.
-	pm.ScheduleFolderPreload(context.Background(), 1, sessionID, "gzip")
-	pm.ScheduleFolderPreload(context.Background(), 2, sessionID, "gzip")
+	pm.ScheduleFolderPreload(context.Background(), 1, sessionID)
+	pm.ScheduleFolderPreload(context.Background(), 2, sessionID)
 }
 
 func TestScheduleFolderPreload_AddTaskError(t *testing.T) {
@@ -420,5 +420,5 @@ func TestScheduleFolderPreload_AddTaskError(t *testing.T) {
 	})
 
 	// Should not panic when AddTask returns an error.
-	pm.ScheduleFolderPreload(context.Background(), 1, "session-1", "gzip")
+	pm.ScheduleFolderPreload(context.Background(), 1, "session-1")
 }

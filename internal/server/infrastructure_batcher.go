@@ -20,7 +20,7 @@ import (
 // Write batcher
 // =====================================================================
 
-func (s *InfrastructureService) buildWriteBatcher(ctx context.Context, maxBatchSize int, flushInterval time.Duration) (*writebatcher.WriteBatcher[BatchedWrite], error) {
+func (s *InfrastructureService) buildWriteBatcher(ctx context.Context, maxBatchSize int, flushInterval time.Duration, deferDQueDrain bool) (*writebatcher.WriteBatcher[BatchedWrite], error) {
 	var cpcRw *dbconnpool.CpConn
 
 	return writebatcher.New(ctx, writebatcher.Config[BatchedWrite]{
@@ -30,6 +30,7 @@ func (s *InfrastructureService) buildWriteBatcher(ctx context.Context, maxBatchS
 		ChannelSize:         4096,
 		DQueDirPath:         s.dqueDirPath,
 		DQueItemsPerSegment: 250,
+		DeferDQueDrain:      deferDQueDrain,
 		SizeFunc:            func(bw BatchedWrite) int64 { return bw.Size() },
 		BeginTx: func(ctx context.Context) (*sql.Tx, error) {
 			var getErr error
@@ -54,8 +55,8 @@ func (s *InfrastructureService) buildWriteBatcher(ctx context.Context, maxBatchS
 			s.batcherQueries = nil
 			var totalAdded int64
 			for _, bw := range batch {
-				if bw.CacheEntry != nil && bw.CacheEntry.ContentLength.Valid {
-					totalAdded += bw.CacheEntry.ContentLength.Int64
+				if bw.CacheEntry != nil {
+					totalAdded += int64(len(bw.CacheEntry.Body))
 				}
 			}
 			if totalAdded > 0 {
@@ -81,16 +82,13 @@ func (s *InfrastructureService) buildWriteBatcher(ctx context.Context, maxBatchS
 			}
 			slog.Error("failed to flush unified batch",
 				"err", err, "files", filesCount, "cache_entries", cacheEntriesCount)
-			cleanupBatchedWriteResources(batch)
 			if cacheEntriesCount > 0 {
 				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 				defer cancel()
-				if size, sizeErr := s.testSeams.GetCacheSizeBytes(ctx, s.dbRwPool); sizeErr == nil {
-					s.cacheSizeBytes.Store(size)
-				}
+				s.resyncCacheSizeFromDB(ctx)
 			}
 		},
-		OnAfterCommit:       s.walCheckpointAfterCommit,
+		OnAfterCommit:       s.postCommitMaintenance,
 		MaintenanceInterval: 5 * time.Minute,
 	})
 }

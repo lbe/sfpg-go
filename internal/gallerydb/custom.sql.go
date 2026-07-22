@@ -13,10 +13,8 @@ import (
 
 // BatchLoadTarget represents a single cache warm target from GetBatchLoadTargets.
 type BatchLoadTarget struct {
-	Path     string
-	Htmx     string
-	HxTarget string
-	Encoding string
+	Path    string
+	Variant string
 }
 
 // CustomQuerier extends the sqlc-generated Querier interface with custom
@@ -169,30 +167,32 @@ func (cq *CustomQueries) Close() error {
 
 const getBatchLoadTargets = `-- name: GetBatchLoadTargets :many
 WITH cte_cache_map AS (
-    SELECT 'folder' AS cache_type, '/gallery/'     AS cache_entry, 'true' AS htmx, 'gallery-content' AS hx_target, 'gzip' AS encoding
+    SELECT 'folder' AS cache_type, '/gallery/'     AS cache_entry, 'full'            AS variant
     UNION ALL
-    SELECT 'folder' AS cache_type, '/info/folder/' AS cache_entry, 'true' AS htmx, 'box_info'        AS hx_target, 'gzip' AS encoding
+    SELECT 'folder' AS cache_type, '/gallery/'     AS cache_entry, 'gallery-content' AS variant
     UNION ALL
-    SELECT 'file'   AS cache_type, '/info/image/'  AS cache_entry, 'true' AS htmx, 'box_info'        AS hx_target, 'gzip' AS encoding
+    SELECT 'folder' AS cache_type, '/info/folder/' AS cache_entry, 'box_info'        AS variant
     UNION ALL
-    SELECT 'file'   AS cache_type, '/lightbox/'    AS cache_entry, 'true' AS htmx, 'lightbox-ui' AS hx_target, 'gzip' AS encoding
+    SELECT 'file'   AS cache_type, '/info/image/'  AS cache_entry, 'box_info'        AS variant
+    UNION ALL
+    SELECT 'file'   AS cache_type, '/lightbox/'    AS cache_entry, 'lightbox-ui'     AS variant
 ),
 cte_folders AS (
-    SELECT b.cache_entry || f.id AS path, b.htmx, b.hx_target, b.encoding
+    SELECT b.cache_entry || f.id AS path, b.variant
       FROM folders f
       JOIN cte_cache_map b ON b.cache_type = 'folder'
 ),
 cte_files AS (
-    SELECT b.cache_entry || f.id AS path, b.htmx, b.hx_target, b.encoding
+    SELECT b.cache_entry || f.id AS path, b.variant
       FROM files f
       JOIN cte_cache_map b ON b.cache_type = 'file'
 ),
 u AS (
-    SELECT path, htmx, hx_target, encoding FROM cte_folders
+    SELECT path, variant FROM cte_folders
     UNION ALL
-    SELECT path, htmx, hx_target, encoding FROM cte_files
+    SELECT path, variant FROM cte_files
 )
-SELECT path, htmx, hx_target, encoding
+SELECT path, variant
   FROM u
  ORDER BY
   CASE
@@ -202,7 +202,8 @@ SELECT path, htmx, hx_target, encoding
     WHEN path LIKE '/lightbox/%' THEN 3
     ELSE 9
   END,
-  path`
+  path,
+  variant`
 
 // GetBatchLoadTargets returns all cache warm targets (gallery, info/folder, info/image, lightbox)
 // in folders-first order for batch load.
@@ -211,15 +212,17 @@ func (cq *CustomQueries) GetBatchLoadTargets(ctx context.Context) ([]BatchLoadTa
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = rowsCloseFn(rows) }() //nolint:errcheck
 
 	var out []BatchLoadTarget
 	for rows.Next() {
 		var t BatchLoadTarget
-		if err := rows.Scan(&t.Path, &t.Htmx, &t.HxTarget, &t.Encoding); err != nil {
+		if err := rows.Scan(&t.Path, &t.Variant); err != nil {
 			return nil, err
 		}
 		out = append(out, t)
+	}
+	if err := rowsCloseFn(rows); err != nil {
+		return nil, err
 	}
 	return out, rowsErrFn(rows)
 }

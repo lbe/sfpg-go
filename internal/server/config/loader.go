@@ -119,9 +119,6 @@ type cliRoute struct {
 // CLI-settable field requires an entry here AND a matching entry in fields().
 var cliRoutes = []cliRoute{
 	{"listener_port", func(o getopt.Opt) (string, bool) { return strconv.Itoa(o.Port.Int), o.Port.IsSet }},
-	{"server_compression_enable", func(o getopt.Opt) (string, bool) {
-		return strconv.FormatBool(o.EnableCompression.Bool), o.EnableCompression.IsSet
-	}},
 	{"enable_http_cache", func(o getopt.Opt) (string, bool) {
 		return strconv.FormatBool(o.EnableHTTPCache.Bool), o.EnableHTTPCache.IsSet
 	}},

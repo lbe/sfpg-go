@@ -101,38 +101,25 @@ func TestAuthRoutes_Auth(t *testing.T) {
 
 		// Config POST
 		{num: 23, name: "config-post", method: "POST", path: "/config",
-			bodyFn: func(t *testing.T, client *http.Client) url.Values {
-				token := csrfTokenFromConfig(t, client)
-				return url.Values{"csrf_token": {token}}
-			}, expCode: http.StatusOK},
+			expCode: http.StatusOK},
 		{num: 25, name: "config-themes", method: "POST", path: "/config/themes",
 			bodyFn: func(t *testing.T, client *http.Client) url.Values {
-				token := csrfTokenFromConfig(t, client)
-				return url.Values{"csrf_token": {token}, "themes": {"light", "dark"}}
+				return url.Values{"themes": {"light", "dark"}}
 			}, expCode: http.StatusOK},
 		{num: 27, name: "config-increment-etag", method: "POST", path: "/config/increment-etag",
-			bodyFn: func(t *testing.T, client *http.Client) url.Values {
-				token := csrfTokenFromConfig(t, client)
-				return url.Values{"csrf_token": {token}}
-			}, expCode: http.StatusOK},
+			expCode: http.StatusOK},
 		{num: 29, name: "config-export-tofile", method: "POST", path: "/config/export/to-file",
-			// No CSRF needed for this endpoint
+			// No COP enforcement for this endpoint (file download)
 			expCode: http.StatusOK},
 		{num: 31, name: "config-import-preview", method: "POST", path: "/config/import/preview",
 			bodyFn: func(t *testing.T, client *http.Client) url.Values {
-				token := csrfTokenFromConfig(t, client)
-				return url.Values{"csrf_token": {token}, "yaml": {"site_name: SmokeTest"}}
+				return url.Values{"yaml": {"site_name: SmokeTest"}}
 			}, expCode: http.StatusOK},
 		{num: 33, name: "config-import-commit", method: "POST", path: "/config/import/commit",
 			bodyFn: func(t *testing.T, client *http.Client) url.Values {
-				token := csrfTokenFromConfig(t, client)
-				return url.Values{"csrf_token": {token}, "yaml": {"site_name: SmokeTest"}}
+				return url.Values{"yaml": {"site_name: SmokeTest"}}
 			}, expCode: http.StatusOK},
 		{num: 35, name: "config-restore-preview", method: "POST", path: "/config/restore-last-known-good?action=preview",
-			bodyFn: func(t *testing.T, client *http.Client) url.Values {
-				token := csrfTokenFromConfig(t, client)
-				return url.Values{"csrf_token": {token}}
-			},
 			expCode: http.StatusOK, note: "may return 400 if no prior config saved (acceptable)"},
 
 		// Dashboard
@@ -143,15 +130,9 @@ func TestAuthRoutes_Auth(t *testing.T) {
 		{num: 42, name: "server-shutdown", method: "POST", path: "/server/shutdown",
 			skip: true, note: "SKIP: destructive (shuts down server)"},
 		{num: 44, name: "server-discovery", method: "POST", path: "/server/discovery",
-			bodyFn: func(t *testing.T, client *http.Client) url.Values {
-				token := csrfTokenFromConfig(t, client)
-				return url.Values{"csrf_token": {token}}
-			}, expCode: http.StatusOK},
+			expCode: http.StatusOK},
 		{num: 46, name: "server-cache-batch-load", method: "POST", path: "/server/cache-batch-load",
-			bodyFn: func(t *testing.T, client *http.Client) url.Values {
-				token := csrfTokenFromConfig(t, client)
-				return url.Values{"csrf_token": {token}}
-			}, expCode: http.StatusOK},
+			expCode: http.StatusOK},
 
 		// Debug
 		{num: 50, name: "pprof", method: "GET", path: "/debug/pprof/", expCode: http.StatusBadRequest},
@@ -211,9 +192,7 @@ func TestLogout(t *testing.T) {
 		client := newClient()
 		login(t, client)
 
-		// Get CSRF token for logout POST
-		token := csrfTokenFromConfig(t, client)
-		resp := doRequest(t, client, "POST", "/logout", url.Values{"csrf_token": {token}}, false)
+		resp := doRequest(t, client, "POST", "/logout", nil, false)
 		defer resp.Body.Close()
 
 		expected := http.StatusOK
@@ -232,13 +211,14 @@ func TestLogout(t *testing.T) {
 // Section 4: Dashboard Client Login Flow — 4 tests
 //
 // These tests exercise the sfpg-go-dashboard TUI client login flows.
-// Since WP-8 (login CSRF always required), login without CSRF returns 403.
-// The dashboard client has been updated to fetch CSRF from /login-form.
+// COP (Cross-Origin Protection) validates same-origin POST via Origin/Sec-Fetch-Site headers
+// rather than requiring a token. The dashboard client sends Origin for COP compliance.
 // =========================================================================
 
 func TestDashboardClientLoginFlow(t *testing.T) {
-	// #52: Login without CSRF from a fresh client — must return 403 after WP-8
-	t.Run("#52-login-nocsrf-fresh", func(t *testing.T) {
+	// #52: Login from a fresh client — COP allows same-origin POST (no token required).
+
+	t.Run("#52-login-fresh", func(t *testing.T) {
 		client := newClient()
 
 		form := url.Values{
@@ -248,18 +228,21 @@ func TestDashboardClientLoginFlow(t *testing.T) {
 		resp := doRequest(t, client, "POST", "/login", form, false)
 		defer resp.Body.Close()
 
-		expected := http.StatusForbidden
+		// COP validates via browser headers (Origin/Sec-Fetch-Site);
+		// curl/non-browser POSTs with Origin set are allowed.
+		expected := http.StatusOK
 		status := "PASS"
 		note := "OK"
 		if resp.StatusCode != expected {
 			status = "FAIL"
-			note = fmt.Sprintf("expected %d, got %d — CSRF required after WP-8", expected, resp.StatusCode)
+			note = fmt.Sprintf("expected %d, got %d", expected, resp.StatusCode)
 		}
 		reportResult(t, 52, "/login", "POST", "No", expected, resp.StatusCode, status, note)
 	})
 
-	// #53: Login without CSRF after a prior request — must return 403 after WP-8
-	t.Run("#53-login-nocsrf-existing-session", func(t *testing.T) {
+	// #53: Login after prior request — COP allows same-origin POST with Origin header.
+
+	t.Run("#53-login-existing-session", func(t *testing.T) {
 		client := newClient()
 
 		// Make a prior request that creates a session
@@ -269,7 +252,7 @@ func TestDashboardClientLoginFlow(t *testing.T) {
 		}
 		gResp.Body.Close()
 
-		// Now login without CSRF — must fail since WP-8 requires CSRF always
+		// COP allows same-origin POST with Origin header.
 		form := url.Values{
 			"username": {"admin"},
 			"password": {"admin"},
@@ -277,21 +260,20 @@ func TestDashboardClientLoginFlow(t *testing.T) {
 		resp := doRequest(t, client, "POST", "/login", form, false)
 		defer resp.Body.Close()
 
-		expected := http.StatusForbidden
+		expected := http.StatusOK
 		status := "PASS"
 		note := "OK"
 		if resp.StatusCode != expected {
 			status = "FAIL"
-			note = fmt.Sprintf("expected %d, got %d — CSRF required after WP-8", expected, resp.StatusCode)
+			note = fmt.Sprintf("expected %d, got %d", expected, resp.StatusCode)
 		}
 		reportResult(t, 53, "/login", "POST", "No", expected, resp.StatusCode, status, note)
 	})
 
-	// #54: Dashboard fetch after proper login (with CSRF) — end-to-end flow
+	// #54: Dashboard fetch after login — end-to-end flow
 	t.Run("#54-dashboard-after-login", func(t *testing.T) {
 		client := newClient()
 
-		// Login with CSRF token (via the standard login helper)
 		login(t, client)
 
 		// Fetch dashboard with the session cookie from login
@@ -354,8 +336,7 @@ func TestRestart(t *testing.T) {
 		client := newClient()
 		login(t, client)
 
-		token := csrfTokenFromConfig(t, client)
-		resp := doRequest(t, client, "POST", "/config/restart", url.Values{"csrf_token": {token}}, false)
+		resp := doRequest(t, client, "POST", "/config/restart", nil, false)
 		resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
@@ -400,8 +381,7 @@ func TestRestart(t *testing.T) {
 		client := newClient()
 		login(t, client)
 
-		token := csrfTokenFromConfig(t, client)
-		resp := doRequest(t, client, "POST", "/server/restart", url.Values{"csrf_token": {token}}, false)
+		resp := doRequest(t, client, "POST", "/server/restart", nil, false)
 		resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
@@ -447,7 +427,7 @@ func TestLoginRateLimit_Returns429(t *testing.T) {
 	client := newClient()
 	login(t, client)
 
-	values, token, err := parseConfigForm(t, client)
+	values, err := parseConfigForm(t, client)
 	if err != nil {
 		t.Fatalf("failed to parse config form: %v", err)
 	}
@@ -457,7 +437,7 @@ func TestLoginRateLimit_Returns429(t *testing.T) {
 	// shared dev air (TestMain enforces it at package start), so this test
 	// must never put the default of 10 back.
 	defer func() {
-		restoreValues, restoreToken, err := parseConfigForm(t, client)
+		restoreValues, err := parseConfigForm(t, client)
 		if err != nil {
 			t.Errorf("restore parse: %v", err)
 			return
@@ -467,7 +447,6 @@ func TestLoginRateLimit_Returns429(t *testing.T) {
 		for _, key := range []string{"admin_current_password", "admin_new_password", "admin_confirm_password", "yaml"} {
 			restoreValues.Del(key)
 		}
-		restoreValues.Set("csrf_token", restoreToken)
 		resp := doRequest(t, client, http.MethodPost, "/config", restoreValues, false)
 		resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
@@ -480,7 +459,6 @@ func TestLoginRateLimit_Returns429(t *testing.T) {
 	for _, key := range []string{"admin_current_password", "admin_new_password", "admin_confirm_password", "yaml"} {
 		submission.Del(key)
 	}
-	submission.Set("csrf_token", token)
 	resp := doRequest(t, client, http.MethodPost, "/config", submission, false)
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -491,21 +469,9 @@ func TestLoginRateLimit_Returns429(t *testing.T) {
 
 	burstClient := newClient()
 	for attempt := 1; attempt <= 3; attempt++ {
-		resp, err := burstClient.Get(serverURL + "/login-form")
-		if err != nil {
-			t.Fatalf("attempt %d: GET /login-form: %v", attempt, err)
-		}
-		if resp.StatusCode != http.StatusOK {
-			resp.Body.Close()
-			t.Fatalf("attempt %d: GET /login-form: got %d", attempt, resp.StatusCode)
-		}
-		token := extractCSRFFromBody(t, resp.Body)
-		resp.Body.Close()
-
 		loginResp := doRequest(t, burstClient, http.MethodPost, "/login", url.Values{
-			"username":   {"rate-limit-probe"}, // NOT admin — avoid lockout side effects
-			"password":   {"wrongpassword"},
-			"csrf_token": {token},
+			"username": {"rate-limit-probe"}, // NOT admin — avoid lockout side effects
+			"password": {"wrongpassword"},
 		}, false)
 		if attempt <= 2 && loginResp.StatusCode == http.StatusTooManyRequests {
 			loginResp.Body.Close()

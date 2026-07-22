@@ -17,28 +17,6 @@ type DBTX interface {
 	QueryRowContext(context.Context, string, ...interface{}) *sql.Row
 }
 
-var (
-	// prepareContextFn is a testable hook for DBTX.PrepareContext.
-	prepareContextFn = func(ctx context.Context, db DBTX, query string) (*sql.Stmt, error) {
-		return db.PrepareContext(ctx, query)
-	}
-
-	// stmtCloseFn is a testable hook for *sql.Stmt.Close.
-	stmtCloseFn = func(s *sql.Stmt) error {
-		return s.Close()
-	}
-
-	// rowsCloseFn is a testable hook for *sql.Rows.Close.
-	rowsCloseFn = func(r *sql.Rows) error {
-		return r.Close()
-	}
-
-	// rowsErrFn is a testable hook for *sql.Rows.Err.
-	rowsErrFn = func(r *sql.Rows) error {
-		return r.Err()
-	}
-)
-
 func New(db DBTX) *Queries {
 	return &Queries{db: db}
 }
@@ -46,172 +24,172 @@ func New(db DBTX) *Queries {
 func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	q := Queries{db: db}
 	var err error
-	if q.clearHttpCacheStmt, err = prepareContextFn(ctx, db, clearHttpCache); err != nil {
+	if q.clearHttpCacheStmt, err = db.PrepareContext(ctx, clearHttpCache); err != nil {
 		return nil, fmt.Errorf("error preparing query ClearHttpCache: %w", err)
 	}
-	if q.clearLoginAttemptsStmt, err = prepareContextFn(ctx, db, clearLoginAttempts); err != nil {
+	if q.clearLoginAttemptsStmt, err = db.PrepareContext(ctx, clearLoginAttempts); err != nil {
 		return nil, fmt.Errorf("error preparing query ClearLoginAttempts: %w", err)
 	}
-	if q.configKeyExistsStmt, err = prepareContextFn(ctx, db, configKeyExists); err != nil {
+	if q.configKeyExistsStmt, err = db.PrepareContext(ctx, configKeyExists); err != nil {
 		return nil, fmt.Errorf("error preparing query ConfigKeyExists: %w", err)
 	}
-	if q.countHttpCacheEntriesStmt, err = prepareContextFn(ctx, db, countHttpCacheEntries); err != nil {
+	if q.countHttpCacheEntriesStmt, err = db.PrepareContext(ctx, countHttpCacheEntries); err != nil {
 		return nil, fmt.Errorf("error preparing query CountHttpCacheEntries: %w", err)
 	}
-	if q.deleteHttpCacheByIDStmt, err = prepareContextFn(ctx, db, deleteHttpCacheByID); err != nil {
+	if q.deleteHttpCacheByIDStmt, err = db.PrepareContext(ctx, deleteHttpCacheByID); err != nil {
 		return nil, fmt.Errorf("error preparing query DeleteHttpCacheByID: %w", err)
 	}
-	if q.deleteHttpCacheByKeyStmt, err = prepareContextFn(ctx, db, deleteHttpCacheByKey); err != nil {
+	if q.deleteHttpCacheByKeyStmt, err = db.PrepareContext(ctx, deleteHttpCacheByKey); err != nil {
 		return nil, fmt.Errorf("error preparing query DeleteHttpCacheByKey: %w", err)
 	}
-	if q.deleteHttpCacheExpiredStmt, err = prepareContextFn(ctx, db, deleteHttpCacheExpired); err != nil {
+	if q.deleteHttpCacheExpiredStmt, err = db.PrepareContext(ctx, deleteHttpCacheExpired); err != nil {
 		return nil, fmt.Errorf("error preparing query DeleteHttpCacheExpired: %w", err)
 	}
-	if q.deleteIPTCStmt, err = prepareContextFn(ctx, db, deleteIPTC); err != nil {
+	if q.deleteIPTCStmt, err = db.PrepareContext(ctx, deleteIPTC); err != nil {
 		return nil, fmt.Errorf("error preparing query DeleteIPTC: %w", err)
 	}
-	if q.deleteIPTCKeywordStmt, err = prepareContextFn(ctx, db, deleteIPTCKeyword); err != nil {
+	if q.deleteIPTCKeywordStmt, err = db.PrepareContext(ctx, deleteIPTCKeyword); err != nil {
 		return nil, fmt.Errorf("error preparing query DeleteIPTCKeyword: %w", err)
 	}
-	if q.deleteInvalidFileByPathStmt, err = prepareContextFn(ctx, db, deleteInvalidFileByPath); err != nil {
+	if q.deleteInvalidFileByPathStmt, err = db.PrepareContext(ctx, deleteInvalidFileByPath); err != nil {
 		return nil, fmt.Errorf("error preparing query DeleteInvalidFileByPath: %w", err)
 	}
-	if q.deleteXMPPropertyStmt, err = prepareContextFn(ctx, db, deleteXMPProperty); err != nil {
+	if q.deleteXMPPropertyStmt, err = db.PrepareContext(ctx, deleteXMPProperty); err != nil {
 		return nil, fmt.Errorf("error preparing query DeleteXMPProperty: %w", err)
 	}
-	if q.deleteXMPRawStmt, err = prepareContextFn(ctx, db, deleteXMPRaw); err != nil {
+	if q.deleteXMPRawStmt, err = db.PrepareContext(ctx, deleteXMPRaw); err != nil {
 		return nil, fmt.Errorf("error preparing query DeleteXMPRaw: %w", err)
 	}
-	if q.getConfigValueByKeyStmt, err = prepareContextFn(ctx, db, getConfigValueByKey); err != nil {
+	if q.getConfigValueByKeyStmt, err = db.PrepareContext(ctx, getConfigValueByKey); err != nil {
 		return nil, fmt.Errorf("error preparing query GetConfigValueByKey: %w", err)
 	}
-	if q.getConfigsStmt, err = prepareContextFn(ctx, db, getConfigs); err != nil {
+	if q.getConfigsStmt, err = db.PrepareContext(ctx, getConfigs); err != nil {
 		return nil, fmt.Errorf("error preparing query GetConfigs: %w", err)
 	}
-	if q.getExifByFileStmt, err = prepareContextFn(ctx, db, getExifByFile); err != nil {
+	if q.getExifByFileStmt, err = db.PrepareContext(ctx, getExifByFile); err != nil {
 		return nil, fmt.Errorf("error preparing query GetExifByFile: %w", err)
 	}
-	if q.getFileByPathStmt, err = prepareContextFn(ctx, db, getFileByPath); err != nil {
+	if q.getFileByPathStmt, err = db.PrepareContext(ctx, getFileByPath); err != nil {
 		return nil, fmt.Errorf("error preparing query GetFileByPath: %w", err)
 	}
-	if q.getFileViewByIDStmt, err = prepareContextFn(ctx, db, getFileViewByID); err != nil {
+	if q.getFileViewByIDStmt, err = db.PrepareContext(ctx, getFileViewByID); err != nil {
 		return nil, fmt.Errorf("error preparing query GetFileViewByID: %w", err)
 	}
-	if q.getFileViewsByFolderIDOrderByFileNameStmt, err = prepareContextFn(ctx, db, getFileViewsByFolderIDOrderByFileName); err != nil {
+	if q.getFileViewsByFolderIDOrderByFileNameStmt, err = db.PrepareContext(ctx, getFileViewsByFolderIDOrderByFileName); err != nil {
 		return nil, fmt.Errorf("error preparing query GetFileViewsByFolderIDOrderByFileName: %w", err)
 	}
-	if q.getFolderByIDStmt, err = prepareContextFn(ctx, db, getFolderByID); err != nil {
+	if q.getFolderByIDStmt, err = db.PrepareContext(ctx, getFolderByID); err != nil {
 		return nil, fmt.Errorf("error preparing query GetFolderByID: %w", err)
 	}
-	if q.getFolderByPathStmt, err = prepareContextFn(ctx, db, getFolderByPath); err != nil {
+	if q.getFolderByPathStmt, err = db.PrepareContext(ctx, getFolderByPath); err != nil {
 		return nil, fmt.Errorf("error preparing query GetFolderByPath: %w", err)
 	}
-	if q.getFolderIDByPathStmt, err = prepareContextFn(ctx, db, getFolderIDByPath); err != nil {
+	if q.getFolderIDByPathStmt, err = db.PrepareContext(ctx, getFolderIDByPath); err != nil {
 		return nil, fmt.Errorf("error preparing query GetFolderIDByPath: %w", err)
 	}
-	if q.getFolderTileExistsViewByPathStmt, err = prepareContextFn(ctx, db, getFolderTileExistsViewByPath); err != nil {
+	if q.getFolderTileExistsViewByPathStmt, err = db.PrepareContext(ctx, getFolderTileExistsViewByPath); err != nil {
 		return nil, fmt.Errorf("error preparing query GetFolderTileExistsViewByPath: %w", err)
 	}
-	if q.getFolderViewByIDStmt, err = prepareContextFn(ctx, db, getFolderViewByID); err != nil {
+	if q.getFolderViewByIDStmt, err = db.PrepareContext(ctx, getFolderViewByID); err != nil {
 		return nil, fmt.Errorf("error preparing query GetFolderViewByID: %w", err)
 	}
-	if q.getFoldersViewsByParentIDOrderByNameStmt, err = prepareContextFn(ctx, db, getFoldersViewsByParentIDOrderByName); err != nil {
+	if q.getFoldersViewsByParentIDOrderByNameStmt, err = db.PrepareContext(ctx, getFoldersViewsByParentIDOrderByName); err != nil {
 		return nil, fmt.Errorf("error preparing query GetFoldersViewsByParentIDOrderByName: %w", err)
 	}
-	if q.getGalleryStatisticsStmt, err = prepareContextFn(ctx, db, getGalleryStatistics); err != nil {
+	if q.getGalleryStatisticsStmt, err = db.PrepareContext(ctx, getGalleryStatistics); err != nil {
 		return nil, fmt.Errorf("error preparing query GetGalleryStatistics: %w", err)
 	}
-	if q.getHttpCacheByKeyStmt, err = prepareContextFn(ctx, db, getHttpCacheByKey); err != nil {
+	if q.getHttpCacheByKeyStmt, err = db.PrepareContext(ctx, getHttpCacheByKey); err != nil {
 		return nil, fmt.Errorf("error preparing query GetHttpCacheByKey: %w", err)
 	}
-	if q.getHttpCacheOldestCreatedStmt, err = prepareContextFn(ctx, db, getHttpCacheOldestCreated); err != nil {
+	if q.getHttpCacheOldestCreatedStmt, err = db.PrepareContext(ctx, getHttpCacheOldestCreated); err != nil {
 		return nil, fmt.Errorf("error preparing query GetHttpCacheOldestCreated: %w", err)
 	}
-	if q.getHttpCacheSizeBytesStmt, err = prepareContextFn(ctx, db, getHttpCacheSizeBytes); err != nil {
+	if q.getHttpCacheSizeBytesStmt, err = db.PrepareContext(ctx, getHttpCacheSizeBytes); err != nil {
 		return nil, fmt.Errorf("error preparing query GetHttpCacheSizeBytes: %w", err)
 	}
-	if q.getIPTCByFileStmt, err = prepareContextFn(ctx, db, getIPTCByFile); err != nil {
+	if q.getIPTCByFileStmt, err = db.PrepareContext(ctx, getIPTCByFile); err != nil {
 		return nil, fmt.Errorf("error preparing query GetIPTCByFile: %w", err)
 	}
-	if q.getIPTCKeywordsStmt, err = prepareContextFn(ctx, db, getIPTCKeywords); err != nil {
+	if q.getIPTCKeywordsStmt, err = db.PrepareContext(ctx, getIPTCKeywords); err != nil {
 		return nil, fmt.Errorf("error preparing query GetIPTCKeywords: %w", err)
 	}
-	if q.getInvalidFileByPathStmt, err = prepareContextFn(ctx, db, getInvalidFileByPath); err != nil {
+	if q.getInvalidFileByPathStmt, err = db.PrepareContext(ctx, getInvalidFileByPath); err != nil {
 		return nil, fmt.Errorf("error preparing query GetInvalidFileByPath: %w", err)
 	}
-	if q.getLoginAttemptStmt, err = prepareContextFn(ctx, db, getLoginAttempt); err != nil {
+	if q.getLoginAttemptStmt, err = db.PrepareContext(ctx, getLoginAttempt); err != nil {
 		return nil, fmt.Errorf("error preparing query GetLoginAttempt: %w", err)
 	}
-	if q.getModuleStateStmt, err = prepareContextFn(ctx, db, getModuleState); err != nil {
+	if q.getModuleStateStmt, err = db.PrepareContext(ctx, getModuleState); err != nil {
 		return nil, fmt.Errorf("error preparing query GetModuleState: %w", err)
 	}
-	if q.getThumbnailExistsViewByIDStmt, err = prepareContextFn(ctx, db, getThumbnailExistsViewByID); err != nil {
+	if q.getThumbnailExistsViewByIDStmt, err = db.PrepareContext(ctx, getThumbnailExistsViewByID); err != nil {
 		return nil, fmt.Errorf("error preparing query GetThumbnailExistsViewByID: %w", err)
 	}
-	if q.getThumbnailsByFileIDStmt, err = prepareContextFn(ctx, db, getThumbnailsByFileID); err != nil {
+	if q.getThumbnailsByFileIDStmt, err = db.PrepareContext(ctx, getThumbnailsByFileID); err != nil {
 		return nil, fmt.Errorf("error preparing query GetThumbnailsByFileID: %w", err)
 	}
-	if q.getXMPPropertiesByFileStmt, err = prepareContextFn(ctx, db, getXMPPropertiesByFile); err != nil {
+	if q.getXMPPropertiesByFileStmt, err = db.PrepareContext(ctx, getXMPPropertiesByFile); err != nil {
 		return nil, fmt.Errorf("error preparing query GetXMPPropertiesByFile: %w", err)
 	}
-	if q.getXMPRawStmt, err = prepareContextFn(ctx, db, getXMPRaw); err != nil {
+	if q.getXMPRawStmt, err = db.PrepareContext(ctx, getXMPRaw); err != nil {
 		return nil, fmt.Errorf("error preparing query GetXMPRaw: %w", err)
 	}
-	if q.httpCacheExistsByKeyStmt, err = prepareContextFn(ctx, db, httpCacheExistsByKey); err != nil {
+	if q.httpCacheExistsByKeyStmt, err = db.PrepareContext(ctx, httpCacheExistsByKey); err != nil {
 		return nil, fmt.Errorf("error preparing query HttpCacheExistsByKey: %w", err)
 	}
-	if q.insertConfigIfNotExistsStmt, err = prepareContextFn(ctx, db, insertConfigIfNotExists); err != nil {
+	if q.insertConfigIfNotExistsStmt, err = db.PrepareContext(ctx, insertConfigIfNotExists); err != nil {
 		return nil, fmt.Errorf("error preparing query InsertConfigIfNotExists: %w", err)
 	}
-	if q.insertIPTCKeywordStmt, err = prepareContextFn(ctx, db, insertIPTCKeyword); err != nil {
+	if q.insertIPTCKeywordStmt, err = db.PrepareContext(ctx, insertIPTCKeyword); err != nil {
 		return nil, fmt.Errorf("error preparing query InsertIPTCKeyword: %w", err)
 	}
-	if q.setModuleStateStmt, err = prepareContextFn(ctx, db, setModuleState); err != nil {
+	if q.setModuleStateStmt, err = db.PrepareContext(ctx, setModuleState); err != nil {
 		return nil, fmt.Errorf("error preparing query SetModuleState: %w", err)
 	}
-	if q.unlockAccountStmt, err = prepareContextFn(ctx, db, unlockAccount); err != nil {
+	if q.unlockAccountStmt, err = db.PrepareContext(ctx, unlockAccount); err != nil {
 		return nil, fmt.Errorf("error preparing query UnlockAccount: %w", err)
 	}
-	if q.updateFolderTileIdStmt, err = prepareContextFn(ctx, db, updateFolderTileId); err != nil {
+	if q.updateFolderTileIdStmt, err = db.PrepareContext(ctx, updateFolderTileId); err != nil {
 		return nil, fmt.Errorf("error preparing query UpdateFolderTileId: %w", err)
 	}
-	if q.upsertConfigValueOnlyStmt, err = prepareContextFn(ctx, db, upsertConfigValueOnly); err != nil {
+	if q.upsertConfigValueOnlyStmt, err = db.PrepareContext(ctx, upsertConfigValueOnly); err != nil {
 		return nil, fmt.Errorf("error preparing query UpsertConfigValueOnly: %w", err)
 	}
-	if q.upsertExifStmt, err = prepareContextFn(ctx, db, upsertExif); err != nil {
+	if q.upsertExifStmt, err = db.PrepareContext(ctx, upsertExif); err != nil {
 		return nil, fmt.Errorf("error preparing query UpsertExif: %w", err)
 	}
-	if q.upsertFilePathReturningIDStmt, err = prepareContextFn(ctx, db, upsertFilePathReturningID); err != nil {
+	if q.upsertFilePathReturningIDStmt, err = db.PrepareContext(ctx, upsertFilePathReturningID); err != nil {
 		return nil, fmt.Errorf("error preparing query UpsertFilePathReturningID: %w", err)
 	}
-	if q.upsertFileReturningFileStmt, err = prepareContextFn(ctx, db, upsertFileReturningFile); err != nil {
+	if q.upsertFileReturningFileStmt, err = db.PrepareContext(ctx, upsertFileReturningFile); err != nil {
 		return nil, fmt.Errorf("error preparing query UpsertFileReturningFile: %w", err)
 	}
-	if q.upsertFolderPathReturningIDStmt, err = prepareContextFn(ctx, db, upsertFolderPathReturningID); err != nil {
+	if q.upsertFolderPathReturningIDStmt, err = db.PrepareContext(ctx, upsertFolderPathReturningID); err != nil {
 		return nil, fmt.Errorf("error preparing query UpsertFolderPathReturningID: %w", err)
 	}
-	if q.upsertFolderReturningFolderStmt, err = prepareContextFn(ctx, db, upsertFolderReturningFolder); err != nil {
+	if q.upsertFolderReturningFolderStmt, err = db.PrepareContext(ctx, upsertFolderReturningFolder); err != nil {
 		return nil, fmt.Errorf("error preparing query UpsertFolderReturningFolder: %w", err)
 	}
-	if q.upsertHttpCacheStmt, err = prepareContextFn(ctx, db, upsertHttpCache); err != nil {
+	if q.upsertHttpCacheStmt, err = db.PrepareContext(ctx, upsertHttpCache); err != nil {
 		return nil, fmt.Errorf("error preparing query UpsertHttpCache: %w", err)
 	}
-	if q.upsertIPTCStmt, err = prepareContextFn(ctx, db, upsertIPTC); err != nil {
+	if q.upsertIPTCStmt, err = db.PrepareContext(ctx, upsertIPTC); err != nil {
 		return nil, fmt.Errorf("error preparing query UpsertIPTC: %w", err)
 	}
-	if q.upsertInvalidFileStmt, err = prepareContextFn(ctx, db, upsertInvalidFile); err != nil {
+	if q.upsertInvalidFileStmt, err = db.PrepareContext(ctx, upsertInvalidFile); err != nil {
 		return nil, fmt.Errorf("error preparing query UpsertInvalidFile: %w", err)
 	}
-	if q.upsertLoginAttemptStmt, err = prepareContextFn(ctx, db, upsertLoginAttempt); err != nil {
+	if q.upsertLoginAttemptStmt, err = db.PrepareContext(ctx, upsertLoginAttempt); err != nil {
 		return nil, fmt.Errorf("error preparing query UpsertLoginAttempt: %w", err)
 	}
-	if q.upsertThumbnailReturningIDStmt, err = prepareContextFn(ctx, db, upsertThumbnailReturningID); err != nil {
+	if q.upsertThumbnailReturningIDStmt, err = db.PrepareContext(ctx, upsertThumbnailReturningID); err != nil {
 		return nil, fmt.Errorf("error preparing query UpsertThumbnailReturningID: %w", err)
 	}
-	if q.upsertXMPPropertyStmt, err = prepareContextFn(ctx, db, upsertXMPProperty); err != nil {
+	if q.upsertXMPPropertyStmt, err = db.PrepareContext(ctx, upsertXMPProperty); err != nil {
 		return nil, fmt.Errorf("error preparing query UpsertXMPProperty: %w", err)
 	}
-	if q.upsertXMPRawStmt, err = prepareContextFn(ctx, db, upsertXMPRaw); err != nil {
+	if q.upsertXMPRawStmt, err = db.PrepareContext(ctx, upsertXMPRaw); err != nil {
 		return nil, fmt.Errorf("error preparing query UpsertXMPRaw: %w", err)
 	}
 	return &q, nil
@@ -220,282 +198,282 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 func (q *Queries) Close() error {
 	var err error
 	if q.clearHttpCacheStmt != nil {
-		if cerr := stmtCloseFn(q.clearHttpCacheStmt); cerr != nil {
+		if cerr := q.clearHttpCacheStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing clearHttpCacheStmt: %w", cerr)
 		}
 	}
 	if q.clearLoginAttemptsStmt != nil {
-		if cerr := stmtCloseFn(q.clearLoginAttemptsStmt); cerr != nil {
+		if cerr := q.clearLoginAttemptsStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing clearLoginAttemptsStmt: %w", cerr)
 		}
 	}
 	if q.configKeyExistsStmt != nil {
-		if cerr := stmtCloseFn(q.configKeyExistsStmt); cerr != nil {
+		if cerr := q.configKeyExistsStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing configKeyExistsStmt: %w", cerr)
 		}
 	}
 	if q.countHttpCacheEntriesStmt != nil {
-		if cerr := stmtCloseFn(q.countHttpCacheEntriesStmt); cerr != nil {
+		if cerr := q.countHttpCacheEntriesStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing countHttpCacheEntriesStmt: %w", cerr)
 		}
 	}
 	if q.deleteHttpCacheByIDStmt != nil {
-		if cerr := stmtCloseFn(q.deleteHttpCacheByIDStmt); cerr != nil {
+		if cerr := q.deleteHttpCacheByIDStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing deleteHttpCacheByIDStmt: %w", cerr)
 		}
 	}
 	if q.deleteHttpCacheByKeyStmt != nil {
-		if cerr := stmtCloseFn(q.deleteHttpCacheByKeyStmt); cerr != nil {
+		if cerr := q.deleteHttpCacheByKeyStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing deleteHttpCacheByKeyStmt: %w", cerr)
 		}
 	}
 	if q.deleteHttpCacheExpiredStmt != nil {
-		if cerr := stmtCloseFn(q.deleteHttpCacheExpiredStmt); cerr != nil {
+		if cerr := q.deleteHttpCacheExpiredStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing deleteHttpCacheExpiredStmt: %w", cerr)
 		}
 	}
 	if q.deleteIPTCStmt != nil {
-		if cerr := stmtCloseFn(q.deleteIPTCStmt); cerr != nil {
+		if cerr := q.deleteIPTCStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing deleteIPTCStmt: %w", cerr)
 		}
 	}
 	if q.deleteIPTCKeywordStmt != nil {
-		if cerr := stmtCloseFn(q.deleteIPTCKeywordStmt); cerr != nil {
+		if cerr := q.deleteIPTCKeywordStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing deleteIPTCKeywordStmt: %w", cerr)
 		}
 	}
 	if q.deleteInvalidFileByPathStmt != nil {
-		if cerr := stmtCloseFn(q.deleteInvalidFileByPathStmt); cerr != nil {
+		if cerr := q.deleteInvalidFileByPathStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing deleteInvalidFileByPathStmt: %w", cerr)
 		}
 	}
 	if q.deleteXMPPropertyStmt != nil {
-		if cerr := stmtCloseFn(q.deleteXMPPropertyStmt); cerr != nil {
+		if cerr := q.deleteXMPPropertyStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing deleteXMPPropertyStmt: %w", cerr)
 		}
 	}
 	if q.deleteXMPRawStmt != nil {
-		if cerr := stmtCloseFn(q.deleteXMPRawStmt); cerr != nil {
+		if cerr := q.deleteXMPRawStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing deleteXMPRawStmt: %w", cerr)
 		}
 	}
 	if q.getConfigValueByKeyStmt != nil {
-		if cerr := stmtCloseFn(q.getConfigValueByKeyStmt); cerr != nil {
+		if cerr := q.getConfigValueByKeyStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getConfigValueByKeyStmt: %w", cerr)
 		}
 	}
 	if q.getConfigsStmt != nil {
-		if cerr := stmtCloseFn(q.getConfigsStmt); cerr != nil {
+		if cerr := q.getConfigsStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getConfigsStmt: %w", cerr)
 		}
 	}
 	if q.getExifByFileStmt != nil {
-		if cerr := stmtCloseFn(q.getExifByFileStmt); cerr != nil {
+		if cerr := q.getExifByFileStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getExifByFileStmt: %w", cerr)
 		}
 	}
 	if q.getFileByPathStmt != nil {
-		if cerr := stmtCloseFn(q.getFileByPathStmt); cerr != nil {
+		if cerr := q.getFileByPathStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getFileByPathStmt: %w", cerr)
 		}
 	}
 	if q.getFileViewByIDStmt != nil {
-		if cerr := stmtCloseFn(q.getFileViewByIDStmt); cerr != nil {
+		if cerr := q.getFileViewByIDStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getFileViewByIDStmt: %w", cerr)
 		}
 	}
 	if q.getFileViewsByFolderIDOrderByFileNameStmt != nil {
-		if cerr := stmtCloseFn(q.getFileViewsByFolderIDOrderByFileNameStmt); cerr != nil {
+		if cerr := q.getFileViewsByFolderIDOrderByFileNameStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getFileViewsByFolderIDOrderByFileNameStmt: %w", cerr)
 		}
 	}
 	if q.getFolderByIDStmt != nil {
-		if cerr := stmtCloseFn(q.getFolderByIDStmt); cerr != nil {
+		if cerr := q.getFolderByIDStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getFolderByIDStmt: %w", cerr)
 		}
 	}
 	if q.getFolderByPathStmt != nil {
-		if cerr := stmtCloseFn(q.getFolderByPathStmt); cerr != nil {
+		if cerr := q.getFolderByPathStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getFolderByPathStmt: %w", cerr)
 		}
 	}
 	if q.getFolderIDByPathStmt != nil {
-		if cerr := stmtCloseFn(q.getFolderIDByPathStmt); cerr != nil {
+		if cerr := q.getFolderIDByPathStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getFolderIDByPathStmt: %w", cerr)
 		}
 	}
 	if q.getFolderTileExistsViewByPathStmt != nil {
-		if cerr := stmtCloseFn(q.getFolderTileExistsViewByPathStmt); cerr != nil {
+		if cerr := q.getFolderTileExistsViewByPathStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getFolderTileExistsViewByPathStmt: %w", cerr)
 		}
 	}
 	if q.getFolderViewByIDStmt != nil {
-		if cerr := stmtCloseFn(q.getFolderViewByIDStmt); cerr != nil {
+		if cerr := q.getFolderViewByIDStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getFolderViewByIDStmt: %w", cerr)
 		}
 	}
 	if q.getFoldersViewsByParentIDOrderByNameStmt != nil {
-		if cerr := stmtCloseFn(q.getFoldersViewsByParentIDOrderByNameStmt); cerr != nil {
+		if cerr := q.getFoldersViewsByParentIDOrderByNameStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getFoldersViewsByParentIDOrderByNameStmt: %w", cerr)
 		}
 	}
 	if q.getGalleryStatisticsStmt != nil {
-		if cerr := stmtCloseFn(q.getGalleryStatisticsStmt); cerr != nil {
+		if cerr := q.getGalleryStatisticsStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getGalleryStatisticsStmt: %w", cerr)
 		}
 	}
 	if q.getHttpCacheByKeyStmt != nil {
-		if cerr := stmtCloseFn(q.getHttpCacheByKeyStmt); cerr != nil {
+		if cerr := q.getHttpCacheByKeyStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getHttpCacheByKeyStmt: %w", cerr)
 		}
 	}
 	if q.getHttpCacheOldestCreatedStmt != nil {
-		if cerr := stmtCloseFn(q.getHttpCacheOldestCreatedStmt); cerr != nil {
+		if cerr := q.getHttpCacheOldestCreatedStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getHttpCacheOldestCreatedStmt: %w", cerr)
 		}
 	}
 	if q.getHttpCacheSizeBytesStmt != nil {
-		if cerr := stmtCloseFn(q.getHttpCacheSizeBytesStmt); cerr != nil {
+		if cerr := q.getHttpCacheSizeBytesStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getHttpCacheSizeBytesStmt: %w", cerr)
 		}
 	}
 	if q.getIPTCByFileStmt != nil {
-		if cerr := stmtCloseFn(q.getIPTCByFileStmt); cerr != nil {
+		if cerr := q.getIPTCByFileStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getIPTCByFileStmt: %w", cerr)
 		}
 	}
 	if q.getIPTCKeywordsStmt != nil {
-		if cerr := stmtCloseFn(q.getIPTCKeywordsStmt); cerr != nil {
+		if cerr := q.getIPTCKeywordsStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getIPTCKeywordsStmt: %w", cerr)
 		}
 	}
 	if q.getInvalidFileByPathStmt != nil {
-		if cerr := stmtCloseFn(q.getInvalidFileByPathStmt); cerr != nil {
+		if cerr := q.getInvalidFileByPathStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getInvalidFileByPathStmt: %w", cerr)
 		}
 	}
 	if q.getLoginAttemptStmt != nil {
-		if cerr := stmtCloseFn(q.getLoginAttemptStmt); cerr != nil {
+		if cerr := q.getLoginAttemptStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getLoginAttemptStmt: %w", cerr)
 		}
 	}
 	if q.getModuleStateStmt != nil {
-		if cerr := stmtCloseFn(q.getModuleStateStmt); cerr != nil {
+		if cerr := q.getModuleStateStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getModuleStateStmt: %w", cerr)
 		}
 	}
 	if q.getThumbnailExistsViewByIDStmt != nil {
-		if cerr := stmtCloseFn(q.getThumbnailExistsViewByIDStmt); cerr != nil {
+		if cerr := q.getThumbnailExistsViewByIDStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getThumbnailExistsViewByIDStmt: %w", cerr)
 		}
 	}
 	if q.getThumbnailsByFileIDStmt != nil {
-		if cerr := stmtCloseFn(q.getThumbnailsByFileIDStmt); cerr != nil {
+		if cerr := q.getThumbnailsByFileIDStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getThumbnailsByFileIDStmt: %w", cerr)
 		}
 	}
 	if q.getXMPPropertiesByFileStmt != nil {
-		if cerr := stmtCloseFn(q.getXMPPropertiesByFileStmt); cerr != nil {
+		if cerr := q.getXMPPropertiesByFileStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getXMPPropertiesByFileStmt: %w", cerr)
 		}
 	}
 	if q.getXMPRawStmt != nil {
-		if cerr := stmtCloseFn(q.getXMPRawStmt); cerr != nil {
+		if cerr := q.getXMPRawStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getXMPRawStmt: %w", cerr)
 		}
 	}
 	if q.httpCacheExistsByKeyStmt != nil {
-		if cerr := stmtCloseFn(q.httpCacheExistsByKeyStmt); cerr != nil {
+		if cerr := q.httpCacheExistsByKeyStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing httpCacheExistsByKeyStmt: %w", cerr)
 		}
 	}
 	if q.insertConfigIfNotExistsStmt != nil {
-		if cerr := stmtCloseFn(q.insertConfigIfNotExistsStmt); cerr != nil {
+		if cerr := q.insertConfigIfNotExistsStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing insertConfigIfNotExistsStmt: %w", cerr)
 		}
 	}
 	if q.insertIPTCKeywordStmt != nil {
-		if cerr := stmtCloseFn(q.insertIPTCKeywordStmt); cerr != nil {
+		if cerr := q.insertIPTCKeywordStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing insertIPTCKeywordStmt: %w", cerr)
 		}
 	}
 	if q.setModuleStateStmt != nil {
-		if cerr := stmtCloseFn(q.setModuleStateStmt); cerr != nil {
+		if cerr := q.setModuleStateStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing setModuleStateStmt: %w", cerr)
 		}
 	}
 	if q.unlockAccountStmt != nil {
-		if cerr := stmtCloseFn(q.unlockAccountStmt); cerr != nil {
+		if cerr := q.unlockAccountStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing unlockAccountStmt: %w", cerr)
 		}
 	}
 	if q.updateFolderTileIdStmt != nil {
-		if cerr := stmtCloseFn(q.updateFolderTileIdStmt); cerr != nil {
+		if cerr := q.updateFolderTileIdStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing updateFolderTileIdStmt: %w", cerr)
 		}
 	}
 	if q.upsertConfigValueOnlyStmt != nil {
-		if cerr := stmtCloseFn(q.upsertConfigValueOnlyStmt); cerr != nil {
+		if cerr := q.upsertConfigValueOnlyStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing upsertConfigValueOnlyStmt: %w", cerr)
 		}
 	}
 	if q.upsertExifStmt != nil {
-		if cerr := stmtCloseFn(q.upsertExifStmt); cerr != nil {
+		if cerr := q.upsertExifStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing upsertExifStmt: %w", cerr)
 		}
 	}
 	if q.upsertFilePathReturningIDStmt != nil {
-		if cerr := stmtCloseFn(q.upsertFilePathReturningIDStmt); cerr != nil {
+		if cerr := q.upsertFilePathReturningIDStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing upsertFilePathReturningIDStmt: %w", cerr)
 		}
 	}
 	if q.upsertFileReturningFileStmt != nil {
-		if cerr := stmtCloseFn(q.upsertFileReturningFileStmt); cerr != nil {
+		if cerr := q.upsertFileReturningFileStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing upsertFileReturningFileStmt: %w", cerr)
 		}
 	}
 	if q.upsertFolderPathReturningIDStmt != nil {
-		if cerr := stmtCloseFn(q.upsertFolderPathReturningIDStmt); cerr != nil {
+		if cerr := q.upsertFolderPathReturningIDStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing upsertFolderPathReturningIDStmt: %w", cerr)
 		}
 	}
 	if q.upsertFolderReturningFolderStmt != nil {
-		if cerr := stmtCloseFn(q.upsertFolderReturningFolderStmt); cerr != nil {
+		if cerr := q.upsertFolderReturningFolderStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing upsertFolderReturningFolderStmt: %w", cerr)
 		}
 	}
 	if q.upsertHttpCacheStmt != nil {
-		if cerr := stmtCloseFn(q.upsertHttpCacheStmt); cerr != nil {
+		if cerr := q.upsertHttpCacheStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing upsertHttpCacheStmt: %w", cerr)
 		}
 	}
 	if q.upsertIPTCStmt != nil {
-		if cerr := stmtCloseFn(q.upsertIPTCStmt); cerr != nil {
+		if cerr := q.upsertIPTCStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing upsertIPTCStmt: %w", cerr)
 		}
 	}
 	if q.upsertInvalidFileStmt != nil {
-		if cerr := stmtCloseFn(q.upsertInvalidFileStmt); cerr != nil {
+		if cerr := q.upsertInvalidFileStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing upsertInvalidFileStmt: %w", cerr)
 		}
 	}
 	if q.upsertLoginAttemptStmt != nil {
-		if cerr := stmtCloseFn(q.upsertLoginAttemptStmt); cerr != nil {
+		if cerr := q.upsertLoginAttemptStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing upsertLoginAttemptStmt: %w", cerr)
 		}
 	}
 	if q.upsertThumbnailReturningIDStmt != nil {
-		if cerr := stmtCloseFn(q.upsertThumbnailReturningIDStmt); cerr != nil {
+		if cerr := q.upsertThumbnailReturningIDStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing upsertThumbnailReturningIDStmt: %w", cerr)
 		}
 	}
 	if q.upsertXMPPropertyStmt != nil {
-		if cerr := stmtCloseFn(q.upsertXMPPropertyStmt); cerr != nil {
+		if cerr := q.upsertXMPPropertyStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing upsertXMPPropertyStmt: %w", cerr)
 		}
 	}
 	if q.upsertXMPRawStmt != nil {
-		if cerr := stmtCloseFn(q.upsertXMPRawStmt); cerr != nil {
+		if cerr := q.upsertXMPRawStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing upsertXMPRawStmt: %w", cerr)
 		}
 	}

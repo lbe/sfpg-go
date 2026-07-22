@@ -61,13 +61,14 @@ test.describe("Authentication", () => {
     await expect(page.locator("#login_modal")).toBeChecked({ timeout: 3000 });
   });
 
-  test("4: Login without CSRF via HTTP request", async ({ page }) => {
-    // Use Playwright's API request context to POST directly
+  test("4: Login via API request (same-origin COP allows without token)", async ({
+    page,
+  }) => {
     const r = await page.request.post("/login", {
       form: { username: "admin", password: "admin" },
       headers: { Origin: "http://localhost:8083" },
     });
-    expect(r.status()).toBe(403);
+    expect(r.status()).toBe(200);
   });
 
   test("5: Logout clears session", async ({ page }) => {

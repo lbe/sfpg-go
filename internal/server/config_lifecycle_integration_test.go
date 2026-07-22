@@ -245,9 +245,7 @@ func TestConfigPersistence_AfterRestart_SiteNamePersist(t *testing.T) {
 
 	loginAsAdmin(t, client, ts.URL)
 
-	csrfToken := extractCSRFTokenFromConfig(t, client, ts.URL)
 	formData := url.Values{}
-	formData.Set("csrf_token", csrfToken)
 	formData.Set("site_name", "Persistence Test")
 
 	req, err := http.NewRequest(http.MethodPost, ts.URL+"/config", strings.NewReader(formData.Encode()))
@@ -415,14 +413,9 @@ func TestRestartWithModifiedDBConfig_AppliesNewValues(t *testing.T) {
 
 	// Verify initial config values (from defaults)
 	app.ConfigManager.ConfigMu.RLock()
-	initialCompression := app.ConfigManager.Config.ServerCompressionEnable
 	initialCache := app.ConfigManager.Config.EnableHTTPCache
 	app.ConfigManager.ConfigMu.RUnlock()
 
-	// Initial values should be from defaults (true for compression/cache)
-	if !initialCompression {
-		t.Logf("Initial compression: %v (unexpected, but continuing)", initialCompression)
-	}
 	if !initialCache {
 		t.Logf("Initial cache: %v (unexpected, but continuing)", initialCache)
 	}
@@ -437,7 +430,6 @@ func TestRestartWithModifiedDBConfig_AppliesNewValues(t *testing.T) {
 	}
 
 	// Modify values (opposite of defaults)
-	dbConfig.ServerCompressionEnable = false
 	dbConfig.EnableHTTPCache = false
 	dbConfig.ListenerPort = 9876
 	dbConfig.DBMaxPoolSize = 42 // Pool size for documentation purposes (not runtime changeable)
@@ -453,9 +445,6 @@ func TestRestartWithModifiedDBConfig_AppliesNewValues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to verify saved config: %v", err)
 	}
-	if verifyConfig.ServerCompressionEnable != false {
-		t.Errorf("Database config compression = %v, want false", verifyConfig.ServerCompressionEnable)
-	}
 	if verifyConfig.EnableHTTPCache != false {
 		t.Errorf("Database config cache = %v, want false", verifyConfig.EnableHTTPCache)
 	}
@@ -470,7 +459,6 @@ func TestRestartWithModifiedDBConfig_AppliesNewValues(t *testing.T) {
 
 	// Verify new values are applied to app.ConfigManager.Config
 	app.ConfigManager.ConfigMu.RLock()
-	newCompression := app.ConfigManager.Config.ServerCompressionEnable
 	newCache := app.ConfigManager.Config.EnableHTTPCache
 	newPort := app.ConfigManager.Config.ListenerPort
 	newMaxPool := app.ConfigManager.Config.DBMaxPoolSize
@@ -478,9 +466,6 @@ func TestRestartWithModifiedDBConfig_AppliesNewValues(t *testing.T) {
 	app.ConfigManager.ConfigMu.RUnlock()
 
 	// Check that config was reloaded from database
-	if newCompression != false {
-		t.Errorf("After loadConfig, compression = %v, want false (from database)", newCompression)
-	}
 	if newCache != false {
 		t.Errorf("After loadConfig, cache = %v, want false (from database)", newCache)
 	}
@@ -843,12 +828,8 @@ func TestIntegration_DBConfig_ListenerPortChangeRequiresRestart(t *testing.T) {
 	// Login as admin
 	loginAsAdmin(t, client, ts.URL)
 
-	// Extract CSRF token from config page
-	csrfToken := extractCSRFTokenFromConfig(t, client, ts.URL)
-
 	// POST config change (change port from 8081 to 9090)
 	formData := url.Values{}
-	formData.Set("csrf_token", csrfToken)
 	formData.Set("listener_port", "9090")
 
 	req, err := http.NewRequest(http.MethodPost, ts.URL+"/config", strings.NewReader(formData.Encode()))
@@ -894,9 +875,7 @@ func TestConfigPersistence_LoginSecurityFields(t *testing.T) {
 
 	loginAsAdmin(t, client, ts.URL)
 
-	csrfToken := extractCSRFTokenFromConfig(t, client, ts.URL)
 	formData := url.Values{}
-	formData.Set("csrf_token", csrfToken)
 	formData.Set("login_rate_limit_per_ip", "8")
 	formData.Set("lockout_threshold", "6")
 	formData.Set("lockout_duration", "1200")

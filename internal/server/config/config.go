@@ -75,28 +75,30 @@ type Config struct {
 	//
 	// Security implications: SameSite is a modern defense against CSRF attacks.
 	// Lax provides excellent protection without sacrificing usability. Combined with
-	// explicit CSRF token validation on state-changing requests, provides
-	// defense-in-depth against CSRF exploits.
+	// http.CrossOriginProtection on unsafe methods, provides defense-in-depth.
 	SessionSameSite string
 
 	// Performance settings (restart required)
-	ServerCompressionEnable bool
-	EnableHTTPCache         bool
-	CacheMaxSize            int64         // in bytes
-	CacheMaxTime            time.Duration // TTL
-	CacheMaxEntrySize       int64         // in bytes
-	CacheCleanupInterval    time.Duration
-	DBMaxPoolSize           int
-	DBMinIdleConnections    int
-	DBOptimizeInterval      time.Duration
-	WorkerPoolMax           int // 0 means auto-calculate
-	WorkerPoolMinIdle       int // 0 means auto-calculate
-	WorkerPoolMaxIdleTime   time.Duration
-	DBPoolMonitorInterval   time.Duration
-	QueueSize               int
-	EnableCachePreload      bool // Pre-load HTTP cache when folders are opened (runtime, no restart)
+	EnableHTTPCache       bool
+	CacheMaxSize          int64         // in bytes
+	CacheMaxTime          time.Duration // TTL
+	CacheMaxEntrySize     int64         // in bytes
+	CacheCleanupInterval  time.Duration
+	DBMaxPoolSize         int
+	DBMinIdleConnections  int
+	DBOptimizeInterval    time.Duration
+	WorkerPoolMax         int // 0 means auto-calculate
+	WorkerPoolMinIdle     int // 0 means auto-calculate
+	WorkerPoolMaxIdleTime time.Duration
+	DBPoolMonitorInterval time.Duration
+	QueueSize             int
+	EnableCachePreload    bool // Pre-load HTTP cache when folders are opened (runtime, no restart)
 	// MaxHTTPCacheEntryInsertPerTransaction is the max number of cache entries to insert in one transaction (batch size). Default: 10.
 	MaxHTTPCacheEntryInsertPerTransaction int
+
+	// HTTPCacheBodyCodec selects the write codec for new http_cache rows.
+	// Valid: "zstd-1", "gzip-6", "identity". Hot-reloadable.
+	HTTPCacheBodyCodec string
 
 	// Discovery settings (runtime)
 	RunFileDiscovery bool
@@ -121,8 +123,8 @@ type Config struct {
 	LoginRateLimitPerIP int
 
 	// EnablePprof enables Go's net/http/pprof debug endpoints under /debug/pprof/.
-	// When false (the default), pprof routes are not registered and cannot be accessed.
-	// When true, pprof routes are registered and protected behind authentication.
+	// When false, pprof routes are not registered and cannot be accessed.
+	// When true (the default), pprof routes are registered and protected behind authentication.
 	// Requires restart to take effect.
 	EnablePprof bool
 
@@ -162,7 +164,6 @@ func DefaultConfig() *Config {
 		SessionSameSite: "Lax",
 
 		// Performance
-		ServerCompressionEnable:               true,
 		EnableHTTPCache:                       true,
 		CacheMaxSize:                          500 * 1024 * 1024,   // 500MB
 		CacheMaxTime:                          30 * 24 * time.Hour, // 30 days
@@ -178,13 +179,14 @@ func DefaultConfig() *Config {
 		QueueSize:                             10000,
 		EnableCachePreload:                    true,
 		MaxHTTPCacheEntryInsertPerTransaction: 10,
+		HTTPCacheBodyCodec:                    "zstd-1",
 
 		// Discovery
 		RunFileDiscovery:  true,
 		DiscoveryQueueMax: 0, // 0 = unbounded (no maximum)
 
 		// Profiling
-		EnablePprof: false,
+		EnablePprof: true,
 
 		// Security
 		LockoutDuration:     3600, // 1 hour

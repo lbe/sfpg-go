@@ -38,9 +38,7 @@ func TestIntegration_MultipleCategoryUpdates(t *testing.T) {
 	loginAsAdmin(t, client, ts.URL)
 
 	// Update Server category setting
-	csrfToken := extractCSRFTokenFromConfig(t, client, ts.URL)
 	formData := url.Values{}
-	formData.Set("csrf_token", csrfToken)
 	formData.Set("listener_address", "127.0.0.1")
 	req, err := http.NewRequest(http.MethodPost, ts.URL+"/config", strings.NewReader(formData.Encode()))
 	if err != nil {
@@ -58,9 +56,7 @@ func TestIntegration_MultipleCategoryUpdates(t *testing.T) {
 	resp.Body.Close()
 
 	// Update Logging category setting
-	csrfToken = extractCSRFTokenFromConfig(t, client, ts.URL)
 	formData = url.Values{}
-	formData.Set("csrf_token", csrfToken)
 	formData.Set("log_level", "INFO")
 	req, err = http.NewRequest(http.MethodPost, ts.URL+"/config", strings.NewReader(formData.Encode()))
 	if err != nil {
@@ -78,9 +74,7 @@ func TestIntegration_MultipleCategoryUpdates(t *testing.T) {
 	resp.Body.Close()
 
 	// Update Application category setting
-	csrfToken = extractCSRFTokenFromConfig(t, client, ts.URL)
 	formData = url.Values{}
-	formData.Set("csrf_token", csrfToken)
 	formData.Set("site_name", "Multi-Category Test")
 	req, err = http.NewRequest(http.MethodPost, ts.URL+"/config", strings.NewReader(formData.Encode()))
 	if err != nil {
@@ -98,9 +92,7 @@ func TestIntegration_MultipleCategoryUpdates(t *testing.T) {
 	resp.Body.Close()
 
 	// Update Performance category setting
-	csrfToken = extractCSRFTokenFromConfig(t, client, ts.URL)
 	formData = url.Values{}
-	formData.Set("csrf_token", csrfToken)
 	formData.Set("cache_max_size", "104857600") // 100MB
 	req, err = http.NewRequest(http.MethodPost, ts.URL+"/config", strings.NewReader(formData.Encode()))
 	if err != nil {
@@ -162,11 +154,8 @@ func TestIntegration_ConfigPersistence_LoadFromOptDoesNotOverrideWithDefaults(t 
 	loginAsAdmin(t, client, ts1.URL)
 
 	// Set boolean values to non-default values
-	csrfToken := extractCSRFTokenFromConfig(t, client, ts1.URL)
 	formData := url.Values{}
-	formData.Set("csrf_token", csrfToken)
 	// Include with empty values to signal presence of config fields
-	formData.Set("server_compression_enable", "")
 	formData.Set("enable_http_cache", "")
 	formData.Set("run_file_discovery", "")
 
@@ -193,15 +182,7 @@ func TestIntegration_ConfigPersistence_LoadFromOptDoesNotOverrideWithDefaults(t 
 	defer app1.dbRoPool.Put(cpcRo)
 	ctx := context.Background()
 
-	value, err := cpcRo.Queries.GetConfigValueByKey(ctx, "server_compression_enable")
-	if err != nil {
-		t.Fatalf("failed to get server_compression_enable: %v", err)
-	}
-	if value != "false" {
-		t.Errorf("expected server_compression_enable='false' in DB, got '%s'", value)
-	}
-
-	value, err = cpcRo.Queries.GetConfigValueByKey(ctx, "enable_http_cache")
+	value, err := cpcRo.Queries.GetConfigValueByKey(ctx, "enable_http_cache")
 	if err != nil {
 		t.Fatalf("failed to get enable_http_cache: %v", err)
 	}
@@ -225,14 +206,13 @@ func TestIntegration_ConfigPersistence_LoadFromOptDoesNotOverrideWithDefaults(t 
 	app1.Shutdown()
 
 	// Create second app instance with default opt values (simulating no CLI/env overrides)
-	// Defaults are: EnableCompression=true, EnableHTTPCache=true, RunFileDiscovery=true
+	// Defaults are: EnableHTTPCache=true, RunFileDiscovery=true
 	// We explicitly set these to match defaults to test that LoadFromOpt doesn't override DB
 	// NOTE: Since these are NOT set (IsSet=false), LoadFromOpt should NOT override DB values
 	opt := getopt.Opt{
-		SessionSecret:     getopt.OptString{String: "this-is-a-test-secret-with-min-32-bytes", IsSet: true},
-		EnableCompression: getopt.OptBool{Bool: true, IsSet: false}, // Not set - should not override DB
-		EnableHTTPCache:   getopt.OptBool{Bool: true, IsSet: false}, // Not set - should not override DB
-		RunFileDiscovery:  getopt.OptBool{Bool: true, IsSet: false}, // Not set - should not override DB
+		SessionSecret:    getopt.OptString{String: "this-is-a-test-secret-with-min-32-bytes", IsSet: true},
+		EnableHTTPCache:  getopt.OptBool{Bool: true, IsSet: false}, // Not set - should not override DB
+		RunFileDiscovery: getopt.OptBool{Bool: true, IsSet: false}, // Not set - should not override DB
 	}
 	app2 := New(opt, "x.y.z")
 	app2.dbPaths = dbPaths
@@ -249,9 +229,6 @@ func TestIntegration_ConfigPersistence_LoadFromOptDoesNotOverrideWithDefaults(t 
 
 	// Verify that database values (false) are used, NOT opt defaults (true)
 	// This is the key test: LoadFromOpt should NOT override with defaults
-	if app2.ConfigManager.Config.ServerCompressionEnable != false {
-		t.Errorf("expected ServerCompressionEnable=false (from DB), got %v (overridden by opt default)", app2.ConfigManager.Config.ServerCompressionEnable)
-	}
 	if app2.ConfigManager.Config.EnableHTTPCache != false {
 		t.Errorf("expected EnableHTTPCache=false (from DB), got %v (overridden by opt default)", app2.ConfigManager.Config.EnableHTTPCache)
 	}
@@ -775,13 +752,11 @@ func TestIntegration_ConfigPersistence_BooleanValues(t *testing.T) {
 
 	loginAsAdmin(t, client, ts.URL)
 
-	csrfToken := extractCSRFTokenFromConfig(t, client, ts.URL)
 	formData := url.Values{}
-	formData.Set("csrf_token", csrfToken)
 	// Omitted checkboxes should be saved as false.
 	formData.Set("enable_http_cache", "on")
 	formData.Set("run_file_discovery", "on")
-	// server_compression_enable and session_http_only are intentionally omitted.
+	// session_http_only is intentionally omitted.
 
 	req, err := http.NewRequest(http.MethodPost, ts.URL+"/config", strings.NewReader(formData.Encode()))
 	if err != nil {
@@ -804,10 +779,9 @@ func TestIntegration_ConfigPersistence_BooleanValues(t *testing.T) {
 	}
 
 	checks := map[string]string{
-		"server_compression_enable": "false",
-		"enable_http_cache":         "true",
-		"session_http_only":         "false",
-		"run_file_discovery":        "true",
+		"enable_http_cache":  "true",
+		"session_http_only":  "false",
+		"run_file_discovery": "true",
 	}
 	for key, expected := range checks {
 		value, err := cpcRo.Queries.GetConfigValueByKey(app1.RuntimeManager.ctx, key)
@@ -841,9 +815,6 @@ func TestIntegration_ConfigPersistence_BooleanValues(t *testing.T) {
 	}
 	app2.ApplyConfig()
 
-	if app2.ConfigManager.Config.ServerCompressionEnable {
-		t.Error("expected ServerCompressionEnable=false after restart")
-	}
 	if !app2.ConfigManager.Config.EnableHTTPCache {
 		t.Error("expected EnableHTTPCache=true after restart")
 	}
@@ -876,9 +847,7 @@ func TestIntegration_ConfigPersistence_CLIEnvOverridesDB(t *testing.T) {
 
 	loginAsAdmin(t, client, ts.URL)
 
-	csrfToken := extractCSRFTokenFromConfig(t, client, ts.URL)
 	formData := url.Values{}
-	formData.Set("csrf_token", csrfToken)
 	formData.Set("enable_http_cache", "")
 
 	req, err := http.NewRequest(http.MethodPost, ts.URL+"/config", strings.NewReader(formData.Encode()))
@@ -958,9 +927,7 @@ func TestIntegration_ConcurrentConfigUpdates(t *testing.T) {
 
 			loginAsAdmin(t, client, ts.URL)
 
-			csrfToken := extractCSRFTokenFromConfig(t, client, ts.URL)
 			formData := url.Values{}
-			formData.Set("csrf_token", csrfToken)
 			formData.Set("site_name", "Concurrent Test")
 			formData.Set("log_level", "INFO")
 			formData.Set("cache_max_size", "52428800")

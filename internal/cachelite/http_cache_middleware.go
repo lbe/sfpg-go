@@ -3,6 +3,7 @@ package cachelite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -102,7 +103,7 @@ func (hcm *HTTPCacheMiddleware) IsEnabled() bool {
 }
 
 // SetOnGalleryCacheHit replaces the OnGalleryCacheHit callback after middleware creation.
-func (hcm *HTTPCacheMiddleware) SetOnGalleryCacheHit(fn func(ctx context.Context, folderID int64, sessionID, acceptEncoding string)) {
+func (hcm *HTTPCacheMiddleware) SetOnGalleryCacheHit(fn func(ctx context.Context, folderID int64, sessionID string)) {
 	hcm.config.OnGalleryCacheHit = fn
 }
 
@@ -189,12 +190,11 @@ func (hcm *HTTPCacheMiddleware) maybeTriggerGalleryPreload(ctx context.Context, 
 		return
 	}
 
-	// Extract sessionID and acceptEncoding
+	// Extract sessionID
 	sessionID := hcm.getSessionIDForPreload(r)
-	acceptEncoding := r.Header.Get("Accept-Encoding")
 
 	// Call callback in goroutine (fire-and-forget, like handler does)
-	go hcm.config.OnGalleryCacheHit(ctx, folderID, sessionID, acceptEncoding)
+	go hcm.config.OnGalleryCacheHit(ctx, folderID, sessionID)
 }
 
 // Middleware returns the http.Handler wrapper with SQLite-backed cache lookup, storage, and eviction.
@@ -220,19 +220,21 @@ func (hcm *HTTPCacheMiddleware) Middleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// Get theme from cookie for cache key - theme affects rendered page
-		theme := "dark" // default
-		if cookie, err := r.Cookie("theme"); err == nil && cookie.Value != "" {
-			theme = cookie.Value
-		}
 		// HX-Target distinguishes folder tile (gallery-content) from boosted link (empty/body)
-		// Theme is included so different themes are cached separately
-		params := NewCacheKeyForRequest(r, theme)
+		// Theme is no longer part of the cache key (Phase 2) — all users share one cache entry
+		// per URL/HTMX variant regardless of theme cookie.
+		params := NewCacheKeyForRequest(r)
 		cacheKey := NewCacheKey(params)
 
 		// Check cache for existing entry
 		entry, err := hcm.checkCache(r.Context(), cacheKey)
-		if err == nil && entry != nil {
+		if err != nil {
+			if errors.Is(err, ErrUnrecognizedCacheBody) {
+				// entry is nil here — no body length to log
+				slog.Warn("cache body unrecognized, treating as MISS", "key", cacheKey, "err", err)
+			}
+			// Other errors (DB errors, corrupt decompress) also fall through to MISS.
+		} else if entry != nil {
 			// Cache hit: check ETag for 304 Not Modified
 			if entry.ETag.Valid {
 				ifNoneMatch := r.Header.Get("If-None-Match")
@@ -261,9 +263,7 @@ func (hcm *HTTPCacheMiddleware) Middleware(next http.Handler) http.Handler {
 			if entry.ContentType.Valid {
 				w.Header().Set("Content-Type", entry.ContentType.String)
 			}
-			if entry.ContentEncoding.Valid {
-				w.Header().Set("Content-Encoding", entry.ContentEncoding.String)
-			}
+
 			if entry.CacheControl.Valid {
 				w.Header().Set("Cache-Control", entry.CacheControl.String)
 			}
@@ -325,19 +325,16 @@ func (hcm *HTTPCacheMiddleware) Middleware(next http.Handler) http.Handler {
 			expiresAt = sql.NullInt64{Int64: now + int64(hcm.config.DefaultTTL.Seconds()), Valid: true}
 		}
 
-		// Use the Content-Encoding header set by compression middleware
-		contentEncoding := buf.Header().Get("Content-Encoding")
-
 		// Get entry from pool (Body already has 8KB capacity)
 		newEntry := GetHTTPCacheEntry()
 		newEntry.Key = cacheKey
 		newEntry.Method = r.Method
 		newEntry.Path = r.URL.Path
 		newEntry.QueryString = sql.NullString{String: params.Query, Valid: params.Query != ""}
-		newEntry.Encoding = params.Encoding
+
 		newEntry.Status = int64(buf.statusCode)
 		newEntry.ContentType = sql.NullString{String: buf.Header().Get("Content-Type"), Valid: buf.Header().Get("Content-Type") != ""}
-		newEntry.ContentEncoding = sql.NullString{String: contentEncoding, Valid: contentEncoding != ""}
+
 		newEntry.CacheControl = sql.NullString{String: cacheControl, Valid: cacheControl != ""}
 		newEntry.ETag = sql.NullString{String: buf.Header().Get("ETag"), Valid: buf.Header().Get("ETag") != ""}
 		newEntry.LastModified = sql.NullString{String: buf.Header().Get("Last-Modified"), Valid: buf.Header().Get("Last-Modified") != ""}

@@ -14,8 +14,7 @@ import (
 type PreloadTask struct {
 	CacheKey      string
 	Path          string
-	HXTarget      string // optional; when set, request uses HX-Request/HX-Target and Encoding
-	Encoding      string // optional; used with HXTarget (e.g. "gzip")
+	HXTarget      string // optional; when set, request uses HX-Request/HX-Target
 	TaskTracker   *TaskTracker
 	RequestConfig InternalRequestConfig
 	Metrics       *PreloadMetrics
@@ -33,11 +32,7 @@ func (t *PreloadTask) Run(ctx context.Context) error {
 	start := time.Now()
 	var err error
 	if t.HXTarget != "" {
-		enc := t.Encoding
-		if enc == "" {
-			enc = "gzip"
-		}
-		err = MakeInternalRequestWithVariant(ctx, t.RequestConfig, t.Path, t.HXTarget, enc)
+		err = MakeInternalRequestWithHXTarget(ctx, t.RequestConfig, t.Path, t.HXTarget)
 	} else {
 		err = MakeInternalRequest(ctx, t.RequestConfig, t.Path)
 	}

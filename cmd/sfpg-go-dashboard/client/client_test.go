@@ -13,35 +13,13 @@ import (
 	"github.com/lbe/sfpg-go/internal/testutil"
 )
 
-// galleryPageWithCSRF returns a minimal gallery page HTML containing a CSRF token
-// in the login form, matching the real server's response format.
-func galleryPageWithCSRF(token string) string {
-	return fmt.Sprintf(`<!DOCTYPE html>
-<html><body>
-<input type="hidden" name="csrf_token" value="%s" />
-</body></html>`, token)
-}
-
-// TestLogin authenticates with username/password using proper CSRF flow.
+// TestLogin authenticates with username/password.
 func TestLogin(t *testing.T) {
-	csrfToken := "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
-
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/login-form" && r.Method == "GET":
-			// Return login form with CSRF token
-			w.Header().Set("Content-Type", "text/html")
-			w.WriteHeader(http.StatusOK)
-			fmt.Fprint(w, galleryPageWithCSRF(csrfToken))
-
-		case r.URL.Path == "/login" && r.Method == "POST":
-			// Verify CSRF token was sent
-			if r.FormValue("csrf_token") != csrfToken {
-				t.Errorf("csrf_token = %q, want %q", r.FormValue("csrf_token"), csrfToken)
-			}
+		if r.URL.Path == "/login" && r.Method == "POST" {
 			// Verify Origin header
 			if origin := r.Header.Get("Origin"); origin == "" {
-				t.Error("Missing Origin header for CSRF protection")
+				t.Error("Missing Origin header")
 			}
 			// Set session cookie matching real server (session-name)
 			http.SetCookie(w, &http.Cookie{
@@ -52,11 +30,10 @@ func TestLogin(t *testing.T) {
 			// Real server returns HX-Trigger: auth-changed on success
 			w.Header().Set("Hx-Trigger", "auth-changed")
 			w.WriteHeader(http.StatusOK)
-
-		default:
-			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
-			w.WriteHeader(http.StatusNotFound)
+			return
 		}
+		t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer server.Close()
 
@@ -83,24 +60,15 @@ func TestLogin(t *testing.T) {
 // TestLoginInvalidCredentials returns error when server rejects credentials.
 // The real server returns 200 with a login form (no HX-Trigger) on auth failure.
 func TestLoginInvalidCredentials(t *testing.T) {
-	csrfToken := "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
-
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/login-form" && r.Method == "GET":
-			w.Header().Set("Content-Type", "text/html")
-			w.WriteHeader(http.StatusOK)
-			fmt.Fprint(w, galleryPageWithCSRF(csrfToken))
-
-		case r.URL.Path == "/login" && r.Method == "POST":
+		if r.URL.Path == "/login" && r.Method == "POST" {
 			// Real server returns 200 with login form on failure, NO HX-Trigger
 			w.Header().Set("Content-Type", "text/html")
 			w.WriteHeader(http.StatusOK)
 			fmt.Fprint(w, `<form id="login-form"><div id="login-error-message">Invalid credentials</div></form>`)
-
-		default:
-			w.WriteHeader(http.StatusNotFound)
+			return
 		}
+		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer server.Close()
 

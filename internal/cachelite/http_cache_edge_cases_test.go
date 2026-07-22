@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -44,7 +43,7 @@ func TestContentTypePreservation(t *testing.T) {
 		w.Header().Set("Content-Type", "image/jpeg")
 		w.Header().Set("Cache-Control", "public, max-age=3600")
 		w.WriteHeader(200)
-		_, _ = w.Write([]byte("fake-jpeg-binary-data"))
+		_, _ = w.Write([]byte("<html><body>fake-jpeg-binary-data</body></html>"))
 	})
 
 	cfg := cachelite.CacheConfig{
@@ -77,58 +76,6 @@ func TestContentTypePreservation(t *testing.T) {
 
 	if w2.Header().Get("Content-Type") != "image/jpeg" {
 		t.Errorf("cached Content-Type = %q, want image/jpeg", w2.Header().Get("Content-Type"))
-	}
-}
-
-// TestRangeRequest_NoCompression verifies compression is disabled for Range requests.
-func TestRangeRequest_NoCompression(t *testing.T) {
-	db := createTestDBPool(t)
-	defer db.Close()
-
-	payload := []byte("0123456789abcdefghijklmnopqrstuvwxyz")
-
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "image/jpeg")
-		w.Header().Set("Cache-Control", "public, max-age=3600")
-		w.Header().Set("Accept-Ranges", "bytes")
-
-		// Simplified range handling for test
-		rangeHdr := r.Header.Get("Range")
-		if rangeHdr != "" {
-			w.WriteHeader(206)
-			_, _ = w.Write(payload)
-			return
-		}
-
-		w.WriteHeader(200)
-		_, _ = w.Write(payload)
-	})
-
-	cfg := cachelite.CacheConfig{
-		Enabled:      true,
-		MaxEntrySize: 10 * 1024 * 1024,
-		MaxTotalSize: 500 * 1024 * 1024,
-		DefaultTTL:   time.Hour,
-	}
-
-	cacheMW := createTestMiddlewareForEdgeCases(t, db, cfg)
-	mw := cacheMW.Middleware(handler)
-
-	// Request with Range + Accept-Encoding
-	req := httptest.NewRequest("GET", "/photo.jpg", nil)
-	req.Header.Set("Range", "bytes=0-10")
-	req.Header.Set("Accept-Encoding", "gzip")
-	w := httptest.NewRecorder()
-	mw.ServeHTTP(w, req)
-
-	if w.Code != 206 {
-		t.Fatalf("status = %d, want 206", w.Code)
-	}
-	if ce := w.Header().Get("Content-Encoding"); ce == "gzip" {
-		t.Errorf("Content-Encoding = %q, should NOT be gzip for Range request", ce)
-	}
-	if ct := w.Header().Get("Content-Type"); ct != "image/jpeg" {
-		t.Errorf("Content-Type = %q, want image/jpeg", ct)
 	}
 }
 
@@ -263,7 +210,7 @@ func TestWeakETag_304(t *testing.T) {
 		w.Header().Set("Cache-Control", "public, max-age=3600")
 		w.Header().Set("ETag", `W/"weak-123"`)
 		w.WriteHeader(200)
-		_, _ = w.Write([]byte("content"))
+		_, _ = w.Write([]byte("<html><body>content</body></html>"))
 	})
 
 	cfg := cachelite.CacheConfig{
@@ -308,7 +255,7 @@ func TestCacheIntegrity(t *testing.T) {
 	db := createTestDBPool(t)
 	defer db.Close()
 
-	originalContent := "This is test content that should be cached"
+	originalContent := "<html><body>This is test content that should be cached</body></html>"
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
@@ -348,46 +295,5 @@ func TestCacheIntegrity(t *testing.T) {
 	body2 := w2.Body.String()
 	if body2 != originalContent {
 		t.Errorf("HIT body = %q, want %q", body2, originalContent)
-	}
-}
-
-// TestIdentityEncoding_NoCompression verifies identity encoding prevents compression.
-func TestIdentityEncoding_NoCompression(t *testing.T) {
-	db := createTestDBPool(t)
-	defer db.Close()
-
-	content := strings.Repeat("test", 100)
-
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain")
-		w.Header().Set("Cache-Control", "public, max-age=3600")
-		w.WriteHeader(200)
-		_, _ = w.Write([]byte(content))
-	})
-
-	cfg := cachelite.CacheConfig{
-		Enabled:      true,
-		MaxEntrySize: 10 * 1024 * 1024,
-		MaxTotalSize: 500 * 1024 * 1024,
-		DefaultTTL:   time.Hour,
-	}
-
-	cacheMW := createTestMiddlewareForEdgeCases(t, db, cfg)
-	mw := cacheMW.Middleware(handler)
-
-	// Request with identity encoding
-	req := httptest.NewRequest("GET", "/identity", nil)
-	req.Header.Set("Accept-Encoding", "identity")
-	w := httptest.NewRecorder()
-	mw.ServeHTTP(w, req)
-
-	if w.Code != 200 {
-		t.Fatalf("status = %d, want 200", w.Code)
-	}
-	if ce := w.Header().Get("Content-Encoding"); ce != "" && ce != "identity" {
-		t.Errorf("Content-Encoding = %q, should be empty or identity", ce)
-	}
-	if w.Body.String() != content {
-		t.Errorf("body mismatch, got %d bytes want %d", w.Body.Len(), len(content))
 	}
 }

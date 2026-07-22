@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/lbe/sfpg-go/internal/cachelite"
 )
 
 // configField describes a single configuration field for the table-driven
@@ -123,7 +125,7 @@ func intField(dbKey, yamlKey string, ptr func(*Config) *int, parse func(string) 
 
 // --- bool fields ---
 // name is the human-readable field name used in error messages
-// (e.g., "compression enable" not "server_compression_enable").
+// (e.g., "http cache enable" not "enable_http_cache").
 func boolField(dbKey, yamlKey, name string, ptr func(*Config) *bool, restart, isCheckbox bool) field[bool] {
 	return field[bool]{
 		dbKey:      dbKey,
@@ -259,6 +261,15 @@ func parseDurationNamed(friendlyName, dbKey string) func(string) (time.Duration,
 	}
 }
 
+// validateHTTPCacheBodyCodec validates an http_cache_body_codec value via the
+// cachelite package's registered codec IDs.
+func validateHTTPCacheBodyCodec(v string) (string, error) {
+	if err := cachelite.ValidateWriteCodecID(v); err != nil {
+		return "", fmt.Errorf("invalid http cache body codec: %w", err)
+	}
+	return v, nil
+}
+
 // validateOneOfNamed returns a string validator that checks the (case-insensitive)
 // value is in the allowed set. The original value is returned on success.
 // name is used in error messages: "invalid <name> %q, must be one of: ..."
@@ -339,7 +350,7 @@ func themesField() configField {
 	}
 }
 
-// fields returns the single source of truth for all 34 config fields.
+// fields returns the single source of truth for all 38 config fields.
 // The table is the sole definition used by ToMap, SetValueFromString,
 // ExportToYAML, IdentifyChanges, restartRequiredKeys, MergeDefaults,
 // and RecoverFromCorruption.
@@ -360,6 +371,7 @@ func fields() []configField {
 			stringField("current_theme", "current-theme", func(c *Config) *string { return &c.CurrentTheme }, nil, false).toConfigField(),
 			stringField("image_directory", "image-directory", func(c *Config) *string { return &c.ImageDirectory }, nil, true).toConfigField(),
 			stringField("etag_version", "etag-version", func(c *Config) *string { return &c.ETagVersion }, nil, false).toConfigField(),
+			stringField("http_cache_body_codec", "http-cache-body-codec", func(c *Config) *string { return &c.HTTPCacheBodyCodec }, validateHTTPCacheBodyCodec, false).toConfigField(),
 			stringField("session_same_site", "session-same-site", func(c *Config) *string { return &c.SessionSameSite }, validateOneOfExactNamed("session same-site", "Lax", "Strict", "None"), true).toConfigField(),
 
 			// --- Int fields (11) ---
@@ -383,7 +395,6 @@ func fields() []configField {
 			// Note: third arg is human-readable name for error messages, not dbKey.
 			boolField("session_http_only", "session-http-only", "session http only", func(c *Config) *bool { return &c.SessionHttpOnly }, true, true).toConfigField(),
 			boolField("session_secure", "session-secure", "session secure", func(c *Config) *bool { return &c.SessionSecure }, true, true).toConfigField(),
-			boolField("server_compression_enable", "compression", "compression enable", func(c *Config) *bool { return &c.ServerCompressionEnable }, true, true).toConfigField(),
 			boolField("enable_http_cache", "http-cache", "http cache enable", func(c *Config) *bool { return &c.EnableHTTPCache }, true, true).toConfigField(),
 			boolField("enable_cache_preload", "enable-cache-preload", "enable cache preload", func(c *Config) *bool { return &c.EnableCachePreload }, false, true).toConfigField(),
 			boolField("run_file_discovery", "discover", "run file discovery", func(c *Config) *bool { return &c.RunFileDiscovery }, false, true).toConfigField(),

@@ -1,6 +1,6 @@
 # HTMX Reference for AI Context
 
-> **Project note:** This file is a generic HTMX cheat sheet. For project-specific patterns actually used in SFPG templates (e.g., `hx-sync`, `hx-select`, `hx-vals` for CSRF tokens, polling), see `web/templates/` and `references/hyperscript-reference.md`.
+> **Project note:** This file is a generic HTMX cheat sheet. For project-specific patterns actually used in SFPG templates (e.g., `hx-sync`, `hx-select`, polling), see `web/templates/` and `references/hyperscript-reference.md`.
 
 ## Overview
 

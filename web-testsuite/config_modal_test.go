@@ -30,7 +30,7 @@ func TestConfigModal_SaveSiteName(t *testing.T) {
 
 	// Fetch the current config form and capture all field values so we can
 	// resubmit them without accidentally toggling checkboxes to false.
-	originalValues, token, err := parseConfigForm(t, client)
+	originalValues, err := parseConfigForm(t, client)
 	if err != nil {
 		t.Fatalf("failed to parse config form: %v", err)
 	}
@@ -46,7 +46,6 @@ func TestConfigModal_SaveSiteName(t *testing.T) {
 	for _, key := range []string{"admin_current_password", "admin_new_password", "admin_confirm_password", "yaml"} {
 		submission.Del(key)
 	}
-	submission.Set("csrf_token", token)
 
 	// POST the config form (simulates clicking Save Settings in the modal).
 	resp := doRequest(t, client, http.MethodPost, "/config", submission, false)
@@ -73,7 +72,7 @@ func TestConfigModal_SaveSiteName(t *testing.T) {
 
 	// Re-fetch the config form and verify the new site_name persisted.
 	t.Run("#71-config-persisted", func(t *testing.T) {
-		values, _, err := parseConfigForm(t, client)
+		values, err := parseConfigForm(t, client)
 		if err != nil {
 			t.Fatalf("failed to re-parse config form: %v", err)
 		}
@@ -95,7 +94,7 @@ func TestConfigModal_SaveSiteName(t *testing.T) {
 	// Restore the original site_name so the snapshot/restore cleanup is
 	// left with a clean state.
 	t.Run("#72-config-restore-site-name", func(t *testing.T) {
-		restoreValues, token, err := parseConfigForm(t, client)
+		restoreValues, err := parseConfigForm(t, client)
 		if err != nil {
 			t.Fatalf("failed to parse config form for restore: %v", err)
 		}
@@ -104,7 +103,6 @@ func TestConfigModal_SaveSiteName(t *testing.T) {
 		for _, key := range []string{"admin_current_password", "admin_new_password", "admin_confirm_password", "yaml"} {
 			restoreValues.Del(key)
 		}
-		restoreValues.Set("csrf_token", token)
 
 		resp := doRequest(t, client, http.MethodPost, "/config", restoreValues, false)
 		defer resp.Body.Close()
@@ -129,8 +127,7 @@ func TestConfigModal_SaveSiteName(t *testing.T) {
 func TestConfigModal_Unauthenticated_SaveFails(t *testing.T) {
 	client := newClient()
 	resp := doRequest(t, client, http.MethodPost, "/config", url.Values{
-		"site_name":  {"ShouldNotPersist"},
-		"csrf_token": {"dummy"},
+		"site_name": {"ShouldNotPersist"},
 	}, false)
 	defer resp.Body.Close()
 
@@ -148,39 +145,38 @@ func TestConfigModal_Unauthenticated_SaveFails(t *testing.T) {
 }
 
 // parseConfigForm fetches GET /config, parses the form, and returns all
-// current field values plus the CSRF token. It understands text inputs,
-// checkboxes, single-selects, and multi-selects.
-func parseConfigForm(t *testing.T, client *http.Client) (url.Values, string, error) {
+// current field values. It understands text inputs, checkboxes, single-selects,
+// and multi-selects.
+func parseConfigForm(t *testing.T, client *http.Client) (url.Values, error) {
 	t.Helper()
 	return parseConfigFormRaw(client)
 }
 
 // parseConfigFormRaw is the TestMain-safe variant of parseConfigForm: same
 // logic, but takes no *testing.T so package-level setup helpers can use it.
-func parseConfigFormRaw(client *http.Client) (url.Values, string, error) {
+func parseConfigFormRaw(client *http.Client) (url.Values, error) {
 	resp, err := client.Get(serverURL + "/config")
 	if err != nil {
-		return nil, "", fmt.Errorf("GET /config: %w", err)
+		return nil, fmt.Errorf("GET /config: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, "", fmt.Errorf("GET /config expected 200, got %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("GET /config expected 200, got %d: %s", resp.StatusCode, string(body))
 	}
 
 	doc, err := html.Parse(resp.Body)
 	if err != nil {
-		return nil, "", fmt.Errorf("parse HTML: %w", err)
+		return nil, fmt.Errorf("parse HTML: %w", err)
 	}
 
 	form := FindElementByID(doc, "config-form")
 	if form == nil {
-		return nil, "", fmt.Errorf("#config-form not found")
+		return nil, fmt.Errorf("#config-form not found")
 	}
 
 	values := url.Values{}
-	var csrfToken string
 
 	for _, input := range FindAllElements(form, func(n *html.Node) bool {
 		return n.Type == html.ElementNode && (n.Data == "input" || n.Data == "select" || n.Data == "textarea")
@@ -189,6 +185,8 @@ func parseConfigFormRaw(client *http.Client) (url.Values, string, error) {
 		if name == "" {
 			continue
 		}
+
+		// Hidden token input removed; COP handles request forgery at the router level
 
 		switch input.Data {
 		case "input":
@@ -232,17 +230,9 @@ func parseConfigFormRaw(client *http.Client) (url.Values, string, error) {
 		case "textarea":
 			values.Set(name, GetTextContent(input))
 		}
-
-		if name == "csrf_token" {
-			csrfToken = values.Get(name)
-		}
 	}
 
-	if csrfToken == "" {
-		return nil, "", fmt.Errorf("csrf_token not found in config form")
-	}
-
-	return values, csrfToken, nil
+	return values, nil
 }
 
 // cloneValues returns a deep copy of url.Values.
@@ -270,7 +260,7 @@ func TestConfigModal_SaveLoginSecurityFields(t *testing.T) {
 	client := newClient()
 	login(t, client)
 
-	originalValues, token, err := parseConfigForm(t, client)
+	originalValues, err := parseConfigForm(t, client)
 	if err != nil {
 		t.Fatalf("failed to parse config form: %v", err)
 	}
@@ -288,8 +278,6 @@ func TestConfigModal_SaveLoginSecurityFields(t *testing.T) {
 	for _, key := range []string{"admin_current_password", "admin_new_password", "admin_confirm_password", "yaml"} {
 		submission.Del(key)
 	}
-	submission.Set("csrf_token", token)
-
 	resp := doRequest(t, client, http.MethodPost, "/config", submission, false)
 	defer resp.Body.Close()
 
@@ -303,7 +291,7 @@ func TestConfigModal_SaveLoginSecurityFields(t *testing.T) {
 
 	// Re-fetch the config form and verify the new values persisted.
 	t.Run("login-security-persisted", func(t *testing.T) {
-		values, _, err := parseConfigForm(t, client)
+		values, err := parseConfigForm(t, client)
 		if err != nil {
 			t.Fatalf("failed to re-parse config form: %v", err)
 		}
@@ -321,7 +309,7 @@ func TestConfigModal_SaveLoginSecurityFields(t *testing.T) {
 
 	// Restore the original values (mirrors #72-config-restore-site-name).
 	t.Run("login-security-restore", func(t *testing.T) {
-		restoreValues, token, err := parseConfigForm(t, client)
+		restoreValues, err := parseConfigForm(t, client)
 		if err != nil {
 			t.Fatalf("failed to parse config form for restore: %v", err)
 		}
@@ -332,7 +320,6 @@ func TestConfigModal_SaveLoginSecurityFields(t *testing.T) {
 		for _, key := range []string{"admin_current_password", "admin_new_password", "admin_confirm_password", "yaml"} {
 			restoreValues.Del(key)
 		}
-		restoreValues.Set("csrf_token", token)
 
 		resp := doRequest(t, client, http.MethodPost, "/config", restoreValues, false)
 		defer resp.Body.Close()

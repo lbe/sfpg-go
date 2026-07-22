@@ -19,7 +19,6 @@ func TestRenderPage_EdgeCases(t *testing.T) {
 		data := map[string]any{
 			"Title":        "Test Gallery",
 			"FolderName":   "TestFolder",
-			"CSRFToken":    "test-token",
 			"CacheVersion": "test-version",
 		}
 		var buf bytes.Buffer
@@ -34,7 +33,6 @@ func TestRenderPage_EdgeCases(t *testing.T) {
 		// Test both dashboardPartialTemplate and hamburgerMenuItemsTemplate execution
 		data := map[string]any{
 			"Title":        "Dashboard",
-			"CSRFToken":    "test-token",
 			"CacheVersion": "test-version",
 		}
 		var buf bytes.Buffer

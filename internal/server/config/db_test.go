@@ -63,7 +63,6 @@ func TestLoadFromDatabase(t *testing.T) {
 func TestLoadFromOpt(t *testing.T) {
 	opt := getopt.Opt{
 		Port:               getopt.OptInt{Int: 9090, IsSet: true},
-		EnableCompression:  getopt.OptBool{Bool: true, IsSet: true},
 		EnableHTTPCache:    getopt.OptBool{Bool: false, IsSet: true},
 		EnableCachePreload: getopt.OptBool{Bool: false, IsSet: true},
 		RunFileDiscovery:   getopt.OptBool{Bool: false, IsSet: true},
@@ -77,9 +76,6 @@ func TestLoadFromOpt(t *testing.T) {
 	}
 	if cfg.ListenerPort != 9090 {
 		t.Errorf("expected ListenerPort to be 9090, got %d", cfg.ListenerPort)
-	}
-	if !cfg.ServerCompressionEnable {
-		t.Errorf("expected ServerCompressionEnable to be true, got %v", cfg.ServerCompressionEnable)
 	}
 	if cfg.EnableHTTPCache {
 		t.Errorf("expected EnableHTTPCache to be false, got %v", cfg.EnableHTTPCache)
@@ -268,15 +264,6 @@ func TestTypeConversion(t *testing.T) {
 		t.Errorf("expected ListenerPort to be 9999, got %d", cfg.ListenerPort)
 	}
 
-	// Test string to bool conversion
-	err = cfg.SetValueFromString("server_compression_enable", "false")
-	if err != nil {
-		t.Fatalf("failed to set server_compression_enable: %v", err)
-	}
-	if cfg.ServerCompressionEnable {
-		t.Error("expected ServerCompressionEnable to be false")
-	}
-
 	// Test string to duration conversion
 	err = cfg.SetValueFromString("cache_max_time", "24h")
 	if err != nil {
@@ -311,7 +298,6 @@ func TestIdentifyChanges(t *testing.T) {
 	other.SessionHttpOnly = false
 	other.SessionSecure = false
 	other.SessionSameSite = "Strict"
-	other.ServerCompressionEnable = false
 	other.EnableHTTPCache = false
 	other.CacheMaxSize = cfg.CacheMaxSize + 1
 	other.CacheMaxTime = cfg.CacheMaxTime + time.Second
@@ -433,7 +419,7 @@ func TestIdentifyChanges_AllFieldTypes(t *testing.T) {
 		{"session_http_only", func(c *Config) { c.SessionHttpOnly = false }, "session-http-only"},
 		{"session_secure", func(c *Config) { c.SessionSecure = false }, "session-secure"},
 		{"session_same_site", func(c *Config) { c.SessionSameSite = "Strict" }, "session-same-site"},
-		{"server_compression_enable", func(c *Config) { c.ServerCompressionEnable = false }, "compression"},
+
 		{"enable_http_cache", func(c *Config) { c.EnableHTTPCache = false }, "http-cache"},
 		{"cache_max_size", func(c *Config) { c.CacheMaxSize = 1000000 }, "cache-max-size"},
 		{"cache_max_time", func(c *Config) { c.CacheMaxTime = 1 * time.Hour }, "cache-max-time"},

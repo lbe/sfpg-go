@@ -10,7 +10,7 @@
                 trigger closeModal on #lightbox_modal
                 wait 200ms
               end
-              -- Signal HTMX to load logout form with fresh CSRF token from uncached endpoint
+              -- Signal HTMX to load logout form from uncached endpoint
               send logoutModalOpened to body
             end"
 />

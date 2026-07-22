@@ -18,6 +18,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -176,14 +177,26 @@ func TestSetDB(t *testing.T) {
 		app.dbRwPool.Put(rwConn)
 	})
 
+	t.Run("dque path configured after setDB", func(t *testing.T) {
+		if app.writeBatcher != nil {
+			t.Fatal("writeBatcher should not be initialized by setDB alone")
+		}
+		dqueDir := filepath.Join(filepath.Dir(app.dbPaths.Main), filepath.Base(app.dbPaths.Main)+"-dque")
+		if app.dqueDirPath != dqueDir {
+			t.Fatalf("dqueDirPath = %q, want %q", app.dqueDirPath, dqueDir)
+		}
+	})
+
 	t.Run("writeBatcher configured with dque overflow", func(t *testing.T) {
+		app.StartWriteBatcher(app.RuntimeManager.ctx, true)
+
 		if app.writeBatcher == nil {
-			t.Fatal("writeBatcher should be initialized after setDB")
+			t.Fatal("writeBatcher should be initialized after StartWriteBatcher")
 		}
 
 		stats := app.writeBatcher.GetStats()
 		if !stats.DQueEnabled {
-			t.Error("writeBatcher.DQueEnabled is false — DQueDirPath not set in setDB()")
+			t.Error("writeBatcher.DQueEnabled is false — DQueDirPath not set")
 		}
 
 		// Verify the dque overflow directory exists on disk
@@ -240,6 +253,8 @@ func TestReconfigurePools_DQueWired(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reconfigurePoolsFromConfig failed: %v", err)
 	}
+
+	app.StartWriteBatcher(app.RuntimeManager.ctx, true)
 
 	if app.writeBatcher == nil {
 		t.Fatal("writeBatcher is nil after reconfigure")
@@ -1156,6 +1171,7 @@ func TestApp_reconfigurePoolsFromConfig_UpdatesCacheMiddleware(t *testing.T) {
 	app.ConfigManager.ConfigMu.Lock()
 	app.ConfigManager.Config.EnableHTTPCache = true
 	app.ConfigManager.ConfigMu.Unlock()
+	app.StartWriteBatcher(app.RuntimeManager.ctx, true)
 	app.initializeHTTPCache()
 
 	if app.cacheMW == nil {
@@ -1926,12 +1942,12 @@ func TestStartup_OrderingConstraint(t *testing.T) {
 
 // --- merged from app_startup_test.go ---
 type recordingMemoryReclaimer struct {
-	called bool
+	called atomic.Bool
 	cfg    MemoryReclaimerConfig
 }
 
 func (r *recordingMemoryReclaimer) Reclaim(cfg MemoryReclaimerConfig) {
-	r.called = true
+	r.called.Store(true)
 	r.cfg = cfg
 }
 
@@ -1986,7 +2002,7 @@ func TestApp_Run_DefaultStartup(t *testing.T) {
 	if !strings.Contains(serveHook.addr, ":") {
 		t.Errorf("Serve addr = %q, expected listener address", serveHook.addr)
 	}
-	if !reclaimer.called {
+	if !reclaimer.called.Load() {
 		t.Error("memory reclaimer was not started")
 	}
 
@@ -2135,14 +2151,14 @@ func TestCase1_CLIOverridesUnchangedField(t *testing.T) {
 	app.ConfigManager.Config.ListenerPort = 8081
 	app.ConfigManager.ConfigMu.Unlock()
 
-	// Simulate user changing compression (not port) via web UI
+	// Simulate user changing a field (not port) via web UI
 	// changedFields does NOT include "listener_port"
 	newConfig := config.DefaultConfig()
-	newConfig.ListenerPort = 8081             // DB value (unchanged)
-	newConfig.ServerCompressionEnable = false // User changed compression
+	newConfig.ListenerPort = 8081  // DB value (unchanged)
+	newConfig.SiteName = "Updated" // User changed site name
 
-	// Call UpdateConfig with compression in changedFields
-	app.UpdateConfigWithPrecedence(newConfig, []string{"server_compression_enable"})
+	// Call UpdateConfig with site_name in changedFields
+	app.UpdateConfigWithPrecedence(newConfig, []string{"site_name"})
 
 	// After UpdateConfig, port should be 8083 (CLI value) because it wasn't changed
 	app.ConfigManager.ConfigMu.RLock()

@@ -20,15 +20,8 @@ func NewConfigETagHandler(h *ConfigHandlers) *ConfigETagHandler {
 // ConfigIncrementETag increments the application ETag version.
 // POST /config/increment-etag
 func (h *ConfigETagHandler) ConfigIncrementETag(w http.ResponseWriter, r *http.Request) {
-	// Parse form to get CSRF token
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "Bad Request", http.StatusBadRequest)
-		return
-	}
-
-	// Validate CSRF token
-	if !h.validateCsrf(r) {
-		http.Error(w, "Forbidden - CSRF token invalid", http.StatusForbidden)
 		return
 	}
 

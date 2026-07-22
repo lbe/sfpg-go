@@ -19,19 +19,10 @@ import (
 // mockSessionManager is a mock implementation for testing
 type mockSessionManager struct {
 	isAuthenticated bool
-	csrfToken       string
 }
 
 func (m *mockSessionManager) IsAuthenticated(w http.ResponseWriter, r *http.Request) bool {
 	return m.isAuthenticated
-}
-
-func (m *mockSessionManager) EnsureCSRFToken(w http.ResponseWriter, r *http.Request) string {
-	return m.csrfToken
-}
-
-func (m *mockSessionManager) ValidateCSRFToken(r *http.Request) bool {
-	return true
 }
 
 func (m *mockSessionManager) ClearSession(w http.ResponseWriter, r *http.Request) {}

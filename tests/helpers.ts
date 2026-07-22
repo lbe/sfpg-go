@@ -19,7 +19,7 @@ export function menu(page: Page): Locator {
  * Full login flow via the UI (not HTTP helpers) so we are testing the
  * exact same interaction a real user performs.
  *
- * 1. Navigate to gallery  → establishes a session and gets a CSRF token
+ * 1. Navigate to gallery  → establishes a session
  * 2. Open hamburger menu  → click Login label → opens login modal
  * 3. Fill username / password → submit
  * 4. Wait for auth-changed → modal closes via hyperscript

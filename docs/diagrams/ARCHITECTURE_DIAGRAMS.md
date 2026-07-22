@@ -31,8 +31,7 @@ graph TB
     subgraph "Server Layer"
         Router[HTTP Router]
         CacheMW[Cache Middleware]
-        CompressMW[Compression Middleware]
-        CSRFMW[CSRF Protection]
+        COPMW[CrossOriginProtection]
         Handlers[Handler Groups]
     end
 
@@ -63,9 +62,8 @@ graph TB
 
     Browser --> Router
     Router --> CacheMW
-    CacheMW --> CompressMW
-    CompressMW --> CSRFMW
-    CSRFMW --> Handlers
+    CacheMW --> COPMW
+    COPMW --> Handlers
 
     Handlers --> App
     App --> ConfigSvc
@@ -100,19 +98,17 @@ sequenceDiagram
     participant Client as Browser
     participant Router as HTTP Router
     participant CacheMW as Cache Middleware
-    participant CompressMW as Compression Middleware
-    participant CSRFMW as CSRF Protection
+    participant COPMW as CrossOriginProtection
     participant Handler as Handler
     participant Service as Service
     participant DB as Database
 
     Client->>Router: GET /gallery/1
     Router->>CacheMW: Forward
-    CacheMW->>CompressMW: Forward
-    CompressMW->>CSRFMW: Forward
-    CSRFMW->>CSRFMW: Allow safe method
+    CacheMW->>COPMW: Forward
+    COPMW->>COPMW: Allow safe method
 
-    CSRFMW->>CacheMW: Forward
+    COPMW->>CacheMW: Forward
     CacheMW->>CacheMW: Check cache (cache key)
     alt Cache Hit
         CacheMW-->>Client: Return cached response (304 or 200)
@@ -157,8 +153,7 @@ stateDiagram-v2
     end note
 
     note right of SessionCreation
-        Creates secure cookie
-        with CSRF token
+        Creates secure session cookie
     end note
 ```
 
@@ -474,7 +469,7 @@ graph TD
     subgraph "Middleware"
         AuthMW[middleware/auth.go]
         CacheMW[cachelite/middleware.go]
-        CSRFMW[middleware/csrf.go]
+        COPMW[http.CrossOriginProtection]
         LogMW[middleware/logging.go]
     end
 
@@ -533,7 +528,7 @@ graph TD
     ServerH --> CacheBatch
 
     Router --> CacheMW
-    Router --> CSRFMW
+    Router --> COPMW
     Router --> LogMW
 
     CacheMW --> CacheSubmit

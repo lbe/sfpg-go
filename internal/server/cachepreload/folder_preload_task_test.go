@@ -128,14 +128,13 @@ func TestFolderPreloadTask_ImagesPreloadInfoAndLightbox(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 
 	task := &FolderPreloadTask{
-		FolderID:          1,
-		SessionID:         "test-session",
-		ETagVersion:       "v1",
-		PreferredEncoding: "gzip", // from triggering request
-		CacheableRoutes:   []string{"/gallery/", "/lightbox/", "/info/folder/", "/info/image/"},
-		DBRoPool:          dbRoPool,
-		TaskTracker:       &TaskTracker{},
-		Scheduler:         sched,
+		FolderID:        1,
+		SessionID:       "test-session",
+		ETagVersion:     "v1",
+		CacheableRoutes: []string{"/gallery/", "/lightbox/", "/info/folder/", "/info/image/"},
+		DBRoPool:        dbRoPool,
+		TaskTracker:     &TaskTracker{},
+		Scheduler:       sched,
 		RequestConfig: InternalRequestConfig{
 			Handler:     http.HandlerFunc(handlerFunc),
 			ETagVersion: "v1",
@@ -208,15 +207,10 @@ func TestFolderPreloadTask_SkipsAlreadyCachedRoutes(t *testing.T) {
 	etagVersion := "v1"
 	query := fmt.Sprintf("v=%s", etagVersion)
 	cacheKeyInfo := cachelite.NewCacheKey(cachelite.CacheKeyParams{
-		Method: "GET",
-		Path:   "/info/image/42",
-		Query:  query,
-		HTMX: cachelite.HTMXParams{
-			Request:   "true",
-			Target:    "box_info",
-			IsVariant: true,
-		},
-		Encoding: "gzip",
+		Method:  "GET",
+		Path:    "/info/image/42",
+		Query:   query,
+		Variant: "box_info",
 	})
 	now := time.Now().Unix()
 	cachedEntry := &cachelite.HTTPCacheEntry{
@@ -224,7 +218,6 @@ func TestFolderPreloadTask_SkipsAlreadyCachedRoutes(t *testing.T) {
 		Method:        "GET",
 		Path:          "/info/image/42",
 		QueryString:   sql.NullString{String: query, Valid: true},
-		Encoding:      "gzip",
 		Status:        200,
 		Body:          []byte("cached response"),
 		ContentLength: sql.NullInt64{Int64: int64(len("cached response")), Valid: true},
@@ -242,14 +235,13 @@ func TestFolderPreloadTask_SkipsAlreadyCachedRoutes(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 
 	task := &FolderPreloadTask{
-		FolderID:          1,
-		SessionID:         "test-session",
-		ETagVersion:       etagVersion,
-		PreferredEncoding: "gzip",
-		CacheableRoutes:   []string{"/gallery/", "/lightbox/", "/info/folder/", "/info/image/"},
-		DBRoPool:          dbRoPool,
-		TaskTracker:       &TaskTracker{},
-		Scheduler:         sched,
+		FolderID:        1,
+		SessionID:       "test-session",
+		ETagVersion:     etagVersion,
+		CacheableRoutes: []string{"/gallery/", "/lightbox/", "/info/folder/", "/info/image/"},
+		DBRoPool:        dbRoPool,
+		TaskTracker:     &TaskTracker{},
+		Scheduler:       sched,
 		RequestConfig: InternalRequestConfig{
 			Handler:     http.HandlerFunc(handlerFunc),
 			ETagVersion: etagVersion,
@@ -554,9 +546,7 @@ func TestFolderPreloadTask_Run_ScheduleAddTaskError(t *testing.T) {
 	}
 
 	// The cache key should be unregistered after the failed schedule.
-	// Re-claiming the exact key is hard because it includes encoding/query,
-	// so verify via TryClaimTask on a fresh equivalent path.
-	if !tt.TryClaimTask(cachelite.NewCacheKey(cachelite.NewCacheKeyForPreload("/gallery/1", "v=v1", "identity", "", false))) {
+	if !tt.TryClaimTask(cachelite.NewCacheKey(cachelite.NewCacheKeyForPreload("/gallery/1", "v=v1", "gallery-content"))) {
 		t.Error("expected cache key to be unregistered after failed schedule")
 	}
 }

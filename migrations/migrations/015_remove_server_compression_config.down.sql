@@ -1,0 +1,1 @@
+-- No-op: the config row deletion is non-destructive and will be recreated if needed.

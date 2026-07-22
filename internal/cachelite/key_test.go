@@ -9,29 +9,17 @@ import (
 func TestCacheKey_Consistency(t *testing.T) {
 	// Same parameters should generate same key regardless of source
 	requestParams := CacheKeyParams{
-		Method: "GET",
-		Path:   "/gallery/123",
-		Query:  "v=1",
-		HTMX: HTMXParams{
-			Request:   "true",
-			Target:    "gallery-content",
-			IsVariant: true,
-		},
-		Theme:    "dark",
-		Encoding: "gzip",
+		Method:  "GET",
+		Path:    "/gallery/123",
+		Query:   "v=1",
+		Variant: "gallery-content",
 	}
 
 	preloadParams := CacheKeyParams{
-		Method: "GET",
-		Path:   "/gallery/123",
-		Query:  "v=1",
-		HTMX: HTMXParams{
-			Request:   "true",
-			Target:    "gallery-content",
-			IsVariant: true,
-		},
-		Theme:    "dark",
-		Encoding: "gzip",
+		Method:  "GET",
+		Path:    "/gallery/123",
+		Query:   "v=1",
+		Variant: "gallery-content",
 	}
 
 	middlewareKey := NewCacheKey(requestParams)
@@ -42,28 +30,18 @@ func TestCacheKey_Consistency(t *testing.T) {
 	}
 }
 
-func TestCacheKey_HTMXVariants(t *testing.T) {
-	// All HX parameters should be included
+func TestCacheKey_Variant(t *testing.T) {
+	// Variant name should be included
 	params := CacheKeyParams{
-		Method: "GET",
-		Path:   "/gallery/123",
-		Query:  "",
-		HTMX: HTMXParams{
-			Request:   "true",
-			Target:    "gallery-content",
-			IsVariant: true,
-		},
-		Theme:    "dark",
-		Encoding: "gzip",
+		Method:  "GET",
+		Path:    "/gallery/123",
+		Query:   "",
+		Variant: "gallery-content",
 	}
 
 	key := NewCacheKey(params)
-	expectedComponents := []string{"HX=true", "HXTarget=gallery-content", "IsVariant=true", "Theme=dark", "|gzip"}
-
-	for _, component := range expectedComponents {
-		if !strings.Contains(key, component) {
-			t.Errorf("Cache key missing component %s in key: %s", component, key)
-		}
+	if !strings.Contains(key, "|Variant=gallery-content") {
+		t.Errorf("Cache key missing variant component in key: %s", key)
 	}
 }
 
@@ -74,9 +52,8 @@ func TestNewCacheKeyForRequest(t *testing.T) {
 	}
 	req.Header.Set("HX-Request", "true")
 	req.Header.Set("HX-Target", "gallery-content")
-	req.Header.Set("Accept-Encoding", "gzip")
 
-	params := NewCacheKeyForRequest(req, "dark")
+	params := NewCacheKeyForRequest(req)
 
 	if params.Method != "GET" {
 		t.Errorf("Expected Method GET, got %s", params.Method)
@@ -87,25 +64,14 @@ func TestNewCacheKeyForRequest(t *testing.T) {
 	if params.Query != "v=1" {
 		t.Errorf("Expected Query v=1, got %s", params.Query)
 	}
-	if params.HTMX.Request != "true" {
-		t.Errorf("Expected HTMX.Request true, got %s", params.HTMX.Request)
+	if params.Variant != "gallery-content" {
+		t.Errorf("Expected Variant gallery-content, got %s", params.Variant)
 	}
-	if params.HTMX.Target != "gallery-content" {
-		t.Errorf("Expected HTMX.Target gallery-content, got %s", params.HTMX.Target)
-	}
-	if !params.HTMX.IsVariant {
-		t.Error("Expected IsVariant true")
-	}
-	if params.Theme != "dark" {
-		t.Errorf("Expected Theme dark, got %s", params.Theme)
-	}
-	if params.Encoding != "gzip" {
-		t.Errorf("Expected Encoding gzip, got %s", params.Encoding)
-	}
+	// Encoding is no longer part of CacheKeyParams.
 }
 
 func TestNewCacheKeyForPreload(t *testing.T) {
-	params := NewCacheKeyForPreload("/gallery/123", "v=1", "gzip", "dark", true)
+	params := NewCacheKeyForPreload("/gallery/123", "v=1", "gallery-content")
 
 	if params.Method != "GET" {
 		t.Errorf("Expected Method GET, got %s", params.Method)
@@ -113,90 +79,164 @@ func TestNewCacheKeyForPreload(t *testing.T) {
 	if params.Path != "/gallery/123" {
 		t.Errorf("Expected Path /gallery/123, got %s", params.Path)
 	}
-	if params.HTMX.Request != "true" {
-		t.Errorf("Expected HTMX.Request true, got %s", params.HTMX.Request)
-	}
-	if params.HTMX.Target != "gallery-content" {
-		t.Errorf("Expected HTMX.Target gallery-content, got %s", params.HTMX.Target)
+	if params.Variant != "gallery-content" {
+		t.Errorf("Expected Variant gallery-content, got %s", params.Variant)
 	}
 }
 
-func TestNewCacheKeyForRequest_LightboxTargetNormalization(t *testing.T) {
-	targets := []string{"lightbox_content", "lightbox-ui"}
-	var keys []string
-
-	for _, target := range targets {
-		req, err := http.NewRequest("GET", "/lightbox/123?v=1", nil)
-		if err != nil {
-			t.Fatalf("http.NewRequest: %v", err)
-		}
-		req.Header.Set("HX-Request", "true")
-		req.Header.Set("HX-Target", target)
-		req.Header.Set("Accept-Encoding", "gzip")
-
-		params := NewCacheKeyForRequest(req, "dark")
-		key := NewCacheKey(params)
-		keys = append(keys, key)
-
-		if params.HTMX.Target != "lightbox-ui" {
-			t.Errorf("NewCacheKeyForRequest with target=%q: got HXTarget=%q, want lightbox-ui", target, params.HTMX.Target)
-		}
-	}
-
-	if keys[0] != keys[1] {
-		t.Errorf("lightbox_content and lightbox-ui produced different cache keys:\n  %s\n  %s", keys[0], keys[1])
-	}
-
-	// Verify non-lightbox paths are NOT normalized
-	req, err := http.NewRequest("GET", "/gallery/123?v=1", nil)
+func TestNewCacheKeyForRequest_InfoFullAndHTMXShareKey(t *testing.T) {
+	// Full page request to /info/image/1 (no HTMX)
+	reqA, err := http.NewRequest("GET", "/info/image/1", nil)
 	if err != nil {
 		t.Fatalf("http.NewRequest: %v", err)
 	}
-	req.Header.Set("HX-Request", "true")
-	req.Header.Set("HX-Target", "gallery-content")
-	req.Header.Set("Accept-Encoding", "gzip")
-	params := NewCacheKeyForRequest(req, "dark")
-	if params.HTMX.Target != "gallery-content" {
-		t.Errorf("non-lightbox path: expected HXTarget=gallery-content, got %q", params.HTMX.Target)
+
+	// HTMX request to same path
+	reqB, err := http.NewRequest("GET", "/info/image/1", nil)
+	if err != nil {
+		t.Fatalf("http.NewRequest: %v", err)
+	}
+	reqB.Header.Set("HX-Request", "true")
+	reqB.Header.Set("HX-Target", "box_info")
+
+	keyA := NewCacheKey(NewCacheKeyForRequest(reqA))
+	keyB := NewCacheKey(NewCacheKeyForRequest(reqB))
+
+	if keyA != keyB {
+		t.Errorf("info full and HTMX requests produced different cache keys:\n  %s\n  %s", keyA, keyB)
 	}
 }
 
-func TestVariantForPath(t *testing.T) {
+func TestNewCacheKeyForRequest_LightboxTargetsShareKey(t *testing.T) {
+	// Request with HX-Target: lightbox_content
+	reqA, err := http.NewRequest("GET", "/lightbox/1", nil)
+	if err != nil {
+		t.Fatalf("http.NewRequest: %v", err)
+	}
+	reqA.Header.Set("HX-Request", "true")
+	reqA.Header.Set("HX-Target", "lightbox_content")
+
+	// Request with HX-Target: lightbox-ui
+	reqB, err := http.NewRequest("GET", "/lightbox/1", nil)
+	if err != nil {
+		t.Fatalf("http.NewRequest: %v", err)
+	}
+	reqB.Header.Set("HX-Request", "true")
+	reqB.Header.Set("HX-Target", "lightbox-ui")
+
+	keyA := NewCacheKey(NewCacheKeyForRequest(reqA))
+	keyB := NewCacheKey(NewCacheKeyForRequest(reqB))
+
+	if keyA != keyB {
+		t.Errorf("lightbox_content and lightbox-ui produced different cache keys:\n  %s\n  %s", keyA, keyB)
+	}
+
+	// Both should have variant lightbox-ui
+	paramsA := NewCacheKeyForRequest(reqA)
+	paramsB := NewCacheKeyForRequest(reqB)
+	if paramsA.Variant != "lightbox-ui" {
+		t.Errorf("NewCacheKeyForRequest with target=lightbox_content: got Variant=%q, want lightbox-ui", paramsA.Variant)
+	}
+	if paramsB.Variant != "lightbox-ui" {
+		t.Errorf("NewCacheKeyForRequest with target=lightbox-ui: got Variant=%q, want lightbox-ui", paramsB.Variant)
+	}
+}
+
+func TestNewCacheKeyForRequest_GalleryFullAndPartialDistinct(t *testing.T) {
+	// Full page request to /gallery/1 (no HTMX) → variant full
+	reqA, err := http.NewRequest("GET", "/gallery/1", nil)
+	if err != nil {
+		t.Fatalf("http.NewRequest: %v", err)
+	}
+
+	// HTMX request to same path → variant gallery-content
+	reqB, err := http.NewRequest("GET", "/gallery/1", nil)
+	if err != nil {
+		t.Fatalf("http.NewRequest: %v", err)
+	}
+	reqB.Header.Set("HX-Request", "true")
+	reqB.Header.Set("HX-Target", "gallery-content")
+
+	keyA := NewCacheKey(NewCacheKeyForRequest(reqA))
+	keyB := NewCacheKey(NewCacheKeyForRequest(reqB))
+
+	if keyA == keyB {
+		t.Errorf("gallery full and partial requests produced the same cache key:\n  %s", keyA)
+	}
+}
+
+func TestNormalizedVariant(t *testing.T) {
 	tests := []struct {
-		path         string
-		wantHxTarget string
-		wantEncoding string
+		path      string
+		hxRequest string
+		hxTarget  string
+		want      string
 	}{
-		{"/info/image/", "box_info", "gzip"},
-		{"/info/folder/", "box_info", "gzip"},
-		{"/lightbox/", "lightbox-ui", "gzip"},
-		{"/gallery/", "gallery-content", "gzip"},
-		{"/other/", "", "identity"},
+		{"/info/image/", "true", "box_info", "box_info"},
+		{"/info/image/", "false", "", "box_info"},
+		{"/info/folder/", "false", "", "box_info"},
+		{"/lightbox/1", "true", "lightbox_content", "lightbox-ui"},
+		{"/lightbox/", "true", "lightbox-ui", "lightbox-ui"},
+		{"/lightbox/", "false", "", "lightbox-ui"},
+		{"/gallery/", "true", "gallery-content", "gallery-content"},
+		{"/gallery/", "false", "", "full"},
+		{"/gallery/", "true", "some-other-target", "full"},
+		{"/other/", "false", "", "full"},
+		{"/other/", "true", "some-target", "full"},
 	}
 
 	for _, tt := range tests {
-		hxTarget, encoding := VariantForPath(tt.path)
-		if hxTarget != tt.wantHxTarget {
-			t.Errorf("VariantForPath(%q) hxTarget = %q, want %q", tt.path, hxTarget, tt.wantHxTarget)
-		}
-		if encoding != tt.wantEncoding {
-			t.Errorf("VariantForPath(%q) encoding = %q, want %q", tt.path, encoding, tt.wantEncoding)
+		got := NormalizedVariant(tt.path, tt.hxRequest, tt.hxTarget)
+		if got != tt.want {
+			t.Errorf("NormalizedVariant(%q, %q, %q) = %q, want %q", tt.path, tt.hxRequest, tt.hxTarget, got, tt.want)
 		}
 	}
 }
 
-func TestNewCacheKey_DefaultTheme(t *testing.T) {
-	params := CacheKeyParams{
-		Method:   "GET",
-		Path:     "/test",
-		Query:    "",
-		HTMX:     HTMXParams{},
-		Theme:    "", // empty theme
-		Encoding: "gzip",
+func TestPreloadVariantForPath(t *testing.T) {
+	tests := []struct {
+		path string
+		want string
+	}{
+		{"/info/image/", "box_info"},
+		{"/info/folder/", "box_info"},
+		{"/lightbox/", "lightbox-ui"},
+		{"/gallery/", "gallery-content"},
+		{"/other/", "full"},
 	}
 
-	key := NewCacheKey(params)
-	if !strings.Contains(key, "Theme=dark") {
-		t.Errorf("Expected default theme dark, got key: %s", key)
+	for _, tt := range tests {
+		got := PreloadVariantForPath(tt.path)
+		if got != tt.want {
+			t.Errorf("PreloadVariantForPath(%q) = %q, want %q", tt.path, got, tt.want)
+		}
+	}
+}
+
+func TestNewCacheKey_NoEncoding(t *testing.T) {
+	// Different encoding values should produce the same cache key
+	paramsWithGzip := CacheKeyParams{
+		Method:  "GET",
+		Path:    "/test",
+		Query:   "",
+		Variant: "full",
+	}
+	paramsWithBr := CacheKeyParams{
+		Method:  "GET",
+		Path:    "/test",
+		Query:   "",
+		Variant: "full",
+	}
+
+	keyGzip := NewCacheKey(paramsWithGzip)
+	keyBr := NewCacheKey(paramsWithBr)
+
+	if keyGzip != keyBr {
+		t.Errorf("Expected same key for different encodings:\n  gzip: %s\n  br:   %s", keyGzip, keyBr)
+	}
+
+	// Verify no encoding component in the key
+	if strings.Contains(keyGzip, "|gzip") || strings.Contains(keyGzip, "|br") || strings.Contains(keyGzip, "|identity") {
+		t.Errorf("Cache key should not contain encoding, got: %s", keyGzip)
 	}
 }

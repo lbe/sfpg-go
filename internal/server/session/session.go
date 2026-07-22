@@ -1,12 +1,9 @@
-// Package session provides session store, CSRF token handling, and session
-// cookie options for the web application. It is used by the server package
-// for authentication and form protection.
+// Package session provides session store, session cookie options, and
+// authentication helpers for the web application. It is used by the server
+// package for authentication and session management.
 package session
 
 import (
-	"crypto/rand"
-	"crypto/subtle"
-	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"net"
@@ -114,32 +111,6 @@ func ClearSessionCookie(store *sessions.CookieStore, w http.ResponseWriter, r *h
 	http.SetCookie(w, c)
 }
 
-// EnsureCsrfToken ensures a CSRF token exists in the session and returns it.
-// If none is present, it generates a new one. If the session cookie is invalid
-// (e.g., after secret rotation), the cookie is cleared and a new session is used.
-func EnsureCsrfToken(store *sessions.CookieStore, w http.ResponseWriter, r *http.Request) string {
-	sess, err := store.Get(r, SessionName)
-	if err != nil {
-		ClearSessionCookie(store, w, r)
-		// gorilla/sessions returns a usable session even on cookie decode error.
-		sess, _ = store.Get(r, SessionName) //nolint:errcheck
-	}
-	if token, ok := sess.Values["csrf_token"].(string); ok && token != "" {
-		return token
-	}
-	bytes := make([]byte, 32)
-	if _, err := rand.Read(bytes); err != nil {
-		slog.Error("failed to generate random bytes for CSRF token", "err", err)
-		return ""
-	}
-	token := hex.EncodeToString(bytes)
-	sess.Values["csrf_token"] = token
-	if err := sess.Save(r, w); err != nil {
-		slog.Error("failed to save session with new CSRF token", "err", err)
-	}
-	return token
-}
-
 // IsAuthenticated reports whether the request has a valid authenticated session.
 // If the session cookie is invalid or malformed, it clears the cookie and
 // returns false.
@@ -153,28 +124,9 @@ func IsAuthenticated(store *sessions.CookieStore, w http.ResponseWriter, r *http
 	return authenticated
 }
 
-// randRead is a testable hook for crypto/rand.Read.
-var randRead = rand.Read
-
-// GenerateCSRFToken generates a cryptographically random CSRF token.
-// It does NOT save the token to any session; callers must persist it
-// themselves if needed. Use this for ephemeral tokens on public pages
-// where emitting a Set-Cookie is undesirable.
-func GenerateCSRFToken() string {
-	b := make([]byte, 32)
-	if _, err := randRead(b); err != nil {
-		slog.Error("failed to generate CSRF token", "err", err)
-		return ""
-	}
-	return hex.EncodeToString(b)
-}
-
 // SessionManager provides an interface for session management operations.
-// It encapsulates session store access, CSRF token handling, and session options.
 type SessionManager interface {
 	GetOptions() *sessions.Options
-	EnsureCSRFToken(w http.ResponseWriter, r *http.Request) string
-	ValidateCSRFToken(r *http.Request) bool
 	ClearSession(w http.ResponseWriter, r *http.Request)
 
 	// GetSession retrieves the session from the request.
@@ -217,66 +169,6 @@ func NewManager(store *sessions.CookieStore, configGetter func() *OptionsConfig)
 func (m *Manager) GetOptions() *sessions.Options {
 	cfg := m.configGetter()
 	return GetSessionOptions(cfg)
-}
-
-// EnsureCSRFToken ensures a CSRF token exists in the session and returns it.
-// If none is present, it generates a new one. If the session cookie is invalid
-// (e.g., after secret rotation), the cookie is cleared and a new session is used.
-func (m *Manager) EnsureCSRFToken(w http.ResponseWriter, r *http.Request) string {
-	sess, err := m.store.Get(r, SessionName)
-	if err != nil {
-		slog.Warn("EnsureCSRFToken: clearing invalid session cookie",
-			"path", r.URL.Path,
-			"remote_addr", r.RemoteAddr,
-			"err", err)
-		ClearSessionCookie(m.store, w, r)
-		// gorilla/sessions returns a usable session even on cookie decode error.
-		sess, err = m.store.Get(r, SessionName)
-		if err != nil {
-			slog.Warn("EnsureCSRFToken: failed to get session after clearing cookie",
-				"path", r.URL.Path,
-				"remote_addr", r.RemoteAddr,
-				"err", err)
-		}
-	}
-	if token, ok := sess.Values["csrf_token"].(string); ok && token != "" {
-		return token
-	}
-	bytes := make([]byte, 32)
-	if _, err := rand.Read(bytes); err != nil {
-		slog.Error("failed to generate random bytes for CSRF token", "err", err)
-		return ""
-	}
-	token := hex.EncodeToString(bytes)
-	sess.Values["csrf_token"] = token
-	if err := sess.Save(r, w); err != nil {
-		slog.Error("failed to save session with new CSRF token", "err", err)
-	}
-	return token
-}
-
-// ValidateCSRFToken validates the CSRF token in the request form against the session.
-// Returns false if the session has no token or the form token is missing or doesn't match.
-func (m *Manager) ValidateCSRFToken(r *http.Request) bool {
-	// gorilla/sessions returns a usable session even on cookie decode error.
-	sess, err := m.store.Get(r, SessionName)
-	if err != nil {
-		slog.Warn("ValidateCSRFToken: session decode error",
-			"path", r.URL.Path,
-			"remote_addr", r.RemoteAddr,
-			"err", err)
-	}
-	sessionToken, ok := sess.Values["csrf_token"].(string)
-	if !ok || sessionToken == "" {
-		slog.Warn("validateCsrfToken: no token in session")
-		return false
-	}
-	formToken := r.FormValue("csrf_token")
-	if formToken == "" {
-		slog.Warn("validateCsrfToken: no token in form")
-		return false
-	}
-	return subtle.ConstantTimeCompare([]byte(sessionToken), []byte(formToken)) == 1
 }
 
 // ClearSession removes the session cookie by setting a max-age=-1 cookie
@@ -388,7 +280,7 @@ func (m *Manager) SetAuthenticated(w http.ResponseWriter, r *http.Request, authe
 		if err != nil {
 			return fmt.Errorf("rotate session on login: %w", err)
 		}
-		// Copy user values (including csrf_token) to the new session.
+		// Copy user values to the new session.
 		for k, v := range sess.Values {
 			newSess.Values[k] = v
 		}

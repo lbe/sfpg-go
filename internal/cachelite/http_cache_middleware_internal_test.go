@@ -84,9 +84,10 @@ func TestCheckCache_ReturnsStoredEntry_Internal(t *testing.T) {
 		Path:        "/check",
 		Status:      200,
 		ContentType: sql.NullString{String: "text/plain", Valid: true},
-		Body:        []byte("hello"),
+		Body:        []byte("<html><body>hello</body></html>"),
 		CreatedAt:   time.Now().Unix(),
 	}
+	entry.ContentLength = sql.NullInt64{Int64: int64(len(entry.Body)), Valid: true}
 
 	if err := StoreCacheEntry(ctx, db, entry); err != nil {
 		t.Fatalf("failed to store entry: %v", err)

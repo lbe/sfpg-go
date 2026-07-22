@@ -179,8 +179,18 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 		}
 	}
 
+	app.StartWriteBatcher(app.RuntimeManager.ctx, true)
+	app.startCacheSizeCalibration()
+	app.startStartupPragmaOptimize()
+
 	// Apply config to app fields
 	app.ApplyConfig()
+
+	// Ensure HTTP cache key format is current *before* stale cache drop
+	// and initializeHTTPCache, so legacy rows from a previous key version
+	// are invalidated before the cache middleware starts serving.
+	app.ensureHTTPCacheKeyFormatCurrent()
+
 	app.scheduleStaleCacheDrop("run-startup")
 
 	// Initialize HTTP cache middleware after config is loaded
@@ -203,6 +213,7 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 		runDiscovery = app.ConfigManager.Config.RunFileDiscovery
 	}
 	if runDiscovery {
+		app.discoveryRunning.Store(true)
 		go app.TriggerDiscovery()
 	} else if app.SubsystemManager.moduleStateService != nil || app.testSeams.GetLastStartedAt != nil {
 		go func() {
@@ -279,6 +290,7 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 							"inserted", app.SubsystemManager.processingStats.NewlyInserted.Load(),
 							"skipped_invalid", app.SubsystemManager.processingStats.SkippedInvalid.Load(),
 						)
+						app.scheduleDiscoveryCompletePragmaOptimize()
 						return
 					}
 				}
@@ -371,6 +383,9 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 	}
 
 	slog.Info("Calling app.Serve()")
+	app.RuntimeManager.SetOnListen(func() {
+		app.onServerListening()
+	})
 	if err := app.Serve(); err != nil {
 		slog.Error("server error", "err", err)
 		time.Sleep(1 * time.Second) // Give logger time to write

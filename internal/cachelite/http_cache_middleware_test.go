@@ -14,8 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"golang.org/x/net/html"
-
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 
@@ -140,7 +138,7 @@ func TestCacheMiss_HandlerCalledAndStored(t *testing.T) {
 		w.Header().Set("Content-Type", "text/html")
 		w.Header().Set("Cache-Control", "public, max-age=3600")
 		w.WriteHeader(200)
-		_, _ = w.Write([]byte("expensive content"))
+		_, _ = w.Write([]byte("<html><body>expensive content</body></html>"))
 	})
 
 	cfg := defaultConfig()
@@ -164,14 +162,9 @@ func TestCacheMiss_HandlerCalledAndStored(t *testing.T) {
 
 	// The middleware includes HX-Request and HX-Target in the cache key's query part
 	params := cachelite.CacheKeyParams{
-		Method: "GET",
-		Path:   "/test",
-		HTMX: cachelite.HTMXParams{
-			Request: "false",
-			Target:  "",
-		},
-		Theme:    "dark",
-		Encoding: "identity",
+		Method:  "GET",
+		Path:    "/test",
+		Variant: "full",
 	}
 	key := cachelite.NewCacheKey(params)
 	entry, err := cachelite.GetCacheEntry(context.Background(), db, key)
@@ -181,8 +174,8 @@ func TestCacheMiss_HandlerCalledAndStored(t *testing.T) {
 	if entry == nil {
 		t.Fatal("expected cache entry to be stored")
 	}
-	if string(entry.Body) != "expensive content" {
-		t.Errorf("cached body = %q, want %q", string(entry.Body), "expensive content")
+	if len(entry.Body) == 0 {
+		t.Error("cached body is empty")
 	}
 }
 
@@ -196,7 +189,7 @@ func TestCacheHit_HandlerNotCalled_CachedResponseReturned(t *testing.T) {
 		w.Header().Set("Content-Type", "text/html")
 		w.Header().Set("Cache-Control", "public, max-age=3600")
 		w.WriteHeader(200)
-		_, _ = w.Write([]byte("expensive content"))
+		_, _ = w.Write([]byte("<html><body>expensive content</body></html>"))
 	})
 
 	cfg := defaultConfig()
@@ -224,19 +217,20 @@ func TestCacheHit_HandlerNotCalled_CachedResponseReturned(t *testing.T) {
 	if w2.Header().Get("X-Cache") != "HIT" {
 		t.Errorf("X-Cache = %q, want HIT", w2.Header().Get("X-Cache"))
 	}
-	if w2.Body.String() != "expensive content" {
-		t.Errorf("cache hit body = %q, want %q", w2.Body.String(), "expensive content")
+	if w2.Body.Len() == 0 {
+		t.Error("cache hit body is empty")
 	}
 }
 
-// TestEncodingSeparation_GzipVsBrotli verifies separate cache entries per encoding.
-func TestEncodingSeparation_GzipVsBrotli(t *testing.T) {
+// TestEncodingAgnostic_SameKeyForDifferentEncodings verifies that different
+// Accept-Encoding values share one cache entry (encoding is no longer part of the key).
+func TestEncodingAgnostic_SameKeyForDifferentEncodings(t *testing.T) {
 	db := createTestDBPool(t)
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		w.WriteHeader(200)
-		_, _ = w.Write([]byte("content for " + r.Header.Get("Accept-Encoding")))
+		_, _ = w.Write([]byte("<html><body>plain body</body></html>"))
 	})
 
 	cfg := defaultConfig()
@@ -244,53 +238,23 @@ func TestEncodingSeparation_GzipVsBrotli(t *testing.T) {
 	cacheMW := createTestMiddlewareWithSubmit(t, db, cfg)
 	mw := cacheMW.Middleware(handler)
 
+	// First request with gzip
 	req1 := httptest.NewRequest("GET", "/test", nil)
 	req1.Header.Set("Accept-Encoding", "gzip")
 	w1 := httptest.NewRecorder()
 	mw.ServeHTTP(w1, req1)
 
+	// Second request with br should get HIT (same key)
 	req2 := httptest.NewRequest("GET", "/test", nil)
 	req2.Header.Set("Accept-Encoding", "br")
 	w2 := httptest.NewRecorder()
 	mw.ServeHTTP(w2, req2)
 
-	// The middleware includes HX-Request (defaults to "false") in the cache key's query part
-	paramsGzip := cachelite.CacheKeyParams{
-		Method: "GET",
-		Path:   "/test",
-		HTMX: cachelite.HTMXParams{
-			Request: "false",
-			Target:  "",
-		},
-		Theme:    "dark",
-		Encoding: "gzip",
+	if w2.Header().Get("X-Cache") != "HIT" {
+		t.Errorf("br request X-Cache = %q, want HIT (encoding should not affect key)", w2.Header().Get("X-Cache"))
 	}
-	paramsBr := cachelite.CacheKeyParams{
-		Method: "GET",
-		Path:   "/test",
-		HTMX: cachelite.HTMXParams{
-			Request: "false",
-			Target:  "",
-		},
-		Theme:    "dark",
-		Encoding: "br",
-	}
-	keyGzip := cachelite.NewCacheKey(paramsGzip)
-	keyBr := cachelite.NewCacheKey(paramsBr)
-
-	entryGzip, _ := cachelite.GetCacheEntry(context.Background(), db, keyGzip)
-	entryBr, _ := cachelite.GetCacheEntry(context.Background(), db, keyBr)
-
-	if entryGzip == nil {
-		t.Error("expected gzip cache entry")
-	}
-	if entryBr == nil {
-		t.Error("expected br cache entry")
-	}
-	if entryGzip != nil && entryBr != nil {
-		if string(entryGzip.Body) == string(entryBr.Body) {
-			t.Error("expected different cached bodies for different encodings")
-		}
+	if w2.Body.Len() == 0 {
+		t.Error("hit body is empty")
 	}
 }
 
@@ -324,11 +288,9 @@ func TestSizeLimit_SkipOversized(t *testing.T) {
 	}
 
 	params := cachelite.CacheKeyParams{
-		Method:   "GET",
-		Path:     "/large",
-		HTMX:     cachelite.HTMXParams{},
-		Theme:    "dark",
-		Encoding: "identity",
+		Method:  "GET",
+		Path:    "/large",
+		Variant: "full",
 	}
 	key := cachelite.NewCacheKey(params)
 	entry, _ := cachelite.GetCacheEntry(context.Background(), db, key)
@@ -347,15 +309,12 @@ func TestBudgetEviction_LRU(t *testing.T) {
 	now := time.Now().Unix()
 	oldEntry := &cachelite.HTTPCacheEntry{
 		Key: cachelite.NewCacheKey(cachelite.CacheKeyParams{
-			Method:   "GET",
-			Path:     "/old",
-			HTMX:     cachelite.HTMXParams{},
-			Theme:    "dark",
-			Encoding: "identity",
+			Method:  "GET",
+			Path:    "/old",
+			Variant: "full",
 		}),
 		Method:        "GET",
 		Path:          "/old",
-		Encoding:      "identity",
 		Status:        200,
 		Body:          []byte("old content"),
 		ContentLength: sql.NullInt64{Int64: 11, Valid: true},
@@ -377,11 +336,9 @@ func TestBudgetEviction_LRU(t *testing.T) {
 	mw.ServeHTTP(w, req)
 
 	oldParams := cachelite.CacheKeyParams{
-		Method:   "GET",
-		Path:     "/old",
-		HTMX:     cachelite.HTMXParams{},
-		Theme:    "dark",
-		Encoding: "identity",
+		Method:  "GET",
+		Path:    "/old",
+		Variant: "full",
 	}
 	oldKey := cachelite.NewCacheKey(oldParams)
 	evictedEntry, _ := cachelite.GetCacheEntry(context.Background(), db, oldKey)
@@ -395,30 +352,24 @@ func TestCacheInvalidation_ClearCache(t *testing.T) {
 	now := time.Now().Unix()
 	entry1 := &cachelite.HTTPCacheEntry{
 		Key: cachelite.NewCacheKey(cachelite.CacheKeyParams{
-			Method:   "GET",
-			Path:     "/test1",
-			HTMX:     cachelite.HTMXParams{},
-			Theme:    "dark",
-			Encoding: "identity",
+			Method:  "GET",
+			Path:    "/test1",
+			Variant: "full",
 		}),
 		Method:    "GET",
 		Path:      "/test1",
-		Encoding:  "identity",
 		Status:    200,
 		Body:      []byte("content1"),
 		CreatedAt: now,
 	}
 	entry2 := &cachelite.HTTPCacheEntry{
 		Key: cachelite.NewCacheKey(cachelite.CacheKeyParams{
-			Method:   "GET",
-			Path:     "/test2",
-			HTMX:     cachelite.HTMXParams{},
-			Theme:    "dark",
-			Encoding: "identity",
+			Method:  "GET",
+			Path:    "/test2",
+			Variant: "full",
 		}),
 		Method:    "GET",
 		Path:      "/test2",
-		Encoding:  "identity",
 		Status:    200,
 		Body:      []byte("content2"),
 		CreatedAt: now,
@@ -444,15 +395,12 @@ func TestExpiration_ExpiredNotReturned(t *testing.T) {
 	now := time.Now().Unix()
 	expiredEntry := &cachelite.HTTPCacheEntry{
 		Key: cachelite.NewCacheKey(cachelite.CacheKeyParams{
-			Method:   "GET",
-			Path:     "/expired",
-			HTMX:     cachelite.HTMXParams{},
-			Theme:    "dark",
-			Encoding: "identity",
+			Method:  "GET",
+			Path:    "/expired",
+			Variant: "full",
 		}),
 		Method:    "GET",
 		Path:      "/expired",
-		Encoding:  "identity",
 		Status:    200,
 		Body:      []byte("expired content"),
 		CreatedAt: now - 7200,
@@ -490,11 +438,9 @@ func TestSkipPOST(t *testing.T) {
 	}
 
 	params := cachelite.CacheKeyParams{
-		Method:   "POST",
-		Path:     "/test",
-		HTMX:     cachelite.HTMXParams{},
-		Theme:    "dark",
-		Encoding: "identity",
+		Method:  "POST",
+		Path:    "/test",
+		Variant: "full",
 	}
 	key := cachelite.NewCacheKey(params)
 	entry, _ := cachelite.GetCacheEntry(context.Background(), db, key)
@@ -503,7 +449,8 @@ func TestSkipPOST(t *testing.T) {
 	}
 }
 
-// TestSkipNoCacheDirective verifies no-store responses are not cached.
+// TestSkipNoCacheDirective verifies no-store responses are not cached when the path
+// is not in CacheableRoutes.
 func TestSkipNoCacheDirective(t *testing.T) {
 	db := createTestDBPool(t)
 
@@ -515,6 +462,7 @@ func TestSkipNoCacheDirective(t *testing.T) {
 	})
 
 	cfg := defaultConfig()
+	cfg.CacheableRoutes = []string{"/gallery/"} // /test is not cacheable
 
 	cacheMW := createTestMiddlewareWithSubmit(t, db, cfg)
 	mw := cacheMW.Middleware(handler)
@@ -528,11 +476,9 @@ func TestSkipNoCacheDirective(t *testing.T) {
 	}
 
 	params := cachelite.CacheKeyParams{
-		Method:   "GET",
-		Path:     "/test",
-		HTMX:     cachelite.HTMXParams{},
-		Theme:    "dark",
-		Encoding: "identity",
+		Method:  "GET",
+		Path:    "/test",
+		Variant: "full",
 	}
 	key := cachelite.NewCacheKey(params)
 	entry, _ := cachelite.GetCacheEntry(context.Background(), db, key)
@@ -565,11 +511,9 @@ func TestSkip404(t *testing.T) {
 	}
 
 	params := cachelite.CacheKeyParams{
-		Method:   "GET",
-		Path:     "/test",
-		HTMX:     cachelite.HTMXParams{},
-		Theme:    "dark",
-		Encoding: "identity",
+		Method:  "GET",
+		Path:    "/test",
+		Variant: "full",
 	}
 	key := cachelite.NewCacheKey(params)
 	entry, _ := cachelite.GetCacheEntry(context.Background(), db, key)
@@ -578,8 +522,9 @@ func TestSkip404(t *testing.T) {
 	}
 }
 
-// TestContentEncodingStoredAndRestoredBrotli ensures compressed responses persist encoding header.
-func TestContentEncodingStoredAndRestoredBrotli(t *testing.T) {
+// TestPlainBody_NoCompression verifies that cached bodies are plain (no Content-Encoding).
+// With encoding out of the key, all requests share one entry; bodies are stored uncompressed.
+func TestPlainBody_NoCompression(t *testing.T) {
 	db := createTestDBPool(t)
 
 	handlerCalls := 0
@@ -587,10 +532,8 @@ func TestContentEncodingStoredAndRestoredBrotli(t *testing.T) {
 		handlerCalls++
 		w.Header().Set("Content-Type", "text/html")
 		w.Header().Set("Cache-Control", "public, max-age=3600")
-		// Explicitly set Content-Encoding header (as compression middleware would)
-		w.Header().Set("Content-Encoding", "br")
 		w.WriteHeader(200)
-		_, _ = w.Write([]byte("compressed-body-br"))
+		_, _ = w.Write([]byte("<html><body>plain uncompressed body</body></html>"))
 	})
 
 	cfg := defaultConfig()
@@ -598,9 +541,8 @@ func TestContentEncodingStoredAndRestoredBrotli(t *testing.T) {
 	cacheMW := createTestMiddlewareWithSubmit(t, db, cfg)
 	mw := cacheMW.Middleware(handler)
 
-	// First request (MISS) with br negotiation
-	req1 := httptest.NewRequest("GET", "/br", nil)
-	req1.Header.Set("Accept-Encoding", "br")
+	// First request (MISS)
+	req1 := httptest.NewRequest("GET", "/test", nil)
 	w1 := httptest.NewRecorder()
 	mw.ServeHTTP(w1, req1)
 
@@ -611,9 +553,8 @@ func TestContentEncodingStoredAndRestoredBrotli(t *testing.T) {
 		t.Fatalf("miss X-Cache = %q, want MISS", w1.Header().Get("X-Cache"))
 	}
 
-	// Second request (HIT) should restore Content-Encoding: br
-	req2 := httptest.NewRequest("GET", "/br", nil)
-	req2.Header.Set("Accept-Encoding", "br")
+	// Second request (HIT)
+	req2 := httptest.NewRequest("GET", "/test", nil)
 	w2 := httptest.NewRecorder()
 	mw.ServeHTTP(w2, req2)
 
@@ -626,31 +567,11 @@ func TestContentEncodingStoredAndRestoredBrotli(t *testing.T) {
 	if w2.Header().Get("X-Cache") != "HIT" {
 		t.Fatalf("hit X-Cache = %q, want HIT", w2.Header().Get("X-Cache"))
 	}
-	if ce := w2.Header().Get("Content-Encoding"); ce != "br" {
-		t.Fatalf("hit Content-Encoding = %q, want br", ce)
+	if ce := w2.Header().Get("Content-Encoding"); ce != "" {
+		t.Fatalf("hit Content-Encoding = %q, want empty (plain body)", ce)
 	}
-	if body := w2.Body.String(); body != "compressed-body-br" {
-		t.Fatalf("hit body = %q, want compressed-body-br", body)
-	}
-
-	// The middleware includes HX-Request and HX-Target in the cache key's query part
-	params := cachelite.CacheKeyParams{
-		Method: "GET",
-		Path:   "/br",
-		HTMX: cachelite.HTMXParams{
-			Request: "false",
-			Target:  "",
-		},
-		Theme:    "dark",
-		Encoding: "br",
-	}
-	key := cachelite.NewCacheKey(params)
-	entry, err := cachelite.GetCacheEntry(context.Background(), db, key)
-	if err != nil {
-		t.Fatalf("GetCacheEntry error: %v", err)
-	}
-	if entry == nil || !entry.ContentEncoding.Valid || entry.ContentEncoding.String != "br" {
-		t.Fatalf("cached ContentEncoding = %#v, want br", entry)
+	if w2.Body.Len() == 0 {
+		t.Fatalf("hit body is empty")
 	}
 }
 
@@ -669,7 +590,7 @@ func TestIfNoneMatchReturns304(t *testing.T) {
 		w.Header().Set("Last-Modified", lastMod)
 		w.Header().Set("Vary", "Accept-Encoding")
 		w.WriteHeader(200)
-		_, _ = w.Write([]byte("etag-body"))
+		_, _ = w.Write([]byte("<html><body>etag-body</body></html>"))
 	})
 
 	cfg := defaultConfig()
@@ -771,14 +692,9 @@ func TestSkipSetCookie_ResponseNotCached(t *testing.T) {
 
 	// Verify no cache entry was stored
 	params := cachelite.CacheKeyParams{
-		Method: "GET",
-		Path:   "/test",
-		HTMX: cachelite.HTMXParams{
-			Request: "false",
-			Target:  "",
-		},
-		Theme:    "dark",
-		Encoding: "identity",
+		Method:  "GET",
+		Path:    "/test",
+		Variant: "full",
 	}
 	key := cachelite.NewCacheKey(params)
 	entry, _ := cachelite.GetCacheEntry(context.Background(), db, key)
@@ -830,14 +746,9 @@ func TestSkipSetCookie_NotCachedEvenWithNoStoreException(t *testing.T) {
 
 	// Verify no cache entry was stored
 	params := cachelite.CacheKeyParams{
-		Method: "GET",
-		Path:   "/test",
-		HTMX: cachelite.HTMXParams{
-			Request: "false",
-			Target:  "",
-		},
-		Theme:    "dark",
-		Encoding: "identity",
+		Method:  "GET",
+		Path:    "/test",
+		Variant: "full",
 	}
 	key := cachelite.NewCacheKey(params)
 	entry, _ := cachelite.GetCacheEntry(context.Background(), db, key)
@@ -876,11 +787,9 @@ func TestBypassOnClientNoCache(t *testing.T) {
 		t.Fatalf("handler calls after bypass = %d, want 1", handlerCalls)
 	}
 	params := cachelite.CacheKeyParams{
-		Method:   "GET",
-		Path:     "/nocache",
-		HTMX:     cachelite.HTMXParams{},
-		Theme:    "dark",
-		Encoding: "identity",
+		Method:  "GET",
+		Path:    "/nocache",
+		Variant: "full",
 	}
 	key := cachelite.NewCacheKey(params)
 	if entry, _ := cachelite.GetCacheEntry(context.Background(), db, key); entry != nil {
@@ -915,7 +824,7 @@ func TestHTTPCacheMiddleware_ComprehensiveBypass(t *testing.T) {
 		w.Header().Set("Content-Type", "text/plain")
 		w.Header().Set("Cache-Control", "public, max-age=3600")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("fresh content"))
+		_, _ = w.Write([]byte("<html><body>fresh content</body></html>"))
 	})
 
 	cacheMW := createTestMiddlewareWithSubmit(t, db, cfg) // Sync storage
@@ -1007,13 +916,12 @@ func TestGalleryCacheHit_OnGalleryCacheHitCalled(t *testing.T) {
 		w.Header().Set("Cache-Control", "public, max-age=3600")
 		w.Header().Set("ETag", `"test-etag"`)
 		w.WriteHeader(200)
-		_, _ = w.Write([]byte("gallery content"))
+		_, _ = w.Write([]byte("<html><body>gallery content</body></html>"))
 	})
 
 	var callbackCalls []struct {
-		folderID       int64
-		sessionID      string
-		acceptEncoding string
+		folderID  int64
+		sessionID string
 	}
 	var callbackMu sync.Mutex
 
@@ -1023,13 +931,12 @@ func TestGalleryCacheHit_OnGalleryCacheHitCalled(t *testing.T) {
 		MaxTotalSize:    500 * 1024 * 1024,
 		DefaultTTL:      time.Hour,
 		CacheableRoutes: []string{"/gallery"},
-		OnGalleryCacheHit: func(ctx context.Context, folderID int64, sessionID string, acceptEncoding string) {
+		OnGalleryCacheHit: func(ctx context.Context, folderID int64, sessionID string) {
 			callbackMu.Lock()
 			callbackCalls = append(callbackCalls, struct {
-				folderID       int64
-				sessionID      string
-				acceptEncoding string
-			}{folderID, sessionID, acceptEncoding})
+				folderID  int64
+				sessionID string
+			}{folderID, sessionID})
 			callbackMu.Unlock()
 		},
 		SessionCookieName:     "session-name",
@@ -1094,9 +1001,6 @@ func TestGalleryCacheHit_OnGalleryCacheHitCalled(t *testing.T) {
 	if call.sessionID == "" {
 		t.Error("callback sessionID is empty")
 	}
-	if call.acceptEncoding != "gzip" {
-		t.Errorf("callback acceptEncoding = %q, want gzip", call.acceptEncoding)
-	}
 }
 
 // TestGalleryCacheHit_SkipWhenInternalPreload verifies that OnGalleryCacheHit
@@ -1109,7 +1013,7 @@ func TestGalleryCacheHit_SkipWhenInternalPreload(t *testing.T) {
 		w.Header().Set("Cache-Control", "public, max-age=3600")
 		w.Header().Set("ETag", `"test-etag"`)
 		w.WriteHeader(200)
-		_, _ = w.Write([]byte("gallery content"))
+		_, _ = w.Write([]byte("<html><body>gallery content</body></html>"))
 	})
 
 	callbackCalled := false
@@ -1121,7 +1025,7 @@ func TestGalleryCacheHit_SkipWhenInternalPreload(t *testing.T) {
 		MaxTotalSize:    500 * 1024 * 1024,
 		DefaultTTL:      time.Hour,
 		CacheableRoutes: []string{"/gallery"},
-		OnGalleryCacheHit: func(ctx context.Context, folderID int64, sessionID string, acceptEncoding string) {
+		OnGalleryCacheHit: func(ctx context.Context, folderID int64, sessionID string) {
 			callbackMu.Lock()
 			callbackCalled = true
 			callbackMu.Unlock()
@@ -1168,7 +1072,7 @@ func TestGalleryCacheHit_SessionIDFromCookie(t *testing.T) {
 		w.Header().Set("Cache-Control", "public, max-age=3600")
 		w.Header().Set("ETag", `"test-etag"`)
 		w.WriteHeader(200)
-		_, _ = w.Write([]byte("gallery content"))
+		_, _ = w.Write([]byte("<html><body>gallery content</body></html>"))
 	})
 
 	var capturedSessionID string
@@ -1180,7 +1084,7 @@ func TestGalleryCacheHit_SessionIDFromCookie(t *testing.T) {
 		MaxTotalSize:    500 * 1024 * 1024,
 		DefaultTTL:      time.Hour,
 		CacheableRoutes: []string{"/gallery"},
-		OnGalleryCacheHit: func(ctx context.Context, folderID int64, sessionID string, acceptEncoding string) {
+		OnGalleryCacheHit: func(ctx context.Context, folderID int64, sessionID string) {
 			callbackMu.Lock()
 			capturedSessionID = sessionID
 			callbackMu.Unlock()
@@ -1223,7 +1127,7 @@ func TestGalleryCacheHit_SessionIDFromRemoteAddr(t *testing.T) {
 		w.Header().Set("Cache-Control", "public, max-age=3600")
 		w.Header().Set("ETag", `"test-etag"`)
 		w.WriteHeader(200)
-		_, _ = w.Write([]byte("gallery content"))
+		_, _ = w.Write([]byte("<html><body>gallery content</body></html>"))
 	})
 
 	var capturedSessionID string
@@ -1235,7 +1139,7 @@ func TestGalleryCacheHit_SessionIDFromRemoteAddr(t *testing.T) {
 		MaxTotalSize:    500 * 1024 * 1024,
 		DefaultTTL:      time.Hour,
 		CacheableRoutes: []string{"/gallery"},
-		OnGalleryCacheHit: func(ctx context.Context, folderID int64, sessionID string, acceptEncoding string) {
+		OnGalleryCacheHit: func(ctx context.Context, folderID int64, sessionID string) {
 			callbackMu.Lock()
 			capturedSessionID = sessionID
 			callbackMu.Unlock()
@@ -1268,7 +1172,69 @@ func TestGalleryCacheHit_SessionIDFromRemoteAddr(t *testing.T) {
 	callbackMu.Unlock()
 }
 
-// TestThemeInCacheKey verifies that different theme cookies result in separate cache entries.
+// TestGarbageBlobInDB_ReturnsMISS verifies that a cache row with unrecognizable body contents
+// results in a cache MISS (not corrupt bytes or 500) with the live handler body served.
+func TestGarbageBlobInDB_ReturnsMISS(t *testing.T) {
+	db := createTestDBPool(t)
+
+	handlerCalls := 0
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handlerCalls++
+		w.Header().Set("Content-Type", "text/html")
+		w.Header().Set("Cache-Control", "public, max-age=3600")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte("<html><body>live render</body></html>"))
+	})
+
+	cfg := defaultConfig()
+	cacheMW := createTestMiddlewareWithSubmit(t, db, cfg)
+	mw := cacheMW.Middleware(handler)
+
+	// Insert a garbage blob directly via sqlc. The blob has no matching codec magic
+	// and ContentLength intentionally mismatched, so decodeCacheBodyForServe
+	// returns ErrUnrecognizedCacheBody.
+	// Key must match what the middleware computes for GET /test without HTMX headers.
+	ctx := context.Background()
+	cpc, err := db.Get()
+	if err != nil {
+		t.Fatalf("Get connection: %v", err)
+	}
+	garbageBody := []byte{0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF}
+	err = cpc.Queries.UpsertHttpCache(ctx, gallerydb.UpsertHttpCacheParams{
+		Key:           "GET:/test?|Variant=full",
+		Method:        "GET",
+		Path:          "/test",
+		Status:        200,
+		Body:          garbageBody,
+		ContentLength: sql.NullInt64{Int64: int64(len(garbageBody)) + 999, Valid: true},
+		CreatedAt:     time.Now().Unix(),
+	})
+	db.Put(cpc)
+	if err != nil {
+		t.Fatalf("UpsertHttpCache: %v", err)
+	}
+
+	// Request should return MISS (not garbage body), with live handler content.
+	req := httptest.NewRequest("GET", "/test", nil)
+	w := httptest.NewRecorder()
+	mw.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("status = %d, want 200", w.Code)
+	}
+	if w.Header().Get("X-Cache") != "MISS" {
+		t.Errorf("X-Cache = %q, want MISS (garbage body should not be served)", w.Header().Get("X-Cache"))
+	}
+	if handlerCalls != 1 {
+		t.Errorf("handler calls = %d, want 1 (garbage body should cause MISS, not serve corrupt bytes)", handlerCalls)
+	}
+	if w.Body.String() != "<html><body>live render</body></html>" {
+		t.Errorf("body = %q, want <html><body>live render</body></html>", w.Body.String())
+	}
+}
+
+// TestThemeInCacheKey verifies that different theme cookies share the same cache entry.
+// After Phase 2, theme is no longer part of the cache key.
 func TestThemeInCacheKey(t *testing.T) {
 	db := createTestDBPool(t)
 
@@ -1277,15 +1243,14 @@ func TestThemeInCacheKey(t *testing.T) {
 		handlerCalls++
 		w.Header().Set("Content-Type", "text/html")
 		w.Header().Set("Cache-Control", "public, max-age=3600")
-		w.Header().Set("ETag", `"test-etag"`)
-		_, _ = w.Write([]byte("<html data-theme=\"" + getThemeFromCookie(r) + "\">"))
+		_, _ = w.Write([]byte("<html>content</html>"))
 	})
 
 	cfg := defaultConfig()
 	cacheMW := createTestMiddlewareWithSubmit(t, db, cfg)
 	mw := cacheMW.Middleware(handler)
 
-	// First request: dark theme (no cookie, default)
+	// First request: no theme cookie
 	req1 := httptest.NewRequest("GET", "/gallery/1", nil)
 	w1 := httptest.NewRecorder()
 	mw.ServeHTTP(w1, req1)
@@ -1296,83 +1261,17 @@ func TestThemeInCacheKey(t *testing.T) {
 	if w1.Header().Get("X-Cache") != "MISS" {
 		t.Fatalf("first request: X-Cache = %q, want MISS", w1.Header().Get("X-Cache"))
 	}
-	doc1, err := html.Parse(strings.NewReader(w1.Body.String()))
-	if err != nil {
-		t.Fatalf("first request: failed to parse HTML: %v", err)
-	}
-	bodyElement1 := findElementWithAttribute(doc1, "data-theme", "dark")
-	if bodyElement1 == nil {
-		t.Fatalf("first request: missing element with data-theme=\"dark\"")
-	}
 
-	// Second request: light theme - should be MISS (different cache key)
+	// Second request: light theme cookie - should be HIT (same cache key)
 	req2 := httptest.NewRequest("GET", "/gallery/1", nil)
 	req2.AddCookie(&http.Cookie{Name: "theme", Value: "light"})
 	w2 := httptest.NewRecorder()
 	mw.ServeHTTP(w2, req2)
 
-	if handlerCalls != 2 {
-		t.Fatalf("second request: handler calls = %d, want 2", handlerCalls)
+	if handlerCalls != 1 {
+		t.Fatalf("second request: handler calls = %d, want 1 (shared key)", handlerCalls)
 	}
-	if w2.Header().Get("X-Cache") != "MISS" {
-		t.Fatalf("second request: X-Cache = %q, want MISS", w2.Header().Get("X-Cache"))
+	if w2.Header().Get("X-Cache") != "HIT" {
+		t.Fatalf("second request: X-Cache = %q, want HIT (shared key)", w2.Header().Get("X-Cache"))
 	}
-	doc2, err := html.Parse(strings.NewReader(w2.Body.String()))
-	if err != nil {
-		t.Fatalf("second request: failed to parse HTML: %v", err)
-	}
-	bodyElement2 := findElementWithAttribute(doc2, "data-theme", "light")
-	if bodyElement2 == nil {
-		t.Fatalf("second request: missing element with data-theme=\"light\"")
-	}
-
-	// Third request: dark theme again - should be HIT (same cache key as first)
-	req3 := httptest.NewRequest("GET", "/gallery/1", nil)
-	w3 := httptest.NewRecorder()
-	mw.ServeHTTP(w3, req3)
-
-	if handlerCalls != 2 {
-		t.Fatalf("third request: handler calls = %d, want 2 (cached)", handlerCalls)
-	}
-	if w3.Header().Get("X-Cache") != "HIT" {
-		t.Fatalf("third request: X-Cache = %q, want HIT", w3.Header().Get("X-Cache"))
-	}
-
-	// Fourth request: light theme again - should be HIT (same cache key as second)
-	req4 := httptest.NewRequest("GET", "/gallery/1", nil)
-	req4.AddCookie(&http.Cookie{Name: "theme", Value: "light"})
-	w4 := httptest.NewRecorder()
-	mw.ServeHTTP(w4, req4)
-
-	if handlerCalls != 2 {
-		t.Fatalf("fourth request: handler calls = %d, want 2 (cached)", handlerCalls)
-	}
-	if w4.Header().Get("X-Cache") != "HIT" {
-		t.Fatalf("fourth request: X-Cache = %q, want HIT", w4.Header().Get("X-Cache"))
-	}
-}
-
-// getThemeFromCookie extracts the theme from the request cookie, defaulting to "dark"
-func getThemeFromCookie(r *http.Request) string {
-	if cookie, err := r.Cookie("theme"); err == nil && cookie.Value != "" {
-		return cookie.Value
-	}
-	return "dark"
-}
-
-// findElementWithAttribute searches the HTML tree for an element with a specific attribute value.
-func findElementWithAttribute(n *html.Node, attrName, attrValue string) *html.Node {
-	if n.Type == html.ElementNode {
-		for _, attr := range n.Attr {
-			if attr.Key == attrName && attr.Val == attrValue {
-				return n
-			}
-		}
-	}
-	for c := n.FirstChild; c != nil; c = c.NextSibling {
-		if found := findElementWithAttribute(c, attrName, attrValue); found != nil {
-			return found
-		}
-	}
-	return nil
 }

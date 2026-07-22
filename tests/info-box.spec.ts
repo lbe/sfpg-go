@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import { goToGallery } from "./helpers";
 import {
   getFirstFolderID,
@@ -32,6 +32,65 @@ test.beforeAll(() => {
   if (!subfolderID)
     test.skip(true, "No subfolder under root — cannot test folder info hover");
 });
+
+/** Ensure #boxgallery has .populated so the mouseleave clear guard can run. */
+async function ensureGalleryPopulated(
+  page: Page,
+  galleryFolderID: number,
+): Promise<void> {
+  await page.goto(`/gallery/${galleryFolderID}?cb=${Date.now()}`);
+  await page.waitForSelector("#gallery-content", { timeout: 10000 });
+  await page.locator("#boxgallery").evaluate((el) => {
+    el.classList.add("populated");
+  });
+}
+
+async function pinInfoBox(page: Page): Promise<void> {
+  const pinned = await page.evaluate(() =>
+    document.body.classList.contains("info-pinned"),
+  );
+  if (pinned) {
+    return;
+  }
+  await page.locator("#info-btn").click();
+  await expect(page.locator("body")).toHaveClass(/info-pinned/);
+  await expect(page.locator("#box_info_wrapper")).not.toHaveClass(/hidden/);
+}
+
+async function unpinInfoBox(page: Page): Promise<void> {
+  const pinned = await page.evaluate(() =>
+    document.body.classList.contains("info-pinned"),
+  );
+  if (!pinned) {
+    return;
+  }
+  await page.locator("#info-btn").click();
+  await expect(page.locator("body")).not.toHaveClass(/info-pinned/);
+}
+
+async function hoverTileForInfo(page: Page, tileID: number): Promise<void> {
+  const tile = page.locator(`#gallery-tile-${tileID}`).first();
+  await expect(tile).toBeVisible({ timeout: 5000 });
+  await tile.scrollIntoViewIfNeeded();
+  await tile.hover();
+  await page.waitForSelector(`#inner_box_info[data-info-id="${tileID}"]`, {
+    state: "attached",
+    timeout: 10000,
+  });
+}
+
+/** Move pointer off the gallery grid to fire #boxgallery mouseleave. */
+async function leaveGalleryGrid(page: Page): Promise<void> {
+  const gallery = page.locator("#boxgallery");
+  await gallery.hover({ position: { x: 8, y: 8 } });
+  const box = await gallery.boundingBox();
+  if (box) {
+    await page.mouse.move(box.x + box.width + 50, box.y - 30);
+  } else {
+    await page.locator("#hamburger-menu-btn").hover({ force: true });
+  }
+  await page.waitForTimeout(300);
+}
 
 test.describe("Info Box", () => {
   test("1: Folder info endpoint returns folder name and image count", async ({
@@ -170,5 +229,33 @@ test.describe("Info Box", () => {
         expect(secondInfoID).not.toBe(firstInfoID);
       }
     }
+  });
+
+  test("6: Pinned info box survives mouseleave from gallery grid", async ({
+    page,
+  }) => {
+    await ensureGalleryPopulated(page, folderID);
+    await pinInfoBox(page);
+    await hoverTileForInfo(page, subfolderID);
+
+    await leaveGalleryGrid(page);
+
+    await expect(page.locator("#inner_box_info")).toHaveAttribute(
+      "data-info-id",
+      String(subfolderID),
+    );
+  });
+
+  test("7: Unpinned info box clears on mouseleave from gallery grid", async ({
+    page,
+  }) => {
+    await ensureGalleryPopulated(page, folderID);
+    await pinInfoBox(page);
+    await hoverTileForInfo(page, subfolderID);
+    await unpinInfoBox(page);
+
+    await leaveGalleryGrid(page);
+
+    await expect(page.locator("#inner_box_info")).toHaveCount(0);
   });
 });

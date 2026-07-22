@@ -26,10 +26,8 @@ func TestHTTPCacheEntryPool_ResetClearsAllFields(t *testing.T) {
 	entry.Method = "GET"
 	entry.Path = "/test"
 	entry.QueryString = sql.NullString{String: "q=1", Valid: true}
-	entry.Encoding = "gzip"
 	entry.Status = 200
 	entry.ContentType = sql.NullString{String: "text/html", Valid: true}
-	entry.ContentEncoding = sql.NullString{String: "gzip", Valid: true}
 	entry.CacheControl = sql.NullString{String: "max-age=3600", Valid: true}
 	entry.ETag = sql.NullString{String: "\"etag\"", Valid: true}
 	entry.LastModified = sql.NullString{String: "Wed, 01 Jan 2020 00:00:00 GMT", Valid: true}
@@ -67,41 +65,52 @@ func TestHTTPCacheEntryPool_ResetClearsAllFields(t *testing.T) {
 	PutHTTPCacheEntry(entry2)
 }
 
-func TestHTTPCacheEntryPool_BodyCapacityPreserved(t *testing.T) {
+func TestHTTPCacheEntryPool_BodyCapacityReused(t *testing.T) {
 	entry := GetHTTPCacheEntry()
-	originalCap := cap(entry.Body)
-
-	// Simulate typical body (< maxRetainedCapacity)
+	// entry.Body starts with cap == defaultBodyCapacity (8 KiB)
+	// Append ~5 KiB without changing capacity
 	entry.Body = append(entry.Body[:0], make([]byte, 5000)...)
 
 	PutHTTPCacheEntry(entry)
 	entry2 := GetHTTPCacheEntry()
 
-	// Capacity should be preserved (not reallocated)
-	if cap(entry2.Body) < originalCap {
-		t.Errorf("Body capacity shrunk: was %d, now %d", originalCap, cap(entry2.Body))
+	if cap(entry2.Body) != defaultBodyCapacity {
+		t.Errorf("Body capacity after Put/Get = %d, want %d", cap(entry2.Body), defaultBodyCapacity)
 	}
 
 	PutHTTPCacheEntry(entry2)
 }
 
-func TestHTTPCacheEntryPool_OversizedBodyShrunk(t *testing.T) {
+func TestHTTPCacheEntryPool_UndersizedBodyGrown(t *testing.T) {
 	entry := GetHTTPCacheEntry()
 
-	// Simulate oversized body (> maxRetainedCapacity)
-	entry.Body = make([]byte, 0, 32*1024) // 32KB capacity
-	entry.Body = append(entry.Body, make([]byte, 20000)...)
-
-	if cap(entry.Body) <= maxRetainedCapacity {
-		t.Fatalf("Setup failed: capacity %d should exceed %d", cap(entry.Body), maxRetainedCapacity)
-	}
+	// Simulate a post-compression body: small capacity + small payload
+	entry.Body = make([]byte, 0, 512)
+	entry.Body = append(entry.Body, []byte("small compressed payload")...)
 
 	PutHTTPCacheEntry(entry)
-
-	// After reset, capacity should be shrunk to default (not kept at oversized)
 	entry2 := GetHTTPCacheEntry()
-	if cap(entry2.Body) > maxRetainedCapacity {
-		t.Errorf("Oversized body not shrunk: cap = %d, want <= %d", cap(entry2.Body), maxRetainedCapacity)
+
+	if cap(entry2.Body) != defaultBodyCapacity {
+		t.Errorf("Undersized body not grown: cap = %d, want %d", cap(entry2.Body), defaultBodyCapacity)
+	}
+
+	PutHTTPCacheEntry(entry2)
+}
+
+func TestHTTPCacheEntryPool_NonDefaultCapacityReset(t *testing.T) {
+	entry := GetHTTPCacheEntry()
+
+	// Simulate a body with non-standard capacity (12 KiB, which is > defaultBodyCapacity,
+	// covers both the old 8-16 KiB band and oversized cases)
+	entry.Body = make([]byte, 0, 12*1024)
+	entry.Body = append(entry.Body, make([]byte, 10000)...)
+
+	PutHTTPCacheEntry(entry)
+	entry2 := GetHTTPCacheEntry()
+
+	if cap(entry2.Body) != defaultBodyCapacity {
+		t.Errorf("Non-default capacity not reset: cap = %d, want %d", cap(entry2.Body), defaultBodyCapacity)
 	}
 
 	PutHTTPCacheEntry(entry2)

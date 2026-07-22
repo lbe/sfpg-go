@@ -67,7 +67,7 @@ func TestPoolReconfiguration_NoCloseWhileActive(t *testing.T) {
 	}
 	db.Close()
 
-	if migErr := migrateBlobsDB(thumbsDBPath); migErr != nil {
+	if _, migErr := migrateBlobsDB(thumbsDBPath); migErr != nil {
 		t.Fatalf("migrateBlobsDB failed: %v", migErr)
 	}
 
@@ -208,7 +208,7 @@ func TestRecreatePoolsWithConfig_CreatePoolsFails(t *testing.T) {
 	db.Close()
 
 	// Run thumbs migration
-	if migErr := migrateBlobsDB(thumbsDBPath); migErr != nil {
+	if _, migErr := migrateBlobsDB(thumbsDBPath); migErr != nil {
 		t.Fatalf("migrateBlobsDB failed: %v", migErr)
 	}
 
@@ -274,7 +274,7 @@ func TestRecreatePoolsWithConfig_CloseOldPoolsErrors(t *testing.T) {
 	db.Close()
 
 	// Run thumbs migration
-	if migErr := migrateBlobsDB(thumbsDBPath); migErr != nil {
+	if _, migErr := migrateBlobsDB(thumbsDBPath); migErr != nil {
 		t.Fatalf("migrateBlobsDB failed: %v", migErr)
 	}
 

@@ -7,7 +7,7 @@ import (
 
 func TestTaskTracker_RegisterAndIsPending(t *testing.T) {
 	tt := &TaskTracker{}
-	key := "GET:/gallery/1?v=x|HX=false|HXTarget=|identity"
+	key := "GET:/gallery/1?v=x"
 
 	if tt.IsTaskPending(key) {
 		t.Error("expected not pending before register")
@@ -22,7 +22,7 @@ func TestTaskTracker_RegisterAndIsPending(t *testing.T) {
 
 func TestTaskTracker_RegisterDuplicate_ReturnsFalse(t *testing.T) {
 	tt := &TaskTracker{}
-	key := "GET:/gallery/1?v=x|identity"
+	key := "GET:/gallery/1?v=x"
 
 	tt.RegisterTask(key, "sess1", "task1")
 	if tt.RegisterTask(key, "sess2", "task2") {
@@ -32,7 +32,7 @@ func TestTaskTracker_RegisterDuplicate_ReturnsFalse(t *testing.T) {
 
 func TestTaskTracker_Unregister_AllowsReschedule(t *testing.T) {
 	tt := &TaskTracker{}
-	key := "GET:/gallery/1?v=x|identity"
+	key := "GET:/gallery/1?v=x"
 
 	tt.RegisterTask(key, "sess1", "task1")
 	tt.UnregisterTask(key)
@@ -69,7 +69,7 @@ func TestTaskTracker_ConcurrentAccess(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			key := "GET:/gallery/1?v=x|identity"
+			key := "GET:/gallery/1?v=x"
 			tt.RegisterTask(key, "sess", "task")
 			tt.IsTaskPending(key)
 			tt.UnregisterTask(key)

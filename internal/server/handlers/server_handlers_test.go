@@ -23,14 +23,6 @@ func (m *mockSessionManagerAuthenticated) GetOptions() *sessions.Options {
 	return &sessions.Options{}
 }
 
-func (m *mockSessionManagerAuthenticated) EnsureCSRFToken(w http.ResponseWriter, r *http.Request) string {
-	return "test-csrf-token"
-}
-
-func (m *mockSessionManagerAuthenticated) ValidateCSRFToken(r *http.Request) bool {
-	return false // Default to false for testing CSRF failure
-}
-
 func (m *mockSessionManagerAuthenticated) ClearSession(w http.ResponseWriter, r *http.Request) {}
 
 func (m *mockSessionManagerAuthenticated) GetSession(w http.ResponseWriter, r *http.Request) (*sessions.Session, error) {
@@ -56,14 +48,6 @@ func (m *mockSessionManagerUnauthenticated) GetOptions() *sessions.Options {
 	return &sessions.Options{}
 }
 
-func (m *mockSessionManagerUnauthenticated) EnsureCSRFToken(w http.ResponseWriter, r *http.Request) string {
-	return "test-csrf-token"
-}
-
-func (m *mockSessionManagerUnauthenticated) ValidateCSRFToken(r *http.Request) bool {
-	return false
-}
-
 func (m *mockSessionManagerUnauthenticated) ClearSession(w http.ResponseWriter, r *http.Request) {}
 
 func (m *mockSessionManagerUnauthenticated) GetSession(w http.ResponseWriter, r *http.Request) (*sessions.Session, error) {
@@ -79,39 +63,6 @@ func (m *mockSessionManagerUnauthenticated) IsAuthenticated(w http.ResponseWrite
 }
 
 func (m *mockSessionManagerUnauthenticated) SetAuthenticated(w http.ResponseWriter, r *http.Request, authenticated bool) error {
-	return nil
-}
-
-// mockSessionManagerWithCSRF implements SessionManager that validates CSRF successfully
-type mockSessionManagerWithCSRF struct{}
-
-func (m *mockSessionManagerWithCSRF) GetOptions() *sessions.Options {
-	return &sessions.Options{}
-}
-
-func (m *mockSessionManagerWithCSRF) EnsureCSRFToken(w http.ResponseWriter, r *http.Request) string {
-	return "valid-csrf-token"
-}
-
-func (m *mockSessionManagerWithCSRF) ValidateCSRFToken(r *http.Request) bool {
-	return true
-}
-
-func (m *mockSessionManagerWithCSRF) ClearSession(w http.ResponseWriter, r *http.Request) {}
-
-func (m *mockSessionManagerWithCSRF) GetSession(w http.ResponseWriter, r *http.Request) (*sessions.Session, error) {
-	return sessions.NewSession(nil, session.SessionName), nil
-}
-
-func (m *mockSessionManagerWithCSRF) SaveSession(w http.ResponseWriter, r *http.Request, sess *sessions.Session) error {
-	return nil
-}
-
-func (m *mockSessionManagerWithCSRF) IsAuthenticated(w http.ResponseWriter, r *http.Request) bool {
-	return true
-}
-
-func (m *mockSessionManagerWithCSRF) SetAuthenticated(w http.ResponseWriter, r *http.Request, authenticated bool) error {
 	return nil
 }
 
@@ -145,46 +96,19 @@ func TestServerShutdownPost_Unauthorized(t *testing.T) {
 	}
 }
 
-func TestServerShutdownPost_CSRFFailed(t *testing.T) {
-	// Initialize templates
-	if err := ui.ParseTemplates(web.FS); err != nil {
-		t.Fatalf("ParseTemplates failed: %v", err)
-	}
-
-	sm := &mockSessionManagerAuthenticated{}
-	serverCtl := &mockServerControl{}
-	helper := &mockTemplateHelpers{}
-	handlers := NewServerHandlers(sm, serverCtl, helper.AddCommonTemplateData, helper.ServerError)
-
-	// Create POST request with CSRF token (but validation returns false)
-	req := httptest.NewRequest(http.MethodPost, "/server/shutdown", strings.NewReader("csrf_token=test-token"))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	rr := httptest.NewRecorder()
-
-	handlers.ServerShutdownPost(rr, req)
-
-	if rr.Code != http.StatusForbidden {
-		t.Errorf("expected status %d for CSRF failure, got %d", http.StatusForbidden, rr.Code)
-	}
-}
-
 func TestServerShutdownPost_Authorized(t *testing.T) {
 	// Initialize templates
 	if err := ui.ParseTemplates(web.FS); err != nil {
 		t.Fatalf("ParseTemplates failed: %v", err)
 	}
 
-	sm := &mockSessionManagerWithCSRF{}
+	sm := &mockSessionManagerAuthenticated{}
 
 	serverCtl := &mockServerControl{}
-	helper := &mockTemplateHelpers{
-		CSRFToken: "valid-csrf-token",
-	}
+	helper := &mockTemplateHelpers{}
 	handlers := NewServerHandlers(sm, serverCtl, helper.AddCommonTemplateData, helper.ServerError)
 
-	// Create POST request with valid CSRF token
-	req := httptest.NewRequest(http.MethodPost, "/server/shutdown", strings.NewReader("csrf_token=valid-csrf-token"))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req := httptest.NewRequest(http.MethodPost, "/server/shutdown", nil)
 	rr := httptest.NewRecorder()
 
 	handlers.ServerShutdownPost(rr, req)
@@ -231,46 +155,19 @@ func TestServerDiscoveryPost_Unauthorized(t *testing.T) {
 	}
 }
 
-func TestServerDiscoveryPost_CSRFFailed(t *testing.T) {
-	// Initialize templates
-	if err := ui.ParseTemplates(web.FS); err != nil {
-		t.Fatalf("ParseTemplates failed: %v", err)
-	}
-
-	sm := &mockSessionManagerAuthenticated{}
-	serverCtl := &mockServerControl{}
-	helper := &mockTemplateHelpers{}
-	handlers := NewServerHandlers(sm, serverCtl, helper.AddCommonTemplateData, helper.ServerError)
-
-	// Create POST request with CSRF token (but validation returns false)
-	req := httptest.NewRequest(http.MethodPost, "/server/discovery", strings.NewReader("csrf_token=test-token"))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	rr := httptest.NewRecorder()
-
-	handlers.ServerDiscoveryPost(rr, req)
-
-	if rr.Code != http.StatusForbidden {
-		t.Errorf("expected status %d for CSRF failure, got %d", http.StatusForbidden, rr.Code)
-	}
-}
-
 func TestServerDiscoveryPost_Authorized(t *testing.T) {
 	// Initialize templates
 	if err := ui.ParseTemplates(web.FS); err != nil {
 		t.Fatalf("ParseTemplates failed: %v", err)
 	}
 
-	sm := &mockSessionManagerWithCSRF{}
+	sm := &mockSessionManagerAuthenticated{}
 
 	serverCtl := &mockServerControl{}
-	helper := &mockTemplateHelpers{
-		CSRFToken: "valid-csrf-token",
-	}
+	helper := &mockTemplateHelpers{}
 	handlers := NewServerHandlers(sm, serverCtl, helper.AddCommonTemplateData, helper.ServerError)
 
-	// Create POST request with valid CSRF token
-	req := httptest.NewRequest(http.MethodPost, "/server/discovery", strings.NewReader("csrf_token=valid-csrf-token"))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req := httptest.NewRequest(http.MethodPost, "/server/discovery", nil)
 	rr := httptest.NewRecorder()
 
 	handlers.ServerDiscoveryPost(rr, req)
@@ -306,17 +203,13 @@ func TestServerDiscoveryPost_Authorized(t *testing.T) {
 }
 
 func TestServerDiscoveryPost_NoCommonData(t *testing.T) {
-	// This test verifies behavior when AddCommonTemplateData is nil
-	// With CSRF validation, we still need a valid CSRF token to proceed
-	sm := &mockSessionManagerWithCSRF{}
+	sm := &mockSessionManagerAuthenticated{}
 
 	serverCtl := &mockServerControl{}
 	helper := &mockTemplateHelpers{}
 	handlers := NewServerHandlers(sm, serverCtl, helper.AddCommonTemplateData, helper.ServerError)
 
-	// Create POST request with valid CSRF token
-	req := httptest.NewRequest(http.MethodPost, "/server/discovery", strings.NewReader("csrf_token=valid-csrf-token"))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req := httptest.NewRequest(http.MethodPost, "/server/discovery", nil)
 	rr := httptest.NewRecorder()
 
 	handlers.ServerDiscoveryPost(rr, req)
@@ -345,48 +238,22 @@ func TestServerCacheBatchLoadPost_Unauthorized(t *testing.T) {
 	}
 }
 
-func TestServerCacheBatchLoadPost_CSRFFailed(t *testing.T) {
-	if err := ui.ParseTemplates(web.FS); err != nil {
-		t.Fatalf("ParseTemplates failed: %v", err)
-	}
-
-	sm := &mockSessionManagerAuthenticated{}
-	serverCtl := &mockServerControl{}
-	helper := &mockTemplateHelpers{}
-	handlers := NewServerHandlers(sm, serverCtl, helper.AddCommonTemplateData, helper.ServerError)
-
-	// Create POST request with CSRF token (but validation returns false)
-	req := httptest.NewRequest(http.MethodPost, "/server/cache-batch-load", strings.NewReader("csrf_token=test-token"))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	rr := httptest.NewRecorder()
-
-	handlers.ServerCacheBatchLoadPost(rr, req)
-
-	if rr.Code != http.StatusForbidden {
-		t.Errorf("expected status %d for CSRF failure, got %d", http.StatusForbidden, rr.Code)
-	}
-}
-
 func TestServerCacheBatchLoadPost_BlockedWhenDiscoveryActive(t *testing.T) {
 	if err := ui.ParseTemplates(web.FS); err != nil {
 		t.Fatalf("ParseTemplates failed: %v", err)
 	}
 
-	sm := &mockSessionManagerWithCSRF{}
+	sm := &mockSessionManagerAuthenticated{}
 	serverCtl := &mockServerControl{
 		BatchLoad: interfaces.StartCacheBatchLoadResult{
 			Blocked: true,
 			Message: "Cache batch load blocked: discovery active",
 		},
 	}
-	helper := &mockTemplateHelpers{
-		CSRFToken: "valid-csrf-token",
-	}
+	helper := &mockTemplateHelpers{}
 	handlers := NewServerHandlers(sm, serverCtl, helper.AddCommonTemplateData, helper.ServerError)
 
-	// Create POST request with valid CSRF token
-	req := httptest.NewRequest(http.MethodPost, "/server/cache-batch-load", strings.NewReader("csrf_token=valid-csrf-token"))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req := httptest.NewRequest(http.MethodPost, "/server/cache-batch-load", nil)
 	rr := httptest.NewRecorder()
 
 	handlers.ServerCacheBatchLoadPost(rr, req)
@@ -417,21 +284,17 @@ func TestServerCacheBatchLoadPost_StartsRunWhenIdle(t *testing.T) {
 		t.Fatalf("ParseTemplates failed: %v", err)
 	}
 
-	sm := &mockSessionManagerWithCSRF{}
+	sm := &mockSessionManagerAuthenticated{}
 	serverCtl := &mockServerControl{
 		BatchLoad: interfaces.StartCacheBatchLoadResult{
 			Blocked: false,
 			Message: "Cache batch load started",
 		},
 	}
-	helper := &mockTemplateHelpers{
-		CSRFToken: "valid-csrf-token",
-	}
+	helper := &mockTemplateHelpers{}
 	handlers := NewServerHandlers(sm, serverCtl, helper.AddCommonTemplateData, helper.ServerError)
 
-	// Create POST request with valid CSRF token
-	req := httptest.NewRequest(http.MethodPost, "/server/cache-batch-load", strings.NewReader("csrf_token=valid-csrf-token"))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req := httptest.NewRequest(http.MethodPost, "/server/cache-batch-load", nil)
 	rr := httptest.NewRecorder()
 
 	handlers.ServerCacheBatchLoadPost(rr, req)
@@ -462,17 +325,14 @@ func TestServerCacheBatchLoadPost_StartError(t *testing.T) {
 		t.Fatalf("ParseTemplates failed: %v", err)
 	}
 
-	sm := &mockSessionManagerWithCSRF{}
+	sm := &mockSessionManagerAuthenticated{}
 	serverCtl := &mockServerControl{
 		BatchErr: errors.New("batch load failed"),
 	}
-	helper := &mockTemplateHelpers{
-		CSRFToken: "valid-csrf-token",
-	}
+	helper := &mockTemplateHelpers{}
 	handlers := NewServerHandlers(sm, serverCtl, helper.AddCommonTemplateData, helper.ServerError)
 
-	req := httptest.NewRequest(http.MethodPost, "/server/cache-batch-load", strings.NewReader("csrf_token=valid-csrf-token"))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req := httptest.NewRequest(http.MethodPost, "/server/cache-batch-load", nil)
 	rr := httptest.NewRecorder()
 
 	handlers.ServerCacheBatchLoadPost(rr, req)

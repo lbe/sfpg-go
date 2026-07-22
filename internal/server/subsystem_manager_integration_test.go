@@ -299,7 +299,7 @@ func TestSubsystemManager_Start_CacheOnGalleryHitWired(t *testing.T) {
 	if cacheCfg.OnGalleryCacheHit == nil {
 		t.Fatal("OnGalleryCacheHit callback should be wired")
 	}
-	cacheCfg.OnGalleryCacheHit(app.RuntimeManager.ctx, 1, "session-id", "gzip")
+	cacheCfg.OnGalleryCacheHit(app.RuntimeManager.ctx, 1, "session-id")
 }
 
 func TestSubsystemManager_StartPool(t *testing.T) {

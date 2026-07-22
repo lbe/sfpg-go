@@ -111,9 +111,9 @@ func (app *App) getRouter() http.Handler {
 	mux.Handle("GET /raw-image/{id}", http.HandlerFunc(app.HandlerManager.galleryHandlers.RawImageByID))
 	mux.Handle("GET /thumbnail/folder/{id}", http.HandlerFunc(app.HandlerManager.galleryHandlers.FolderThumbnailByID))
 
-	// Read EnablePprof from runtime config (or fall back to default=false if config not loaded)
+	// Read EnablePprof from runtime config (or fall back to default=true if config not loaded)
 	app.ConfigManager.ConfigMu.RLock()
-	enablePprof := false
+	enablePprof := true
 	if app.ConfigManager.Config != nil {
 		enablePprof = app.ConfigManager.Config.EnablePprof
 	}
@@ -132,36 +132,27 @@ func (app *App) getRouter() http.Handler {
 	// Build middleware chain from innermost to outermost
 	var handler http.Handler = mux
 
-	// Layer 1: Cross-Origin protection - security layer applied first
-	handler = middleware.CSRFProtection(handler)
+	// Cross-Origin protection - security layer applied first
+	handler = http.NewCrossOriginProtection().Handler(handler)
 
-	// Layer 2: Compression middleware (if enabled)
-	// Read from app.ConfigManager.Config (runtime config), fall back to app.opt (startup CLI/env) if config not loaded
 	app.ConfigManager.ConfigMu.RLock()
-	enableCompression := false
 	enableHTTPCache := false
 	if app.ConfigManager.Config != nil {
-		enableCompression = app.ConfigManager.Config.ServerCompressionEnable
 		enableHTTPCache = app.ConfigManager.Config.EnableHTTPCache
 	} else {
 		// Fall back to app.opt if config not loaded yet (e.g., in tests)
-		enableCompression = app.opt.EnableCompression.IsSet && app.opt.EnableCompression.Bool
 		enableHTTPCache = app.opt.EnableHTTPCache.IsSet && app.opt.EnableHTTPCache.Bool
 	}
 	app.ConfigManager.ConfigMu.RUnlock()
 
-	if enableCompression {
-		handler = middleware.CompressMiddleware(handler)
-	}
-
-	// Layer 3: HTTP cache middleware (if enabled)
+	// HTTP cache middleware (if enabled)
 	if enableHTTPCache {
 		if app.cacheMW != nil {
 			handler = app.cacheMW.Middleware(handler)
 		}
 	}
 
-	// Layer 5: Global logging middleware (outermost)
+	// Global logging middleware (outermost)
 	handler = middleware.NewLoggingMiddleware(nil)(handler)
 
 	return handler

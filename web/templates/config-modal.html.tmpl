@@ -62,7 +62,6 @@
         class="flex min-h-0 flex-1 flex-col overflow-hidden"
         _="on load call clearConfigSpinner() on htmx:afterSwap from me call clearConfigSpinner() on htmx:afterSettle from me call clearConfigSpinner()"
       >
-        <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}" />
         <div
           id="config-error-message"
           class="mb-4 px-6 text-error"
@@ -243,6 +242,7 @@
           <div class="modal-action justify-end">
             <div class="flex items-center gap-2">
               <button
+                type="button"
                 class="btn btn-outline btn-sm"
                 hx-post="/config/restore-last-known-good?action=preview"
                 hx-target="#restore-diff-modal"
@@ -253,6 +253,7 @@
                 Restore
               </button>
               <button
+                type="button"
                 class="btn btn-outline btn-primary btn-sm"
                 hx-post="/config/export/to-file"
                 hx-target="#export-diff-modal"
@@ -263,6 +264,7 @@
                 Export
               </button>
               <button
+                type="button"
                 class="btn btn-outline btn-primary btn-sm"
                 _="on click click() on #import-file-input on mouseenter set #button-explanation-text.textContent to 'Import configuration from a YAML file' on mouseleave set #button-explanation-text.textContent to ''"
               >
@@ -365,7 +367,6 @@
             hx-post="/config/restart"
             hx-target="#config-success-message"
             hx-swap="outerHTML"
-            hx-vals='{"csrf_token": "{{ .CSRFToken }}"}'
             _="on htmx:afterRequest
                  -- Close the restart dialog
                  set #restart-diff-modal.checked to false

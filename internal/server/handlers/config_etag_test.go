@@ -85,8 +85,7 @@ func setupTestConfigHandlers(t *testing.T, mockSvc config.ConfigService, mockAut
 	credStore := &fakeCredentialStore{}
 	cfgOps := &mockConfigOps{}
 	helper := &mockTemplateHelpers{
-		CSRFToken: "test-csrf-token",
-		Authed:    true,
+		Authed: true,
 	}
 
 	ch := NewConfigHandlers(
@@ -182,9 +181,8 @@ func TestConfigIncrementETag_UpdatesInMemoryConfig(t *testing.T) {
 	h := setupTestConfigHandlers(t, mockSvc, nil)
 	h.Ctx = context.Background()
 
-	// Create authenticated request with CSRF
-	formData := strings.NewReader("csrf_token=valid-token")
-	req := httptest.NewRequest("POST", "/config/increment-etag", formData)
+	// Create authenticated request
+	req := httptest.NewRequest("POST", "/config/increment-etag", nil)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 
@@ -255,7 +253,7 @@ func TestConfigIncrementETag_Error(t *testing.T) {
 	h.Ctx = context.Background()
 	h.SessionManager.(*mockSessionManagerAuth).authenticated = true
 
-	req := httptest.NewRequest("POST", "/config/increment-etag", strings.NewReader("csrf_token=valid-token"))
+	req := httptest.NewRequest("POST", "/config/increment-etag", nil)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 
@@ -288,25 +286,6 @@ func TestConfigIncrementETag_ParseFormError(t *testing.T) {
 	}
 }
 
-func TestConfigIncrementETag_InvalidCSRF(t *testing.T) {
-	if err := ui.ParseTemplates(web.FS); err != nil {
-		t.Fatalf("Parse templates: %v", err)
-	}
-
-	h := setupTestConfigHandlers(t, &mockConfigServiceForETag{}, nil)
-	h.SessionManager = &mockSessionManagerAuthenticatedInvalidCSRF{}
-
-	req := httptest.NewRequest("POST", "/config/increment-etag", strings.NewReader("csrf_token=invalid"))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	w := httptest.NewRecorder()
-
-	NewConfigETagHandler(h).ConfigIncrementETag(w, req)
-
-	if w.Code != http.StatusForbidden {
-		t.Fatalf("Status = %d, want %d", w.Code, http.StatusForbidden)
-	}
-}
-
 func TestConfigIncrementETag_LoadError(t *testing.T) {
 	if err := ui.ParseTemplates(web.FS); err != nil {
 		t.Fatalf("Parse templates: %v", err)
@@ -324,7 +303,7 @@ func TestConfigIncrementETag_LoadError(t *testing.T) {
 	h := setupTestConfigHandlers(t, mockSvc, nil)
 	h.SessionManager.(*mockSessionManagerAuth).authenticated = true
 
-	req := httptest.NewRequest("POST", "/config/increment-etag", strings.NewReader("csrf_token=valid"))
+	req := httptest.NewRequest("POST", "/config/increment-etag", nil)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 
@@ -357,8 +336,7 @@ func TestConfigIncrementETag_InvalidatesHTTPCache(t *testing.T) {
 	h := setupTestConfigHandlers(t, mockSvc, nil)
 	h.Ctx = context.Background()
 
-	formData := strings.NewReader("csrf_token=valid-token")
-	req := httptest.NewRequest("POST", "/config/increment-etag", formData)
+	req := httptest.NewRequest("POST", "/config/increment-etag", nil)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 

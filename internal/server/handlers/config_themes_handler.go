@@ -21,17 +21,11 @@ func NewConfigThemesHandler(h *ConfigHandlers) *ConfigThemesHandler {
 
 // UpdateThemesHandler handles POST /config/themes requests.
 // It updates the list of available themes and adjusts current_theme if needed.
-// Authentication and CSRF protection are required.
+// Authentication is required.
 func (h *ConfigThemesHandler) UpdateThemesHandler(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		slog.Warn("failed to parse form in themes update", "err", err)
 		http.Error(w, "Invalid form data", http.StatusBadRequest)
-		return
-	}
-
-	if !h.validateCsrf(r) {
-		slog.Warn("CSRF validation failed for themes update", "remote_addr", r.RemoteAddr)
-		http.Error(w, "Forbidden - CSRF token invalid", http.StatusForbidden)
 		return
 	}
 
@@ -62,6 +56,12 @@ func (h *ConfigThemesHandler) UpdateThemesHandler(w http.ResponseWriter, r *http
 
 	h.cfgOps.UpdateConfigWithPrecedence(applyResult.Config, applyResult.RestartRequiredKeys)
 	h.cfgOps.ApplyConfig()
+
+	// Invalidate HTTP cache if current theme changed — stale cached pages would
+	// have the old SSR data-theme value.
+	if oldConfig.CurrentTheme != applyResult.Config.CurrentTheme {
+		h.cfgOps.InvalidateHTTPCache()
+	}
 
 	w.Header().Set("HX-Trigger", "config-saved")
 	w.WriteHeader(http.StatusOK)

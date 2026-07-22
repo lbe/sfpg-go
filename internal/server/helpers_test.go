@@ -133,9 +133,6 @@ func CreateApp(t testing.TB, opts ...AppOption) *App {
 		if !opt.Profile.IsSet && envOpt.Profile.IsSet {
 			opt.Profile = envOpt.Profile
 		}
-		if !opt.EnableCompression.IsSet && envOpt.EnableCompression.IsSet {
-			opt.EnableCompression = envOpt.EnableCompression
-		}
 		if !opt.EnableHTTPCache.IsSet && envOpt.EnableHTTPCache.IsSet {
 			opt.EnableHTTPCache = envOpt.EnableHTTPCache
 		}
@@ -188,6 +185,10 @@ func CreateApp(t testing.TB, opts ...AppOption) *App {
 	if err := app.loadConfig(); err != nil {
 		t.Fatalf("load config: %v", err)
 	}
+	if err := app.reconfigurePoolsFromConfig(); err != nil {
+		t.Fatalf("reconfigure pools: %v", err)
+	}
+	app.StartWriteBatcher(app.RuntimeManager.ctx, true)
 
 	// When using an existing root directory, apply config to ensure ETag and other settings
 	if cfg.rootDir != "" {
@@ -231,7 +232,6 @@ func CreateApp(t testing.TB, opts ...AppOption) *App {
 }
 
 // MakeAuthCookie creates an authenticated session cookie for testing.
-// Includes a stable CSRF token to ensure consistent HTML output across requests.
 func MakeAuthCookie(t *testing.T, app *App) *http.Cookie {
 	t.Helper()
 	rr := httptest.NewRecorder()
@@ -241,8 +241,6 @@ func MakeAuthCookie(t *testing.T, app *App) *http.Cookie {
 		t.Fatalf("failed to get session: %v", err)
 	}
 	session.Values["authenticated"] = true
-	// Include a stable CSRF token to ensure consistent HTML output for cache tests
-	session.Values["csrf_token"] = "test-csrf-token-for-consistent-caching"
 	if err := session.Save(req, rr); err != nil {
 		t.Fatalf("Failed to save session: %v", err)
 	}

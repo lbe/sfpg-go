@@ -20,7 +20,7 @@ import (
 	"github.com/lbe/sfpg-go/internal/server/session"
 )
 
-// SessionAuthFacade owns session management, authentication, and CSRF.
+// SessionAuthFacade owns session management and authentication.
 type SessionAuthFacade struct {
 	sessionSecret  string
 	store          *sessions.CookieStore
@@ -28,7 +28,7 @@ type SessionAuthFacade struct {
 	authService    auth.AuthService
 }
 
-// NewSessionAuthFacade constructs a facade for session, auth, and CSRF operations.
+// NewSessionAuthFacade constructs a facade for session and auth operations.
 func NewSessionAuthFacade(sessionSecret string) *SessionAuthFacade {
 	return &SessionAuthFacade{sessionSecret: sessionSecret}
 }
@@ -51,32 +51,6 @@ func (s *SessionAuthFacade) EnsureSession(getOptionsConfig func() *session.Optio
 // IsAuthenticated reports whether the request has a valid authenticated session.
 func (s *SessionAuthFacade) IsAuthenticated(w http.ResponseWriter, r *http.Request) bool {
 	return session.IsAuthenticated(s.store, w, r)
-}
-
-// ─── CSRF ───────────────────────────────────────────────────────────
-
-// EnsureCSRFToken returns a CSRF token for the current session, creating one if needed.
-func (s *SessionAuthFacade) EnsureCSRFToken(w http.ResponseWriter, r *http.Request) string {
-	if s.sessionManager != nil {
-		return s.sessionManager.EnsureCSRFToken(w, r)
-	}
-	return session.EnsureCsrfToken(s.store, w, r)
-}
-
-// CSRFTokenForPage returns the CSRF token to embed in rendered pages.
-func (s *SessionAuthFacade) CSRFTokenForPage(w http.ResponseWriter, r *http.Request, authenticated bool) string {
-	if authenticated {
-		return s.EnsureCSRFToken(w, r)
-	}
-	sess, err := s.store.Get(r, session.SessionName)
-	if err != nil {
-		slog.Debug("failed to get session for CSRF token", "err", err)
-		return session.GenerateCSRFToken()
-	}
-	if token, ok := sess.Values["csrf_token"].(string); ok && token != "" {
-		return token
-	}
-	return session.GenerateCSRFToken()
 }
 
 // ─── Credential DB operations ───────────────────────────────────────

@@ -29,7 +29,7 @@ func TestHTTPCacheMiddleware_SetOnGalleryCacheHit(t *testing.T) {
 
 	var called bool
 	var gotFolderID int64
-	hcm.SetOnGalleryCacheHit(func(ctx context.Context, folderID int64, sessionID, acceptEncoding string) {
+	hcm.SetOnGalleryCacheHit(func(ctx context.Context, folderID int64, sessionID string) {
 		called = true
 		gotFolderID = folderID
 	})
@@ -39,7 +39,7 @@ func TestHTTPCacheMiddleware_SetOnGalleryCacheHit(t *testing.T) {
 		t.Fatal("OnGalleryCacheHit callback was not stored")
 	}
 
-	cfg.OnGalleryCacheHit(context.Background(), 42, "session-id", "gzip")
+	cfg.OnGalleryCacheHit(context.Background(), 42, "session-id")
 
 	if !called {
 		t.Error("OnGalleryCacheHit callback was not called")
@@ -63,14 +63,11 @@ func TestHTTPCacheMiddleware_UpdatePool(t *testing.T) {
 	now := time.Now().Unix()
 	entry := &cachelite.HTTPCacheEntry{
 		Key: cachelite.NewCacheKey(cachelite.CacheKeyParams{
-			Method:   "GET",
-			Path:     "/unit",
-			Theme:    "dark",
-			Encoding: "identity",
+			Method: "GET",
+			Path:   "/unit",
 		}),
 		Method:        "GET",
 		Path:          "/unit",
-		Encoding:      "identity",
 		Status:        200,
 		Body:          []byte("pool-two"),
 		ContentLength: sql.NullInt64{Int64: 8, Valid: true},
@@ -119,14 +116,11 @@ func TestHTTPCacheMiddleware_GetSizeBytesAndEntryCount(t *testing.T) {
 	now := time.Now().Unix()
 	entry := &cachelite.HTTPCacheEntry{
 		Key: cachelite.NewCacheKey(cachelite.CacheKeyParams{
-			Method:   "GET",
-			Path:     "/unit",
-			Theme:    "dark",
-			Encoding: "identity",
+			Method: "GET",
+			Path:   "/unit",
 		}),
 		Method:        "GET",
 		Path:          "/unit",
-		Encoding:      "identity",
 		Status:        200,
 		Body:          []byte("hello cache"),
 		ContentLength: sql.NullInt64{Int64: 11, Valid: true},
@@ -161,14 +155,11 @@ func TestCountCacheEntries(t *testing.T) {
 	now := time.Now().Unix()
 	entry := &cachelite.HTTPCacheEntry{
 		Key: cachelite.NewCacheKey(cachelite.CacheKeyParams{
-			Method:   "GET",
-			Path:     "/unit",
-			Theme:    "dark",
-			Encoding: "identity",
+			Method: "GET",
+			Path:   "/unit",
 		}),
 		Method:    "GET",
 		Path:      "/unit",
-		Encoding:  "identity",
 		Status:    200,
 		Body:      []byte("x"),
 		CreatedAt: now,

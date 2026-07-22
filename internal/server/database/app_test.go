@@ -87,7 +87,7 @@ func TestMigrateDB(t *testing.T) {
 
 	// First run: should create and migrate the database
 	t.Run("initial migration", func(t *testing.T) {
-		if err := migrateDB(dbPath); err != nil {
+		if _, err := migrateDB(dbPath); err != nil {
 			t.Fatalf("migrateDB failed: %v", err)
 		}
 
@@ -113,7 +113,7 @@ func TestMigrateDB(t *testing.T) {
 
 	// Second run: should handle existing database gracefully
 	t.Run("rerun migration", func(t *testing.T) {
-		if err := migrateDB(dbPath); err != nil {
+		if _, err := migrateDB(dbPath); err != nil {
 			t.Fatalf("migrateDB failed on rerun: %v", err)
 		}
 
@@ -189,7 +189,7 @@ func TestCreateDatabasePools(t *testing.T) {
 	db.Close()
 
 	// Run thumbs migration (required for CustomQueries that reference thumbs.thumbnail_blobs)
-	if migErr := migrateBlobsDB(thumbsDBPath); migErr != nil {
+	if _, migErr := migrateBlobsDB(thumbsDBPath); migErr != nil {
 		t.Fatalf("migrateBlobsDB failed: %v", migErr)
 	}
 
@@ -230,10 +230,10 @@ func TestEnsureRootFolderExists(t *testing.T) {
 	dbPath := filepath.Join(tempDir, "sfpg.db")
 	thumbsDBPath := filepath.Join(tempDir, "thumbs.db")
 
-	if err := migrateDB(dbPath); err != nil {
+	if _, err := migrateDB(dbPath); err != nil {
 		t.Fatalf("migrateDB failed: %v", err)
 	}
-	if err := migrateBlobsDB(thumbsDBPath); err != nil {
+	if _, err := migrateBlobsDB(thumbsDBPath); err != nil {
 		t.Fatalf("migrateBlobsDB failed: %v", err)
 	}
 
@@ -341,8 +341,8 @@ func TestSetup_EnsureRootFolderExistsFails(t *testing.T) {
 
 func TestSetup_MigrateDBFails(t *testing.T) {
 	orig := migrateDBFn
-	migrateDBFn = func(dbPath string) error {
-		return errors.New("migration failed")
+	migrateDBFn = func(dbPath string) (bool, error) {
+		return false, errors.New("migration failed")
 	}
 	t.Cleanup(func() { migrateDBFn = orig })
 
@@ -358,8 +358,8 @@ func TestSetup_MigrateDBFails(t *testing.T) {
 
 func TestSetup_MigrateBlobsDBFails(t *testing.T) {
 	orig := migrateBlobsDBFn
-	migrateBlobsDBFn = func(dbPath string) error {
-		return errors.New("thumbs migration failed")
+	migrateBlobsDBFn = func(dbPath string) (bool, error) {
+		return false, errors.New("thumbs migration failed")
 	}
 	t.Cleanup(func() { migrateBlobsDBFn = orig })
 
@@ -395,7 +395,7 @@ func TestMigrateDB_OpenFileFails(t *testing.T) {
 	}
 	t.Cleanup(func() { osOpenFile = orig })
 
-	err := migrateDB(filepath.Join(t.TempDir(), "sfpg.db"))
+	_, err := migrateDB(filepath.Join(t.TempDir(), "sfpg.db"))
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -411,7 +411,7 @@ func TestMigrateDB_ChmodFails(t *testing.T) {
 	}
 	t.Cleanup(func() { osChmod = orig })
 
-	err := migrateDB(filepath.Join(t.TempDir(), "sfpg.db"))
+	_, err := migrateDB(filepath.Join(t.TempDir(), "sfpg.db"))
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -424,7 +424,7 @@ func TestMigrateDB_UpFails(t *testing.T) {
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "sfpg.db")
 
-	if err := migrateDB(dbPath); err != nil {
+	if _, err := migrateDB(dbPath); err != nil {
 		t.Fatalf("initial migration failed: %v", err)
 	}
 
@@ -438,7 +438,7 @@ func TestMigrateDB_UpFails(t *testing.T) {
 		t.Fatalf("dirty migration: %v", execErr)
 	}
 
-	err = migrateDB(dbPath)
+	_, err = migrateDB(dbPath)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -454,7 +454,7 @@ func TestMigrateBlobsDB_OpenFileFails(t *testing.T) {
 	}
 	t.Cleanup(func() { osOpenFile = orig })
 
-	err := migrateBlobsDB(filepath.Join(t.TempDir(), "thumbs.db"))
+	_, err := migrateBlobsDB(filepath.Join(t.TempDir(), "thumbs.db"))
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -470,7 +470,7 @@ func TestMigrateBlobsDB_ChmodFails(t *testing.T) {
 	}
 	t.Cleanup(func() { osChmod = orig })
 
-	err := migrateBlobsDB(filepath.Join(t.TempDir(), "thumbs.db"))
+	_, err := migrateBlobsDB(filepath.Join(t.TempDir(), "thumbs.db"))
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -483,7 +483,7 @@ func TestMigrateBlobsDB_UpFails(t *testing.T) {
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "thumbs.db")
 
-	if err := migrateBlobsDB(dbPath); err != nil {
+	if _, err := migrateBlobsDB(dbPath); err != nil {
 		t.Fatalf("initial thumbs migration failed: %v", err)
 	}
 
@@ -497,7 +497,7 @@ func TestMigrateBlobsDB_UpFails(t *testing.T) {
 		t.Fatalf("dirty thumbs migration: %v", execErr)
 	}
 
-	err = migrateBlobsDB(dbPath)
+	_, err = migrateBlobsDB(dbPath)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -543,7 +543,7 @@ func TestCreateDatabasePools_RoPoolFails(t *testing.T) {
 	db.Close()
 
 	// Run thumbs migration
-	if migErr := migrateBlobsDB(thumbsDBPath); migErr != nil {
+	if _, migErr := migrateBlobsDB(thumbsDBPath); migErr != nil {
 		t.Fatalf("migrateBlobsDB failed: %v", migErr)
 	}
 

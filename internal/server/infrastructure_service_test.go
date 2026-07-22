@@ -95,15 +95,6 @@ func TestInfrastructureService_SetupDB_NilConfig(t *testing.T) {
 		setupRw:    newFakePool(100, 10),
 		setupRo:    newFakePool(100, 10),
 	}
-	infra.testSeams.BuildWriteBatcher = func(ctx context.Context, maxBatchSize int, flushInterval time.Duration) (*writebatcher.WriteBatcher[BatchedWrite], error) {
-		return nil, nil // avoid starting real batcher
-	}
-	infra.testSeams.GetCacheSizeBytes = func(ctx context.Context, pool *dbconnpool.DbSQLConnPool) (int64, error) {
-		return 0, nil
-	}
-	infra.testSeams.BuildWriteBatcher = func(ctx context.Context, maxBatchSize int, flushInterval time.Duration) (*writebatcher.WriteBatcher[BatchedWrite], error) {
-		return nil, nil // avoid starting real batcher
-	}
 
 	logs := withLogCapture(t, slog.LevelInfo, func() {
 		infra.SetupDB(context.Background(), nil)
@@ -113,6 +104,9 @@ func TestInfrastructureService_SetupDB_NilConfig(t *testing.T) {
 	if infra.dqueDirPath != want {
 		t.Fatalf("dqueDirPath = %q, want %q", infra.dqueDirPath, want)
 	}
+	if infra.writeBatcher != nil {
+		t.Fatal("writeBatcher should not be created in SetupDB")
+	}
 	if !strings.Contains(logs, "rw_configured_max=100") {
 		t.Errorf("expected default configured max in logs, got: %s", logs)
 	}
@@ -121,25 +115,26 @@ func TestInfrastructureService_SetupDB_NilConfig(t *testing.T) {
 	}
 }
 
-func TestInfrastructureService_SetupDB_CacheSizeError(t *testing.T) {
+func TestInfrastructureService_CalibrateCacheSizeNow_Error(t *testing.T) {
 	infra := NewInfrastructureService()
 	infra.dbInitializer = &fakeDatabaseInitializer{
 		setupPaths: database.DatabasePaths{Main: "/tmp/fake/sfpg.db"},
 		setupRw:    newFakePool(100, 10),
 		setupRo:    newFakePool(100, 10),
 	}
-	infra.testSeams.BuildWriteBatcher = func(ctx context.Context, maxBatchSize int, flushInterval time.Duration) (*writebatcher.WriteBatcher[BatchedWrite], error) {
-		return nil, nil // avoid starting real batcher
-	}
+	infra.SetupDB(context.Background(), config.DefaultConfig())
 	infra.testSeams.GetCacheSizeBytes = func(ctx context.Context, pool *dbconnpool.DbSQLConnPool) (int64, error) {
 		return 0, errors.New("size error")
 	}
 
 	logs := withLogCapture(t, slog.LevelWarn, func() {
-		infra.SetupDB(context.Background(), config.DefaultConfig())
+		infra.CalibrateCacheSizeNow(context.Background())
 	})
-	if !strings.Contains(logs, "Failed to initialize cache size counter") {
-		t.Errorf("expected cache size warning, got: %s", logs)
+	if !strings.Contains(logs, "cache size calibration failed") {
+		t.Errorf("expected cache size calibration warning, got: %s", logs)
+	}
+	if infra.CacheSizeCalibrated() {
+		t.Fatal("counter should not be marked calibrated after error")
 	}
 }
 
@@ -165,16 +160,14 @@ func TestInfrastructureService_SetupDB_PanicOnSetupError(t *testing.T) {
 	}
 }
 
-func TestInfrastructureService_SetupDB_PanicOnWriteBatcherError(t *testing.T) {
+func TestInfrastructureService_StartWriteBatcher_PanicOnError(t *testing.T) {
 	infra := NewInfrastructureService()
 	infra.dbInitializer = &fakeDatabaseInitializer{
 		setupPaths: database.DatabasePaths{Main: "/tmp/fake/sfpg.db"},
 		setupRw:    newFakePool(100, 10),
 		setupRo:    newFakePool(100, 10),
 	}
-	infra.testSeams.GetCacheSizeBytes = func(ctx context.Context, pool *dbconnpool.DbSQLConnPool) (int64, error) {
-		return 0, nil
-	}
+	infra.SetupDB(context.Background(), config.DefaultConfig())
 	infra.testSeams.BuildWriteBatcher = func(ctx context.Context, maxBatchSize int, flushInterval time.Duration) (*writebatcher.WriteBatcher[BatchedWrite], error) {
 		return nil, errors.New("batcher boom")
 	}
@@ -190,7 +183,7 @@ func TestInfrastructureService_SetupDB_PanicOnWriteBatcherError(t *testing.T) {
 	}()
 
 	withLogCapture(t, slog.LevelError, func() {
-		infra.SetupDB(context.Background(), config.DefaultConfig())
+		infra.StartWriteBatcher(context.Background(), true)
 	})
 }
 
@@ -257,6 +250,15 @@ func TestInfrastructureService_ReconfigurePools_UsesBuildBatcherHook(t *testing.
 	}
 	infra.dbRwPool = newFakePool(10, 2)
 	infra.dbRoPool = newFakePool(10, 2)
+	ctx := context.Background()
+	wb, err := writebatcher.New(ctx, writebatcher.Config[BatchedWrite]{
+		BeginTx: func(ctx context.Context) (*sql.Tx, error) { return nil, nil },
+		Flush:   func(ctx context.Context, tx *sql.Tx, batch []BatchedWrite) error { return nil },
+	})
+	if err != nil {
+		t.Fatalf("New writebatcher: %v", err)
+	}
+	infra.writeBatcher = wb
 
 	cfg := config.DefaultConfig()
 	cfg.DBMaxPoolSize = 20
@@ -266,7 +268,33 @@ func TestInfrastructureService_ReconfigurePools_UsesBuildBatcherHook(t *testing.
 		t.Fatalf("ReconfigurePools error = %v", err)
 	}
 	if !hookCalled {
-		t.Error("testSeams.BuildWriteBatcher should be called")
+		t.Error("testSeams.BuildWriteBatcher should be called when batcher already exists")
+	}
+}
+
+func TestInfrastructureService_ReconfigurePools_SkipsBatcherWhenNil(t *testing.T) {
+	infra := NewInfrastructureService()
+	hookCalled := false
+	infra.testSeams.BuildWriteBatcher = func(ctx context.Context, maxBatchSize int, flushInterval time.Duration) (*writebatcher.WriteBatcher[BatchedWrite], error) {
+		hookCalled = true
+		return nil, nil
+	}
+	infra.dbInitializer = &fakeDatabaseInitializer{
+		recreateRw: newFakePool(20, 4),
+		recreateRo: newFakePool(20, 4),
+	}
+	infra.dbRwPool = newFakePool(10, 2)
+	infra.dbRoPool = newFakePool(10, 2)
+
+	cfg := config.DefaultConfig()
+	cfg.DBMaxPoolSize = 20
+	cfg.DBMinIdleConnections = 4
+
+	if err := infra.ReconfigurePools(context.Background(), cfg); err != nil {
+		t.Fatalf("ReconfigurePools error = %v", err)
+	}
+	if hookCalled {
+		t.Error("BuildWriteBatcher should not be called before StartWriteBatcher")
 	}
 }
 
@@ -281,6 +309,15 @@ func TestInfrastructureService_ReconfigurePools_BatcherError(t *testing.T) {
 	}
 	infra.dbRwPool = newFakePool(10, 2)
 	infra.dbRoPool = newFakePool(10, 2)
+	ctx := context.Background()
+	wb, err := writebatcher.New(ctx, writebatcher.Config[BatchedWrite]{
+		BeginTx: func(ctx context.Context) (*sql.Tx, error) { return nil, nil },
+		Flush:   func(ctx context.Context, tx *sql.Tx, batch []BatchedWrite) error { return nil },
+	})
+	if err != nil {
+		t.Fatalf("New writebatcher: %v", err)
+	}
+	infra.writeBatcher = wb
 
 	logs := withLogCapture(t, slog.LevelError, func() {
 		cfg := config.DefaultConfig()
@@ -369,41 +406,24 @@ func TestInfrastructureService_MaybeEvictCacheEntries_EarlyReturns(t *testing.T)
 		t.Run(tt.name, func(t *testing.T) {
 			infra := NewInfrastructureService()
 			infra.cacheMWForEvict = tt.cmw
-			sizeCalled := false
-			infra.testSeams.GetCacheSizeBytes = func(ctx context.Context, pool *dbconnpool.DbSQLConnPool) (int64, error) {
-				sizeCalled = true
+			evictCalled := false
+			infra.testSeams.EvictLRU = func(ctx context.Context, pool *dbconnpool.DbSQLConnPool, targetFree int64) (int64, error) {
+				evictCalled = true
 				return 0, nil
 			}
 
 			infra.maybeEvictCacheEntries(tt.batch)
-			if sizeCalled {
-				t.Error("GetCacheSizeBytes should not be called")
+			if evictCalled {
+				t.Error("EvictLRU should not be called")
 			}
 		})
-	}
-}
-
-func TestInfrastructureService_MaybeEvictCacheEntries_SizeError(t *testing.T) {
-	infra := NewInfrastructureService()
-	infra.cacheMWForEvict = &fakeCacheMiddlewareForEvict{cfg: cachelite.CacheConfig{MaxTotalSize: 1000}}
-	infra.testSeams.GetCacheSizeBytes = func(ctx context.Context, pool *dbconnpool.DbSQLConnPool) (int64, error) {
-		return 0, errors.New("size error")
-	}
-
-	logs := withLogCapture(t, slog.LevelWarn, func() {
-		infra.maybeEvictCacheEntries([]BatchedWrite{{CacheEntry: &cachelite.HTTPCacheEntry{Path: "/gallery/1"}}})
-	})
-	if !strings.Contains(logs, "failed to get cache size for eviction check") {
-		t.Errorf("expected size error log, got: %s", logs)
 	}
 }
 
 func TestInfrastructureService_MaybeEvictCacheEntries_UnderLimit(t *testing.T) {
 	infra := NewInfrastructureService()
 	infra.cacheMWForEvict = &fakeCacheMiddlewareForEvict{cfg: cachelite.CacheConfig{MaxTotalSize: 1000}}
-	infra.testSeams.GetCacheSizeBytes = func(ctx context.Context, pool *dbconnpool.DbSQLConnPool) (int64, error) {
-		return 500, nil
-	}
+	infra.cacheSizeBytes.Store(500)
 	evictCalled := false
 	infra.testSeams.EvictLRU = func(ctx context.Context, pool *dbconnpool.DbSQLConnPool, targetFree int64) (int64, error) {
 		evictCalled = true
@@ -419,9 +439,7 @@ func TestInfrastructureService_MaybeEvictCacheEntries_UnderLimit(t *testing.T) {
 func TestInfrastructureService_MaybeEvictCacheEntries_EvictionError(t *testing.T) {
 	infra := NewInfrastructureService()
 	infra.cacheMWForEvict = &fakeCacheMiddlewareForEvict{cfg: cachelite.CacheConfig{MaxTotalSize: 1000}}
-	infra.testSeams.GetCacheSizeBytes = func(ctx context.Context, pool *dbconnpool.DbSQLConnPool) (int64, error) {
-		return 1500, nil
-	}
+	infra.cacheSizeBytes.Store(1500)
 	infra.testSeams.EvictLRU = func(ctx context.Context, pool *dbconnpool.DbSQLConnPool, targetFree int64) (int64, error) {
 		return 0, errors.New("eviction failed")
 	}
@@ -437,9 +455,6 @@ func TestInfrastructureService_MaybeEvictCacheEntries_EvictionError(t *testing.T
 func TestInfrastructureService_MaybeEvictCacheEntries_OverLimit(t *testing.T) {
 	infra := NewInfrastructureService()
 	infra.cacheMWForEvict = &fakeCacheMiddlewareForEvict{cfg: cachelite.CacheConfig{MaxTotalSize: 1000}}
-	infra.testSeams.GetCacheSizeBytes = func(ctx context.Context, pool *dbconnpool.DbSQLConnPool) (int64, error) {
-		return 1500, nil
-	}
 	var evictTarget int64
 	infra.testSeams.EvictLRU = func(ctx context.Context, pool *dbconnpool.DbSQLConnPool, targetFree int64) (int64, error) {
 		evictTarget = targetFree
@@ -456,6 +471,21 @@ func TestInfrastructureService_MaybeEvictCacheEntries_OverLimit(t *testing.T) {
 	if got := infra.cacheSizeBytes.Load(); got != 900 {
 		t.Fatalf("cacheSizeBytes = %d, want 900", got)
 	}
+}
+
+func TestInfrastructureService_MaybeEvictCacheEntries_UsesCounterNotQuery(t *testing.T) {
+	infra := NewInfrastructureService()
+	infra.cacheMWForEvict = &fakeCacheMiddlewareForEvict{cfg: cachelite.CacheConfig{MaxTotalSize: 1000}}
+	infra.cacheSizeBytes.Store(1500)
+	infra.testSeams.GetCacheSizeBytes = func(ctx context.Context, pool *dbconnpool.DbSQLConnPool) (int64, error) {
+		t.Fatal("GetCacheSizeBytes must not be called; eviction uses cacheSizeBytes counter")
+		return 0, nil
+	}
+	infra.testSeams.EvictLRU = func(ctx context.Context, pool *dbconnpool.DbSQLConnPool, targetFree int64) (int64, error) {
+		return 0, nil
+	}
+
+	infra.maybeEvictCacheEntries([]BatchedWrite{{CacheEntry: &cachelite.HTTPCacheEntry{Path: "/gallery/1"}}})
 }
 
 func TestInfrastructureService_WalCheckpointAfterCommit_StatError(t *testing.T) {
@@ -527,9 +557,10 @@ func TestInfrastructureService_WalCheckpointAfterCommit_FiveMinuteElapsed(t *tes
 	}
 }
 
-func TestInfrastructureService_WalCheckpointAfterCommit_OneHourOptimize(t *testing.T) {
+func TestMaybeRunPeriodicOptimize_RunsWhenDue(t *testing.T) {
 	infra := NewInfrastructureService()
-	infra.dbPaths.Main = filepath.Join(t.TempDir(), "sfpg.db")
+	infra.lastPragmaOptimizeRun.Store(time.Now().Add(-65 * time.Minute))
+	infra.dbOptimizeInterval.Store(int64(time.Hour))
 
 	optimizeCalled := false
 	infra.testSeams.PragmaOptimize = func(ctx context.Context, pool dbPoolForCheckpoint) {
@@ -537,32 +568,66 @@ func TestInfrastructureService_WalCheckpointAfterCommit_OneHourOptimize(t *testi
 	}
 
 	logs := withLogCapture(t, slog.LevelInfo, func() {
-		infra.walCheckpointAfterCommit(context.Background(), time.Now(), time.Now().Add(-65*time.Minute), 0)
+		infra.maybeRunPeriodicOptimize(context.Background())
 	})
 	if !optimizeCalled {
-		t.Error("PragmaOptimize should be called")
+		t.Error("PragmaOptimize should be called when interval has elapsed")
 	}
-	if !strings.Contains(logs, "PRAGMA optimize: 1 hour elapsed") {
+	if !strings.Contains(logs, "PRAGMA optimize: interval elapsed") {
 		t.Errorf("expected optimize log, got: %s", logs)
+	}
+	// Verify clock was updated.
+	lastRun, _ := infra.lastPragmaOptimizeRun.Load().(time.Time)
+	if lastRun.IsZero() {
+		t.Error("lastPragmaOptimizeRun should be updated after optimize")
 	}
 }
 
-func TestInfrastructureService_WalCheckpointAfterCommit_OptimizeConnectionError(t *testing.T) {
+func TestMaybeRunPeriodicOptimize_ConnectionError(t *testing.T) {
 	infra := NewInfrastructureService()
-	infra.dbPaths.Main = filepath.Join(t.TempDir(), "sfpg.db")
-
-	// The optimize branch is replaced by a hook that invokes pragmaOptimize with
-	// a fake pool whose Get returns an error.
-	infra.testSeams.PragmaOptimize = func(ctx context.Context, pool dbPoolForCheckpoint) {
-		fakePool := &fakeDBPoolForCheckpoint{getErr: errors.New("no conn")}
-		infra.pragmaOptimize(ctx, fakePool)
-	}
+	before := time.Now().Add(-65 * time.Minute)
+	infra.lastPragmaOptimizeRun.Store(before)
+	infra.dbOptimizeInterval.Store(int64(time.Hour))
 
 	logs := withLogCapture(t, slog.LevelWarn, func() {
-		infra.walCheckpointAfterCommit(context.Background(), time.Now(), time.Now().Add(-65*time.Minute), 0)
+		infra.maybeRunPeriodicOptimize(context.Background())
 	})
 	if !strings.Contains(logs, "failed to get connection for PRAGMA optimize") {
 		t.Errorf("expected optimize connection error log, got: %s", logs)
+	}
+	lastRun, _ := infra.lastPragmaOptimizeRun.Load().(time.Time)
+	if time.Since(lastRun) < 64*time.Minute {
+		t.Errorf("lastPragmaOptimizeRun should not advance on failure, got %v", lastRun)
+	}
+}
+
+func TestMaybeRunPeriodicOptimize_SkipsWhenRecent(t *testing.T) {
+	infra := NewInfrastructureService()
+	infra.lastPragmaOptimizeRun.Store(time.Now().Add(-5 * time.Minute))
+	infra.dbOptimizeInterval.Store(int64(time.Hour))
+
+	optimizeCalled := false
+	infra.testSeams.PragmaOptimize = func(ctx context.Context, pool dbPoolForCheckpoint) {
+		optimizeCalled = true
+	}
+
+	infra.maybeRunPeriodicOptimize(context.Background())
+	if optimizeCalled {
+		t.Error("PragmaOptimize should not be called when recent")
+	}
+}
+
+func TestMaybeRunPeriodicOptimize_SkipsWhenClockUnset(t *testing.T) {
+	infra := NewInfrastructureService()
+
+	optimizeCalled := false
+	infra.testSeams.PragmaOptimize = func(ctx context.Context, pool dbPoolForCheckpoint) {
+		optimizeCalled = true
+	}
+
+	infra.maybeRunPeriodicOptimize(context.Background())
+	if optimizeCalled {
+		t.Error("PragmaOptimize should not be called when clock is unset")
 	}
 }
 
@@ -646,6 +711,7 @@ func TestInfrastructureService_SubmitCacheWrite_AdapterError(t *testing.T) {
 		return 0, nil
 	}
 	infra.SetupDB(context.Background(), config.DefaultConfig())
+	infra.StartWriteBatcher(context.Background(), true)
 	if err := infra.writeBatcher.Close(); err != nil {
 		t.Fatalf("close batcher: %v", err)
 	}
@@ -815,6 +881,8 @@ func (f *fakeDatabaseInitializer) RecreatePoolsWithConfig(ctx context.Context, d
 }
 
 // fakeDBPoolForCheckpoint is a test double for dbPoolForCheckpoint.
+//
+//nolint:unused // used by integration tests behind build tag
 type fakeDBPoolForCheckpoint struct {
 	getCpc    *fakeCpConn
 	getErr    error
@@ -822,6 +890,8 @@ type fakeDBPoolForCheckpoint struct {
 	putCpc    *dbconnpool.CpConn
 }
 
+//
+//nolint:unused // used by integration tests behind build tag
 func (f *fakeDBPoolForCheckpoint) Get() (*dbconnpool.CpConn, error) {
 	if f.getErr != nil {
 		return nil, f.getErr
@@ -829,12 +899,16 @@ func (f *fakeDBPoolForCheckpoint) Get() (*dbconnpool.CpConn, error) {
 	return f.getCpc.CpConn, nil
 }
 
+//
+//nolint:unused // used by integration tests behind build tag
 func (f *fakeDBPoolForCheckpoint) Put(cpc *dbconnpool.CpConn) {
 	f.putCalled = true
 	f.putCpc = cpc
 }
 
 // fakeCpConn wraps a *sql.Conn with configurable hooks.
+//
+//nolint:unused // used by integration tests behind build tag
 type fakeCpConn struct {
 	CpConn           *dbconnpool.CpConn
 	QueryContextFn   func(ctx context.Context, query string, args ...any) (*sql.Rows, error)
@@ -948,6 +1022,7 @@ func TestInfrastructureService_RealDBLifecycle(t *testing.T) {
 	cfg := config.DefaultConfig()
 
 	infra.SetupDB(context.Background(), cfg)
+	infra.StartWriteBatcher(context.Background(), true)
 	t.Cleanup(func() { infra.Shutdown() })
 
 	cpc, err := infra.dbRwPool.Get()

@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lbe/sfpg-go/internal/cachelite"
 	"github.com/lbe/sfpg-go/internal/dbconnpool"
 	"github.com/lbe/sfpg-go/internal/scheduler"
 	"github.com/lbe/sfpg-go/internal/server/interfaces"
@@ -143,10 +142,9 @@ func (pm *PreloadManager) stopScheduler() {
 }
 
 // ScheduleFolderPreload schedules background cache preload for a folder.
-// acceptEncoding is the triggering request's Accept-Encoding; its normalized value
-// is used for preload keys so they match that client's subsequent requests.
-// sessionID is used for task cancellation when user navigates away. Non-blocking.
-func (pm *PreloadManager) ScheduleFolderPreload(ctx context.Context, folderID int64, sessionID string, acceptEncoding string) {
+// sessionID is used for task cancellation when user navigates away.
+// Non-blocking.
+func (pm *PreloadManager) ScheduleFolderPreload(ctx context.Context, folderID int64, sessionID string) {
 	pm.mu.RLock()
 	enabled := pm.enabled
 	sched := pm.scheduler
@@ -194,21 +192,17 @@ func (pm *PreloadManager) ScheduleFolderPreload(ctx context.Context, folderID in
 		Handler:     handler,
 		ETagVersion: etagVersion,
 	}
-	// Use triggering request's encoding priority so preload keys match that client.
-	preferredEncoding := cachelite.NormalizeAcceptEncoding(acceptEncoding)
-
 	fpt := &FolderPreloadTask{
-		FolderID:          folderID,
-		SessionID:         sessionID,
-		ETagVersion:       etagVersion,
-		PreferredEncoding: preferredEncoding,
-		CacheableRoutes:   routes,
-		DBRoPool:          dbRoPool,
-		TaskTracker:       taskTracker,
-		Scheduler:         sched,
-		RequestConfig:     reqConfig,
-		Metrics:           metrics,
-		GetQueries:        getQueries,
+		FolderID:        folderID,
+		SessionID:       sessionID,
+		ETagVersion:     etagVersion,
+		CacheableRoutes: routes,
+		DBRoPool:        dbRoPool,
+		TaskTracker:     taskTracker,
+		Scheduler:       sched,
+		RequestConfig:   reqConfig,
+		Metrics:         metrics,
+		GetQueries:      getQueries,
 	}
 
 	// Schedule FolderPreloadTask (fire-and-forget)

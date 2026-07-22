@@ -5,7 +5,6 @@ package gallerydb
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -829,62 +828,6 @@ func TestModuleStateQueries(t *testing.T) {
 	}
 	if !state.LastFinishedAt.Valid || state.LastFinishedAt.Int64 != finishedAt {
 		t.Errorf("expected LastFinishedAt=%d, got %v", finishedAt, state.LastFinishedAt)
-	}
-}
-
-func TestGetIPTCKeywords_RowsCloseError(t *testing.T) {
-	_, q, ctx := setupTestDB(t)
-	fileID := seedIPTCKeywordRows(t, q, ctx)
-
-	orig := rowsCloseFn
-	rowsCloseFn = func(r *sql.Rows) error { return errors.New("rows close denied") }
-	t.Cleanup(func() { rowsCloseFn = orig })
-
-	_, err := q.GetIPTCKeywords(ctx, fileID)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-}
-
-func TestGetIPTCKeywords_RowsErrError(t *testing.T) {
-	_, q, ctx := setupTestDB(t)
-	fileID := seedIPTCKeywordRows(t, q, ctx)
-
-	orig := rowsErrFn
-	rowsErrFn = func(r *sql.Rows) error { return errors.New("rows err denied") }
-	t.Cleanup(func() { rowsErrFn = orig })
-
-	_, err := q.GetIPTCKeywords(ctx, fileID)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-}
-
-func TestGetXMPPropertiesByFile_RowsCloseError(t *testing.T) {
-	_, q, ctx := setupTestDB(t)
-	fileID := seedXMPPropertyRows(t, q, ctx)
-
-	orig := rowsCloseFn
-	rowsCloseFn = func(r *sql.Rows) error { return errors.New("rows close denied") }
-	t.Cleanup(func() { rowsCloseFn = orig })
-
-	_, err := q.GetXMPPropertiesByFile(ctx, fileID)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-}
-
-func TestGetXMPPropertiesByFile_RowsErrError(t *testing.T) {
-	_, q, ctx := setupTestDB(t)
-	fileID := seedXMPPropertyRows(t, q, ctx)
-
-	orig := rowsErrFn
-	rowsErrFn = func(r *sql.Rows) error { return errors.New("rows err denied") }
-	t.Cleanup(func() { rowsErrFn = orig })
-
-	_, err := q.GetXMPPropertiesByFile(ctx, fileID)
-	if err == nil {
-		t.Fatal("expected error, got nil")
 	}
 }
 

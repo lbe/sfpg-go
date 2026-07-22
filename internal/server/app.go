@@ -7,7 +7,9 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 
+	"github.com/lbe/sfpg-go/internal/cachelite"
 	"github.com/lbe/sfpg-go/internal/dbconnpool"
 	"github.com/lbe/sfpg-go/internal/gallerydb"
 	"github.com/lbe/sfpg-go/internal/gallerylib"
@@ -49,6 +51,10 @@ type App struct {
 	// testSeams holds optional test doubles for App lifecycle paths.
 	// The zero value means use production implementations.
 	testSeams AppTestSeams
+
+	// discoveryRunning is true while TriggerDiscovery is walking/enqueueing.
+	// Used by cache size calibration quiet checks (independent of module_state DB).
+	discoveryRunning atomic.Bool
 }
 
 // New creates and initializes a new App instance. It sets up the application
@@ -258,6 +264,16 @@ func (app *App) ApplyConfig() {
 		app.SubsystemManager.preloadManager.SetEnabled(enablePreload)
 	}
 
+	// Hot-reload http_cache_body_codec (no restart required).
+	app.ConfigManager.ConfigMu.RLock()
+	cfg := app.ConfigManager.Config
+	app.ConfigManager.ConfigMu.RUnlock()
+	if cfg != nil {
+		if err := cachelite.ConfigureBodyCodec(cfg.HTTPCacheBodyCodec); err != nil {
+			slog.Error("failed to apply http_cache_body_codec", "codec", cfg.HTTPCacheBodyCodec, "err", err)
+		}
+	}
+
 	// Hot-reload per-IP login rate limit (no restart required)
 	if app.HandlerManager != nil && app.HandlerManager.authHandlers != nil {
 		app.ConfigManager.ConfigMu.RLock()
@@ -269,4 +285,10 @@ func (app *App) ApplyConfig() {
 		app.ConfigManager.ConfigMu.RUnlock()
 		app.HandlerManager.authHandlers.SyncLoginRateLimitMax(max)
 	}
+
+	// Hot-reload DBOptimizeInterval (no restart required)
+	app.ConfigManager.ConfigMu.RLock()
+	optimizeInterval := app.ConfigManager.Config.DBOptimizeInterval
+	app.ConfigManager.ConfigMu.RUnlock()
+	app.setDBOptimizeInterval(optimizeInterval)
 }

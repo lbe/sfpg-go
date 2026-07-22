@@ -37,44 +37,6 @@ func TestConfigHandlers_ImportPreview_MissingYAML(t *testing.T) {
 	}
 }
 
-func TestConfigHandlers_ImportPreview_InvalidCSRF(t *testing.T) {
-	if err := ui.ParseTemplates(web.FS); err != nil {
-		t.Fatalf("ParseTemplates failed: %v", err)
-	}
-
-	ch := setupTestConfigHandlers(t, &mockConfigServiceForConfig{}, &mockAuthServiceForConfig{})
-	ch.SessionManager = &mockSessionManagerAuthenticatedInvalidCSRF{}
-
-	req := httptest.NewRequest(http.MethodPost, "/config/import/preview", strings.NewReader("yaml=site_name: Test"))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	w := httptest.NewRecorder()
-
-	ch.ImportConfigPreviewHandler(w, req)
-
-	if w.Code != http.StatusForbidden {
-		t.Errorf("expected status 403, got %d", w.Code)
-	}
-}
-
-func TestConfigHandlers_ImportCommit_InvalidCSRF(t *testing.T) {
-	if err := ui.ParseTemplates(web.FS); err != nil {
-		t.Fatalf("ParseTemplates failed: %v", err)
-	}
-
-	ch := setupTestConfigHandlers(t, &mockConfigServiceForConfig{}, &mockAuthServiceForConfig{})
-	ch.SessionManager = &mockSessionManagerAuthenticatedInvalidCSRF{}
-
-	req := httptest.NewRequest(http.MethodPost, "/config/import/commit", strings.NewReader("yaml=site_name: Test"))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	w := httptest.NewRecorder()
-
-	ch.ImportConfigCommitHandler(w, req)
-
-	if w.Code != http.StatusForbidden {
-		t.Errorf("expected status 403, got %d", w.Code)
-	}
-}
-
 func TestConfigHandlers_ImportCommit_Success(t *testing.T) {
 	if err := ui.ParseTemplates(web.FS); err != nil {
 		t.Fatalf("ParseTemplates failed: %v", err)
@@ -455,6 +417,80 @@ func TestConfigHandlers_ImportCommit_RestartRequired(t *testing.T) {
 	if testutil.FindElementByID(doc, "config-restart-badge") == nil {
 		t.Error("expected restart-initiated alert #config-restart-badge")
 	}
+	success := testutil.FindElementByID(doc, "config-success-message")
+	if success == nil {
+		t.Fatal("missing #config-success-message in restart-required import response")
+	}
+	if got := testutil.GetAttr(success, "hx-swap-oob"); got != "outerHTML" {
+		t.Errorf("expected #config-success-message hx-swap-oob=outerHTML, got %q", got)
+	}
+	successText := testutil.FindElementByTag(success, "span")
+	if successText == nil {
+		t.Fatal("missing success message text span")
+	}
+	if got := testutil.GetTextContent(successText); got != "Settings saved. Server restart required for changes to take effect." {
+		t.Errorf("unexpected restart-required message: %q", got)
+	}
+}
+
+func TestConfigModal_ImportButtonDoesNotSubmitForm(t *testing.T) {
+	raw, err := web.FS.ReadFile("templates/config-modal.html.tmpl")
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	doc, err := testutil.ParseHTML(strings.NewReader(string(raw)))
+	if err != nil {
+		t.Fatalf("parse HTML: %v", err)
+	}
+	fileInput := testutil.FindElementByID(doc, "import-file-input")
+	if fileInput == nil {
+		t.Fatal("missing #import-file-input")
+	}
+	importBtn := previousElementSibling(fileInput)
+	if importBtn == nil || importBtn.Data != "button" {
+		t.Fatal("expected Import button immediately before #import-file-input")
+	}
+	if got := testutil.GetAttr(importBtn, "type"); got != "button" {
+		t.Errorf("Import button type = %q, want button", got)
+	}
+}
+
+func TestConfigImportModal_CommitButtonTargetsSuccessAlert(t *testing.T) {
+	raw, err := web.FS.ReadFile("templates/config-ui/config-import-modal.html.tmpl")
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	doc, err := testutil.ParseHTML(strings.NewReader(string(raw)))
+	if err != nil {
+		t.Fatalf("parse HTML: %v", err)
+	}
+	commitBtn := testutil.FindElement(doc, func(n *html.Node) bool {
+		if n.Type != html.ElementNode || n.Data != "button" {
+			return false
+		}
+		return testutil.GetAttr(n, "hx-post") == "/config/import/commit"
+	})
+	if commitBtn == nil {
+		t.Fatal("missing import commit button")
+	}
+	if got := testutil.GetAttr(commitBtn, "type"); got != "button" {
+		t.Errorf("commit button type = %q, want button", got)
+	}
+	if got := testutil.GetAttr(commitBtn, "hx-target"); got != "#config-success-message" {
+		t.Errorf("commit hx-target = %q, want #config-success-message", got)
+	}
+	if got := testutil.GetAttr(commitBtn, "hx-swap"); got != "outerHTML" {
+		t.Errorf("commit hx-swap = %q, want outerHTML", got)
+	}
+}
+
+func previousElementSibling(n *html.Node) *html.Node {
+	for s := n.PrevSibling; s != nil; s = s.PrevSibling {
+		if s.Type == html.ElementNode {
+			return s
+		}
+	}
+	return nil
 }
 
 func TestConfigHandlers_ImportCommit_LoadError(t *testing.T) {

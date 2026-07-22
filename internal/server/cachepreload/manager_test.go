@@ -105,7 +105,7 @@ func TestPreloadManager_SetEnabled_Callback(t *testing.T) {
 func TestPreloadManager_ScheduleFolderPreload_WhenDisabled_NoOp(t *testing.T) {
 	pm := NewPreloadManager([]string{"/gallery/"}, false)
 	defer pm.Shutdown()
-	pm.ScheduleFolderPreload(context.Background(), 23, "sess-1", "")
+	pm.ScheduleFolderPreload(context.Background(), 23, "sess-1")
 	// No panic, no-op
 }
 

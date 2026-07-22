@@ -83,7 +83,7 @@ That's it! Open `http://localhost:8081` in your browser and log in with:
 - **Contextual Info Box:** Hover over any folder or image to see a pop-up box with detailed information, including file metadata, image dimensions, and EXIF/IPTC tags.
 - **Performant Thumbnailing:** Generates and caches thumbnails in the background for a fast user experience, utilizing efficient object pooling to minimize memory allocations.
 - **Advanced Caching:** A sophisticated, multi-layer caching system:
-  - **SQLite-backed HTTP Response Cache:** Persistently caches fully-rendered, compressed HTTP responses in the database, dramatically speeding up subsequent page loads.
+  - **SQLite-backed HTTP Response Cache:** Persistently caches fully-rendered HTTP responses in the database, dramatically speeding up subsequent page loads.
   - **Unified Write Batching (Feb 2026):** All database writes (file metadata, thumbnails, cache entries) are consolidated through a single batched writer, eliminating SQLite lock contention and improving throughput by 2-10x.
   - **Persistent Write Overflow (Jun 2026):** The batcher spills excess writes to a segment-backed on-disk queue (`dque`) when the in-memory channel fills, so bursts during preload/discovery are absorbed instead of dropped, and pending writes survive process restarts (crash recovery).
   - **Client-Side Caching:** Uses `ETag` and `Last-Modified` headers to allow browsers to serve content from their local cache, avoiding unnecessary requests.
@@ -96,7 +96,7 @@ That's it! Open `http://localhost:8081` in your browser and log in with:
 - **Web-Based Configuration:** Update administrator credentials, session settings, and login security through the web UI.
 - **Self-Contained Deployment:** The compiled binary includes all necessary assets and migrations, requiring no external file dependencies to run.
 - **Live-Reload for Development:** Includes an `air` configuration for a smooth development workflow.
-- **Robust Testing:** Comprehensive test suite with unit, integration, e2e, and browser tests; **19** consolidated root `internal/server/*_test.go` survivors (see `docs/phase2-test-ownership.md`); optional test doubles in `internal/server/testseams.go`.
+- **Robust Testing:** Comprehensive test suite with unit, integration, e2e, and browser tests; **23** root `internal/server/*_test.go` files; optional test doubles in `internal/server/testseams.go`.
 
 ## Technology Stack
 
@@ -294,7 +294,6 @@ Most settings can be provided via command-line flags, environment variables, or 
 | `-discover`                | `SFG_DISCOVER`                | Run file discovery on startup.                                  | `true`            |
 | `-debug-delay-ms`          | `SFG_DEBUG_DELAY_MS`          | Artificial delay in milliseconds for debugging.                 | `0`               |
 | `-profile`                 | `SFG_PROFILE`                 | Profiling mode: 'cpu', 'mem', 'block', etc.                     | `''`              |
-| `-compression`             | `SFG_COMPRESSION`             | Enable gzip/brotli response compression.                        | `true`            |
 | `-http-cache`              | `SFG_HTTP_CACHE`              | Enable SQLite HTTP response cache.                              | `true`            |
 | `-cache-preload`           | `SFG_CACHE_PRELOAD`           | Enable cache preloading when folders are opened.                | `true`            |
 | `-unlock-account`          | `SFG_UNLOCK_ACCOUNT`          | Unlock a locked account by username.                            | `''`              |
@@ -327,6 +326,7 @@ Example `config.yaml` keys:
 ```yaml
 listener-port: 8081
 http-cache: true
+http-cache-body-codec: zstd-1
 enable-cache-preload: true
 discover: true
 session-secret: "change-me-in-production"
@@ -381,17 +381,25 @@ These variables are critical for securing session cookies, especially in product
 
 CSRF (Cross-Site Request Forgery) protection is built into the application through multiple complementary mechanisms:
 
-#### Automatic CSRF Token Validation
+#### Cross-Origin Protection (COP)
 
-All state-changing requests (POST, PUT, DELETE) to protected endpoints are validated using CSRF tokens:
+All state-changing requests (POST, PUT, DELETE, PATCH) pass through Go's
+`http.CrossOriginProtection` middleware before reaching route handlers:
 
-- **Token Generation:** A cryptographically secure 32-byte token is generated and stored in the user's session.
-- **Token Validation:** The token is validated on every state-changing request using constant-time comparison to prevent timing attacks.
-- **Form Integration:** All forms include a hidden CSRF token field that is validated server-side before processing requests.
+- **Same-origin check:** For unsafe methods, the middleware validates `Sec-Fetch-Site`
+  (preferred) or `Origin` against the request `Host`.
+- **No session tokens:** Forms do not include hidden CSRF fields; cached HTML stays
+  auth-agnostic.
+- **Non-browser clients:** Requests without `Sec-Fetch-Site` or `Origin` (e.g. `curl`)
+  are permitted by the standard library.
+
+Behind a reverse proxy, preserve the original `Host` header so same-origin checks work.
+See `DEPLOYMENT.md` for Caddy/nginx examples.
 
 #### Session Cookie Security Settings
 
-CSRF protection is enhanced through session cookie configuration. These settings are managed via the **Configuration** modal in the web interface and can be overridden with environment variables:
+Session cookie configuration complements COP and is managed via the **Configuration** modal
+in the web interface (overridable with environment variables):
 
 | Setting             | Environment Variable    | Default | Security Impact                                                                                                 |
 | ------------------- | ----------------------- | ------- | --------------------------------------------------------------------------------------------------------------- |
@@ -423,7 +431,7 @@ The SameSite attribute is the primary browser-level CSRF defense mechanism:
 - Cookies are sent with all requests, including cross-site requests.
 - Essentially disables SameSite CSRF protection.
 - Only use if cross-site requests require authentication, and only with `SessionSecure=true`.
-- Requires explicit CSRF token validation to provide any CSRF protection.
+- SameSite protection is weakened; rely on COP and HTTPS (HSTS recommended).
 
 #### Production Security Recommendations
 
@@ -456,40 +464,35 @@ Session security settings can be modified via the web interface:
 
 The application implements CSRF protection at multiple layers:
 
-- **Explicit CSRF Token Validation:** Every state-changing request includes a cryptographically secure token.
+- **Cross-Origin Protection:** Same-origin validation on every unsafe HTTP method.
 - **SameSite Cookie Attribute:** Browser-enforced protection against cross-site request inclusion.
 - **Secure & HttpOnly Flags:** Protect the session cookie from interception and XSS attacks.
 - **Session Timeouts:** Limit exposure window for session hijacking.
 
-This multi-layer approach ensures protection against CSRF attacks even if one layer is bypassed.
+### HTTP Caching
 
-### HTTP Caching & Compression
-
-The application includes built-in HTTP response caching and compression to improve performance and reduce bandwidth usage.
-
-#### Compression
-
-Responses are automatically compressed using gzip or Brotli (when supported by the client). The application negotiates the best encoding based on the `Accept-Encoding` header.
-
-- **Negotiation Order:** Brotli (`br`) > gzip > identity (no compression)
-- **Skipped For:** Already-compressed media (images, videos, archives), very small responses (< 512 bytes), and responses with explicit `Cache-Control: no-store` directives.
-- **Header:** Responses include `Vary: Accept-Encoding` to ensure proxies and browsers cache separate versions per encoding.
+The application includes built-in HTTP response caching to improve performance and reduce bandwidth usage.
 
 #### SQLite Response Cache
 
-HTTP responses for gallery endpoints are cached in SQLite with compression, keyed by path and encoding type. This provides:
+HTTP responses for gallery pages are cached in SQLite. Bodies may be **compressed at rest**
+(zstd-1 by default) to reduce disk use; clients still receive plaintext HTML. The cache is
+keyed by HTTP method, request path, and HTMX variant (full page vs. partial). This provides:
 
-- **Single Compression Pass:** Responses are compressed once and stored in the database.
-- **Encoding-Aware Caching:** Separate cache entries for gzip, Brotli, and identity (uncompressed) encodings.
-- **Efficient 304 Revalidation:** When clients send `If-None-Match` (ETag) or `If-Modified-Since` headers, the server returns a 304 Not Modified response with minimal overhead.
-- **Size Limits:** Individual cache entries are limited to 10MB; total cache size is limited to 500MB with automatic LRU eviction.
+- **Storage compression:** Large HTML pages are compressed in SQLite; wire compression is
+  handled by Caddy `encode` in production.
+- **Simple Cache Key:** One cache entry per method/path/HTMX variant — no per-encoding rows.
+- **Efficient 304 Revalidation:** When clients send `If-None-Match` (ETag) or `If-Modified-Since`
+  headers, the server returns a 304 Not Modified response with minimal overhead.
+- **Size Limits:** Individual cache entries are limited to 10MB; total cache size is limited to
+  500MB with automatic LRU eviction.
 - **TTL Support:** Responses respect `Cache-Control` headers and can expire automatically.
 
 #### Configuration
 
-Both features are **enabled by default**. The HTTP cache respects the full configuration precedence chain: **Default** (true) → **Database** → **Environment Variables** (`SFG_HTTP_CACHE`) → **Command Line** (`-http-cache`). This means you can disable caching at any level:
+The HTTP cache is enabled by default. It respects the full configuration precedence chain: **Default** → **Database** → **Environment Variables** → **Command Line**. This means you can adjust settings at any level:
 
-**Example: Disable caching but keep compression**
+**Example: Disable caching**
 
 ```shell
 ./sfpg-go -http-cache=false
@@ -535,7 +538,7 @@ The application is organized with a clear separation of concerns, with most of t
   - `batcher_wiring.go`: Thin `fileBatcher` wiring implementing `files.UnifiedBatcher` so the `files` package submits writes without importing `writebatcher`.
   - `cachebatch/`: One-shot HTTP cache batch-load manager.
   - `cachepreload/`: Cache preloading when folders are opened.
-  - `compress/`, `conditional/`: Pure helper packages for compression negotiation and ETag/304 handling.
+  - `conditional/`: Pure helper package for ETag/304 handling.
   - `config/`: Configuration service (load, save, validate, export, import, restore).
   - `database/`: Database setup, migrations, and connection-pool configuration.
   - `files/`: File processing service (discovery, MIME detection, EXIF, thumbnail generation).
@@ -544,7 +547,7 @@ The application is organized with a clear separation of concerns, with most of t
   - `logging/`: Bootstrap logging setup.
   - `menu/`: Session-aware hamburger-menu rendering.
   - `metrics/`: Runtime metrics collection.
-  - `middleware/`: Reusable middleware (auth, compress, conditional, CSRF, logging).
+  - `middleware/`: Reusable middleware (auth, conditional, logging); COP is wired in `router.go`.
   - `modulestate/`: Tracks active background modules (discovery, cache batch load).
   - `pathutil/`: Path-manipulation utilities with path-traversal checks.
   - `security/`: Per-IP login rate limiting (`IPRateLimiter`), lockout thresholds, unlock tasks, and security helpers.
@@ -583,8 +586,8 @@ The application is organized with a clear separation of concerns, with most of t
   - `sfpg.db` — main SQLite database (folders, files, config, HTTP cache, etc.).
   - `thumbs/thumbs.db` — separate SQLite database for thumbnail JPEG blobs.
   - `sfpg.db-dque/` — persistent write-overflow queue used by `writebatcher`.
-- **`docs/`**: Comprehensive architecture documentation and design diagrams.
+- **`docs/`**: Architecture documentation and diagrams.
   - `ARCHITECTURE.md` — authoritative system reference.
-  - `phase2-test-ownership.md` — map of the 19 root `internal/server/*_test.go` survivors.
-  - `phase2-test-merge-map.md` — WP-54 merge ledger (source → destination tests).
+  - `SERVER_DEEP_DIVE.md` — server package entry point (links to ARCHITECTURE.md).
+  - `diagrams/` — Mermaid architecture diagrams.
 - **`Images/`**: The default directory where you should place your photos.

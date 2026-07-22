@@ -22,7 +22,6 @@ func TestConfig_LoadFromOptExcluding(t *testing.T) {
 			},
 			opt: getopt.Opt{
 				Port:               getopt.OptInt{Int: 9090, IsSet: true},
-				EnableCompression:  getopt.OptBool{Bool: true, IsSet: true},
 				EnableHTTPCache:    getopt.OptBool{Bool: false, IsSet: true},
 				EnableCachePreload: getopt.OptBool{Bool: true, IsSet: true},
 				RunFileDiscovery:   getopt.OptBool{Bool: true, IsSet: true},
@@ -33,15 +32,14 @@ func TestConfig_LoadFromOptExcluding(t *testing.T) {
 			},
 			exclude: []string{},
 			expected: Config{
-				ListenerPort:            9090,
-				ServerCompressionEnable: true,
-				EnableHTTPCache:         false,
-				EnableCachePreload:      true,
-				RunFileDiscovery:        true,
-				SessionSecure:           false,
-				SessionHttpOnly:         false,
-				SessionMaxAge:           3600,
-				SessionSameSite:         "Strict",
+				ListenerPort:       9090,
+				EnableHTTPCache:    false,
+				EnableCachePreload: true,
+				RunFileDiscovery:   true,
+				SessionSecure:      false,
+				SessionHttpOnly:    false,
+				SessionMaxAge:      3600,
+				SessionSameSite:    "Strict",
 			},
 		},
 		{
@@ -73,20 +71,17 @@ func TestConfig_LoadFromOptExcluding(t *testing.T) {
 		{
 			name: "applies non-excluded values when some are excluded",
 			initial: Config{
-				ListenerPort:            8080,
-				ServerCompressionEnable: false,
-				EnableHTTPCache:         true,
+				ListenerPort:    8080,
+				EnableHTTPCache: true,
 			},
 			opt: getopt.Opt{
-				Port:              getopt.OptInt{Int: 9090, IsSet: true},
-				EnableCompression: getopt.OptBool{Bool: true, IsSet: true},
-				EnableHTTPCache:   getopt.OptBool{Bool: false, IsSet: true},
+				Port:            getopt.OptInt{Int: 9090, IsSet: true},
+				EnableHTTPCache: getopt.OptBool{Bool: false, IsSet: true},
 			},
 			exclude: []string{"listener_port"},
 			expected: Config{
-				ListenerPort:            8080,  // unchanged - excluded
-				ServerCompressionEnable: true,  // changed - not excluded
-				EnableHTTPCache:         false, // changed - not excluded
+				ListenerPort:    8080,  // unchanged - excluded
+				EnableHTTPCache: false, // changed - not excluded
 			},
 		},
 		{
@@ -105,20 +100,17 @@ func TestConfig_LoadFromOptExcluding(t *testing.T) {
 		{
 			name: "respects multiple excluded fields",
 			initial: Config{
-				ListenerPort:            8080,
-				EnableHTTPCache:         true,
-				ServerCompressionEnable: false,
+				ListenerPort:    8080,
+				EnableHTTPCache: true,
 			},
 			opt: getopt.Opt{
-				Port:              getopt.OptInt{Int: 9090, IsSet: true},
-				EnableCompression: getopt.OptBool{Bool: true, IsSet: true},
-				EnableHTTPCache:   getopt.OptBool{Bool: false, IsSet: true},
+				Port:            getopt.OptInt{Int: 9090, IsSet: true},
+				EnableHTTPCache: getopt.OptBool{Bool: false, IsSet: true},
 			},
 			exclude: []string{"listener_port", "enable_http_cache"},
 			expected: Config{
-				ListenerPort:            8080, // unchanged - excluded
-				EnableHTTPCache:         true, // unchanged - excluded
-				ServerCompressionEnable: true, // changed - not excluded
+				ListenerPort:    8080, // unchanged - excluded
+				EnableHTTPCache: true, // unchanged - excluded
 			},
 		},
 		{
@@ -152,9 +144,6 @@ func TestConfig_LoadFromOptExcluding(t *testing.T) {
 
 			if cfg.ListenerPort != tt.expected.ListenerPort {
 				t.Errorf("ListenerPort: got %d, want %d", cfg.ListenerPort, tt.expected.ListenerPort)
-			}
-			if cfg.ServerCompressionEnable != tt.expected.ServerCompressionEnable {
-				t.Errorf("ServerCompressionEnable: got %v, want %v", cfg.ServerCompressionEnable, tt.expected.ServerCompressionEnable)
 			}
 			if cfg.EnableHTTPCache != tt.expected.EnableHTTPCache {
 				t.Errorf("EnableHTTPCache: got %v, want %v", cfg.EnableHTTPCache, tt.expected.EnableHTTPCache)

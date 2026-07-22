@@ -10,10 +10,6 @@ const (
 	// defaultBodyCapacity is the pre-allocated capacity for Body slices.
 	// Based on production data: 83% of entries are ≤6KB, so 8KB covers ~90%+ of cases.
 	defaultBodyCapacity = 8 * 1024 // 8KB
-
-	// maxRetainedCapacity prevents memory bloat from occasional large responses.
-	// Bodies exceeding this capacity are reallocated to defaultBodyCapacity on Put.
-	maxRetainedCapacity = 16 * 1024 // 16KB
 )
 
 // httpCacheEntryPool reuses HTTPCacheEntry instances on the cache write path to reduce allocations.
@@ -30,10 +26,8 @@ var httpCacheEntryPool = gensyncpool.New(
 		e.Method = ""
 		e.Path = ""
 		e.QueryString = sql.NullString{}
-		e.Encoding = ""
 		e.Status = 0
 		e.ContentType = sql.NullString{}
-		e.ContentEncoding = sql.NullString{}
 		e.CacheControl = sql.NullString{}
 		e.ETag = sql.NullString{}
 		e.LastModified = sql.NullString{}
@@ -42,11 +36,14 @@ var httpCacheEntryPool = gensyncpool.New(
 		e.CreatedAt = 0
 		e.ExpiresAt = sql.NullInt64{}
 
-		// Body: preserve capacity if reasonable, else shrink to standard size
-		if cap(e.Body) <= maxRetainedCapacity {
-			e.Body = e.Body[:0] // Reuse backing array
+		// Body: reuse the backing array only if cap is exactly defaultBodyCapacity;
+		// otherwise allocate a fresh buffer at the standard size. This handles
+		// undersized (e.g. post-compression) and oversized bodies uniformly.
+		c := cap(e.Body)
+		if c == defaultBodyCapacity {
+			e.Body = e.Body[:0] // Reuse backing array at standard size
 		} else {
-			e.Body = make([]byte, 0, defaultBodyCapacity) // Shrink oversized
+			e.Body = make([]byte, 0, defaultBodyCapacity) // Grow undersized or reset non-standard cap
 		}
 	},
 )

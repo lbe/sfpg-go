@@ -43,7 +43,7 @@ func (q *Queries) GetConfigs(ctx context.Context) ([]Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rowsCloseFn(rows)
+	defer rows.Close()
 	var items []Config
 	for rows.Next() {
 		var i Config
@@ -64,10 +64,10 @@ func (q *Queries) GetConfigs(ctx context.Context) ([]Config, error) {
 		}
 		items = append(items, i)
 	}
-	if err := rowsCloseFn(rows); err != nil {
+	if err := rows.Close(); err != nil {
 		return nil, err
 	}
-	if err := rowsErrFn(rows); err != nil {
+	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	return items, nil

@@ -16,7 +16,7 @@ func TestRotateCacheTable(t *testing.T) {
 
 	for i := 0; i < 3; i++ {
 		path := fmt.Sprintf("/rotate/%d", i)
-		key := NewCacheKey(CacheKeyParams{Method: "GET", Path: path, Theme: "dark", Encoding: "identity"})
+		key := NewCacheKey(CacheKeyParams{Method: "GET", Path: path})
 		entry := &HTTPCacheEntry{
 			Key:       key,
 			Method:    "GET",
@@ -87,7 +87,7 @@ func TestCountCacheEntries(t *testing.T) {
 
 	for i := 0; i < 3; i++ {
 		path := fmt.Sprintf("/count/%d", i)
-		key := NewCacheKey(CacheKeyParams{Method: "GET", Path: path, Theme: "dark", Encoding: "identity"})
+		key := NewCacheKey(CacheKeyParams{Method: "GET", Path: path})
 		entry := &HTTPCacheEntry{
 			Key:       key,
 			Method:    "GET",
@@ -158,7 +158,7 @@ func TestRotateCacheTable_ConcurrentTransactionCausesError(t *testing.T) {
 	defer tx.Rollback()
 
 	// Hold a write lock by inserting in the open transaction, then try to rotate.
-	if _, err := tx.ExecContext(ctx, `INSERT INTO http_cache (key, method, path, status, encoding, body, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`, "block-key", "GET", "/block", 200, "identity", []byte("block"), time.Now().Unix()); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO http_cache (key, method, path, status, body, created_at) VALUES (?, ?, ?, ?, ?, ?)`, "block-key", "GET", "/block", 200, []byte("block"), time.Now().Unix()); err != nil {
 		t.Fatalf("insert in holding tx: %v", err)
 	}
 

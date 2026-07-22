@@ -30,12 +30,8 @@ func TestServerShutdownTemplate(t *testing.T) {
 		t.Fatal("serverShutdownTemplate not initialized")
 	}
 
-	data := map[string]any{
-		"CSRFToken": "test-token",
-	}
-
 	var buf strings.Builder
-	err := serverShutdownTemplate.ExecuteTemplate(&buf, "layout", data)
+	err := serverShutdownTemplate.ExecuteTemplate(&buf, "layout", nil)
 	if err != nil {
 		t.Fatalf("template execution failed: %v", err)
 	}
@@ -134,12 +130,8 @@ func TestShutdownModalTemplate(t *testing.T) {
 	}
 
 	// Verify the shutdown modal template can be executed
-	data := map[string]any{
-		"CSRFToken": "test-token",
-	}
-
 	var buf strings.Builder
-	err := shutdownModalTemplate.Execute(&buf, data)
+	err := shutdownModalTemplate.Execute(&buf, nil)
 	if err != nil {
 		t.Fatalf("template execution failed: %v", err)
 	}

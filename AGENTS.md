@@ -88,9 +88,8 @@ The application follows a structured design with a clear separation of concerns,
   - **Middleware Chain (outermost → innermost):**
     1.  **Logging:** Structured request/response logging.
     2.  **HTTP Cache (`internal/cachelite`):** A custom SQLite-backed HTTP cache that stores full responses for high performance. It handles `ETag` generation and validation.
-    3.  **Compression:** Gzip/Brotli compression (if enabled).
-    4.  **CSRF Protection:** Strict same-origin check for unsafe methods.
-    5.  **Mux / Handler:** Authentication is applied selectively to protected routes inside the mux.
+    3.  **Cross-Origin Protection:** Strict same-origin check for unsafe methods via `http.CrossOriginProtection`.
+    4.  **Mux / Handler:** Authentication is applied selectively to protected routes inside the mux.
   - **Handlers:**
     - `GalleryByID`, `ImageByID`: Serve main content.
     - `LightboxByID`: Interactive lightbox with loop-around navigation logic.
@@ -139,7 +138,7 @@ Optional test doubles live in `internal/server/testseams.go` and are wired throu
 - **Runtime:** `m.testSeams.*` or `app.RuntimeManager.testSeams.*` (e.g. `BeforeListen`, `ExecCommand`, `Exit`)
 - **Handlers:** `hm.testSeams.BuildHandlers` or `app.HandlerManager.testSeams.BuildHandlers`
 
-Do **not** add `testHook*` fields to production structs or use promoted `app.testHook*` in tests. Root test file inventory: `docs/phase2-test-ownership.md`.
+Do **not** add `testHook*` fields to production structs or use promoted `app.testHook*` in tests. Root test files live under `internal/server/*_test.go` (23 files).
 
 ### Database Access Pattern
 
@@ -269,8 +268,6 @@ This AGENTS.md file is a concise guide for AI agents. For detailed information, 
 
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** - Comprehensive architecture documentation with diagrams, data flows, and design patterns
 - **[docs/SERVER_DEEP_DIVE.md](docs/SERVER_DEEP_DIVE.md)** - Archived server package entry point (links to ARCHITECTURE.md)
-- **[docs/phase2-test-ownership.md](docs/phase2-test-ownership.md)** - Root `internal/server/*_test.go` survivor map (19 files)
-- **[docs/phase2-test-merge-map.md](docs/phase2-test-merge-map.md)** - WP-54 test merge ledger
 - **[CLAUDE.md](CLAUDE.md)** - Project instructions for Claude Code (includes common commands, high-level architecture, forbidden practices)
 - **[README.md](README.md)** - Project overview, features, and setup instructions
 - **[DEPLOYMENT.md](DEPLOYMENT.md)** - Deployment and production configuration guide

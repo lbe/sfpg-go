@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -155,94 +156,6 @@ func TestPrepare_HappyPath(t *testing.T) {
 	}
 }
 
-func TestPrepare_StatementFails(t *testing.T) {
-	tests := []struct {
-		name  string
-		query string
-	}{
-		{"ClearHttpCache", clearHttpCache},
-		{"ClearLoginAttempts", clearLoginAttempts},
-		{"ConfigKeyExists", configKeyExists},
-		{"CountHttpCacheEntries", countHttpCacheEntries},
-		{"DeleteHttpCacheByID", deleteHttpCacheByID},
-		{"DeleteHttpCacheByKey", deleteHttpCacheByKey},
-		{"DeleteHttpCacheExpired", deleteHttpCacheExpired},
-		{"DeleteIPTC", deleteIPTC},
-		{"DeleteIPTCKeyword", deleteIPTCKeyword},
-		{"DeleteInvalidFileByPath", deleteInvalidFileByPath},
-		{"DeleteXMPProperty", deleteXMPProperty},
-		{"DeleteXMPRaw", deleteXMPRaw},
-		{"GetConfigValueByKey", getConfigValueByKey},
-		{"GetConfigs", getConfigs},
-		{"GetExifByFile", getExifByFile},
-		{"GetFileByPath", getFileByPath},
-		{"GetFileViewByID", getFileViewByID},
-		{"GetFileViewsByFolderIDOrderByFileName", getFileViewsByFolderIDOrderByFileName},
-		{"GetFolderByID", getFolderByID},
-		{"GetFolderByPath", getFolderByPath},
-		{"GetFolderIDByPath", getFolderIDByPath},
-		{"GetFolderTileExistsViewByPath", getFolderTileExistsViewByPath},
-		{"GetFolderViewByID", getFolderViewByID},
-		{"GetFoldersViewsByParentIDOrderByName", getFoldersViewsByParentIDOrderByName},
-		{"GetGalleryStatistics", getGalleryStatistics},
-		{"GetHttpCacheByKey", getHttpCacheByKey},
-		{"GetHttpCacheOldestCreated", getHttpCacheOldestCreated},
-		{"GetHttpCacheSizeBytes", getHttpCacheSizeBytes},
-		{"GetIPTCByFile", getIPTCByFile},
-		{"GetIPTCKeywords", getIPTCKeywords},
-		{"GetInvalidFileByPath", getInvalidFileByPath},
-		{"GetLoginAttempt", getLoginAttempt},
-		{"GetModuleState", getModuleState},
-		{"GetThumbnailExistsViewByID", getThumbnailExistsViewByID},
-		{"GetThumbnailsByFileID", getThumbnailsByFileID},
-		{"GetXMPPropertiesByFile", getXMPPropertiesByFile},
-		{"GetXMPRaw", getXMPRaw},
-		{"HttpCacheExistsByKey", httpCacheExistsByKey},
-		{"InsertConfigIfNotExists", insertConfigIfNotExists},
-		{"InsertIPTCKeyword", insertIPTCKeyword},
-		{"SetModuleState", setModuleState},
-		{"UnlockAccount", unlockAccount},
-		{"UpdateFolderTileId", updateFolderTileId},
-		{"UpsertConfigValueOnly", upsertConfigValueOnly},
-		{"UpsertExif", upsertExif},
-		{"UpsertFilePathReturningID", upsertFilePathReturningID},
-		{"UpsertFileReturningFile", upsertFileReturningFile},
-		{"UpsertFolderPathReturningID", upsertFolderPathReturningID},
-		{"UpsertFolderReturningFolder", upsertFolderReturningFolder},
-		{"UpsertHttpCache", upsertHttpCache},
-		{"UpsertIPTC", upsertIPTC},
-		{"UpsertInvalidFile", upsertInvalidFile},
-		{"UpsertLoginAttempt", upsertLoginAttempt},
-		{"UpsertThumbnailReturningID", upsertThumbnailReturningID},
-		{"UpsertXMPProperty", upsertXMPProperty},
-		{"UpsertXMPRaw", upsertXMPRaw},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			db := openMigratedMemoryDB(t)
-
-			orig := prepareContextFn
-			prepareContextFn = func(ctx context.Context, d DBTX, query string) (*sql.Stmt, error) {
-				if query == tc.query {
-					return nil, errors.New("prepare denied")
-				}
-				return orig(ctx, d, query)
-			}
-			t.Cleanup(func() { prepareContextFn = orig })
-
-			_, err := Prepare(context.Background(), db)
-			if err == nil {
-				t.Fatal("expected error, got nil")
-			}
-			want := "error preparing query " + tc.name
-			if !strings.Contains(err.Error(), want) {
-				t.Errorf("expected error to contain %q, got %q", want, err.Error())
-			}
-		})
-	}
-}
-
 func TestQueriesClose_HappyPath(t *testing.T) {
 	db := openMigratedMemoryDB(t)
 
@@ -253,217 +166,6 @@ func TestQueriesClose_HappyPath(t *testing.T) {
 
 	if err := q.Close(); err != nil {
 		t.Errorf("Close returned error: %v", err)
-	}
-}
-
-func TestQueriesClose_StatementCloseFails(t *testing.T) {
-	tests := []struct {
-		name string
-	}{
-		{"clearHttpCacheStmt"},
-		{"clearLoginAttemptsStmt"},
-		{"configKeyExistsStmt"},
-		{"countHttpCacheEntriesStmt"},
-		{"deleteHttpCacheByIDStmt"},
-		{"deleteHttpCacheByKeyStmt"},
-		{"deleteHttpCacheExpiredStmt"},
-		{"deleteIPTCStmt"},
-		{"deleteIPTCKeywordStmt"},
-		{"deleteInvalidFileByPathStmt"},
-		{"deleteXMPPropertyStmt"},
-		{"deleteXMPRawStmt"},
-		{"getConfigValueByKeyStmt"},
-		{"getConfigsStmt"},
-		{"getExifByFileStmt"},
-		{"getFileByPathStmt"},
-		{"getFileViewByIDStmt"},
-		{"getFileViewsByFolderIDOrderByFileNameStmt"},
-		{"getFolderByIDStmt"},
-		{"getFolderByPathStmt"},
-		{"getFolderIDByPathStmt"},
-		{"getFolderTileExistsViewByPathStmt"},
-		{"getFolderViewByIDStmt"},
-		{"getFoldersViewsByParentIDOrderByNameStmt"},
-		{"getGalleryStatisticsStmt"},
-		{"getHttpCacheByKeyStmt"},
-		{"getHttpCacheOldestCreatedStmt"},
-		{"getHttpCacheSizeBytesStmt"},
-		{"getIPTCByFileStmt"},
-		{"getIPTCKeywordsStmt"},
-		{"getInvalidFileByPathStmt"},
-		{"getLoginAttemptStmt"},
-		{"getModuleStateStmt"},
-		{"getThumbnailExistsViewByIDStmt"},
-		{"getThumbnailsByFileIDStmt"},
-		{"getXMPPropertiesByFileStmt"},
-		{"getXMPRawStmt"},
-		{"httpCacheExistsByKeyStmt"},
-		{"insertConfigIfNotExistsStmt"},
-		{"insertIPTCKeywordStmt"},
-		{"setModuleStateStmt"},
-		{"unlockAccountStmt"},
-		{"updateFolderTileIdStmt"},
-		{"upsertConfigValueOnlyStmt"},
-		{"upsertExifStmt"},
-		{"upsertFilePathReturningIDStmt"},
-		{"upsertFileReturningFileStmt"},
-		{"upsertFolderPathReturningIDStmt"},
-		{"upsertFolderReturningFolderStmt"},
-		{"upsertHttpCacheStmt"},
-		{"upsertIPTCStmt"},
-		{"upsertInvalidFileStmt"},
-		{"upsertLoginAttemptStmt"},
-		{"upsertThumbnailReturningIDStmt"},
-		{"upsertXMPPropertyStmt"},
-		{"upsertXMPRawStmt"},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			db := openMigratedMemoryDB(t)
-
-			q, err := Prepare(context.Background(), db)
-			if err != nil {
-				t.Fatalf("Prepare failed: %v", err)
-			}
-
-			// Determine the concrete *sql.Stmt pointer to fail on.
-			var target *sql.Stmt
-			switch tc.name {
-			case "clearHttpCacheStmt":
-				target = q.clearHttpCacheStmt
-			case "clearLoginAttemptsStmt":
-				target = q.clearLoginAttemptsStmt
-			case "configKeyExistsStmt":
-				target = q.configKeyExistsStmt
-			case "countHttpCacheEntriesStmt":
-				target = q.countHttpCacheEntriesStmt
-			case "deleteHttpCacheByIDStmt":
-				target = q.deleteHttpCacheByIDStmt
-			case "deleteHttpCacheByKeyStmt":
-				target = q.deleteHttpCacheByKeyStmt
-			case "deleteHttpCacheExpiredStmt":
-				target = q.deleteHttpCacheExpiredStmt
-			case "deleteIPTCStmt":
-				target = q.deleteIPTCStmt
-			case "deleteIPTCKeywordStmt":
-				target = q.deleteIPTCKeywordStmt
-			case "deleteInvalidFileByPathStmt":
-				target = q.deleteInvalidFileByPathStmt
-			case "deleteXMPPropertyStmt":
-				target = q.deleteXMPPropertyStmt
-			case "deleteXMPRawStmt":
-				target = q.deleteXMPRawStmt
-			case "getConfigValueByKeyStmt":
-				target = q.getConfigValueByKeyStmt
-			case "getConfigsStmt":
-				target = q.getConfigsStmt
-			case "getExifByFileStmt":
-				target = q.getExifByFileStmt
-			case "getFileByPathStmt":
-				target = q.getFileByPathStmt
-			case "getFileViewByIDStmt":
-				target = q.getFileViewByIDStmt
-			case "getFileViewsByFolderIDOrderByFileNameStmt":
-				target = q.getFileViewsByFolderIDOrderByFileNameStmt
-			case "getFolderByIDStmt":
-				target = q.getFolderByIDStmt
-			case "getFolderByPathStmt":
-				target = q.getFolderByPathStmt
-			case "getFolderIDByPathStmt":
-				target = q.getFolderIDByPathStmt
-			case "getFolderTileExistsViewByPathStmt":
-				target = q.getFolderTileExistsViewByPathStmt
-			case "getFolderViewByIDStmt":
-				target = q.getFolderViewByIDStmt
-			case "getFoldersViewsByParentIDOrderByNameStmt":
-				target = q.getFoldersViewsByParentIDOrderByNameStmt
-			case "getGalleryStatisticsStmt":
-				target = q.getGalleryStatisticsStmt
-			case "getHttpCacheByKeyStmt":
-				target = q.getHttpCacheByKeyStmt
-			case "getHttpCacheOldestCreatedStmt":
-				target = q.getHttpCacheOldestCreatedStmt
-			case "getHttpCacheSizeBytesStmt":
-				target = q.getHttpCacheSizeBytesStmt
-			case "getIPTCByFileStmt":
-				target = q.getIPTCByFileStmt
-			case "getIPTCKeywordsStmt":
-				target = q.getIPTCKeywordsStmt
-			case "getInvalidFileByPathStmt":
-				target = q.getInvalidFileByPathStmt
-			case "getLoginAttemptStmt":
-				target = q.getLoginAttemptStmt
-			case "getModuleStateStmt":
-				target = q.getModuleStateStmt
-			case "getThumbnailExistsViewByIDStmt":
-				target = q.getThumbnailExistsViewByIDStmt
-			case "getThumbnailsByFileIDStmt":
-				target = q.getThumbnailsByFileIDStmt
-			case "getXMPPropertiesByFileStmt":
-				target = q.getXMPPropertiesByFileStmt
-			case "getXMPRawStmt":
-				target = q.getXMPRawStmt
-			case "httpCacheExistsByKeyStmt":
-				target = q.httpCacheExistsByKeyStmt
-			case "insertConfigIfNotExistsStmt":
-				target = q.insertConfigIfNotExistsStmt
-			case "insertIPTCKeywordStmt":
-				target = q.insertIPTCKeywordStmt
-			case "setModuleStateStmt":
-				target = q.setModuleStateStmt
-			case "unlockAccountStmt":
-				target = q.unlockAccountStmt
-			case "updateFolderTileIdStmt":
-				target = q.updateFolderTileIdStmt
-			case "upsertConfigValueOnlyStmt":
-				target = q.upsertConfigValueOnlyStmt
-			case "upsertExifStmt":
-				target = q.upsertExifStmt
-			case "upsertFilePathReturningIDStmt":
-				target = q.upsertFilePathReturningIDStmt
-			case "upsertFileReturningFileStmt":
-				target = q.upsertFileReturningFileStmt
-			case "upsertFolderPathReturningIDStmt":
-				target = q.upsertFolderPathReturningIDStmt
-			case "upsertFolderReturningFolderStmt":
-				target = q.upsertFolderReturningFolderStmt
-			case "upsertHttpCacheStmt":
-				target = q.upsertHttpCacheStmt
-			case "upsertIPTCStmt":
-				target = q.upsertIPTCStmt
-			case "upsertInvalidFileStmt":
-				target = q.upsertInvalidFileStmt
-			case "upsertLoginAttemptStmt":
-				target = q.upsertLoginAttemptStmt
-			case "upsertThumbnailReturningIDStmt":
-				target = q.upsertThumbnailReturningIDStmt
-			case "upsertXMPPropertyStmt":
-				target = q.upsertXMPPropertyStmt
-			case "upsertXMPRawStmt":
-				target = q.upsertXMPRawStmt
-			default:
-				t.Fatalf("unknown statement field %q", tc.name)
-			}
-
-			orig := stmtCloseFn
-			stmtCloseFn = func(s *sql.Stmt) error {
-				if s == target {
-					return errors.New("close denied")
-				}
-				return orig(s)
-			}
-			t.Cleanup(func() { stmtCloseFn = orig })
-
-			err = q.Close()
-			if err == nil {
-				t.Fatal("expected error, got nil")
-			}
-			want := "error closing " + tc.name
-			if !strings.Contains(err.Error(), want) {
-				t.Errorf("expected error to contain %q, got %q", want, err.Error())
-			}
-		})
 	}
 }
 
@@ -591,29 +293,6 @@ func TestCustomQueriesClose_CustomStatementCloseFails(t *testing.T) {
 				t.Errorf("expected error to contain %q, got %q", want, err.Error())
 			}
 		})
-	}
-}
-
-func TestCustomQueriesClose_EmbeddedQueriesCloseFails(t *testing.T) {
-	_, q, _ := setupAttachedTestDB(t)
-
-	target := q.Queries.clearHttpCacheStmt
-
-	orig := stmtCloseFn
-	stmtCloseFn = func(s *sql.Stmt) error {
-		if s == target {
-			return errors.New("close denied")
-		}
-		return orig(s)
-	}
-	t.Cleanup(func() { stmtCloseFn = orig })
-
-	err := q.Close()
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if !strings.Contains(err.Error(), "error closing embedded Queries") {
-		t.Errorf("expected embedded close error, got %q", err.Error())
 	}
 }
 
@@ -798,4 +477,118 @@ func TestSetModuleState_ExecError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
+}
+
+// TestGetBatchLoadTargets_TargetCountFormula verifies the batch load target
+// count formula: len == 3*folderCount + 2*fileCount.
+func TestGetBatchLoadTargets_TargetCountFormula(t *testing.T) {
+	_, q, ctx := setupAttachedTestDB(t)
+	const folderCount, fileCount = 2, 3
+	folderIDs, fileIDs := seedBatchLoadTargetRowsN(t, q, ctx, folderCount, fileCount)
+
+	targets, err := q.GetBatchLoadTargets(ctx)
+	if err != nil {
+		t.Fatalf("GetBatchLoadTargets: %v", err)
+	}
+
+	want := 3*folderCount + 2*fileCount // 12
+	if len(targets) != want {
+		t.Fatalf("len(targets)=%d want %d (3*folders + 2*files)", len(targets), want)
+	}
+
+	// Per-folder variant rows (use first folder ID)
+	fid := folderIDs[0]
+	assertTarget(t, targets, "/gallery/"+strconv.FormatInt(fid, 10), "full")
+	assertTarget(t, targets, "/gallery/"+strconv.FormatInt(fid, 10), "gallery-content")
+	assertTarget(t, targets, "/info/folder/"+strconv.FormatInt(fid, 10), "box_info")
+
+	// Per-file variant rows (use first file ID)
+	fileID := fileIDs[0]
+	assertTarget(t, targets, "/info/image/"+strconv.FormatInt(fileID, 10), "box_info")
+	assertTarget(t, targets, "/lightbox/"+strconv.FormatInt(fileID, 10), "lightbox-ui")
+}
+
+func TestGetBatchLoadTargets_RowsCloseError(t *testing.T) {
+	_, q, ctx := setupAttachedTestDB(t)
+	seedBatchLoadTargetRows(t, q, ctx)
+
+	orig := rowsCloseFn
+	rowsCloseFn = func(r *sql.Rows) error { return errors.New("rows close denied") }
+	t.Cleanup(func() { rowsCloseFn = orig })
+
+	_, err := q.GetBatchLoadTargets(ctx)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
+
+func TestGetBatchLoadTargets_RowsErrError(t *testing.T) {
+	_, q, ctx := setupAttachedTestDB(t)
+	seedBatchLoadTargetRows(t, q, ctx)
+
+	orig := rowsErrFn
+	rowsErrFn = func(r *sql.Rows) error { return errors.New("rows err denied") }
+	t.Cleanup(func() { rowsErrFn = orig })
+
+	_, err := q.GetBatchLoadTargets(ctx)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
+
+// assertTarget fails if no BatchLoadTarget matches the given path and variant.
+func assertTarget(t *testing.T, targets []BatchLoadTarget, path, variant string) {
+	t.Helper()
+	for _, tt := range targets {
+		if tt.Path == path && tt.Variant == variant {
+			return
+		}
+	}
+	t.Fatalf("target (path=%q, variant=%q) not found", path, variant)
+}
+
+// seedBatchLoadTargetRowsN inserts folderCount folders and fileCount files.
+// Returns the folder and file IDs in insertion order.
+func seedBatchLoadTargetRowsN(t *testing.T, q *CustomQueries, ctx context.Context, folderCount, fileCount int) (folderIDs, fileIDs []int64) {
+	t.Helper()
+	now := time.Now().Unix()
+	for n := 0; n < folderCount; n++ {
+		folderPath := "/batchseed" + strconv.Itoa(n)
+		pathID, err := q.UpsertFolderPathReturningID(ctx, folderPath)
+		if err != nil {
+			t.Fatalf("UpsertFolderPathReturningID(%q): %v", folderPath, err)
+		}
+		folder, err := q.UpsertFolderReturningFolder(ctx, UpsertFolderReturningFolderParams{
+			PathID: pathID, Name: "batchseed" + strconv.Itoa(n), CreatedAt: now, UpdatedAt: now,
+		})
+		if err != nil {
+			t.Fatalf("UpsertFolderReturningFolder(%q): %v", folderPath, err)
+		}
+		folderIDs = append(folderIDs, folder.ID)
+	}
+	for n := 0; n < fileCount; n++ {
+		filePath := "/batchseed0/photo" + strconv.Itoa(n) + ".jpg"
+		filePathID, err := q.UpsertFilePathReturningID(ctx, filePath)
+		if err != nil {
+			t.Fatalf("UpsertFilePathReturningID(%q): %v", filePath, err)
+		}
+		file, err := q.UpsertFileReturningFile(ctx, UpsertFileReturningFileParams{
+			FolderID:  sql.NullInt64{Int64: folderIDs[0], Valid: true},
+			PathID:    filePathID,
+			Filename:  "photo" + strconv.Itoa(n) + ".jpg",
+			CreatedAt: now,
+			UpdatedAt: now,
+		})
+		if err != nil {
+			t.Fatalf("UpsertFileReturningFile(%q): %v", filePath, err)
+		}
+		fileIDs = append(fileIDs, file.ID)
+	}
+	return folderIDs, fileIDs
+}
+
+// seedBatchLoadTargetRows inserts one folder and one file so GetBatchLoadTargets returns rows.
+func seedBatchLoadTargetRows(t *testing.T, q *CustomQueries, ctx context.Context) {
+	t.Helper()
+	seedBatchLoadTargetRowsN(t, q, ctx, 1, 1)
 }

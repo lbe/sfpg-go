@@ -21,7 +21,6 @@ func TestRestartPersistence_SaveAndLoadCycle(t *testing.T) {
 	cfg.ListenerPort = 8888
 	cfg.SiteName = "Restart Test Gallery"
 	cfg.LogLevel = "warn"
-	cfg.ServerCompressionEnable = false
 	cfg.EnableHTTPCache = true
 	cfg.RunFileDiscovery = false
 
@@ -73,9 +72,6 @@ func TestRestartPersistence_SaveAndLoadCycle(t *testing.T) {
 	if loadedCfg.LogLevel != "warn" {
 		t.Errorf("expected LogLevel to be 'warn' after reload, got %q", loadedCfg.LogLevel)
 	}
-	if loadedCfg.ServerCompressionEnable {
-		t.Error("expected ServerCompressionEnable to be false after reload")
-	}
 	if !loadedCfg.EnableHTTPCache {
 		t.Error("expected EnableHTTPCache to be true after reload")
 	}
@@ -91,18 +87,9 @@ func TestRestartPersistence_ConfigValueOverridesOpt(t *testing.T) {
 	db, q, ctx := setupTestDB(t)
 	defer db.Close()
 
-	// Save compression=false and cache=true in the database
+	// Save cache=true in the database
 	now := time.Now().Unix()
 	err := q.UpsertConfigValueOnly(ctx, gallerydb.UpsertConfigValueOnlyParams{
-		Key:       "server_compression_enable",
-		Value:     "false",
-		CreatedAt: now,
-		UpdatedAt: now,
-	})
-	if err != nil {
-		t.Fatalf("failed to set compression: %v", err)
-	}
-	err = q.UpsertConfigValueOnly(ctx, gallerydb.UpsertConfigValueOnlyParams{
 		Key:       "enable_http_cache",
 		Value:     "true",
 		CreatedAt: now,
@@ -120,9 +107,6 @@ func TestRestartPersistence_ConfigValueOverridesOpt(t *testing.T) {
 	}
 
 	// Verify DB values are loaded
-	if cfg.ServerCompressionEnable {
-		t.Error("expected ServerCompressionEnable to be false from DB")
-	}
 	if !cfg.EnableHTTPCache {
 		t.Error("expected EnableHTTPCache to be true from DB")
 	}

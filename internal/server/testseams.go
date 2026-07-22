@@ -62,16 +62,20 @@ type AppTestSeams struct {
 // InfrastructureTestSeams holds optional test doubles for InfrastructureService.
 // The zero value means use production implementations.
 type InfrastructureTestSeams struct {
-	BuildWriteBatcher       func(ctx context.Context, maxBatchSize int, flushInterval time.Duration) (*writebatcher.WriteBatcher[BatchedWrite], error)
-	ShutdownWriteBatcher    func() error
-	PerformWALCheckpoint    func(ctx context.Context)
-	PragmaOptimize          func(ctx context.Context, pool dbPoolForCheckpoint)
-	WALCheckpointQuery      func(ctx context.Context, conn *sql.Conn) (*sql.Rows, error)
-	GetCacheSizeBytes       func(ctx context.Context, pool *dbconnpool.DbSQLConnPool) (int64, error)
-	EvictLRU                func(ctx context.Context, pool *dbconnpool.DbSQLConnPool, targetFree int64) (int64, error)
-	FlushBatchedWrites      func(ctx context.Context, tx *sql.Tx, batch []BatchedWrite) error
-	HandlerQueries          interfaces.HandlerQueries
-	RecreatePoolsWithConfig func(ctx context.Context, dbPaths database.DatabasePaths, cfg *config.Config, oldRw, oldRo *dbconnpool.DbSQLConnPool) (*dbconnpool.DbSQLConnPool, *dbconnpool.DbSQLConnPool, error)
+	BuildWriteBatcher            func(ctx context.Context, maxBatchSize int, flushInterval time.Duration) (*writebatcher.WriteBatcher[BatchedWrite], error)
+	ShutdownWriteBatcher         func() error
+	PerformWALCheckpoint         func(ctx context.Context)
+	PragmaOptimize               func(ctx context.Context, pool dbPoolForCheckpoint)
+	WALCheckpointQuery           func(ctx context.Context, conn *sql.Conn) (*sql.Rows, error)
+	GetCacheSizeBytes            func(ctx context.Context, pool *dbconnpool.DbSQLConnPool) (int64, error)
+	EvictLRU                     func(ctx context.Context, pool *dbconnpool.DbSQLConnPool, targetFree int64) (int64, error)
+	FlushBatchedWrites           func(ctx context.Context, tx *sql.Tx, batch []BatchedWrite) error
+	HandlerQueries               interfaces.HandlerQueries
+	RecreatePoolsWithConfig      func(ctx context.Context, dbPaths database.DatabasePaths, cfg *config.Config, oldRw, oldRo *dbconnpool.DbSQLConnPool) (*dbconnpool.DbSQLConnPool, *dbconnpool.DbSQLConnPool, error)
+	CacheCalibrationPollInterval time.Duration
+	CacheCalibrationMaxWait      time.Duration
+	PragmaOptimizePollInterval   time.Duration
+	PragmaOptimizeMaxWait        time.Duration
 }
 
 // RuntimeManagerTestSeams holds optional test doubles for RuntimeManager.

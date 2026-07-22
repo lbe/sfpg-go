@@ -92,7 +92,7 @@ var responseWriterPool = gensyncpool.New(
 // InternalRequestConfig holds dependencies for making internal HTTP requests.
 type InternalRequestConfig struct {
 	// Handler is the HTTP handler wrapped with full middleware chain
-	// (cache middleware, compression middleware, etc.)
+	// (cache middleware, etc.)
 	Handler http.Handler
 
 	// ETagVersion for cache key query string
@@ -124,7 +124,6 @@ func MakeInternalRequest(ctx context.Context, cfg InternalRequestConfig, path st
 	req = req.WithContext(ctx)
 
 	// Set headers (reusing existing header map, no allocations)
-	req.Header.Set("Accept-Encoding", "identity")
 	req.Header.Set(InternalPreloadHeader, "true")
 
 	// Call handler directly with discarding ResponseWriter
@@ -140,11 +139,11 @@ func MakeInternalRequest(ctx context.Context, cfg InternalRequestConfig, path st
 	return nil
 }
 
-// MakeInternalRequestWithVariant makes an internal HTTP request with optional HX variant
-// and Accept-Encoding so the stored cache key matches real browser requests.
+// MakeInternalRequestWithHXTarget makes an internal HTTP request with HTMX variant headers
+// so the stored cache key matches real browser HTMX requests.
 // When hxTarget is non-empty, sets HX-Request: true and HX-Target: hxTarget; when empty,
-// does not set HX headers (full-page style). encoding is always set on Accept-Encoding.
-func MakeInternalRequestWithVariant(ctx context.Context, cfg InternalRequestConfig, path string, hxTarget string, encoding string) error {
+// does not set HX headers (full-page style).
+func MakeInternalRequestWithHXTarget(ctx context.Context, cfg InternalRequestConfig, path string, hxTarget string) error {
 	if cfg.Handler == nil {
 		return fmt.Errorf("internal request config: handler is required")
 	}
@@ -162,12 +161,6 @@ func MakeInternalRequestWithVariant(ctx context.Context, cfg InternalRequestConf
 
 	// Update context (may allocate depending on context chain)
 	req = req.WithContext(ctx)
-
-	// Set encoding (default to identity if not specified)
-	if encoding == "" {
-		encoding = "identity"
-	}
-	req.Header.Set("Accept-Encoding", encoding)
 
 	// Set HTMX headers if hxTarget provided
 	if hxTarget != "" {

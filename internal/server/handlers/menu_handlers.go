@@ -39,11 +39,6 @@ func (h *MenuHandlers) HamburgerMenu(w http.ResponseWriter, r *http.Request) {
 		// cacheVersion is resolved via FuncMap (GetCacheVersion()), not from template data
 	}
 
-	// Include CSRF token for authenticated users (needed by discovery and cache-batch-load buttons)
-	if authenticated {
-		data["CSRFToken"] = h.sessionManager.EnsureCSRFToken(w, r)
-	}
-
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)

@@ -57,7 +57,7 @@ type Querier interface {
 	// queries for HTTP cache table operations
 	GetHttpCacheByKey(ctx context.Context, key string) (HttpCache, error)
 	GetHttpCacheOldestCreated(ctx context.Context, limit int64) ([]GetHttpCacheOldestCreatedRow, error)
-	GetHttpCacheSizeBytes(ctx context.Context) (interface{}, error)
+	GetHttpCacheSizeBytes(ctx context.Context) (int64, error)
 	GetIPTCByFile(ctx context.Context, fileID int64) (IptcMetadatum, error)
 	GetIPTCKeywords(ctx context.Context, fileID int64) ([]IptcKeyword, error)
 	GetInvalidFileByPath(ctx context.Context, path string) (InvalidFile, error)

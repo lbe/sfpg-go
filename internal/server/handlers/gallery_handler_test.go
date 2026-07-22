@@ -289,38 +289,23 @@ func TestGalleryByID_SkipsPreloadForInternalRequest(t *testing.T) {
 	}
 }
 
-func TestGalleryByID_ETagIncludesTheme(t *testing.T) {
+// TestGalleryByID_ETagAndVary verifies ETag consistency regardless of theme cookie
+// and that Vary omits Cookie (Phase 2 — theme off the cache key).
+func TestGalleryByID_ETagAndVary(t *testing.T) {
 	qh := &fakeHandlerQueries{}
 	gh := setupTestGalleryHandlers(t, qh)
 
-	tests := []struct {
-		name      string
-		cookie    *http.Cookie
-		wantTheme string
-	}{
-		{
-			name:      "no theme cookie uses default dark",
-			cookie:    nil,
-			wantTheme: "dark",
-		},
-		{
-			name:      "light theme cookie",
-			cookie:    &http.Cookie{Name: "theme", Value: "light"},
-			wantTheme: "light",
-		},
-		{
-			name:      "dark theme cookie",
-			cookie:    &http.Cookie{Name: "theme", Value: "dark"},
-			wantTheme: "dark",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+	var sharedETag string
+	for name, cookie := range map[string]*http.Cookie{
+		"no theme cookie": nil,
+		"light theme":     {Name: "theme", Value: "light"},
+		"dark theme":      {Name: "theme", Value: "dark"},
+	} {
+		t.Run(name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/gallery/1", nil)
 			req.SetPathValue("id", "1")
-			if tt.cookie != nil {
-				req.AddCookie(tt.cookie)
+			if cookie != nil {
+				req.AddCookie(cookie)
 			}
 			w := httptest.NewRecorder()
 
@@ -331,15 +316,24 @@ func TestGalleryByID_ETagIncludesTheme(t *testing.T) {
 			}
 
 			etag := w.Header().Get("ETag")
-			wantETagSuffix := "-" + tt.wantTheme + "\""
-			if !strings.HasSuffix(etag, wantETagSuffix) {
-				t.Errorf("ETag = %q, want suffix %q", etag, wantETagSuffix)
+			if etag == "" {
+				t.Fatal("ETag is empty")
+			}
+			if sharedETag == "" {
+				sharedETag = etag
+			} else if etag != sharedETag {
+				t.Errorf("ETag = %q, want %q (must not vary by theme)", etag, sharedETag)
 			}
 
 			vary := w.Header().Values("Vary")
-			hasCookie := slices.Contains(vary, "Cookie")
-			if !hasCookie {
-				t.Errorf("Vary header missing 'Cookie', got %v", vary)
+			if !slices.Contains(vary, "HX-Request") {
+				t.Errorf("Vary missing 'HX-Request', got %v", vary)
+			}
+			if !slices.Contains(vary, "HX-Target") {
+				t.Errorf("Vary missing 'HX-Target', got %v", vary)
+			}
+			if slices.Contains(vary, "Cookie") {
+				t.Errorf("Vary should not contain 'Cookie', got %v", vary)
 			}
 		})
 	}

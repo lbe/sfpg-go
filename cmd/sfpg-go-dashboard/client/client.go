@@ -5,11 +5,9 @@ package client
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strings"
 )
 
@@ -91,46 +89,12 @@ func (j *simpleCookieJar) Cookies(u *url.URL) []*http.Cookie {
 	return j.cookies[u.Host]
 }
 
-// csrfRe matches the CSRF token in an HTML response body.
-var csrfRe = regexp.MustCompile(`csrf_token"\s*value="([a-f0-9]+)"`)
-
-// extractCSRFToken fetches /login-form from the server and extracts the CSRF
-// token from the login form. This token must be included in the subsequent
-// POST /login request.
-//
-// /login-form is used instead of /gallery/1 because the gallery page is
-// HTTP-cached (up to 30 days), which can serve a stale CSRF token.
-func (c *Client) extractCSRFToken(ctx context.Context) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/login-form", nil)
-	if err != nil {
-		return "", fmt.Errorf("create login-form request: %w", err)
-	}
-	req.Header.Set("Origin", c.baseURL)
-
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return "", ErrNetworkError
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("read login-form response: %w", err)
-	}
-
-	matches := csrfRe.FindStringSubmatch(string(body))
-	if len(matches) < 2 {
-		return "", fmt.Errorf("CSRF token not found in /login-form")
-	}
-	return matches[1], nil
-}
-
 // Login authenticates with the sfpg-go server using username and password.
-// It first fetches a CSRF token from /login-form (uncached), then sends a
-// POST request to /login with the credentials and token. The session cookie
+// It sends a POST request to /login with the credentials. The session cookie
 // is stored in the client's cookie jar for subsequent requests.
 //
-// The Origin header is set to the server URL to satisfy CSRF protection.
+// CrossOriginProtection (http.CrossOriginProtection) is satisfied by setting
+// the Origin header to the server URL.
 //
 // Returns:
 //   - nil on successful authentication
@@ -145,24 +109,10 @@ func (c *Client) extractCSRFToken(ctx context.Context) (string, error) {
 //	    // handle invalid credentials
 //	}
 func (c *Client) Login(ctx context.Context, username, password string) error {
-	// Step 1: Extract CSRF token from login form
-	csrfToken, err := c.extractCSRFToken(ctx)
-	if err != nil {
-		// If CSRF extraction fails due to network error, propagate it.
-		// For older servers that don't have /login-form, fall back gracefully.
-		if errors.Is(err, ErrNetworkError) {
-			return err
-		}
-		csrfToken = ""
-	}
-
-	// Step 2: POST login with credentials and CSRF token
+	// POST login with credentials
 	formData := url.Values{}
 	formData.Set("username", username)
 	formData.Set("password", password)
-	if csrfToken != "" {
-		formData.Set("csrf_token", csrfToken)
-	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/login", strings.NewReader(formData.Encode()))
 	if err != nil {

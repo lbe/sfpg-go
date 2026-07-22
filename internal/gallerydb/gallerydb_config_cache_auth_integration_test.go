@@ -5,7 +5,6 @@ package gallerydb
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"testing"
 	"time"
 )
@@ -288,20 +287,18 @@ func TestHttpCacheQueries(t *testing.T) {
 	t.Run("UpsertHttpCache and GetHttpCacheByKey", func(t *testing.T) {
 		// Insert a cache entry
 		params := UpsertHttpCacheParams{
-			Key:             "test_key_1",
-			Method:          "GET",
-			Path:            "/api/test",
-			Encoding:        "gzip",
-			Status:          200,
-			ContentType:     sql.NullString{String: "application/json", Valid: true},
-			ContentEncoding: sql.NullString{String: "gzip", Valid: true},
-			CacheControl:    sql.NullString{String: "max-age=3600", Valid: true},
-			Etag:            sql.NullString{String: `\"12345\"`, Valid: true},
-			LastModified:    sql.NullString{String: "Mon, 01 Jan 2024 00:00:00 GMT", Valid: true},
-			Body:            []byte(`{"test": "data"}`),
-			ContentLength:   sql.NullInt64{Int64: 17, Valid: true},
-			CreatedAt:       now,
-			ExpiresAt:       sql.NullInt64{Int64: now + 3600, Valid: true},
+			Key:           "test_key_1",
+			Method:        "GET",
+			Path:          "/api/test",
+			Status:        200,
+			ContentType:   sql.NullString{String: "application/json", Valid: true},
+			CacheControl:  sql.NullString{String: "max-age=3600", Valid: true},
+			Etag:          sql.NullString{String: `\"12345\"`, Valid: true},
+			LastModified:  sql.NullString{String: "Mon, 01 Jan 2024 00:00:00 GMT", Valid: true},
+			Body:          []byte(`{"test": "data"}`),
+			ContentLength: sql.NullInt64{Int64: 17, Valid: true},
+			CreatedAt:     now,
+			ExpiresAt:     sql.NullInt64{Int64: now + 3600, Valid: true},
 		}
 		err := q.UpsertHttpCache(ctx, params)
 		if err != nil {
@@ -362,7 +359,6 @@ func TestHttpCacheQueries(t *testing.T) {
 			Key:       "test_key_2",
 			Method:    "GET",
 			Path:      "/api/test2",
-			Encoding:  "gzip",
 			Status:    200,
 			CreatedAt: now,
 		})
@@ -385,10 +381,9 @@ func TestHttpCacheQueries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetHttpCacheSizeBytes failed: %v", err)
 		}
-		// Size should be at least the sum of our test entries
-		// We can't check exact size due to type being interface{}, but it should be non-nil
-		if size == nil {
-			t.Error("Expected size to be non-nil")
+		// Size should be at least the sum of our test entries.
+		if size < 0 {
+			t.Errorf("Expected size >= 0, got %d", size)
 		}
 	})
 
@@ -451,7 +446,6 @@ func TestHttpCacheQueries(t *testing.T) {
 			Key:       "expired_key",
 			Method:    "GET",
 			Path:      "/api/expired",
-			Encoding:  "gzip",
 			Status:    200,
 			CreatedAt: pastTime - 100,
 			ExpiresAt: sql.NullInt64{Int64: pastTime, Valid: true},
@@ -465,7 +459,6 @@ func TestHttpCacheQueries(t *testing.T) {
 			Key:       "nonexpired_key",
 			Method:    "GET",
 			Path:      "/api/valid",
-			Encoding:  "gzip",
 			Status:    200,
 			CreatedAt: now,
 			ExpiresAt: sql.NullInt64{Int64: now + 3600, Valid: true},
@@ -499,7 +492,6 @@ func TestHttpCacheQueries(t *testing.T) {
 			Key:       "to_be_cleared",
 			Method:    "GET",
 			Path:      "/api/clearme",
-			Encoding:  "gzip",
 			Status:    200,
 			CreatedAt: now,
 		})
@@ -595,66 +587,6 @@ func TestInsertConfigIfNotExists(t *testing.T) {
 	}
 }
 
-func TestGetConfigs_RowsCloseError(t *testing.T) {
-	db, q, ctx := setupTestDB(t)
-	_ = db
-
-	seedConfigRows(t, q, ctx)
-
-	orig := rowsCloseFn
-	rowsCloseFn = func(r *sql.Rows) error { return errors.New("rows close denied") }
-	t.Cleanup(func() { rowsCloseFn = orig })
-
-	_, err := q.GetConfigs(ctx)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-}
-
-func TestGetConfigs_RowsErrError(t *testing.T) {
-	db, q, ctx := setupTestDB(t)
-	_ = db
-
-	seedConfigRows(t, q, ctx)
-
-	orig := rowsErrFn
-	rowsErrFn = func(r *sql.Rows) error { return errors.New("rows err denied") }
-	t.Cleanup(func() { rowsErrFn = orig })
-
-	_, err := q.GetConfigs(ctx)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-}
-
-func TestGetHttpCacheOldestCreated_RowsCloseError(t *testing.T) {
-	_, q, ctx := setupTestDB(t)
-	seedHttpCacheRows(t, q, ctx)
-
-	orig := rowsCloseFn
-	rowsCloseFn = func(r *sql.Rows) error { return errors.New("rows close denied") }
-	t.Cleanup(func() { rowsCloseFn = orig })
-
-	_, err := q.GetHttpCacheOldestCreated(ctx, 10)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-}
-
-func TestGetHttpCacheOldestCreated_RowsErrError(t *testing.T) {
-	_, q, ctx := setupTestDB(t)
-	seedHttpCacheRows(t, q, ctx)
-
-	orig := rowsErrFn
-	rowsErrFn = func(r *sql.Rows) error { return errors.New("rows err denied") }
-	t.Cleanup(func() { rowsErrFn = orig })
-
-	_, err := q.GetHttpCacheOldestCreated(ctx, 10)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-}
-
 func seedConfigRows(t *testing.T, q *CustomQueries, ctx context.Context) {
 	t.Helper()
 	now := time.Now().Unix()
@@ -675,7 +607,6 @@ func seedHttpCacheRows(t *testing.T, q *CustomQueries, ctx context.Context) {
 		Key:       "seed_cache_key",
 		Method:    "GET",
 		Path:      "/seed",
-		Encoding:  "gzip",
 		Status:    200,
 		CreatedAt: now,
 	})

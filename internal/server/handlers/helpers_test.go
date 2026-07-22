@@ -301,15 +301,13 @@ func (m *mockServerControl) StartCacheBatchLoad() (interfaces.StartCacheBatchLoa
 
 // mockTemplateHelpers provides AddCommonTemplateData and ServerError for tests.
 type mockTemplateHelpers struct {
-	CSRFToken string
-	Authed    bool
+	Authed bool
 }
 
 func (m *mockTemplateHelpers) AddCommonTemplateData(w http.ResponseWriter, r *http.Request, data map[string]any, fullPage bool) map[string]any {
 	if data == nil {
 		data = make(map[string]any)
 	}
-	data["CSRFToken"] = m.CSRFToken
 	data["IsAuthenticated"] = m.Authed
 	return data
 }
@@ -358,7 +356,7 @@ type mockPreloadService struct {
 	lastID int64
 }
 
-func (m *mockPreloadService) ScheduleFolderPreload(ctx context.Context, folderID int64, sessionID string, acceptEncoding string) {
+func (m *mockPreloadService) ScheduleFolderPreload(ctx context.Context, folderID int64, sessionID string) {
 	m.lastID = folderID
 	select {
 	case m.called <- struct{}{}:
@@ -387,8 +385,7 @@ func setupTestGalleryHandlers(t *testing.T, hq interfaces.HandlerQueries) *Galle
 		ETag:   "test-etag",
 	}
 	helper := &mockTemplateHelpers{
-		CSRFToken: "test-csrf-token",
-		Authed:    true,
+		Authed: true,
 	}
 	gh := NewGalleryHandlers(
 		errConnPool{getErr: errors.New("no db")},

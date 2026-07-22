@@ -68,7 +68,7 @@ func TestManager_Run_BlocksWhenDiscoveryActive(t *testing.T) {
 func TestManager_Run_BlocksWhenAlreadyRunning(t *testing.T) {
 	ctx := context.Background()
 	targets := []gallerydb.BatchLoadTarget{
-		{Path: "/gallery/1", Htmx: "true", HxTarget: "gallery-content", Encoding: "gzip"},
+		{Path: "/gallery/1", Variant: "gallery-content"},
 	}
 	blockCh := make(chan struct{})
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -105,18 +105,13 @@ func TestManager_Run_BlocksWhenAlreadyRunning(t *testing.T) {
 func TestManager_Run_SkipsCachedEntries(t *testing.T) {
 	ctx := context.Background()
 	targets := []gallerydb.BatchLoadTarget{
-		{Path: "/gallery/1", Htmx: "true", HxTarget: "gallery-content", Encoding: "gzip"},
+		{Path: "/gallery/1", Variant: "gallery-content"},
 	}
 	cacheKey := cachelite.NewCacheKey(cachelite.CacheKeyParams{
-		Method: "GET",
-		Path:   "/gallery/1",
-		Query:  "v=v1",
-		HTMX: cachelite.HTMXParams{
-			Request:   "true",
-			Target:    "gallery-content",
-			IsVariant: true,
-		},
-		Encoding: "gzip",
+		Method:  "GET",
+		Path:    "/gallery/1",
+		Query:   "v=v1",
+		Variant: "gallery-content",
 	})
 	exists := map[string]bool{cacheKey: true}
 	q := &mockQueries{targets: targets, existsByKey: exists}
@@ -154,7 +149,7 @@ func TestManager_Run_SkipsCachedEntries(t *testing.T) {
 func TestManager_Run_404CountedAsFailure(t *testing.T) {
 	ctx := context.Background()
 	targets := []gallerydb.BatchLoadTarget{
-		{Path: "/gallery/999", Htmx: "true", HxTarget: "gallery-content", Encoding: "gzip"},
+		{Path: "/gallery/999", Variant: "gallery-content"},
 	}
 	q := &mockQueries{targets: targets}
 
@@ -233,7 +228,7 @@ func TestManager_GetBatchLoadSnapshot(t *testing.T) {
 func TestManager_Run_SuccessCountsAsCompleted(t *testing.T) {
 	ctx := context.Background()
 	targets := []gallerydb.BatchLoadTarget{
-		{Path: "/gallery/1", Htmx: "true", HxTarget: "gallery-content", Encoding: "gzip"},
+		{Path: "/gallery/1", Variant: "gallery-content"},
 	}
 	q := &mockQueries{targets: targets}
 
@@ -347,7 +342,7 @@ func TestManager_Run_ErrorPaths(t *testing.T) {
 func TestManager_Run_PutQueriesCleanupCalled(t *testing.T) {
 	ctx := context.Background()
 	targets := []gallerydb.BatchLoadTarget{
-		{Path: "/gallery/1", Htmx: "true", HxTarget: "gallery-content", Encoding: "gzip"},
+		{Path: "/gallery/1", Variant: "gallery-content"},
 	}
 	q := &mockQueries{targets: targets}
 
@@ -376,7 +371,7 @@ func TestManager_Run_PutQueriesCleanupCalled(t *testing.T) {
 func TestManager_Run_DefaultETagVersion(t *testing.T) {
 	ctx := context.Background()
 	targets := []gallerydb.BatchLoadTarget{
-		{Path: "/gallery/1", Htmx: "false", Encoding: "identity"},
+		{Path: "/gallery/1", Variant: "full"},
 	}
 	q := &mockQueries{targets: targets}
 
@@ -411,7 +406,7 @@ func TestManager_Run_DefaultETagVersion(t *testing.T) {
 func TestManager_Run_HttpCacheExistsByKeyError(t *testing.T) {
 	ctx := context.Background()
 	targets := []gallerydb.BatchLoadTarget{
-		{Path: "/gallery/1", Htmx: "true", HxTarget: "gallery-content", Encoding: "gzip"},
+		{Path: "/gallery/1", Variant: "gallery-content"},
 	}
 	q := &mockQueries{targets: targets, existsByKeyErr: errors.New("exists check failed")}
 
@@ -443,17 +438,17 @@ func TestManager_Run_HttpCacheExistsByKeyError(t *testing.T) {
 }
 
 func TestManager_Run_BackpressureSkipsTargets(t *testing.T) {
-	origMakeInternalRequest := makeInternalRequest
+	origRunBatchWarm := runBatchWarm
 	origNumCPU := numCPU
 	origThrottleSleep := throttleSleep
 	defer func() {
-		makeInternalRequest = origMakeInternalRequest
+		runBatchWarm = origRunBatchWarm
 		numCPU = origNumCPU
 		throttleSleep = origThrottleSleep
 	}()
 
 	blockCh := make(chan struct{})
-	makeInternalRequest = func(ctx context.Context, cfg cachepreload.InternalRequestConfig, path, hxTarget, encoding string) error {
+	runBatchWarm = func(ctx context.Context, cfg cachepreload.InternalRequestConfig, path, variant string) error {
 		<-blockCh
 		return nil
 	}
@@ -463,7 +458,7 @@ func TestManager_Run_BackpressureSkipsTargets(t *testing.T) {
 	ctx := context.Background()
 	targets := make([]gallerydb.BatchLoadTarget, 1200)
 	for i := range targets {
-		targets[i] = gallerydb.BatchLoadTarget{Path: "/gallery/1", Htmx: "true", HxTarget: "gallery-content", Encoding: "gzip"}
+		targets[i] = gallerydb.BatchLoadTarget{Path: "/gallery/1", Variant: "gallery-content"}
 	}
 	q := &mockQueries{targets: targets}
 
@@ -495,17 +490,17 @@ func TestManager_Run_BackpressureSkipsTargets(t *testing.T) {
 }
 
 func TestManager_Run_ThrottleScheduling(t *testing.T) {
-	origMakeInternalRequest := makeInternalRequest
+	origRunBatchWarm := runBatchWarm
 	origNumCPU := numCPU
 	origThrottleSleep := throttleSleep
 	defer func() {
-		makeInternalRequest = origMakeInternalRequest
+		runBatchWarm = origRunBatchWarm
 		numCPU = origNumCPU
 		throttleSleep = origThrottleSleep
 	}()
 
 	blockCh := make(chan struct{})
-	makeInternalRequest = func(ctx context.Context, cfg cachepreload.InternalRequestConfig, path, hxTarget, encoding string) error {
+	runBatchWarm = func(ctx context.Context, cfg cachepreload.InternalRequestConfig, path, variant string) error {
 		<-blockCh
 		return nil
 	}
@@ -515,7 +510,7 @@ func TestManager_Run_ThrottleScheduling(t *testing.T) {
 	ctx := context.Background()
 	targets := make([]gallerydb.BatchLoadTarget, 850)
 	for i := range targets {
-		targets[i] = gallerydb.BatchLoadTarget{Path: "/gallery/1", Htmx: "true", HxTarget: "gallery-content", Encoding: "gzip"}
+		targets[i] = gallerydb.BatchLoadTarget{Path: "/gallery/1", Variant: "gallery-content"}
 	}
 	q := &mockQueries{targets: targets}
 

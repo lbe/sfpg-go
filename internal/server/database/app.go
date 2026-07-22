@@ -67,10 +67,12 @@ func Setup(ctx context.Context, rootDir string, cfg *config.Config) (DatabasePat
 	thumbsDBPath := filepath.Join(thumbsDir, "thumbs.db")
 
 	// 2. Migrations
-	if err := migrateDBFn(dbPath); err != nil {
+	mainApplied, err := migrateDBFn(dbPath)
+	if err != nil {
 		return DatabasePaths{}, nil, nil, fmt.Errorf("migration failed: %w", err)
 	}
-	if err := migrateBlobsDBFn(thumbsDBPath); err != nil {
+	thumbsApplied, err := migrateBlobsDBFn(thumbsDBPath)
+	if err != nil {
 		return DatabasePaths{}, nil, nil, fmt.Errorf("thumbs migration failed: %w", err)
 	}
 
@@ -81,7 +83,21 @@ func Setup(ctx context.Context, rootDir string, cfg *config.Config) (DatabasePat
 		return DatabasePaths{}, nil, nil, fmt.Errorf("pool creation failed: %w", err)
 	}
 
-	// 4. Root Folder Check
+	// 4. Post-migration PRAGMA optimize (only when migrations were applied)
+	if mainApplied || thumbsApplied {
+		optCpc, optErr := dbRwPool.Get()
+		if optErr != nil {
+			dbRwPool.Close()
+			dbRoPool.Close()
+			return DatabasePaths{}, nil, nil, fmt.Errorf("failed to get conn for post-migration optimize: %w", optErr)
+		}
+		if runErr := dbconnpool.RunPragmaOptimize(ctx, optCpc.Conn, dbconnpool.PragmaOptimizeDefault); runErr != nil {
+			slog.Warn("post-migration PRAGMA optimize failed", "err", runErr)
+		}
+		dbRwPool.Put(optCpc)
+	}
+
+	// 5. Root Folder Check
 	cpcRw, err := dbRwPoolGet(dbRwPool)
 	if err != nil {
 		dbRwPool.Close()
@@ -99,64 +115,70 @@ func Setup(ctx context.Context, rootDir string, cfg *config.Config) (DatabasePat
 	return DatabasePaths{Main: dbPath, Thumbs: thumbsDBPath}, dbRwPool, dbRoPool, nil
 }
 
-func migrateDB(dbPath string) error {
+func migrateDB(dbPath string) (bool, error) {
 	// Open a temporary connection to ensure file exists
 	db, err := osOpenFile(dbPath, os.O_RDWR|os.O_CREATE, 0o664)
 	if err != nil {
-		return fmt.Errorf("failed to open database file: %w", err)
+		return false, fmt.Errorf("failed to open database file: %w", err)
 	}
 	db.Close() // Ignore close error on empty file
 
 	// Guarantee the required mode; os.OpenFile is subject to the process umask.
 	if err = osChmod(dbPath, 0o664); err != nil {
-		return fmt.Errorf("failed to set database file permissions: %w", err)
+		return false, fmt.Errorf("failed to set database file permissions: %w", err)
 	}
 
 	dbConn, err := sql.Open("sqlite3", dbPath)
 	if err != nil {
-		return fmt.Errorf("failed to open sqlite connection: %w", err)
+		return false, fmt.Errorf("failed to open sqlite connection: %w", err)
 	}
 	defer dbConn.Close()
 
 	d, err := iofs.New(migrations.FS, "migrations")
 	if err != nil {
-		return fmt.Errorf("failed to create iofs source: %w", err)
+		return false, fmt.Errorf("failed to create iofs source: %w", err)
 	}
 
 	m, err := migrate.NewWithSourceInstance("iofs", d, "sqlite://"+filepath.ToSlash(dbPath))
 	if err != nil {
-		return fmt.Errorf("failed to create migrate instance: %w", err)
+		return false, fmt.Errorf("failed to create migrate instance: %w", err)
 	}
 	defer m.Close()
 
-	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
-		return fmt.Errorf("up migration failed: %w", err)
+	if err := m.Up(); err != nil {
+		if errors.Is(err, migrate.ErrNoChange) {
+			return false, nil
+		}
+		return false, fmt.Errorf("up migration failed: %w", err)
 	}
-	return nil
+	return true, nil
 }
 
-func migrateBlobsDB(dbPath string) error {
+func migrateBlobsDB(dbPath string) (bool, error) {
 	db, err := osOpenFile(dbPath, os.O_RDWR|os.O_CREATE, 0o664)
 	if err != nil {
-		return fmt.Errorf("failed to open thumbs database file: %w", err)
+		return false, fmt.Errorf("failed to open thumbs database file: %w", err)
 	}
 	db.Close()
 
 	// Guarantee the required mode; os.OpenFile is subject to the process umask.
 	if err = osChmod(dbPath, 0o664); err != nil {
-		return fmt.Errorf("failed to set thumbs database file permissions: %w", err)
+		return false, fmt.Errorf("failed to set thumbs database file permissions: %w", err)
 	}
 
 	m, err := migrations.NewThumbsMigrator(dbPath)
 	if err != nil {
-		return fmt.Errorf("failed to create thumbs migrator: %w", err)
+		return false, fmt.Errorf("failed to create thumbs migrator: %w", err)
 	}
 	defer m.Close()
 
-	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
-		return fmt.Errorf("thumbs up migration failed: %w", err)
+	if err := m.Up(); err != nil {
+		if errors.Is(err, migrate.ErrNoChange) {
+			return false, nil
+		}
+		return false, fmt.Errorf("thumbs up migration failed: %w", err)
 	}
-	return nil
+	return true, nil
 }
 
 func configureDatabaseDSN(dbPath string) (roDsn, rwDsn string) {
@@ -222,15 +244,6 @@ func createDatabasePools(ctx context.Context, roDsn, rwDsn, thumbsDBPath string,
 		})
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create RW pool: %w", err)
-	}
-
-	// Optimize immediately
-	cpcRw, err := dbRwPool.Get()
-	if err == nil {
-		if _, execErr := cpcRw.Conn.ExecContext(ctx, `PRAGMA optimize=0x10002`); execErr != nil {
-			slog.Warn("PRAGMA optimize call failed", "err", execErr)
-		}
-		dbRwPool.Put(cpcRw)
 	}
 
 	dbRoPool, err := newDbSQLConnPool(ctx, roDsn,

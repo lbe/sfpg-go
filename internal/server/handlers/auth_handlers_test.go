@@ -45,14 +45,6 @@ func (m *mockSessionManagerAuth) GetOptions() *sessions.Options {
 	return &sessions.Options{}
 }
 
-func (m *mockSessionManagerAuth) EnsureCSRFToken(w http.ResponseWriter, r *http.Request) string {
-	return "test-csrf-token"
-}
-
-func (m *mockSessionManagerAuth) ValidateCSRFToken(r *http.Request) bool {
-	return true
-}
-
 func (m *mockSessionManagerAuth) ClearSession(w http.ResponseWriter, r *http.Request) {
 }
 
@@ -75,181 +67,28 @@ func (m *mockSessionManagerAuth) SetAuthenticated(w http.ResponseWriter, r *http
 	return nil
 }
 
-// mockSessionManagerWithExistingSession simulates an existing session WITH a CSRF token.
-// simulates CSRF validation failure on an existing session with a CSRF token (triggers 403).
-type mockSessionManagerWithExistingSession struct{}
+// mockSessionManagerValid implements SessionManager for authenticated sessions.
+type mockSessionManagerValid struct{}
 
-func (m *mockSessionManagerWithExistingSession) GetOptions() *sessions.Options {
+func (m *mockSessionManagerValid) GetOptions() *sessions.Options {
 	return &sessions.Options{}
 }
 
-func (m *mockSessionManagerWithExistingSession) EnsureCSRFToken(w http.ResponseWriter, r *http.Request) string {
-	return "test-csrf-token"
-}
+func (m *mockSessionManagerValid) ClearSession(w http.ResponseWriter, r *http.Request) {}
 
-func (m *mockSessionManagerWithExistingSession) ValidateCSRFToken(r *http.Request) bool {
-	return false // Simulate CSRF validation failure
-}
-
-func (m *mockSessionManagerWithExistingSession) ClearSession(w http.ResponseWriter, r *http.Request) {
-}
-
-func (m *mockSessionManagerWithExistingSession) GetSession(w http.ResponseWriter, r *http.Request) (*sessions.Session, error) {
-	sess := sessions.NewSession(nil, session.SessionName)
-	sess.IsNew = false // This is an existing session
-	sess.Values["csrf_token"] = "existing-csrf-token"
-	return sess, nil
-}
-
-func (m *mockSessionManagerWithExistingSession) SaveSession(w http.ResponseWriter, r *http.Request, sess *sessions.Session) error {
-	return nil
-}
-
-func (m *mockSessionManagerWithExistingSession) IsAuthenticated(w http.ResponseWriter, r *http.Request) bool {
-	return false
-}
-
-func (m *mockSessionManagerWithExistingSession) SetAuthenticated(w http.ResponseWriter, r *http.Request, authenticated bool) error {
-	return nil
-}
-
-// mockSessionManagerNewSessionInvalidCSRF simulates CSRF validation failure on a new session (login is now rejected).
-type mockSessionManagerNewSessionInvalidCSRF struct{}
-
-func (m *mockSessionManagerNewSessionInvalidCSRF) GetOptions() *sessions.Options {
-	return &sessions.Options{}
-}
-
-func (m *mockSessionManagerNewSessionInvalidCSRF) EnsureCSRFToken(w http.ResponseWriter, r *http.Request) string {
-	return "test-csrf-token"
-}
-
-func (m *mockSessionManagerNewSessionInvalidCSRF) ValidateCSRFToken(r *http.Request) bool {
-	return false
-}
-
-func (m *mockSessionManagerNewSessionInvalidCSRF) ClearSession(w http.ResponseWriter, r *http.Request) {
-}
-
-func (m *mockSessionManagerNewSessionInvalidCSRF) GetSession(w http.ResponseWriter, r *http.Request) (*sessions.Session, error) {
-	sess := sessions.NewSession(nil, session.SessionName)
-	sess.IsNew = true
-	return sess, nil
-}
-
-func (m *mockSessionManagerNewSessionInvalidCSRF) SaveSession(w http.ResponseWriter, r *http.Request, sess *sessions.Session) error {
-	return nil
-}
-
-func (m *mockSessionManagerNewSessionInvalidCSRF) IsAuthenticated(w http.ResponseWriter, r *http.Request) bool {
-	return false
-}
-
-func (m *mockSessionManagerNewSessionInvalidCSRF) SetAuthenticated(w http.ResponseWriter, r *http.Request, authenticated bool) error {
-	return nil
-}
-
-// mockSessionManagerExistingSessionNoToken simulates CSRF failure with an existing session missing a token.
-type mockSessionManagerExistingSessionNoToken struct{}
-
-func (m *mockSessionManagerExistingSessionNoToken) GetOptions() *sessions.Options {
-	return &sessions.Options{}
-}
-
-func (m *mockSessionManagerExistingSessionNoToken) EnsureCSRFToken(w http.ResponseWriter, r *http.Request) string {
-	return "test-csrf-token"
-}
-
-func (m *mockSessionManagerExistingSessionNoToken) ValidateCSRFToken(r *http.Request) bool {
-	return false
-}
-
-func (m *mockSessionManagerExistingSessionNoToken) ClearSession(w http.ResponseWriter, r *http.Request) {
-}
-
-func (m *mockSessionManagerExistingSessionNoToken) GetSession(w http.ResponseWriter, r *http.Request) (*sessions.Session, error) {
-	sess := sessions.NewSession(nil, session.SessionName)
-	sess.IsNew = false
-	return sess, nil
-}
-
-func (m *mockSessionManagerExistingSessionNoToken) SaveSession(w http.ResponseWriter, r *http.Request, sess *sessions.Session) error {
-	return nil
-}
-
-func (m *mockSessionManagerExistingSessionNoToken) IsAuthenticated(w http.ResponseWriter, r *http.Request) bool {
-	return false
-}
-
-func (m *mockSessionManagerExistingSessionNoToken) SetAuthenticated(w http.ResponseWriter, r *http.Request, authenticated bool) error {
-	return nil
-}
-
-// mockSessionManagerWithCSRFValid implements SessionManager where CSRF validation passes.
-type mockSessionManagerWithCSRFValid struct{}
-
-func (m *mockSessionManagerWithCSRFValid) GetOptions() *sessions.Options {
-	return &sessions.Options{}
-}
-
-func (m *mockSessionManagerWithCSRFValid) EnsureCSRFToken(w http.ResponseWriter, r *http.Request) string {
-	return "test-csrf-token"
-}
-
-func (m *mockSessionManagerWithCSRFValid) ValidateCSRFToken(r *http.Request) bool {
-	return true // CSRF validation passes
-}
-
-func (m *mockSessionManagerWithCSRFValid) ClearSession(w http.ResponseWriter, r *http.Request) {}
-
-func (m *mockSessionManagerWithCSRFValid) GetSession(w http.ResponseWriter, r *http.Request) (*sessions.Session, error) {
+func (m *mockSessionManagerValid) GetSession(w http.ResponseWriter, r *http.Request) (*sessions.Session, error) {
 	return sessions.NewSession(nil, session.SessionName), nil
 }
 
-func (m *mockSessionManagerWithCSRFValid) SaveSession(w http.ResponseWriter, r *http.Request, sess *sessions.Session) error {
+func (m *mockSessionManagerValid) SaveSession(w http.ResponseWriter, r *http.Request, sess *sessions.Session) error {
 	return nil
 }
 
-func (m *mockSessionManagerWithCSRFValid) IsAuthenticated(w http.ResponseWriter, r *http.Request) bool {
+func (m *mockSessionManagerValid) IsAuthenticated(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
-func (m *mockSessionManagerWithCSRFValid) SetAuthenticated(w http.ResponseWriter, r *http.Request, authenticated bool) error {
-	return nil
-}
-
-// mockSessionManagerAuthenticatedCSRFFailed implements SessionManager for testing
-// an authenticated session where CSRF validation fails (for logout CSRF tests).
-type mockSessionManagerAuthenticatedCSRFFailed struct{}
-
-func (m *mockSessionManagerAuthenticatedCSRFFailed) GetOptions() *sessions.Options {
-	return &sessions.Options{}
-}
-
-func (m *mockSessionManagerAuthenticatedCSRFFailed) EnsureCSRFToken(w http.ResponseWriter, r *http.Request) string {
-	return "test-csrf-token"
-}
-
-func (m *mockSessionManagerAuthenticatedCSRFFailed) ValidateCSRFToken(r *http.Request) bool {
-	return false // CSRF validation fails
-}
-
-func (m *mockSessionManagerAuthenticatedCSRFFailed) ClearSession(w http.ResponseWriter, r *http.Request) {
-}
-
-func (m *mockSessionManagerAuthenticatedCSRFFailed) GetSession(w http.ResponseWriter, r *http.Request) (*sessions.Session, error) {
-	return sessions.NewSession(nil, session.SessionName), nil
-}
-
-func (m *mockSessionManagerAuthenticatedCSRFFailed) SaveSession(w http.ResponseWriter, r *http.Request, sess *sessions.Session) error {
-	return nil
-}
-
-func (m *mockSessionManagerAuthenticatedCSRFFailed) IsAuthenticated(w http.ResponseWriter, r *http.Request) bool {
-	return true // Authenticated
-}
-
-func (m *mockSessionManagerAuthenticatedCSRFFailed) SetAuthenticated(w http.ResponseWriter, r *http.Request, authenticated bool) error {
+func (m *mockSessionManagerValid) SetAuthenticated(w http.ResponseWriter, r *http.Request, authenticated bool) error {
 	return nil
 }
 
@@ -283,14 +122,6 @@ type mockSessionManagerWithError struct{}
 
 func (m *mockSessionManagerWithError) GetOptions() *sessions.Options {
 	return &sessions.Options{}
-}
-
-func (m *mockSessionManagerWithError) EnsureCSRFToken(w http.ResponseWriter, r *http.Request) string {
-	return "test-csrf-token"
-}
-
-func (m *mockSessionManagerWithError) ValidateCSRFToken(r *http.Request) bool {
-	return true
 }
 
 func (m *mockSessionManagerWithError) ClearSession(w http.ResponseWriter, r *http.Request) {
@@ -508,30 +339,9 @@ func TestAuthHandlers_Login_AccountLocked(t *testing.T) {
 	}
 }
 
-func TestAuthHandlers_Login_InvalidCSRF(t *testing.T) {
-	if err := ui.ParseTemplates(web.FS); err != nil {
-		t.Fatalf("ParseTemplates failed: %v", err)
-	}
-
-	cs := &fakeCredentialStore{}
-	// Use a session manager that rejects CSRF on existing session
-	authHandlers := NewAuthHandlers(auth.NewService(cs), &mockSessionManagerWithExistingSession{})
-
-	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("username=testuser&password=password"))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	w := httptest.NewRecorder()
-
-	authHandlers.Login(w, req)
-
-	// Should return 403 Forbidden
-	if w.Code != http.StatusForbidden {
-		t.Errorf("expected status 403, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
 func TestAuthHandlers_Logout(t *testing.T) {
 	cs := &fakeCredentialStore{}
-	authHandlers := NewAuthHandlers(auth.NewService(cs), &mockSessionManagerWithCSRFValid{})
+	authHandlers := NewAuthHandlers(auth.NewService(cs), &mockSessionManagerValid{})
 
 	req := httptest.NewRequest(http.MethodPost, "/logout", nil)
 	w := httptest.NewRecorder()
@@ -548,22 +358,6 @@ func TestAuthHandlers_Logout(t *testing.T) {
 	}
 }
 
-func TestAuthHandlers_Logout_CSRFFailed(t *testing.T) {
-	cs := &fakeCredentialStore{}
-	// Use a mock that returns false for ValidateCSRFToken (authenticated session with invalid CSRF)
-	authHandlers := NewAuthHandlers(auth.NewService(cs), &mockSessionManagerAuthenticatedCSRFFailed{})
-
-	req := httptest.NewRequest(http.MethodPost, "/logout", nil)
-	w := httptest.NewRecorder()
-
-	authHandlers.Logout(w, req)
-
-	// Should return 403 Forbidden on CSRF failure
-	if w.Code != http.StatusForbidden {
-		t.Errorf("expected status %d, got %d: %s", http.StatusForbidden, w.Code, w.Body.String())
-	}
-}
-
 func TestAuthHandlers_Logout_SessionError(t *testing.T) {
 	cs := &fakeCredentialStore{}
 	// Use a mock that returns error on SetAuthenticated
@@ -577,54 +371,6 @@ func TestAuthHandlers_Logout_SessionError(t *testing.T) {
 	// Should return 500 on error
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("expected status 500, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-func TestAuthHandlers_Login_InvalidCSRF_NewSessionRejected(t *testing.T) {
-	if err := ui.ParseTemplates(web.FS); err != nil {
-		t.Fatalf("ParseTemplates failed: %v", err)
-	}
-
-	cs := &fakeCredentialStore{
-		checkAccountLockoutFunc: func(ctx context.Context, username string) (bool, error) {
-			return false, nil
-		},
-	}
-
-	authHandlers := NewAuthHandlers(auth.NewService(cs), &mockSessionManagerNewSessionInvalidCSRF{})
-
-	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("username=testuser&password=wrong"))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	w := httptest.NewRecorder()
-
-	authHandlers.Login(w, req)
-
-	if w.Code != http.StatusForbidden {
-		t.Errorf("expected status 403, got %d", w.Code)
-	}
-}
-
-func TestAuthHandlers_Login_InvalidCSRF_ExistingSessionNoTokenRejected(t *testing.T) {
-	if err := ui.ParseTemplates(web.FS); err != nil {
-		t.Fatalf("ParseTemplates failed: %v", err)
-	}
-
-	cs := &fakeCredentialStore{
-		checkAccountLockoutFunc: func(ctx context.Context, username string) (bool, error) {
-			return false, nil
-		},
-	}
-
-	authHandlers := NewAuthHandlers(auth.NewService(cs), &mockSessionManagerExistingSessionNoToken{})
-
-	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("username=testuser&password=wrong"))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	w := httptest.NewRecorder()
-
-	authHandlers.Login(w, req)
-
-	if w.Code != http.StatusForbidden {
-		t.Errorf("expected status 403, got %d", w.Code)
 	}
 }
 

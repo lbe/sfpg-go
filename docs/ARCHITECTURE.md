@@ -28,7 +28,7 @@ SFPG (Simple Fast Photo Gallery) is a high-performance, self-hosted photo galler
 - **Performance**: Asynchronous processing, intelligent caching, connection pooling
 - **Idempotency**: Safe to re-run file processing without duplicates
 - **Memory Efficiency**: Stream large files, buffer only small responses
-- **Security**: Multiple layers (auth, CSRF, path validation, session security)
+- **Security**: COP + auth + path validation (no token CSRF)
 - **Simplicity**: Single binary, SQLite database, no external dependencies
 
 ### Technology Stack
@@ -65,7 +65,7 @@ graph TB
 
     subgraph "Web Server"
         Router[HTTP Router]
-        Middleware[Auth/Cache/CSRF]
+        Middleware[Auth/Cache/COP]
         Handlers[Route Handlers]
     end
 
@@ -172,12 +172,12 @@ The application is organized into domain-driven packages under `internal/`:
 | **server/logging**      | Request logging helpers                | logging middleware wrappers                                                     |
 | **server/menu**         | Hamburger menu handler                 | `MenuHandlers`                                                                  |
 | **server/metrics**      | Runtime metrics collection             | `Collector`                                                                     |
-| **server/middleware**   | HTTP middleware (auth, CSRF, etc.)     | `AuthMiddleware`, `CSRFProtection`                                              |
+| **server/middleware**   | HTTP middleware (auth, COP, logging)   | `AuthMiddleware`, `CrossOriginProtection`                                       |
 | **server/modulestate**  | Module active-state tracking           | `ModuleStateService`                                                            |
 | **server/pathutil**     | Image-directory path utilities         | `RemoveImagesDirPrefix`                                                         |
 | **server/runtime**      | Process runtime / restart management   | `RuntimeManager`                                                                |
 | **server/security**     | Lockout calculations                   | `CalculateLockout`, `IsLocked`                                                  |
-| **server/session**      | Session & CSRF management              | `SessionManager`, `Manager`                                                     |
+| **server/session**      | Session management only                | `SessionManager`, `Manager`                                                     |
 | **server/subsystem**    | Lifecycle management for subsystems    | `SubsystemManager`                                                              |
 | **server/template**     | Shared template data helpers           | `AddCommonData`                                                                 |
 | **server/theme**        | Theme cookie handling                  | theme helpers                                                                   |
@@ -373,24 +373,24 @@ Read-Write Pool: MaxConnections = db_max_pool_size  (journal_mode=WAL, _txlock=i
 
 ### Database Schema
 
-| Table               | Purpose                  | Key Fields                                                                                                                                                                                                |
-| ------------------- | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **file_paths**      | Normalized file paths    | `id`, `path` (unique)                                                                                                                                                                                     |
-| **folder_paths**    | Normalized folder paths  | `id`, `path` (unique)                                                                                                                                                                                     |
-| **files**           | Image metadata           | `id`, `folder_id`, `path_id`, `filename`, `size_bytes`, `mtime`, `md5`, `phash`, `mime_type`, `width`, `height`                                                                                           |
-| **folders**         | Directory structure      | `id`, `parent_id`, `path_id`, `name`, `mtime`, `tile_id`                                                                                                                                                  |
-| **thumbnails**      | Generated thumbnail refs | `id`, `file_id`, `size_label`, `width`, `height`, `format`                                                                                                                                                |
-| **thumbnail_blobs** | Thumbnail JPEG bytes     | `thumbnail_id`, `data` (in `thumbs.db`)                                                                                                                                                                   |
-| **exif_metadata**   | EXIF camera/location     | `file_id`, `camera_make/model`, `focal_length`, `aperture`, `iso`, `capture_date`, etc.                                                                                                                   |
-| **iptc_metadata**   | IPTC fields              | `file_id`, `title`, `description`, `keywords`, etc.                                                                                                                                                       |
-| **iptc_keywords**   | IPTC keyword rows        | `id`, `file_id`, `keyword`                                                                                                                                                                                |
-| **xmp_properties**  | XMP property rows        | `id`, `file_id`, `namespace`, `property`, `value`                                                                                                                                                         |
-| **xmp_raw**         | Raw XMP packet           | `file_id`, `raw_xml`                                                                                                                                                                                      |
-| **config**          | Key-value configuration  | `key`, `value`, `type`, `category`, `requires_restart`, `description`, `default_value`, etc.                                                                                                              |
-| **http_cache**      | HTTP response cache      | `key`, `method`, `path`, `query_string`, `encoding`, `status`, `content_type`, `cache_control`, `etag`, `last_modified`, `vary`, `body`, `content_length`, `created_at`, `expires_at`, `content_encoding` |
-| **login_attempts**  | Failed login tracking    | `username` (PK), `failed_attempts`, `locked_until`, `last_attempt_at`                                                                                                                                     |
-| **invalid_files**   | Unprocessable files      | `path`, `mtime`, `size`, `reason`, `created_at`, `updated_at`                                                                                                                                             |
-| **module_state**    | Module active state      | `name` (PK), `is_active`, `last_started_at`, `last_finished_at`                                                                                                                                           |
+| Table               | Purpose                  | Key Fields                                                                                                                                                                |
+| ------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **file_paths**      | Normalized file paths    | `id`, `path` (unique)                                                                                                                                                     |
+| **folder_paths**    | Normalized folder paths  | `id`, `path` (unique)                                                                                                                                                     |
+| **files**           | Image metadata           | `id`, `folder_id`, `path_id`, `filename`, `size_bytes`, `mtime`, `md5`, `phash`, `mime_type`, `width`, `height`                                                           |
+| **folders**         | Directory structure      | `id`, `parent_id`, `path_id`, `name`, `mtime`, `tile_id`                                                                                                                  |
+| **thumbnails**      | Generated thumbnail refs | `id`, `file_id`, `size_label`, `width`, `height`, `format`                                                                                                                |
+| **thumbnail_blobs** | Thumbnail JPEG bytes     | `thumbnail_id`, `data` (in `thumbs.db`)                                                                                                                                   |
+| **exif_metadata**   | EXIF camera/location     | `file_id`, `camera_make/model`, `focal_length`, `aperture`, `iso`, `capture_date`, etc.                                                                                   |
+| **iptc_metadata**   | IPTC fields              | `file_id`, `title`, `description`, `keywords`, etc.                                                                                                                       |
+| **iptc_keywords**   | IPTC keyword rows        | `id`, `file_id`, `keyword`                                                                                                                                                |
+| **xmp_properties**  | XMP property rows        | `id`, `file_id`, `namespace`, `property`, `value`                                                                                                                         |
+| **xmp_raw**         | Raw XMP packet           | `file_id`, `raw_xml`                                                                                                                                                      |
+| **config**          | Key-value configuration  | `key`, `value`, `type`, `category`, `requires_restart`, `description`, `default_value`, etc.                                                                              |
+| **http_cache**      | HTTP response cache      | `key`, `method`, `path`, `query_string`, `status`, `content_type`, `cache_control`, `etag`, `last_modified`, `vary`, `body`, `content_length`, `created_at`, `expires_at` |
+| **login_attempts**  | Failed login tracking    | `username` (PK), `failed_attempts`, `locked_until`, `last_attempt_at`                                                                                                     |
+| **invalid_files**   | Unprocessable files      | `path`, `mtime`, `size`, `reason`, `created_at`, `updated_at`                                                                                                             |
+| **module_state**    | Module active state      | `name` (PK), `is_active`, `last_started_at`, `last_finished_at`                                                                                                           |
 
 **Views:** `folder_view`, `file_view`, `thumbnail_exists_view`, `folder_tile_exists_view` (plus quality-control views `qc_file_path_subset_file_name` and `qc_folder_path_subset_file_path`).
 
@@ -413,6 +413,13 @@ sqlc/queries/
 - Compile-time SQL validation
 - No SQL injection risk
 - Easy to refactor
+
+**Testing policy (gallerydb):**
+
+- sqlc-generated output (`db.go`, `querier.go`, sqlc `*.sql.go` — **not** hand-written `custom.sql.go`) — never add test seams; run `sqlc generate` without post-processing.
+- Hand-written `custom.sql.go` + `custom_seams.go` — package-level hooks for custom query error-path tests only.
+- Generated queries: happy-path integration tests in `gallerydb_*_integration_test.go`.
+- Custom queries: `gallerydb_seams_test.go` (prepare/close/row fault injection).
 
 ---
 
@@ -471,32 +478,29 @@ stateDiagram-v2
 graph TB
     Request[Incoming Request] --> LogMW[Logging Middleware]
     LogMW --> CacheMW[HTTP Cache Middleware]
-    CacheMW --> CompressMW[Compression Middleware]
-    CompressMW --> CSRFMW[CSRF Protection]
-    CSRFMW --> Mux[Route Mux]
+    CacheMW --> COPMW[CrossOriginProtection]
+    COPMW --> Mux[Route Mux]
     Mux --> AuthMW[Route-Specific Auth]
     AuthMW --> Handler[Route Handler]
     Handler --> AuthMW
-    AuthMW --> CSRFMW
-    CSRFMW --> CompressMW
-    CompressMW --> CacheMW
+    AuthMW --> COPMW
+    COPMW --> CacheMW
     CacheMW --> LogMW
     LogMW --> Response[Response]
 
     style LogMW fill:#e1f5e1
     style CacheMW fill:#e1f1ff
-    style CSRFMW fill:#fff4e1
+    style COPMW fill:#fff4e1
 ```
 
 **Middleware Order (Critical):**
 
 1. **Logging** (outermost) - Log all requests first
 2. **HTTP Cache** - Check SQLite-backed response cache; return 304/hit if present
-3. **Compression** - Gzip/Brotli encode/decode if enabled
-4. **CSRF Protection** - Same-origin check for unsafe methods
-5. **Mux** - Route matching
-6. **Authentication** - Applied selectively to protected routes (not global)
-7. **Handler** - Process request
+3. **CrossOriginProtection** - Same-origin check for unsafe methods via `Sec-Fetch-Site`/`Origin`/`Host`; no session tokens
+4. **Mux** - Route matching
+5. **Authentication** - Applied selectively to protected routes (not global)
+6. **Handler** - Process request
 
 There is no separate global "CORS" middleware.
 
@@ -668,7 +672,7 @@ graph TB
 
     subgraph "Cache Storage"
         CacheDB[(http_cache table)]
-        Indexes[Indexes:<br/>path + encoding,<br/>created_at,<br/>content_length]
+        Indexes[Indexes:<br/>cache key,<br/>created_at,<br/>content_length]
     end
 
     subgraph "Size Tracking"
@@ -696,23 +700,26 @@ graph TB
 
 ### HTTP Cache (cachelite)
 
-**Purpose:** Persist entire HTTP responses (headers + compressed body) in SQLite
+**Purpose:** Persist entire HTTP responses (headers + body) in SQLite
 
-**Cache Key:** `METHOD:/path?query|HX=...|HXTarget=...|IsVariant=...|Theme=...|encoding`
+**Cache Key:** `METHOD:/path?query|Variant=<name>`
 
 The key includes:
 
 - HTTP method and path
 - Query string
-- HTMX request headers (`HX-Request`, `HX-Target`, variant flag)
-- Selected theme cookie (default `dark`)
-- Normalized `Accept-Encoding` (`gzip`, `br`, or `identity`)
+- Normalized variant name (`full`, `gallery-content`, `box_info`, `lightbox-ui`)
+- **No theme** — theme is a client-only cookie; SSR always uses the site default (`CurrentTheme`)
+- **Body compression** — bodies may be **compressed at rest** in SQLite (zstd-1 by default); clients still receive plaintext; wire compression remains at Caddy
+- **No HTMX headers** — info/lightbox paths collapse to one variant regardless of HTMX; gallery distinguishes full vs `gallery-content`
 
-Example:
+Examples:
 
 ```
-GET:/gallery/1?sort=name|HX=true|HXTarget=gallery-content|IsVariant=true|Theme=dark|gzip
-GET:/lightbox/1?|HX=true|HXTarget=lightbox-ui|IsVariant=true|Theme=light|br
+GET:/gallery/1?sort=name|Variant=gallery-content
+GET:/gallery/1?sort=name|Variant=full
+GET:/lightbox/1|Variant=lightbox-ui
+GET:/info/folder/1|Variant=box_info
 ```
 
 **Cacheable Routes:** `/gallery/`, `/lightbox/`, `/info/folder/`, `/info/image/`
@@ -729,12 +736,13 @@ sequenceDiagram
     Client->>CacheMW: GET /gallery/1
     CacheMW->>DB: SELECT * FROM http_cache WHERE key = ?
     alt Cache Hit
-        DB-->>CacheMW: Cached response
+        DB-->>CacheMW: Cached response (stored form)
+        CacheMW->>CacheMW: Decompress stored body to plaintext
         CacheMW->>CacheMW: Check ETag/Last-Modified
         alt Not Modified
             CacheMW-->>Client: 304 Not Modified
         else Modified
-            CacheMW-->>Client: 200 with cached body
+            CacheMW-->>Client: 200 with plaintext body
         end
     else Cache Miss
         CacheMW->>Handler: Forward request
@@ -747,6 +755,23 @@ sequenceDiagram
         end
     end
 ```
+
+### Cache Body Compression
+
+HTTP cache response bodies may be **compressed at rest** in SQLite using a pluggable codec registry. This reduces the disk footprint of large cached gallery pages (samples up to ~10 MB each) without changing the on-wire representation.
+
+- **No migration.** Read dispatch uses magic-prefix matching (primary) + `htmlsniff` (plaintext fallback). Legacy plaintext HTML rows (no compression magic) still HIT.
+- `content_length` column stores the **uncompressed** size (HTTP `Content-Length` on replay; `MaxEntrySize` check).
+- Disk accounting (`GetHttpCacheSizeBytes`, LRU eviction, batcher `OnSuccess`) uses **stored** bytes (`LENGTH(body)` / `len(Body)`).
+- **Default write codec:** `zstd-1`. Configurable via `http_cache_body_codec` (YAML/DB/modal only; no `SFG_` env variable — same pattern as `etag_version`).
+- Typical profile (~10 MB gallery page): encode ~56 ms, decode ~14 ms; `Match` + `htmlsniff` ≪1 ms per request.
+- **`ErrUnrecognizedCacheBody`** (corrupt or unclassifiable blob) → MISS. The middleware logs a warning and falls through to handler re-render, which overwrites the bad row on store.
+
+**Implementation lives entirely inside `internal/cachelite/`:**
+
+- `body_storage.go` — `ConfigureBodyCodec`, `FinalizeForStorage`, `decodeCacheBodyForServe`
+- `bodycodec/` — pluggable codec registry, `zstd-1`, `gzip-6`, `htmlsniff`
+- No registry fields on `App` / `InfrastructureService`; configured via `cachelite.ConfigureBodyCodec()`.
 
 **Cache Eviction:**
 
@@ -771,7 +796,7 @@ sequenceDiagram
     Flush-->>Batcher: Success
 
     Batcher->>Evict: OnSuccess callback
-    Evict->>DB: SELECT SUM(content_length)
+    Evict->>DB: SELECT SUM(LENGTH(body))
     Evict->>Evict: size > max?
     alt Over budget
         Evict->>DB: EvictLRU(freed bytes)
@@ -786,7 +811,7 @@ sequenceDiagram
 - Database is queried for actual size (source of truth)
 - 10% buffer added to eviction target to avoid thrashing
 - Atomic counter updated for runtime eviction calculations
-- WAL checkpointing runs after every successful batch commit and periodically (every 5 minutes or when the WAL exceeds 256 MB); `PRAGMA optimize` runs hourly
+- WAL checkpointing runs after every successful batch commit and periodically (every 5 minutes or when the WAL exceeds 256 MB); periodic `PRAGMA optimize` runs from `postCommitMaintenance` every `DBOptimizeInterval` (default 1h)
 
 ### Cache Preload
 
@@ -812,13 +837,6 @@ graph TB
 - Skips if client sends `X-Preload: skip` header
 - Prevents thundering herd on first access
 
-**Known Limitation - Default Theme Only:**
-
-Cache warm paths (preload and batch load) use internal requests that do not carry a
-theme cookie. As a result, only the default theme is warmed. Users who select a
-non-default theme will experience cache misses for the first request to each
-resource until they are naturally populated by actual user traffic.
-
 ### Client-Side Caching
 
 ```mermaid
@@ -834,12 +852,12 @@ stateDiagram-v2
     Fresh --> Expired: Max-Age expires
 ```
 
-**Headers Set:**
+**Headers Set (gallery / lightbox):**
 
-- `ETag`: `"v123456-gzip"` (version + encoding)
+- `ETag`: `"<etagVersion>-<folderID>"` (content version + resource id; no theme or encoding)
 - `Last-Modified`: File modification time
-- `Cache-Control`: `max-age=3600, must-revalidate`
-- `Vary`: `Accept-Encoding` (separate cache per encoding)
+- `Cache-Control`: `public, max-age=2592000` (gallery) or handler-specific
+- `Vary`: `HX-Request`, `HX-Target` on gallery (partial vs full page); not `Cookie` or `Accept-Encoding`
 
 ---
 
@@ -852,7 +870,7 @@ graph TB
     subgraph "Layers"
         L1[1. Authentication<br/>bcrypt hashed passwords stored in config]
         L2[2. Session Management<br/>HttpOnly + Secure + SameSite]
-        L3[3. CSRF Protection<br/>Origin check + token validation]
+        L3[3. Cross-Origin Protection<br/>Sec-Fetch-Site / Origin check]
         L4[4. Path Traversal Prevention<br/>Relative paths + ID lookups]
         L5[5. Input Validation<br/>Config forms]
         L6[6. SQL Injection Prevention<br/>Parameterized queries]
@@ -883,7 +901,7 @@ stateDiagram-v2
     LoginSubmit --> CheckLockout{HX-Trigger:
 auth-changed}
     CheckLockout -->|Account locked| LoginFail: Show error in modal
-    CheckLockout -->|CSRF invalid| LoginFail: Show error in modal
+    CheckLockout -->|COP rejection| LoginFail: Show error in modal
     CheckLockout -->|Valid + locked| LockedCheck{Account<br/>locked?}
     LockedCheck -->|Yes| LoginFail: Show locked error
     LockedCheck -->|No| CredentialsCheck{bcrypt<br/>verify}
@@ -910,43 +928,33 @@ auth-changed
 
 - Limits `POST /login` attempts per client IP per **60-second sliding window** (`internal/server/security/ratelimit.go`)
 - Config key: `login_rate_limit_per_ip` (default **10**; **`0` disables** IP rate limiting)
-- Enforced in `AuthHandlers.Login` **before** CSRF validation (each POST counts, including failed auth)
+- Enforced in `AuthHandlers.Login` **before** authentication (each POST counts, including failed auth)
 - Uses `RemoteAddr` only (not `X-Forwarded-For`); behind a reverse proxy all clients may share the proxy IP unless the app sees distinct connection addresses
 - Hot reload: `SyncLoginRateLimitMax` on config apply (`SetMax` + `Clear` on one limiter instance)
 - Startup override: `SEPG_LOGIN_RATE_LIMIT_PER_IP` (see [ENV_CONFIGURATION.md](../ENV_CONFIGURATION.md)); no CLI flag
 - Complements per-account lockout (IP cap vs. account lockout are independent)
 
-### CSRF Protection
+### Cross-Origin Protection (COP)
 
-```mermaid
-sequenceDiagram
-    participant Client
-    participant Server
-    participant Session
+Cross-site request forgery protection is handled entirely by the
+`http.CrossOriginProtection` middleware. It does **not** use session tokens.
 
-    Client->>Server: GET /config
-    Server->>Session: Generate CSRF token
-    Session-->>Server: csrf_token
-    Server-->>Client: HTML form with<br/><input name="csrf_token">
+**How it works:**
 
-    Client->>Server: POST /config<br/>csrf_token=abc123
-    Server->>Session: Validate token
-    alt Valid
-        Session-->>Server: OK
-        Server-->>Client: 200 OK
-    else Invalid
-        Session-->>Server: Mismatch
-        Server-->>Client: 403 Forbidden
-    end
-```
+- For unsafe methods (POST/PUT/DELETE/PATCH), the middleware validates the request
+  origin via `Sec-Fetch-Site` header (preferred) or `Origin` header (fallback)
+- The request origin must match the configured host, or be same-site
+- `Host` header is preserved through reverse proxies so same-origin checks work
+  behind Caddy / nginx
+- Safe methods (GET/HEAD/OPTIONS) are allowed unconditionally
+- No session token generation, no hidden form fields, no per-session state
 
-**CSRF Middleware:**
+**Why this approach:**
 
-- Same-origin check (`Origin` header matches request host) for unsafe methods
-- Generates token on first access
-- Token stored in session
-- All POST/PUT/DELETE/PATCH must include valid token
-- Tokens are **not** single-use; the same token is reused across requests
+- Cache-friendly: cached responses do not embed per-session tokens
+- Simpler architecture: no token generation, storage, or validation in request path
+- Sufficient for a self-hosted app where the attack surface is a local network or
+  limited domain
 
 ### Path Traversal Prevention
 
@@ -1063,7 +1071,7 @@ Diagnostic logging for mismatch visibility:
 - `configured/effective DB pool mismatch`: emits warning-level diagnostics when values diverge (except intentional auto min-idle behavior with `db_min_idle_connections=0`).
 - `startup config summary`: emits one low-noise startup snapshot of configured versus effective values for DB pools and other critical subsystems.
 
-Regression protections (consolidated into Phase 2 survivor files — see `docs/phase2-test-ownership.md`):
+Regression protections (consolidated root integration tests):
 
 - Pool precedence and startup/restart sizing (`config_lifecycle_integration_test.go`):
   - `TestDBPoolPrecedence_PoolsIgnoreDatabaseConfig`
@@ -1085,7 +1093,6 @@ classDiagram
     class Config {
         +string ListenerAddress
         +int ListenerPort
-        +bool ServerCompressionEnable
         +bool EnableHTTPCache
         +int CacheMaxSize
         +string ImagesDirectory
@@ -1384,6 +1391,29 @@ timeline
     2025-02 : Atomic size tracking<br/>Eliminates SUM queries
 ```
 
+### PRAGMA Optimize Strategy
+
+SQLite `PRAGMA optimize` triggers the query planner to update `sqlite_stat1` statistics
+for better index selection. In SFPG, **pool-aware** optimize is handled by
+[`internal/dbconnpool/pragma.go`](../../internal/dbconnpool/pragma.go) — the
+runner lives in the connection-pool package (never in `database`) and operates
+on a single `*sql.Conn`.
+
+| Scenario  | Mask                         | When                                                                |
+| --------- | ---------------------------- | ------------------------------------------------------------------- |
+| Startup   | `0x10002` (fresh connection) | Async after listen + quiet; once per process                        |
+| Periodic  | `0` (plain)                  | Every `DBOptimizeInterval` (default 1h) via `postCommitMaintenance` |
+| Migration | `0` (plain)                  | Sync, only when migration actually applied                          |
+| Discovery | `0` (plain)                  | Scheduled non-blocking before `return` in discovery completion      |
+| Shutdown  | `0` (plain)                  | After batcher close, before pool close; 30s timeout                 |
+
+- **SQLite 3.53.2**: `PRAGMA optimize` auto-limits analysis scope; do **not** add
+  manual `PRAGMA analysis_limit`.
+- **Stats target**: `sqlite_stat1` table; not per pooled connection.
+- **No writebatcher coupling**: Periodic timing uses its own
+  `lastPragmaOptimizeRun` atomic, ignoring the writebatcher's `lastOptimizeTime`
+  (which had a reset bug that prevented hourly runs from ever firing).
+
 ### Benchmarks
 
 **Cache Middleware (with async eviction):**
@@ -1419,17 +1449,30 @@ internal/
 │   ├── http_cache_middleware_test.go          # Unit tests (default)
 │   ├── http_cache_middleware_integration_test.go  # Integration tests
 │   └── cache_benchmark_test.go                # Benchmarks
-├── server/                                    # 19 root *_test.go survivors (see docs/phase2-test-ownership.md)
+├── server/                                    # 23 root *_test.go files
 │   ├── helpers_test.go                        # CreateApp, shared test options
 │   ├── server_test.go                         # Unit tests (default)
 │   ├── app_test.go                            # App + handler manager unit tests
-│   ├── server_integration_test.go             # Router/middleware integration
+│   ├── app_lifecycle_unit_test.go             # App lifecycle unit tests
 │   ├── app_lifecycle_integration_test.go      # Run/Serve/restart integration
-│   ├── config_lifecycle_integration_test.go     # Config DB lifecycle integration
+│   ├── server_integration_test.go             # Router/middleware integration
+│   ├── config_lifecycle_integration_test.go   # Config DB lifecycle integration
 │   ├── config_precedence_integration_test.go  # Precedence integration/e2e
-│   ├── server_e2e_test.go                     # e2e-tagged flows
+│   ├── logging_integration_test.go            # Logging integration/e2e
+│   ├── cache_batch_load_integration_test.go   # Cache batch load integration
+│   ├── writebatcher_dque_lifecycle_integration_test.go  # dque overflow integration
 │   ├── infrastructure_service_test.go         # InfrastructureService unit
+│   ├── infrastructure_service_integration_test.go
+│   ├── infrastructure_pragma_test.go          # PRAGMA optimize scheduling
+│   ├── infrastructure_cache_calibration_test.go
+│   ├── app_cache_calibration_test.go
+│   ├── batcher_wiring_test.go
 │   ├── runtime_manager_test.go                # RuntimeManager unit
+│   ├── runtime_manager_integration_test.go
+│   ├── subsystem_manager_test.go
+│   ├── subsystem_manager_integration_test.go
+│   ├── metrics_adapters_test.go
+│   ├── helpers_integration_test.go            # Shared auth helpers
 │   └── files/
 │       ├── service_test.go                    # Unit tests (default)
 │       └── files_integration_test.go          # Integration tests
@@ -1438,7 +1481,7 @@ internal/
     └── mock.go                                # Test doubles
 ```
 
-Handoff docs for the consolidated root survivors: `docs/phase2-test-ownership.md` (per-file map) and `docs/phase2-test-merge-map.md` (WP-54 merge ledger).
+Root `internal/server/*_test.go` files are listed in the test layout above (23 files).
 
 **Running tests:**
 
@@ -1570,9 +1613,8 @@ go test -tags integration -race ./...
 
 **Phase 2 consolidation (WP-51 … WP-54, WP-16):**
 
-- Reduced root `internal/server/*_test.go` files from 74 → **19** survivors
+- Reduced root `internal/server/*_test.go` files from 74 → **23**
 - Root `CreateApp` mentions from 135 → **64**; 0 uncovered `internal/server/` functions (default + integration)
-- Survivor inventory: `docs/phase2-test-ownership.md`; merge ledger: `docs/phase2-test-merge-map.md`
 
 **Test seam extraction (WP-17, WP-18):**
 
@@ -1667,8 +1709,7 @@ sfpg-go/
 ├── docs/
 │   ├── diagrams/                # Architecture diagrams
 │   ├── ARCHITECTURE.md          # This file
-│   ├── phase2-test-ownership.md # Root server test survivor map
-│   └── phase2-test-merge-map.md # WP-54 merge ledger
+│   └── SERVER_DEEP_DIVE.md      # Server package entry point
 ├── internal/
 │   ├── cachelite/               # HTTP response caching
 │   ├── workerpool/              # Concurrent task processing
@@ -1713,7 +1754,7 @@ sfpg-go/
 │   │   ├── pathutil/            # Path utilities
 │   │   ├── runtime/             # Process runtime / restart
 │   │   ├── security/            # Lockout calculations and IP rate limiting
-│   │   ├── session/             # Session & CSRF management
+│   │   ├── session/             # Session management
 │   │   ├── subsystem/           # Subsystem lifecycle
 │   │   ├── template/            # Shared template data
 │   │   ├── theme/               # Theme handling
@@ -1730,26 +1771,26 @@ sfpg-go/
 
 ### External Dependencies
 
-| Dependency                                        | Purpose                           | License      |
-| ------------------------------------------------- | --------------------------------- | ------------ |
-| **github.com/andybalholm/brotli**                 | Brotli compression                | MIT          |
-| **github.com/charmbracelet/bubbles**              | TUI dashboard components          | MIT          |
-| **github.com/charmbracelet/bubbletea**            | TUI framework                     | MIT          |
-| **github.com/charmbracelet/lipgloss**             | TUI styling                       | MIT          |
-| **github.com/dop251/goja**                        | JavaScript runtime (tests)        | BSD-2-Clause |
-| **github.com/evanoberholster/imagemeta**          | EXIF metadata (replaced locally)  | MIT          |
-| **github.com/golang-migrate/migrate/v4**          | Database migrations               | MIT          |
-| **github.com/gorilla/sessions**                   | Session management                | BSD-3-Clause |
-| **github.com/ncruces/go-sqlite3**                 | SQLite driver                     | MIT          |
-| **github.com/nfnt/resize**                        | Image resizing                    | ISC          |
-| **github.com/phsym/console-slog**                 | Console slog handler              | MIT          |
-| **github.com/pkg/profile**                        | CPU/mem/block profiling           | BSD-2-Clause |
-| **github.com/playwright-community/playwright-go** | Browser E2E tests                 | MIT          |
-| **golang.org/x/crypto**                           | bcrypt password hashing           | BSD-3-Clause |
-| **golang.org/x/image**                            | WebP decode support               | BSD-3-Clause |
-| **golang.org/x/net**                              | Networking utilities              | BSD-3-Clause |
-| **golang.org/x/sync**                             | `errgroup` concurrency primitives | BSD-3-Clause |
-| **gopkg.in/yaml.v3**                              | YAML config parsing               | MIT          |
+| Dependency | Purpose | License |
+| ---------- | ------- | ------- |
+
+| **github.com/charmbracelet/bubbles** | TUI dashboard components | MIT |
+| **github.com/charmbracelet/bubbletea** | TUI framework | MIT |
+| **github.com/charmbracelet/lipgloss** | TUI styling | MIT |
+| **github.com/dop251/goja** | JavaScript runtime (tests) | BSD-2-Clause |
+| **github.com/evanoberholster/imagemeta** | EXIF metadata (replaced locally) | MIT |
+| **github.com/golang-migrate/migrate/v4** | Database migrations | MIT |
+| **github.com/gorilla/sessions** | Session management | BSD-3-Clause |
+| **github.com/ncruces/go-sqlite3** | SQLite driver | MIT |
+| **github.com/nfnt/resize** | Image resizing | ISC |
+| **github.com/phsym/console-slog** | Console slog handler | MIT |
+| **github.com/pkg/profile** | CPU/mem/block profiling | BSD-2-Clause |
+| **github.com/playwright-community/playwright-go** | Browser E2E tests | MIT |
+| **golang.org/x/crypto** | bcrypt password hashing | BSD-3-Clause |
+| **golang.org/x/image** | WebP decode support | BSD-3-Clause |
+| **golang.org/x/net** | Networking utilities | BSD-3-Clause |
+| **golang.org/x/sync** | `errgroup` concurrency primitives | BSD-3-Clause |
+| **gopkg.in/yaml.v3** | YAML config parsing | MIT |
 
 ---
 

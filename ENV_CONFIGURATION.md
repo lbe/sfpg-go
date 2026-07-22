@@ -30,15 +30,15 @@ General application settings.
 **Default**: `true`
 **Description**: Enable cache preloading. When a folder is opened, the server proactively caches thumbnails and metadata for its contents to speed up subsequent requests.
 
-### `SFG_COMPRESSION`
-
-**Default**: `true`
-**Description**: Enable gzip/brotli response compression.
-
 ### `SFG_HTTP_CACHE`
 
 **Default**: `true`
 **Description**: Enable the SQLite-backed HTTP response cache.
+
+**HTTP cache body codec** (`http_cache_body_codec` / `http-cache-body-codec`):
+Configurable via YAML or config modal only (no `SFG_` environment variable — same pattern as `etag_version`).
+Valid values: `zstd-1` (default), `gzip-6`, `identity`. Hot-reloadable; changes affect new cache writes only.
+Existing entries decode automatically via magic-prefix detection.
 
 ### `SFG_DEBUG_DELAY_MS`
 
@@ -224,7 +224,7 @@ $ SEPG_LOGIN_RATE_LIMIT_PER_IP=0 ./sfpg
 - **None**: Disables SameSite CSRF protection
   - Only use if cross-site requests require authentication
   - Requires `Secure: true` (HTTPS only)
-  - Relies entirely on CSRF token validation
+  - Relies on `http.CrossOriginProtection` middleware for unsafe methods
 
 **Example**:
 

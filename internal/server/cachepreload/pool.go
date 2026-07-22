@@ -12,7 +12,7 @@ var preloadTaskPool = gensyncpool.New(
 		t.CacheKey = ""
 		t.Path = ""
 		t.HXTarget = ""
-		t.Encoding = ""
+
 		t.TaskTracker = nil
 		t.RequestConfig = InternalRequestConfig{} // zero value
 		t.Metrics = nil

@@ -132,9 +132,6 @@ func TestAddCommonTemplateData_Additional(t *testing.T) {
 	if _, ok := result["IsAuthenticated"]; !ok {
 		t.Error("Expected IsAuthenticated in template data")
 	}
-	if _, ok := result["CSRFToken"]; !ok {
-		t.Error("Expected CSRFToken in template data")
-	}
 }
 
 func TestAddCommonTemplateData_PartialSkipsGalleryStats(t *testing.T) {
@@ -511,12 +508,6 @@ func TestAddCommonTemplateData_AboutModal(t *testing.T) {
 		t.Errorf("Expected IsAuthenticated to be bool, got %T", result["IsAuthenticated"])
 	}
 
-	if csrfToken, ok := result["CSRFToken"].(string); !ok {
-		t.Errorf("Expected CSRFToken to be string, got %T", result["CSRFToken"])
-	} else if csrfToken == "" {
-		t.Error("Expected CSRFToken to be non-empty")
-	}
-
 	if theme, ok := result["Theme"].(string); !ok {
 		t.Errorf("Expected Theme to be string, got %T", result["Theme"])
 	} else if theme == "" {
@@ -869,7 +860,6 @@ func BenchmarkPathOperations(b *testing.B) {
 // --- merged from server_handlers_test.go ---
 type mockServerDeps struct {
 	Cfg       *config.Config
-	CSRFToken string
 	ETag      string
 	BatchLoad interfaces.StartCacheBatchLoadResult
 	BatchErr  error
@@ -945,7 +935,7 @@ func (m *mockServerDeps) AddCommonTemplateData(w http.ResponseWriter, r *http.Re
 	if data == nil {
 		data = make(map[string]any)
 	}
-	data["CSRFToken"] = m.CSRFToken
+	data["IsAuthenticated"] = true
 	return data
 }
 
@@ -957,14 +947,6 @@ type fakeSessionManager struct{}
 
 func (f *fakeSessionManager) IsAuthenticated(w http.ResponseWriter, r *http.Request) bool {
 	return true
-}
-
-func (f *fakeSessionManager) ValidateCSRFToken(r *http.Request) bool {
-	return true
-}
-
-func (f *fakeSessionManager) EnsureCSRFToken(w http.ResponseWriter, r *http.Request) string {
-	return "valid-csrf-token"
 }
 
 func setupTestApp(t *testing.T) *App {
@@ -981,8 +963,7 @@ func setupTestApp(t *testing.T) *App {
 	}
 
 	deps := &mockServerDeps{
-		Cfg:       config.DefaultConfig(),
-		CSRFToken: "valid-csrf-token",
+		Cfg: config.DefaultConfig(),
 	}
 	app.HandlerManager.serverHandlers = handlers.NewServerHandlers(&fakeSessionManager{}, deps, deps.AddCommonTemplateData, deps.ServerError)
 
@@ -999,11 +980,7 @@ func authenticatedRequest(t *testing.T, app *App, method, path string) *http.Req
 		t.Fatalf("SetAuthenticated failed: %v", err)
 	}
 
-	req := httptest.NewRequest(method, path, strings.NewReader("csrf_token=valid-csrf-token"))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	// httptest uses "example.com" as the default host; the CSRF middleware
-	// requires an Origin header that matches the request host.
-	req.Header.Set("Origin", "http://"+req.Host)
+	req := httptest.NewRequest(method, path, nil)
 	for _, c := range loginRR.Result().Cookies() {
 		req.AddCookie(c)
 	}

@@ -37,7 +37,7 @@ func (q *Queries) GetXMPPropertiesByFile(ctx context.Context, fileID int64) ([]X
 	if err != nil {
 		return nil, err
 	}
-	defer rowsCloseFn(rows)
+	defer rows.Close()
 	var items []XmpProperty
 	for rows.Next() {
 		var i XmpProperty
@@ -52,10 +52,10 @@ func (q *Queries) GetXMPPropertiesByFile(ctx context.Context, fileID int64) ([]X
 		}
 		items = append(items, i)
 	}
-	if err := rowsCloseFn(rows); err != nil {
+	if err := rows.Close(); err != nil {
 		return nil, err
 	}
-	if err := rowsErrFn(rows); err != nil {
+	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	return items, nil

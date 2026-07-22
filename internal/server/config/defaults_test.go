@@ -110,6 +110,13 @@ func TestDefaultConfig(t *testing.T) {
 	}
 }
 
+func TestDefaultConfig_HTTPCacheBodyCodec(t *testing.T) {
+	cfg := DefaultConfig()
+	if cfg.HTTPCacheBodyCodec != "zstd-1" {
+		t.Errorf("expected HTTPCacheBodyCodec default 'zstd-1', got %q", cfg.HTTPCacheBodyCodec)
+	}
+}
+
 func TestDefaultConfig_IncludesETagVersion(t *testing.T) {
 	cfg := DefaultConfig()
 

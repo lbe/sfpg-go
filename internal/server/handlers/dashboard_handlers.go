@@ -20,12 +20,9 @@ type DashboardHandlers struct {
 	ServerError           func(http.ResponseWriter, *http.Request, error)
 }
 
-// SessionManager interface for session management.
-// Embedded from session.SessionManager to provide CSRF validation capability.
+// SessionManager interface for session authentication.
 type SessionManager interface {
 	IsAuthenticated(w http.ResponseWriter, r *http.Request) bool
-	ValidateCSRFToken(r *http.Request) bool
-	EnsureCSRFToken(w http.ResponseWriter, r *http.Request) string
 }
 
 // MetricsCollector interface for collecting metrics.

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync/atomic"
+	"time"
 
 	"github.com/lbe/sfpg-go/internal/cachelite"
 	"github.com/lbe/sfpg-go/internal/dbconnpool"
@@ -39,6 +40,15 @@ type InfrastructureService struct {
 	cacheMWForEvict     cacheMiddlewareForEvict
 	cacheRotator        cacheRotator
 	testSeams           InfrastructureTestSeams
+	cacheSizeCalibrated atomic.Bool
+	cacheCalibListening atomic.Bool
+	cacheCalibStarted   atomic.Bool
+
+	startupPragmaOptimizeStarted atomic.Bool
+	pragmaOptimizeListening      atomic.Bool
+
+	lastPragmaOptimizeRun atomic.Value // time.Time
+	dbOptimizeInterval    atomic.Int64 // nanoseconds; 0 means default 1h
 }
 
 // NewInfrastructureService constructs the infrastructure service with production defaults.
@@ -148,6 +158,10 @@ func (s *InfrastructureService) IncrementETag(ctx context.Context, cfgService co
 // =====================================================================
 // Diagnostics
 // =====================================================================
+
+func (s *InfrastructureService) setDBOptimizeInterval(d time.Duration) {
+	s.dbOptimizeInterval.Store(int64(d))
+}
 
 func (s *InfrastructureService) logDBPoolConfiguredVsEffective(source string, configuredMax, configuredMinIdle int) {
 	if s.dbRwPool == nil || s.dbRoPool == nil {
