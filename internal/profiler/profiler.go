@@ -57,6 +57,10 @@ func Mode() string {
 // The stop function is safe to call even if profiling was not started.
 func Start(cfg Config) (stop func(), err error) {
 	if cfg.Mode == "" {
+		mu.Lock()
+		profileDir = ""
+		profileModeStr = ""
+		mu.Unlock()
 		return func() {}, nil
 	}
 

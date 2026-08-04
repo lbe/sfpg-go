@@ -217,6 +217,12 @@ func TestRenderTemplate(t *testing.T) {
 			expectError:  false,
 		},
 		{
+			name:         "about-modal template",
+			templateName: "about-modal.html.tmpl",
+			data:         nil,
+			expectError:  false,
+		},
+		{
 			name:         "unknown template",
 			templateName: "non-existent.html.tmpl",
 			data:         nil,

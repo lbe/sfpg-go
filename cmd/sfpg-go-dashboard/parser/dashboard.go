@@ -4,7 +4,6 @@ package parser
 import (
 	"errors"
 	"io"
-	"strconv"
 	"strings"
 
 	"github.com/lbe/sfpg-go/internal/testutil"
@@ -15,16 +14,6 @@ import (
 // is not found in the HTML response. This typically indicates the response
 // is not a valid dashboard page.
 var ErrDashboardNotFound = errors.New("dashboard element not found in response")
-
-// ModuleStatus represents the status of a registered module.
-type ModuleStatus struct {
-	// Name is the module identifier (e.g., "discovery", "cache_preload").
-	Name string
-	// Status is the current module state (e.g., "active", "recent", "idle").
-	Status string
-	// ActivityCount is the number of recent activities for this module.
-	ActivityCount int
-}
 
 // MemoryStats contains memory allocation statistics from the Go runtime.
 type MemoryStats struct {
@@ -88,12 +77,6 @@ type WorkerPoolStats struct {
 type QueueStats struct {
 	// Queued is the number of items currently in the queue.
 	Queued string
-	// Capacity is the maximum queue capacity.
-	Capacity string
-	// Utilization is the queue utilization percentage.
-	Utilization string
-	// Available is the number of available queue slots.
-	Available string
 }
 
 // FileProcessingStats contains file processing statistics.
@@ -159,8 +142,6 @@ type HTTPCacheStats struct {
 type DashboardMetrics struct {
 	// LastUpdated is the timestamp of the last update.
 	LastUpdated string
-	// Modules is the list of registered module statuses.
-	Modules []ModuleStatus
 	// Memory contains memory statistics.
 	Memory MemoryStats
 	// Runtime contains runtime statistics.
@@ -214,7 +195,6 @@ func ParseDashboard(r io.Reader) (*DashboardMetrics, error) {
 
 	metrics := &DashboardMetrics{
 		LastUpdated: extractLastUpdated(container),
-		Modules:     extractModules(container),
 	}
 
 	extractMemoryStats(container, metrics)
@@ -237,70 +217,6 @@ func extractLastUpdated(container *html.Node) string {
 		return ""
 	}
 	return strings.TrimSpace(testutil.GetTextContent(el))
-}
-
-// extractModules extracts all module status cards from the container.
-func extractModules(container *html.Node) []ModuleStatus {
-	var modules []ModuleStatus
-
-	cards := testutil.FindAllElements(container, func(n *html.Node) bool {
-		if n.Type != html.ElementNode || n.Data != "div" {
-			return false
-		}
-		classes := strings.Fields(testutil.GetAttr(n, "class"))
-		for _, c := range classes {
-			if c == "card" {
-				return true
-			}
-		}
-		return false
-	})
-
-	for _, card := range cards {
-		module := parseModuleCard(card)
-		if module.Name != "" && module.Status != "" {
-			modules = append(modules, module)
-		}
-	}
-
-	return modules
-}
-
-// parseModuleCard parses a single module card element.
-func parseModuleCard(card *html.Node) ModuleStatus {
-	module := ModuleStatus{}
-
-	nameEl := testutil.FindElementByClass(card, "text-sm")
-	if nameEl != nil {
-		module.Name = strings.TrimSpace(testutil.GetTextContent(nameEl))
-	}
-
-	badgeEl := testutil.FindElement(card, func(n *html.Node) bool {
-		classes := testutil.GetAttr(n, "class")
-		return strings.Contains(classes, "badge")
-	})
-	if badgeEl != nil {
-		module.Status = strings.TrimSpace(testutil.GetTextContent(badgeEl))
-	}
-
-	activityEl := testutil.FindElement(card, func(n *html.Node) bool {
-		if n == card {
-			return false
-		}
-		text := testutil.GetTextContent(n)
-		return strings.Contains(text, "Activity count:")
-	})
-	if activityEl != nil {
-		text := testutil.GetTextContent(activityEl)
-		text = strings.TrimPrefix(text, "Activity count:")
-		text = strings.TrimSpace(text)
-		text = strings.ReplaceAll(text, ",", "")
-		if count, err := strconv.Atoi(text); err == nil {
-			module.ActivityCount = count
-		}
-	}
-
-	return module
 }
 
 // extractTextByID finds an element by ID and returns its trimmed text content.
@@ -372,24 +288,10 @@ func extractWorkerPoolStats(container *html.Node, m *DashboardMetrics) {
 }
 
 // extractQueueStats extracts file queue statistics into the metrics struct.
+// Only queue-queued is extracted; capacity, utilization, and available are no
+// longer present in the web dashboard (merged into File Processing card).
 func extractQueueStats(container *html.Node, m *DashboardMetrics) {
 	m.Queue.Queued = extractTextByID(container, "queue-queued")
-	m.Queue.Utilization = extractTextByID(container, "queue-utilization")
-	m.Queue.Available = extractTextByID(container, "queue-available")
-
-	// Extract capacity from queue-capacity-desc "of X items"
-	descEl := testutil.FindElementByID(container, "queue-capacity-desc")
-	if descEl != nil {
-		text := testutil.GetTextContent(descEl)
-		// Format: "of X items"
-		parts := strings.Fields(text)
-		for i, p := range parts {
-			if p == "of" && i+1 < len(parts) {
-				m.Queue.Capacity = parts[i+1]
-				break
-			}
-		}
-	}
 }
 
 // extractFileProcessingStats extracts file processing statistics into the metrics struct.

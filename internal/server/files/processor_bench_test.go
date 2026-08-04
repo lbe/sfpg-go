@@ -28,7 +28,7 @@ func BenchmarkWorkerPoolProcessing(b *testing.B) {
 			pool.Stats.RunningWorkers.Add(1)
 			stats := &ProcessingStats{}
 
-			poolFunc := NewPoolFuncWithProcessor(fp, q, "/images", benchRemovePrefix, stats)
+			poolFunc := NewPoolFuncWithProcessor(fp, q, "/images", benchRemovePrefix, stats, nil)
 
 			b.ResetTimer()
 			b.ReportAllocs()

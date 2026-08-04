@@ -51,7 +51,6 @@ func TestGoldenBaseline(t *testing.T) {
 		LockoutThreshold:                      5,
 		LoginRateLimitPerIP:                   20,
 		RunFileDiscovery:                      false,
-		EnablePprof:                           true,
 		DiscoveryQueueMax:                     10000,
 	}
 
@@ -95,7 +94,6 @@ func TestGoldenBaseline(t *testing.T) {
 		LockoutThreshold:                      99,
 		LoginRateLimitPerIP:                   50,
 		RunFileDiscovery:                      true,
-		EnablePprof:                           false,
 		DiscoveryQueueMax:                     50000,
 	}
 
@@ -137,7 +135,6 @@ func TestGoldenBaseline(t *testing.T) {
 			"lockout_threshold":                           "5",
 			"login_rate_limit_per_ip":                     "20",
 			"run_file_discovery":                          "false",
-			"enable_pprof":                                "true",
 			"discovery_queue_max":                         "10000",
 		}
 		if !reflect.DeepEqual(got, want) {
@@ -203,7 +200,6 @@ func TestGoldenBaseline(t *testing.T) {
 			"lockout-threshold":                           5,
 			"login-rate-limit-per-ip":                     20,
 			"discover":                                    false,
-			"enable-pprof":                                true,
 			"discovery-queue-max":                         10000,
 		}
 		if !reflect.DeepEqual(got, want) {
@@ -233,7 +229,6 @@ func TestGoldenBaseline(t *testing.T) {
 			"cache-max-time", "current-theme",
 			"db-max-pool-size", "db-min-idle-connections", "db-optimize-interval",
 			"db-pool-monitor-interval", "discover", "enable-cache-preload",
-			"enable-pprof",
 			"discovery-queue-max",
 			"etag-version",
 			"http-cache", "image-directory", "listener-address", "listener-port",
@@ -258,7 +253,7 @@ func TestGoldenBaseline(t *testing.T) {
 			"cache_cleanup_interval", "cache_max_entry_size", "cache_max_size",
 			"cache_max_time", "db_max_pool_size", "db_min_idle_connections",
 			"db_optimize_interval", "db_pool_monitor_interval",
-			"enable_http_cache", "enable_pprof", "image_directory",
+			"enable_http_cache", "image_directory",
 			"listener_address", "listener_port", "log_directory", "log_level",
 			"log_retention_count", "log_rollover", "queue_size",
 			"session_http_only", "session_max_age",
@@ -383,9 +378,6 @@ func TestGoldenBaseline(t *testing.T) {
 		if zeroConfig.RunFileDiscovery != false {
 			t.Errorf("RunFileDiscovery = %v, want false", zeroConfig.RunFileDiscovery)
 		}
-		if zeroConfig.EnablePprof != false {
-			t.Errorf("EnablePprof = %v, want false", zeroConfig.EnablePprof)
-		}
 		if zeroConfig.DiscoveryQueueMax != 0 {
 			t.Errorf("DiscoveryQueueMax = %d, want 0", zeroConfig.DiscoveryQueueMax)
 		}
@@ -501,9 +493,6 @@ func TestGoldenBaseline(t *testing.T) {
 		}
 		if zeroConfig.RunFileDiscovery != def.RunFileDiscovery {
 			t.Errorf("RunFileDiscovery = %v, want %v", zeroConfig.RunFileDiscovery, def.RunFileDiscovery)
-		}
-		if zeroConfig.EnablePprof != def.EnablePprof {
-			t.Errorf("EnablePprof = %v, want %v", zeroConfig.EnablePprof, def.EnablePprof)
 		}
 		if zeroConfig.DiscoveryQueueMax != def.DiscoveryQueueMax {
 			t.Errorf("DiscoveryQueueMax = %d, want %d", zeroConfig.DiscoveryQueueMax, def.DiscoveryQueueMax)

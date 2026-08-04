@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/lbe/sfpg-go/internal/dbconnpool"
@@ -84,90 +85,102 @@ func TestNewPool(t *testing.T) {
 
 // TestPoolStats tests the statistics tracking of the pool.
 func TestPoolStats(t *testing.T) {
-	pool := NewPool(context.Background(), 4, 1, 1*time.Second)
+	synctest.Test(t, func(t *testing.T) {
+		pool := NewPool(context.Background(), 4, 1, 1*time.Second)
 
-	pool.AddSubmitted() // Initial is 1, so this makes it 2
-	if pool.Stats.SubmittedTasks.Load() != 2 {
-		t.Errorf("Expected SubmittedTasks to be 2, got %d", pool.Stats.SubmittedTasks.Load())
-	}
+		pool.AddSubmitted() // Initial is 1, so this makes it 2
+		if pool.Stats.SubmittedTasks.Load() != 2 {
+			t.Errorf("Expected SubmittedTasks to be 2, got %d", pool.Stats.SubmittedTasks.Load())
+		}
 
-	pool.AddCompleted()               // Initial is 1, so this makes it 2
-	time.Sleep(10 * time.Millisecond) // Sleep AFTER completion
+		pool.AddCompleted()               // Initial is 1, so this makes it 2
+		time.Sleep(10 * time.Millisecond) // Bubble time — Sleep AFTER completion
 
-	if pool.Stats.CompletedTasks.Load() != 2 {
-		t.Errorf("Expected CompletedTasks to be 2, got %d", pool.Stats.CompletedTasks.Load())
-	}
+		if pool.Stats.CompletedTasks.Load() != 2 {
+			t.Errorf("Expected CompletedTasks to be 2, got %d", pool.Stats.CompletedTasks.Load())
+		}
 
-	if pool.TimeSinceLastCompletion() < 10*time.Millisecond {
-		t.Errorf("Expected TimeSinceLastCompletion to be >= 10ms, got %v", pool.TimeSinceLastCompletion())
-	}
+		if pool.TimeSinceLastCompletion() < 10*time.Millisecond {
+			t.Errorf("Expected TimeSinceLastCompletion to be >= 10ms, got %v", pool.TimeSinceLastCompletion())
+		}
+	})
 }
 
 // TestShouldIStop tests the logic for a worker deciding to stop.
 func TestShouldIStop(t *testing.T) {
-	ctx := context.Background()
-	pool := NewPool(ctx, 10, 2, 50*time.Millisecond)
+	synctest.Test(t, func(t *testing.T) {
+		ctx := context.Background()
+		pool := NewPool(ctx, 10, 2, 50*time.Millisecond)
 
-	// Case 1: Running workers are at or below min workers, should not stop.
-	pool.Stats.RunningWorkers.Store(2)
-	if pool.ShouldIStop(0) {
-		t.Error("ShouldIStop returned true when running workers <= min workers")
-	}
+		// Case 1: Running workers are at or below min workers, should not stop.
+		pool.Stats.RunningWorkers.Store(2)
+		if pool.ShouldIStop(0) {
+			t.Error("ShouldIStop returned true when running workers <= min workers")
+		}
 
-	// Case 2: More tasks in queue than workers, should not stop.
-	pool.Stats.RunningWorkers.Store(5)
-	if pool.ShouldIStop(6) {
-		t.Error("ShouldIStop returned true when queueLength > running workers")
-	}
+		// Case 2: More tasks in queue than workers, should not stop.
+		pool.Stats.RunningWorkers.Store(5)
+		if pool.ShouldIStop(6) {
+			t.Error("ShouldIStop returned true when queueLength > running workers")
+		}
 
-	// Case 3: Idle time is less than threshold, should not stop.
-	pool.Stats.RunningWorkers.Store(5)
-	pool.AddCompleted() // Reset idle timer
-	if pool.ShouldIStop(0) {
-		t.Error("ShouldIStop returned true when idle time < max idle time")
-	}
+		// Case 3: Idle time is less than threshold, should not stop.
+		pool.Stats.RunningWorkers.Store(5)
+		pool.AddCompleted() // Reset idle timer
+		if pool.ShouldIStop(0) {
+			t.Error("ShouldIStop returned true when idle time < max idle time")
+		}
 
-	// Case 4: All conditions to stop are met.
-	pool.Stats.RunningWorkers.Store(5)
-	time.Sleep(60 * time.Millisecond) // Exceed idle time
-	if !pool.ShouldIStop(0) {
-		t.Error("ShouldIStop returned false when all stop conditions are met")
-	}
+		// Case 4: All conditions to stop are met.
+		pool.Stats.RunningWorkers.Store(5)
+		time.Sleep(60 * time.Millisecond) // Bubble time — exceed idle threshold
+		if !pool.ShouldIStop(0) {
+			t.Error("ShouldIStop returned false when all stop conditions are met")
+		}
+	})
 }
 
 // TestTimeSinceLastCompletion tests the TimeSinceLastCompletion method.
 func TestTimeSinceLastCompletion(t *testing.T) {
-	pool := NewPool(context.Background(), 1, 1, 1*time.Second)
+	synctest.Test(t, func(t *testing.T) {
+		pool := NewPool(context.Background(), 1, 1, 1*time.Second)
 
-	if pool.TimeSinceLastCompletion() > 1*time.Millisecond { // Allow for a tiny duration
-		t.Errorf("Expected initial TimeSinceLastCompletion to be ~0, got %v", pool.TimeSinceLastCompletion())
-	}
+		if pool.TimeSinceLastCompletion() > 1*time.Millisecond { // Allow for a tiny duration
+			t.Errorf("Expected initial TimeSinceLastCompletion to be ~0, got %v", pool.TimeSinceLastCompletion())
+		}
 
-	pool.AddCompleted()
-	time.Sleep(50 * time.Millisecond)
-	if pool.TimeSinceLastCompletion() < 50*time.Millisecond {
-		t.Errorf("Expected TimeSinceLastCompletion to be >= 50ms, got %v", pool.TimeSinceLastCompletion())
-	}
+		pool.AddCompleted()
+		time.Sleep(50 * time.Millisecond) // Bubble time
+		if pool.TimeSinceLastCompletion() < 50*time.Millisecond {
+			t.Errorf("Expected TimeSinceLastCompletion to be >= 50ms, got %v", pool.TimeSinceLastCompletion())
+		}
+	})
 }
 
 // TestStartWorkerPool_BasicProcessing tests basic task processing.
 func TestStartWorkerPool_BasicProcessing(t *testing.T) {
-	ctx := t.Context()
+	synctest.Test(t, func(t *testing.T) {
+		ctx := t.Context()
 
-	pool := NewPool(ctx, 4, 1, 1*time.Second)
-	q := queue.NewQueue[string](100)
-	var processedTasks int64
+		pool := NewPool(ctx, 4, 1, 1*time.Second)
+		q := queue.NewQueue[string](100)
+		var processedTasks int64
 
-	mockPoolFunc := func(ctx context.Context, wc WorkerContext, dbRo, dbRw dbconnpool.ConnectionPool, qLen func() int, id int) error {
-		for {
-			select {
-			case <-ctx.Done():
-				return nil
-			default:
+		mockPoolFunc := func(ctx context.Context, wc WorkerContext, dbRo, dbRw dbconnpool.ConnectionPool, qLen func() int, id int) error {
+			for {
+				select {
+				case <-ctx.Done():
+					return nil
+				default:
+				}
 				_, err := q.Dequeue()
 				if err != nil {
 					if errors.Is(err, queue.ErrEmptyQueue) {
-						time.Sleep(10 * time.Millisecond)
+						select {
+						case <-ctx.Done():
+							// Bubble ended — the loop-top ctx check returns nil.
+						case <-time.After(10 * time.Millisecond): // Bubble time
+						}
 						continue
 					}
 					return err
@@ -176,93 +189,113 @@ func TestStartWorkerPool_BasicProcessing(t *testing.T) {
 				wc.AddCompleted()
 			}
 		}
-	}
 
-	go pool.StartWorkerPool(mockPoolFunc, nil, nil, q.Len)
+		go pool.StartWorkerPool(mockPoolFunc, nil, nil, q.Len)
 
-	numTasks := 50
-	for range numTasks {
-		if enqErr := q.Enqueue("task"); enqErr != nil {
-			t.Fatalf("Enqueue: %v", enqErr)
+		numTasks := 50
+		for range numTasks {
+			if enqErr := q.Enqueue("task"); enqErr != nil {
+				t.Fatalf("Enqueue: %v", enqErr)
+			}
 		}
-	}
 
-	// Wait for tasks to be processed
-	time.Sleep(500 * time.Millisecond)
+		// Advance bubble time so the worker drains the queue, then flush.
+		time.Sleep(500 * time.Millisecond)
+		synctest.Wait()
 
-	if atomic.LoadInt64(&processedTasks) != int64(numTasks) {
-		t.Errorf("Expected %d tasks to be processed, got %d", numTasks, atomic.LoadInt64(&processedTasks))
-	}
+		if atomic.LoadInt64(&processedTasks) != int64(numTasks) {
+			t.Errorf("Expected %d tasks to be processed, got %d", numTasks, atomic.LoadInt64(&processedTasks))
+		}
+	})
 }
 
 // TestStartWorkerPool_Scaling tests if the pool scales workers up and down.
 func TestStartWorkerPool_Scaling(t *testing.T) {
-	ctx := t.Context()
+	synctest.Test(t, func(t *testing.T) {
+		ctx := t.Context()
 
-	pool := NewPool(ctx, 5, 1, 100*time.Millisecond)
-	q := queue.NewQueue[string](100)
-	var wg sync.WaitGroup
+		pool := NewPool(ctx, 5, 1, 100*time.Millisecond)
+		q := queue.NewQueue[string](100)
+		var wg sync.WaitGroup
 
-	mockPoolFunc := func(ctx context.Context, wc WorkerContext, dbRo, dbRw dbconnpool.ConnectionPool, qLen func() int, id int) error {
-		wg.Done() // Signal that a worker has started
-		for {
-			if wc.ShouldIStop(qLen()) {
-				return nil
-			}
-			_, err := q.Dequeue()
-			if err != nil {
-				if errors.Is(err, queue.ErrEmptyQueue) {
-					time.Sleep(10 * time.Millisecond)
-					continue
+		mockPoolFunc := func(ctx context.Context, wc WorkerContext, dbRo, dbRw dbconnpool.ConnectionPool, qLen func() int, id int) error {
+			wg.Done() // Signal that a worker has started
+			for {
+				select {
+				case <-ctx.Done():
+					return nil // Bubble ended — let the pool wind down
+				default:
 				}
-				return err
+				if wc.ShouldIStop(qLen()) {
+					return nil
+				}
+				_, err := q.Dequeue()
+				if err != nil {
+					if errors.Is(err, queue.ErrEmptyQueue) {
+						select {
+						case <-ctx.Done():
+							// Bubble ended — the loop-top ctx check returns nil.
+						case <-time.After(10 * time.Millisecond): // Bubble time
+						}
+						continue
+					}
+					return err
+				}
+				wc.AddCompleted()
+				select {
+				case <-ctx.Done():
+					return nil
+				case <-time.After(150 * time.Millisecond): // Simulate work (bubble time)
+				}
 			}
-			wc.AddCompleted()
-			time.Sleep(150 * time.Millisecond) // Simulate work
 		}
-	}
 
-	wg.Add(1) // Expect one initial worker
-	go pool.StartWorkerPool(mockPoolFunc, nil, nil, q.Len)
-	wg.Wait() // Wait for the initial worker to start
+		wg.Add(1) // Expect one initial worker
+		go pool.StartWorkerPool(mockPoolFunc, nil, nil, q.Len)
+		wg.Wait()       // Wait for the initial worker to start
+		synctest.Wait() // Flush RunningWorkers.Add(1) in the pool goroutine
 
-	// Initial state
-	if pool.Stats.RunningWorkers.Load() != 1 {
-		t.Fatalf("Expected 1 running worker initially, got %d", pool.Stats.RunningWorkers.Load())
-	}
-
-	// Add tasks to trigger scale-up
-	wg.Add(4) // Expect 4 more workers to start
-	for range 20 {
-		if enqErr := q.Enqueue("task"); enqErr != nil {
-			t.Fatalf("Enqueue: %v", enqErr)
+		// Initial state
+		if pool.Stats.RunningWorkers.Load() != 1 {
+			t.Fatalf("Expected 1 running worker initially, got %d", pool.Stats.RunningWorkers.Load())
 		}
-	}
 
-	// Wait for scale-up, with a timeout
-	waitChan := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(waitChan)
-	}()
+		// Add tasks to trigger scale-up
+		wg.Add(4) // Expect 4 more workers to start
+		for range 20 {
+			if enqErr := q.Enqueue("task"); enqErr != nil {
+				t.Fatalf("Enqueue: %v", enqErr)
+			}
+		}
 
-	select {
-	case <-waitChan:
-		// All workers started
-	case <-time.After(2 * time.Second):
-		t.Fatalf("Timed out waiting for workers to scale up. Running: %d", pool.Stats.RunningWorkers.Load())
-	}
+		// Wait for scale-up, with a bubble timeout
+		waitChan := make(chan struct{})
+		go func() {
+			wg.Wait()
+			close(waitChan)
+		}()
 
-	if pool.Stats.RunningWorkers.Load() != 5 {
-		t.Errorf("Expected workers to scale up to 5, but got %d", pool.Stats.RunningWorkers.Load())
-	}
+		select {
+		case <-waitChan:
+			// All workers started
+		case <-time.After(2 * time.Second):
+			t.Fatalf("Timed out waiting for workers to scale up. Running: %d", pool.Stats.RunningWorkers.Load())
+		}
+		synctest.Wait() // Flush RunningWorkers.Add(1) for each spawned worker
 
-	// Wait for tasks to finish and trigger scale-down
-	time.Sleep(500 * time.Millisecond)
+		if pool.Stats.RunningWorkers.Load() != 5 {
+			t.Errorf("Expected workers to scale up to 5, but got %d", pool.Stats.RunningWorkers.Load())
+		}
 
-	if pool.Stats.RunningWorkers.Load() != 1 {
-		t.Errorf("Expected workers to scale down to min (1), but at %d", pool.Stats.RunningWorkers.Load())
-	}
+		// Advance bubble time past task processing and idle so the extra
+		// workers stop themselves and the pool shrinks back to min.
+		time.Sleep(2 * time.Second)
+		synctest.Wait()
+
+		if pool.Stats.RunningWorkers.Load() != 1 {
+			t.Errorf("Expected workers to scale down to min (1), but at %d", pool.Stats.RunningWorkers.Load())
+		}
+	})
 }
 
 // TestStartWorkerPool_ContextCancellation tests graceful shutdown.
@@ -297,18 +330,7 @@ func TestStartWorkerPool_ContextCancellation(t *testing.T) {
 
 // TestStartWorkerPool_ErrorHandling tests how the pool handles errors from poolFunc.
 func TestStartWorkerPool_ErrorHandling(t *testing.T) {
-	ctx := t.Context()
-
-	pool := NewPool(ctx, 2, 1, 1*time.Second)
-	q := queue.NewQueue[string](10)
 	testErr := errors.New("test worker error")
-	var wg sync.WaitGroup
-
-	// This worker will run once and exit with an error.
-	mockPoolFunc := func(ctx context.Context, wc WorkerContext, dbRo, dbRw dbconnpool.ConnectionPool, qLen func() int, id int) error {
-		wg.Done()
-		return testErr
-	}
 
 	// Capture log output to detect the error without racing on errgroup
 	var observedErr atomic.Bool
@@ -321,19 +343,35 @@ func TestStartWorkerPool_ErrorHandling(t *testing.T) {
 	slog.SetDefault(slog.New(handler))
 	defer slog.SetDefault(oldLogger)
 
-	wg.Add(1)
-	go func() {
-		pool.StartWorkerPool(mockPoolFunc, nil, nil, q.Len)
-	}()
-	wg.Wait() // worker started and immediately returns testErr
+	synctest.Test(t, func(t *testing.T) {
+		ctx := t.Context()
 
-	// Wait briefly for log emission
-	for i := 0; i < 50 && !observedErr.Load(); i++ {
-		time.Sleep(10 * time.Millisecond)
-	}
-	if !observedErr.Load() {
-		t.Errorf("Expected logged worker error '%v' not observed", testErr)
-	}
+		pool := NewPool(ctx, 2, 1, 1*time.Second)
+		q := queue.NewQueue[string](10)
+		var wg sync.WaitGroup
+
+		// This worker will run once and exit with an error.
+		mockPoolFunc := func(ctx context.Context, wc WorkerContext, dbRo, dbRw dbconnpool.ConnectionPool, qLen func() int, id int) error {
+			wg.Done()
+			return testErr
+		}
+
+		var poolDone sync.WaitGroup
+		poolDone.Add(1)
+		wg.Add(1)
+		go func() {
+			defer poolDone.Done()
+			pool.StartWorkerPool(mockPoolFunc, nil, nil, q.Len)
+		}()
+		wg.Wait() // worker started and immediately returns testErr
+
+		// The pool goroutine emits the error log before returning.
+		poolDone.Wait()
+
+		if !observedErr.Load() {
+			t.Errorf("Expected logged worker error '%v' not observed", testErr)
+		}
+	})
 }
 
 // TestPoolResultCounters tests AddSuccessful and AddFailed on a real Pool.

@@ -38,15 +38,13 @@ test.describe.serial("Server Actions", () => {
     // Click Run Discovery
     await page.locator('button[aria-label="Run Discovery"]').click();
 
-    // Wait for toast/feedback in #server-toast-container
-    await expect(page.locator("#server-toast-container")).toBeAttached({
+    // Container is always in layout; wait for actual toast content.
+    await expect(page.locator("#discovery-started-toast")).toBeVisible({
+      timeout: 10000,
+    });
+    await expect(page.locator("#server-toast-container")).not.toBeEmpty({
       timeout: 5000,
     });
-    // Discovery started should appear
-    const toastText = await page
-      .locator("#server-toast-container")
-      .textContent();
-    expect(toastText).not.toBeNull();
   });
 
   test("3: Run Cache Batch Load", async ({ page }) => {
@@ -58,15 +56,13 @@ test.describe.serial("Server Actions", () => {
     // Click Run Cache Batch Load
     await page.locator('button[aria-label="Run Cache Batch Load"]').click();
 
-    // Wait for feedback in #server-toast-container
-    await expect(page.locator("#server-toast-container")).toBeAttached({
+    // Container is always in layout; wait for actual toast content (not merely attached).
+    await expect(page.locator("#cache-batch-load-toast")).toBeVisible({
+      timeout: 10000,
+    });
+    await expect(page.locator("#server-toast-container")).not.toBeEmpty({
       timeout: 5000,
     });
-    const toastText = await page
-      .locator("#server-toast-container")
-      .textContent();
-    expect(toastText).not.toBeNull();
-    expect(toastText!.length).toBeGreaterThan(0);
   });
 
   test("4: Concurrent Discovery — second click handled gracefully", async ({

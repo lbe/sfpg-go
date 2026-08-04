@@ -35,6 +35,16 @@ func ConditionalMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
+		// Write-through only for GET without validators.
+		// HEAD must keep the buffering path: Finalize omits the body on 200.
+		// Write-through would leak handler body bytes on HEAD if the handler Writes.
+		if r.Method == http.MethodGet &&
+			r.Header.Get("If-None-Match") == "" &&
+			r.Header.Get("If-Modified-Since") == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		wrapped := newConditionalResponseWriter(w)
 		next.ServeHTTP(wrapped, r)
 		wrapped.Finalize(r)

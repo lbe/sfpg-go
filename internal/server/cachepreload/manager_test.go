@@ -2,20 +2,23 @@ package cachepreload
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/lbe/sfpg-go/internal/scheduler"
 )
 
-// waitForScheduler polls until the scheduler is available.
-func waitForScheduler(pm *PreloadManager) {
-	for range 50 {
-		if pm.GetScheduler() != nil {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
+// requireScheduler asserts that the scheduler is available synchronously.
+// NewPreloadManager(_, true) and SetEnabled(true) both create the scheduler
+// before returning, so there is nothing to poll for.
+func requireScheduler(t *testing.T, pm *PreloadManager) *scheduler.Scheduler {
+	t.Helper()
+	s := pm.GetScheduler()
+	if s == nil {
+		t.Fatal("expected scheduler to be available synchronously when enabled")
 	}
+	return s
 }
 
 func TestPreloadManager_IsEnabled_InitialState(t *testing.T) {
@@ -51,7 +54,7 @@ func TestPreloadManager_SetEnabled_DisableWhenEnabled(t *testing.T) {
 	pm := NewPreloadManager([]string{"/gallery/"}, true)
 	defer pm.Shutdown()
 
-	waitForScheduler(pm)
+	requireScheduler(t, pm)
 	pm.SetEnabled(false)
 	if pm.IsEnabled() {
 		t.Error("expected IsEnabled false after SetEnabled(false)")
@@ -64,7 +67,7 @@ func TestPreloadManager_SetEnabled_DisableWhenEnabled(t *testing.T) {
 func TestPreloadManager_SetEnabled_EnableWhenAlreadyEnabled_NoOp(t *testing.T) {
 	pm := NewPreloadManager([]string{"/gallery/"}, true)
 	defer pm.Shutdown()
-	waitForScheduler(pm)
+	requireScheduler(t, pm)
 
 	origSched := pm.GetScheduler()
 	pm.SetEnabled(true)
@@ -111,7 +114,7 @@ func TestPreloadManager_ScheduleFolderPreload_WhenDisabled_NoOp(t *testing.T) {
 
 func TestPreloadManager_Shutdown(t *testing.T) {
 	pm := NewPreloadManager([]string{"/gallery/"}, true)
-	waitForScheduler(pm)
+	requireScheduler(t, pm)
 	pm.Shutdown()
 	if pm.IsEnabled() {
 		t.Error("expected IsEnabled false after Shutdown")
@@ -124,17 +127,17 @@ func TestPreloadManager_Shutdown(t *testing.T) {
 func TestPreloadManager_ConcurrentSetEnabled(t *testing.T) {
 	pm := NewPreloadManager([]string{"/gallery/"}, true)
 	defer pm.Shutdown()
-	waitForScheduler(pm)
 
-	done := make(chan struct{})
-	go func() {
-		for i := range 20 {
-			pm.SetEnabled(i%2 == 0)
-			time.Sleep(1 * time.Millisecond)
-		}
-		close(done)
-	}()
-	<-done
+	var wg sync.WaitGroup
+	for range 20 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			pm.SetEnabled(true)
+			pm.SetEnabled(false)
+		}()
+	}
+	wg.Wait()
 	// No race, no panic
 }
 
@@ -142,12 +145,8 @@ func TestPreloadManager_ConcurrentSetEnabled(t *testing.T) {
 func TestPreloadManager_SchedulerAcceptsTask(t *testing.T) {
 	pm := NewPreloadManager([]string{"/gallery/"}, true)
 	defer pm.Shutdown()
-	waitForScheduler(pm)
 
-	sched := pm.GetScheduler()
-	if sched == nil {
-		t.Fatal("scheduler nil")
-	}
+	sched := requireScheduler(t, pm)
 	id, err := sched.AddTask(&noopTask{}, scheduler.OneTime, time.Now())
 	if err != nil {
 		t.Fatalf("AddTask failed: %v", err)

@@ -30,12 +30,13 @@ func TestClose_DoesNotDrainDQue(t *testing.T) {
 
 	db := testDB(t)
 	cfg := Config[int]{
-		BeginTx:       testBeginTx(db),
-		Flush:         func(ctx context.Context, tx *sql.Tx, batch []int) error { return nil },
-		MaxBatchSize:  10000,
-		FlushInterval: 10 * time.Second,
-		ChannelSize:   4,
-		DQueDirPath:   dir,
+		BeginTx:        testBeginTx(db),
+		Flush:          func(ctx context.Context, tx *sql.Tx, batch []int) error { return nil },
+		MaxBatchSize:   10000,
+		FlushInterval:  10 * time.Second,
+		ChannelSize:    4,
+		DQueDirPath:    dir,
+		DeferDQueDrain: true, // avoid racing the worker's eager drain before Close
 	}
 
 	wb, err := New(context.Background(), cfg)
@@ -66,16 +67,8 @@ func TestClose_DoesNotDrainDQue(t *testing.T) {
 		t.Fatal("Close blocked longer than 5s with large dque backlog")
 	}
 
-	got := persistedDQueSize(t, dir)
-	if got == 0 {
-		t.Fatal("persisted dque empty after Close; overflow must remain on disk")
-	}
-	if got == seeded {
-		return
-	}
-	// Worker may drain a few items asynchronously before Close; most must remain.
-	if got < seeded/2 {
-		t.Errorf("persisted dque size after Close = %d, want at least %d of %d seeded", got, seeded/2, seeded)
+	if got := persistedDQueSize(t, dir); got != seeded {
+		t.Errorf("persisted dque size after Close = %d, want %d", got, seeded)
 	}
 }
 
@@ -190,18 +183,20 @@ func TestReconfigure_CloseOldFirst_LargeDQue(t *testing.T) {
 	}
 }
 
-// TestWorker_ChannelClose_DoesNotDrainDQue verifies channel close does not drain dque.
+// TestWorker_ChannelClose_DoesNotDrainDQue verifies Close leaves deferred dque
+// overflow on disk: drain is deferred, so channel close must not dequeue it.
 func TestWorker_ChannelClose_DoesNotDrainDQue(t *testing.T) {
 	dir := t.TempDir()
 
 	db := testDB(t)
 	cfg := Config[int]{
-		BeginTx:       testBeginTx(db),
-		Flush:         func(ctx context.Context, tx *sql.Tx, batch []int) error { return nil },
-		MaxBatchSize:  10000,
-		FlushInterval: 10 * time.Second,
-		ChannelSize:   4,
-		DQueDirPath:   dir,
+		BeginTx:        testBeginTx(db),
+		Flush:          func(ctx context.Context, tx *sql.Tx, batch []int) error { return nil },
+		MaxBatchSize:   10000,
+		FlushInterval:  10 * time.Second,
+		ChannelSize:    4,
+		DQueDirPath:    dir,
+		DeferDQueDrain: true, // avoid racing the worker's eager drain before Close
 	}
 
 	wb, err := New(context.Background(), cfg)

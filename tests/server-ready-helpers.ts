@@ -1,6 +1,10 @@
 /**
  * Shared helpers for Playwright global setup/teardown:
  * health check, discovery wait, and cache batch load wait.
+ *
+ * Metrics are fetched from the authenticated GET /dashboard HTML page
+ * rather than a JSON API endpoint. Values are extracted by element ID
+ * per cmd/sfpg-go-dashboard/parser/dashboard.go (canonical reference).
  */
 import { request, type APIRequestContext } from "@playwright/test";
 
@@ -12,40 +16,80 @@ const HEALTH_INTERVAL_MS = 500;
 const MODULE_TIMEOUT_MS = 120_000;
 const MODULE_INTERVAL_MS = 1_000;
 
-interface FileProcessingMetrics {
-  total_found: number;
-  already_existing: number;
-  newly_inserted: number;
-  skipped_invalid: number;
-  in_flight: number;
+// ─────────────────────────────────────────────────────────────────────
+// HTML-parsed dashboard metrics (internal helper types)
+// ─────────────────────────────────────────────────────────────────────
+
+/** Internal parsed dashboard metrics used by the wait loops. */
+interface ParsedDashboardMetrics {
+  totalFound: number;
+  inFlight: number;
+  httpCacheEnabled: boolean;
+  batchIsRunning: boolean;
+  batchDoneCount: number;
+  batchTotal: number;
 }
 
-interface CacheBatchLoadMetrics {
-  targets_total: number;
-  targets_scheduled: number;
-  targets_completed: number;
-  targets_failed: number;
-  targets_skipped: number;
-  in_flight: number;
-  is_running: boolean;
-  last_started_at: string;
-  last_finished_at: string;
+/**
+ * Fetch the dashboard HTML, extract key metric values by element ID,
+ * and return them as structured data.
+ *
+ * Element IDs follow the canonical reference from
+ * cmd/sfpg-go-dashboard/parser/dashboard.go.
+ */
+async function fetchDashboardMetrics(
+  ctx: APIRequestContext,
+): Promise<ParsedDashboardMetrics> {
+  const resp = await ctx.get("/dashboard");
+  if (resp.status() !== 200) {
+    throw new Error(
+      `GET /dashboard failed: ${resp.status()} ${await resp.text()}`,
+    );
+  }
+  const html = await resp.text();
+
+  function extractText(id: string): string {
+    const re = new RegExp(`id="${id}"[^>]*>([\\s\\S]*?)</`);
+    const m = html.match(re);
+    return m ? m[1].trim() : "";
+  }
+
+  function parseNum(text: string): number {
+    return parseInt(text.replace(/,/g, ""), 10) || 0;
+  }
+
+  const totalFound = parseNum(extractText("fp-total"));
+  const inFlight = parseNum(extractText("fp-inflight"));
+
+  const httpStatus = extractText("http-status");
+  const httpCacheEnabled = httpStatus === "Enabled";
+
+  const batchStatus = extractText("batch-status");
+  const batchIsRunning = batchStatus === "Running";
+
+  // batch-progress format: "doneCount / expectedTotal" (both may include commas)
+  const progressText = extractText("batch-progress");
+  let batchDoneCount = 0;
+  let batchTotal = 0;
+  if (progressText) {
+    const parts = progressText.split("/");
+    if (parts.length >= 2) {
+      batchDoneCount = parseNum(parts[0]);
+      batchTotal = parseNum(parts[parts.length - 1]);
+    }
+  }
+
+  return {
+    totalFound,
+    inFlight,
+    httpCacheEnabled,
+    batchIsRunning,
+    batchDoneCount,
+    batchTotal,
+  };
 }
 
-interface HTTPCacheMetrics {
-  enabled: boolean;
-  size_bytes: number;
-  max_entry_size: number;
-  max_total_size: number;
-  entry_count: number;
-}
-
-interface MetricsSnapshot {
-  timestamp: string;
-  file_processing: FileProcessingMetrics;
-  cache_batch_load: CacheBatchLoadMetrics;
-  http_cache: HTTPCacheMetrics;
-}
+// ─────────────────────────────────────────────────────────────────────
 
 async function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -72,29 +116,8 @@ export async function waitForHealth(): Promise<void> {
   }
 }
 
-async function getMetrics(ctx: APIRequestContext): Promise<MetricsSnapshot> {
-  const resp = await ctx.get("/api/metrics");
-  if (resp.status() !== 200) {
-    throw new Error(
-      `GET /api/metrics failed: ${resp.status()} ${await resp.text()}`,
-    );
-  }
-  return resp.json() as Promise<MetricsSnapshot>;
-}
-
-function isDiscoveryComplete(metrics: MetricsSnapshot): boolean {
-  return (
-    metrics.file_processing.total_found > 0 &&
-    metrics.file_processing.in_flight === 0
-  );
-}
-
-function cacheBatchLoadDoneCount(metrics: MetricsSnapshot): number {
-  return (
-    metrics.cache_batch_load.targets_completed +
-    metrics.cache_batch_load.targets_failed +
-    metrics.cache_batch_load.targets_skipped
-  );
+function isDiscoveryComplete(metrics: ParsedDashboardMetrics): boolean {
+  return metrics.totalFound > 0 && metrics.inFlight === 0;
 }
 
 export async function ensureDiscoveryComplete(
@@ -102,10 +125,10 @@ export async function ensureDiscoveryComplete(
 ): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < MODULE_TIMEOUT_MS) {
-    const metrics = await getMetrics(ctx);
+    const metrics = await fetchDashboardMetrics(ctx);
     if (isDiscoveryComplete(metrics)) return;
 
-    if (metrics.file_processing.in_flight === 0) {
+    if (metrics.inFlight === 0) {
       const resp = await ctx.post("/server/discovery", {
         headers: { Origin: BASE_URL },
       });
@@ -126,17 +149,16 @@ export async function ensureCacheBatchLoadComplete(
   const start = Date.now();
   let triggered = false;
   while (Date.now() - start < MODULE_TIMEOUT_MS) {
-    const metrics = await getMetrics(ctx);
+    const metrics = await fetchDashboardMetrics(ctx);
 
-    if (!metrics.http_cache.enabled) return;
+    if (!metrics.httpCacheEnabled) return;
 
-    const doneCount = cacheBatchLoadDoneCount(metrics);
-    const allDone = doneCount >= metrics.cache_batch_load.targets_total;
+    const allDone = metrics.batchDoneCount >= metrics.batchTotal;
 
-    if (triggered && !metrics.cache_batch_load.is_running && allDone) return;
+    if (triggered && !metrics.batchIsRunning && allDone) return;
 
-    if (!triggered && !metrics.cache_batch_load.is_running) {
-      if (allDone && metrics.cache_batch_load.targets_total > 0) return;
+    if (!triggered && !metrics.batchIsRunning) {
+      if (allDone && metrics.batchTotal > 0) return;
 
       const resp = await ctx.post("/server/cache-batch-load", {
         headers: { Origin: BASE_URL },

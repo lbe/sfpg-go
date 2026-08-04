@@ -90,6 +90,61 @@ func (q *Queries) GetFolderIDByPath(ctx context.Context, path string) (int64, er
 	return id, err
 }
 
+const getFolderInfoCountsByID = `-- name: GetFolderInfoCountsByID :one
+SELECT
+  CAST((
+    SELECT COUNT(*) FROM folder_view sf
+     WHERE sf.parent_id = f.id
+  ) AS INTEGER) AS dir_count,
+  CAST((
+    SELECT COUNT(*) FROM file_view fv
+     WHERE fv.folder_id = f.id
+       AND (
+            LOWER(fv.filename) LIKE '%.jpg'
+         OR LOWER(fv.filename) LIKE '%.jpeg'
+         OR LOWER(fv.filename) LIKE '%.png'
+         OR LOWER(fv.filename) LIKE '%.gif'
+         OR LOWER(fv.filename) LIKE '%.webp'
+         OR LOWER(fv.filename) LIKE '%.avif'
+         OR LOWER(fv.filename) LIKE '%.heic'
+         OR LOWER(fv.filename) LIKE '%.heif'
+         OR LOWER(fv.filename) LIKE '%.tif'
+         OR LOWER(fv.filename) LIKE '%.tiff'
+       )
+  ) AS INTEGER) AS image_count,
+  CAST((
+    SELECT COUNT(*) FROM file_view fv
+     WHERE fv.folder_id = f.id
+       AND NOT (
+            LOWER(fv.filename) LIKE '%.jpg'
+         OR LOWER(fv.filename) LIKE '%.jpeg'
+         OR LOWER(fv.filename) LIKE '%.png'
+         OR LOWER(fv.filename) LIKE '%.gif'
+         OR LOWER(fv.filename) LIKE '%.webp'
+         OR LOWER(fv.filename) LIKE '%.avif'
+         OR LOWER(fv.filename) LIKE '%.heic'
+         OR LOWER(fv.filename) LIKE '%.heif'
+         OR LOWER(fv.filename) LIKE '%.tif'
+         OR LOWER(fv.filename) LIKE '%.tiff'
+       )
+  ) AS INTEGER) AS file_count
+FROM folders f
+WHERE f.id = ?
+`
+
+type GetFolderInfoCountsByIDRow struct {
+	DirCount   int64
+	ImageCount int64
+	FileCount  int64
+}
+
+func (q *Queries) GetFolderInfoCountsByID(ctx context.Context, id int64) (GetFolderInfoCountsByIDRow, error) {
+	row := q.queryRow(ctx, q.getFolderInfoCountsByIDStmt, getFolderInfoCountsByID, id)
+	var i GetFolderInfoCountsByIDRow
+	err := row.Scan(&i.DirCount, &i.ImageCount, &i.FileCount)
+	return i, err
+}
+
 const getFolderTileExistsViewByPath = `-- name: GetFolderTileExistsViewByPath :one
 SELECT found 
   FROM folder_tile_exists_view
@@ -149,6 +204,41 @@ func (q *Queries) GetFoldersViewsByParentIDOrderByName(ctx context.Context, pare
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getGalleryFolderThumbRowsByParentID = `-- name: GetGalleryFolderThumbRowsByParentID :many
+SELECT fv.id AS id, fv.name AS name
+  FROM folder_view fv
+ WHERE fv.parent_id = ?
+ ORDER BY fv.name
+`
+
+type GetGalleryFolderThumbRowsByParentIDRow struct {
+	ID   int64
+	Name string
+}
+
+func (q *Queries) GetGalleryFolderThumbRowsByParentID(ctx context.Context, parentID sql.NullInt64) ([]GetGalleryFolderThumbRowsByParentIDRow, error) {
+	rows, err := q.query(ctx, q.getGalleryFolderThumbRowsByParentIDStmt, getGalleryFolderThumbRowsByParentID, parentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetGalleryFolderThumbRowsByParentIDRow
+	for rows.Next() {
+		var i GetGalleryFolderThumbRowsByParentIDRow
+		if err := rows.Scan(&i.ID, &i.Name); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

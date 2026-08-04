@@ -31,21 +31,6 @@ func (app *App) scheduleDiscoveryCompletePragmaOptimize() {
 	)
 }
 
-func (app *App) startCacheSizeCalibration() {
-	app.ConfigManager.ConfigMu.RLock()
-	cacheEnabled := app.ConfigManager.Config != nil && app.ConfigManager.Config.EnableHTTPCache
-	app.ConfigManager.ConfigMu.RUnlock()
-	if !cacheEnabled {
-		app.cacheSizeCalibrated.Store(true)
-		return
-	}
-
-	quiet := app.cacheSizeQuietCheck
-	app.StartCacheSizeCalibration(app.RuntimeManager.ctx, quiet, func(fn func()) {
-		app.RuntimeManager.wg.Go(fn)
-	})
-}
-
 // fileProcessingQuiet reports whether discovery walk, queue, and workers are idle.
 func (app *App) fileProcessingQuiet() bool {
 	if app.discoveryRunning.Load() {
@@ -92,7 +77,6 @@ func (app *App) cacheSizeQuietCheck(ctx context.Context) bool {
 }
 
 func (app *App) onServerListening() {
-	app.SetCacheCalibrationListening(true)
 	app.SetPragmaOptimizeListening(true)
 	app.StartDQueDrain()
 }

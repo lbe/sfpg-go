@@ -30,12 +30,11 @@
         exit
       end
 
-      -- 1. LOGIN/LOGOUT/ABOUT MODALS - only handle Escape
-      if #login_modal.checked or #logout_modal.checked or #about_modal.checked
+      -- 1. LOGIN/LOGOUT MODALS - only handle Escape
+      if #login_modal.checked or #logout_modal.checked
         if key is 'Escape'
           if #login_modal.checked set #login_modal.checked to false end
           if #logout_modal.checked set #logout_modal.checked to false end
-          if #about_modal.checked set #about_modal.checked to false end
           halt the event
         end
         exit

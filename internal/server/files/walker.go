@@ -41,6 +41,7 @@ type WalkDeps struct {
 // paths for processing. It runs as a background goroutine; the caller should
 // invoke it via `go files.WalkImageDir(deps)`.
 func WalkImageDir(deps *WalkDeps) {
+	slog.Info("walkImageDir for all images Started", "dir", deps.ImagesDir)
 	deps.Wg.Add(1)
 	defer deps.Wg.Done()
 

@@ -526,6 +526,58 @@ func TestConditionalMiddleware_NoCacheHeaders(t *testing.T) {
 	}
 }
 
+// TestConditionalMiddleware_WriteThrough_GetWithoutValidators tests GET without
+// If-None-Match or If-Modified-Since goes through directly (no body buffer).
+func TestConditionalMiddleware_WriteThrough_GetWithoutValidators(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("ETag", `"abc123"`)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("write-through body"))
+	})
+
+	mw := ConditionalMiddleware(handler)
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	w := httptest.NewRecorder()
+
+	mw.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Response code = %d, want 200", w.Code)
+	}
+
+	if w.Body.String() != "write-through body" {
+		t.Errorf("Response body = %q, want %q", w.Body.String(), "write-through body")
+	}
+}
+
+// TestConditionalMiddleware_WriteThrough_HeadWithoutValidators tests HEAD without
+// validators still uses the buffering path (body must be omitted on 200).
+func TestConditionalMiddleware_WriteThrough_HeadWithoutValidators(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(http.StatusOK)
+		n, _ := w.Write([]byte("head body content that must not appear"))
+		// Ensure the handler actually writes bytes (proving Finalize path is active)
+		_ = n
+	})
+
+	mw := ConditionalMiddleware(handler)
+
+	req := httptest.NewRequest("HEAD", "/test", nil)
+	w := httptest.NewRecorder()
+
+	mw.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Response code = %d, want 200", w.Code)
+	}
+
+	if w.Body.Len() != 0 {
+		t.Errorf("HEAD response body length = %d, want 0 (Finalize path must still cut body)", w.Body.Len())
+	}
+}
+
 // TestConditionalMiddleware_PreserveHeaders tests 304 preserves cache headers
 func TestConditionalMiddleware_PreserveHeaders(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

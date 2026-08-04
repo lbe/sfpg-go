@@ -3,84 +3,22 @@ package server
 import (
 	"context"
 	"log/slog"
-	"time"
+
+	"github.com/lbe/sfpg-go/internal/dbconnpool"
 )
 
 const (
-	defaultCacheCalibrationPollInterval = 10 * time.Second
-	defaultCacheCalibrationMaxWait      = time.Hour
-	cacheCalibrationQuietPendingMax     = int64(100)
+	cacheCalibrationQuietPendingMax = int64(100)
 )
-
-// CacheSizeQuietFunc reports whether the system is idle enough for a cache size SUM.
-type CacheSizeQuietFunc func(ctx context.Context) bool
-
-// ResetCacheSizeCounterAtStartup clears the in-memory counter. Calibration runs later.
-func (s *InfrastructureService) ResetCacheSizeCounterAtStartup() {
-	s.cacheSizeBytes.Store(0)
-	s.cacheSizeCalibrated.Store(false)
-}
-
-// CacheSizeCalibrated reports whether the HTTP cache byte counter matches the database.
-func (s *InfrastructureService) CacheSizeCalibrated() bool {
-	return s.cacheSizeCalibrated.Load()
-}
-
-// SetCacheCalibrationListening enables quiet-based calibration after the HTTP server is listening.
-func (s *InfrastructureService) SetCacheCalibrationListening(listening bool) {
-	s.cacheCalibListening.Store(listening)
-}
 
 // CalibrateCacheSizeNow runs the cache size SUM immediately (CLI / tests).
 func (s *InfrastructureService) CalibrateCacheSizeNow(ctx context.Context) {
 	s.calibrateCacheSize(ctx, "immediate")
 }
 
-// StartCacheSizeCalibration schedules background calibration: when quiet after listen,
-// or after maxWait from startup, whichever comes first.
-func (s *InfrastructureService) StartCacheSizeCalibration(ctx context.Context, quiet CacheSizeQuietFunc, run func(func())) {
-	if quiet == nil {
-		return
-	}
-	if !s.cacheCalibStarted.CompareAndSwap(false, true) {
-		return
-	}
-
-	s.ResetCacheSizeCounterAtStartup()
-
-	scheduleQuietOnce(ctx, quietOnceConfig{
-		PollInterval:  s.cacheCalibrationPollInterval(),
-		MaxWait:       s.cacheCalibrationMaxWait(),
-		Listening:     func() bool { return s.cacheCalibListening.Load() },
-		Quiet:         quiet,
-		Done:          func() bool { return s.cacheSizeCalibrated.Load() },
-		PreAttempt:    nil,
-		QuietReason:   "quiet",
-		TimeoutReason: "timeout",
-		Attempt:       func(ctx context.Context, r string) bool { return s.calibrateCacheSize(ctx, r) },
-	}, run)
-}
-
-func (s *InfrastructureService) cacheCalibrationPollInterval() time.Duration {
-	if s.testSeams.CacheCalibrationPollInterval > 0 {
-		return s.testSeams.CacheCalibrationPollInterval
-	}
-	return defaultCacheCalibrationPollInterval
-}
-
-func (s *InfrastructureService) cacheCalibrationMaxWait() time.Duration {
-	if s.testSeams.CacheCalibrationMaxWait > 0 {
-		return s.testSeams.CacheCalibrationMaxWait
-	}
-	return defaultCacheCalibrationMaxWait
-}
-
-// calibrateCacheSize queries the RO pool and replaces the in-memory counter.
+// calibrateCacheSize queries the RO pool and replaces the in-memory counters.
 // Returns true when calibration succeeded.
 func (s *InfrastructureService) calibrateCacheSize(ctx context.Context, reason string) bool {
-	if s.cacheSizeCalibrated.Load() {
-		return true
-	}
 	if s.dbRoPool == nil {
 		return false
 	}
@@ -91,13 +29,18 @@ func (s *InfrastructureService) calibrateCacheSize(ctx context.Context, reason s
 		return false
 	}
 
+	count, countErr := s.testSeams.GetCacheEntryCount(ctx, s.dbRoPool)
+	if countErr != nil {
+		slog.Warn("cache entry count calibration failed, storing 0", "reason", reason, "err", countErr)
+	}
+
 	s.cacheSizeBytes.Store(size)
-	s.cacheSizeCalibrated.Store(true)
-	slog.Info("cache size counter calibrated", "reason", reason, "bytes", size)
+	s.cacheEntryCount.Store(count)
+	slog.Info("cache size counter calibrated", "reason", reason, "bytes", size, "entries", count)
 	return true
 }
 
-// resyncCacheSizeFromDB refreshes the counter after a failed cache batch flush.
+// resyncCacheSizeFromDB refreshes the counters after a failed cache batch flush.
 func (s *InfrastructureService) resyncCacheSizeFromDB(ctx context.Context) {
 	if s.dbRoPool == nil {
 		return
@@ -107,6 +50,56 @@ func (s *InfrastructureService) resyncCacheSizeFromDB(ctx context.Context) {
 		slog.Warn("failed to resync cache size counter after batch error", "err", err)
 		return
 	}
+	count, countErr := s.testSeams.GetCacheEntryCount(ctx, s.dbRoPool)
+	if countErr != nil {
+		slog.Warn("failed to resync cache entry count after batch error", "err", countErr)
+	}
 	s.cacheSizeBytes.Store(size)
-	s.cacheSizeCalibrated.Store(true)
+	s.cacheEntryCount.Store(count)
+}
+
+// startHTTPCacheBaselines launches two parallel goroutines to populate the
+// HTTP cache entry count and size byte counters from the database. Each
+// goroutine increments cacheBaselineRunning synchronously before launching
+// so that display helpers see running > 0 immediately (rendering "N/A" for
+// unpopulated fields).
+func (s *InfrastructureService) startHTTPCacheBaselines(ctx context.Context) {
+	if s.dbRoPool == nil {
+		return
+	}
+	s.cacheSizeBytes.Store(0)
+	s.cacheEntryCount.Store(0)
+
+	run := func(name string, fn func(context.Context, *dbconnpool.CpConn) error) {
+		s.cacheBaselineRunning.Add(1)
+		go func() {
+			defer s.cacheBaselineRunning.Add(-1)
+			cpc, err := s.dbRoPool.Get()
+			if err != nil {
+				slog.Warn("http cache baseline: connection failed", "query", name, "err", err)
+				return
+			}
+			defer s.dbRoPool.Put(cpc)
+			if err := fn(ctx, cpc); err != nil {
+				slog.Warn("http cache baseline failed", "query", name, "err", err)
+			}
+		}()
+	}
+
+	run("entry_count", func(ctx context.Context, cpc *dbconnpool.CpConn) error {
+		n, err := cpc.Queries.CountHttpCacheEntries(ctx)
+		if err != nil {
+			return err
+		}
+		s.cacheEntryCount.Add(n)
+		return nil
+	})
+	run("size_bytes", func(ctx context.Context, cpc *dbconnpool.CpConn) error {
+		n, err := cpc.Queries.GetHttpCacheSizeBytes(ctx)
+		if err != nil {
+			return err
+		}
+		s.cacheSizeBytes.Add(n)
+		return nil
+	})
 }

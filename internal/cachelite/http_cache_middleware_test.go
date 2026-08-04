@@ -924,6 +924,7 @@ func TestGalleryCacheHit_OnGalleryCacheHitCalled(t *testing.T) {
 		sessionID string
 	}
 	var callbackMu sync.Mutex
+	callbackCh := make(chan struct{}, 1)
 
 	cfg := cachelite.CacheConfig{
 		Enabled:         true,
@@ -938,6 +939,7 @@ func TestGalleryCacheHit_OnGalleryCacheHitCalled(t *testing.T) {
 				sessionID string
 			}{folderID, sessionID})
 			callbackMu.Unlock()
+			callbackCh <- struct{}{}
 		},
 		SessionCookieName:     "session-name",
 		SkipPreloadWhenHeader: "X-SFPG-Internal-Preload",
@@ -975,8 +977,12 @@ func TestGalleryCacheHit_OnGalleryCacheHitCalled(t *testing.T) {
 	w2 := httptest.NewRecorder()
 	mw.ServeHTTP(w2, req2)
 
-	// Give callback time to execute (it's called in a goroutine)
-	time.Sleep(50 * time.Millisecond)
+	// Wait for the callback to execute (it's called in a goroutine)
+	select {
+	case <-callbackCh:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for OnGalleryCacheHit callback")
+	}
 
 	if w2.Code != 200 {
 		t.Errorf("second request status = %d, want 200", w2.Code)
@@ -1049,12 +1055,13 @@ func TestGalleryCacheHit_SkipWhenInternalPreload(t *testing.T) {
 	w2 := httptest.NewRecorder()
 	mw.ServeHTTP(w2, req2)
 
-	time.Sleep(50 * time.Millisecond)
-
 	if w2.Header().Get("X-Cache") != "HIT" {
 		t.Errorf("X-Cache = %q, want HIT", w2.Header().Get("X-Cache"))
 	}
 
+	// The skip decision is made synchronously during ServeHTTP: when the
+	// internal-preload header matches, no callback goroutine is spawned,
+	// so an immediate assert is deterministic.
 	callbackMu.Lock()
 	if callbackCalled {
 		t.Error("callback was called when SkipPreloadWhenHeader matched")
@@ -1075,8 +1082,7 @@ func TestGalleryCacheHit_SessionIDFromCookie(t *testing.T) {
 		_, _ = w.Write([]byte("<html><body>gallery content</body></html>"))
 	})
 
-	var capturedSessionID string
-	var callbackMu sync.Mutex
+	sessionCh := make(chan string, 1)
 
 	cfg := cachelite.CacheConfig{
 		Enabled:         true,
@@ -1085,9 +1091,7 @@ func TestGalleryCacheHit_SessionIDFromCookie(t *testing.T) {
 		DefaultTTL:      time.Hour,
 		CacheableRoutes: []string{"/gallery"},
 		OnGalleryCacheHit: func(ctx context.Context, folderID int64, sessionID string) {
-			callbackMu.Lock()
-			capturedSessionID = sessionID
-			callbackMu.Unlock()
+			sessionCh <- sessionID
 		},
 		SessionCookieName:     "session-name",
 		SkipPreloadWhenHeader: "X-SFPG-Internal-Preload",
@@ -1108,13 +1112,14 @@ func TestGalleryCacheHit_SessionIDFromCookie(t *testing.T) {
 	w2 := httptest.NewRecorder()
 	mw.ServeHTTP(w2, req2)
 
-	time.Sleep(50 * time.Millisecond)
-
-	callbackMu.Lock()
-	if capturedSessionID != "test-session-123" {
-		t.Errorf("sessionID = %q, want test-session-123", capturedSessionID)
+	select {
+	case got := <-sessionCh:
+		if got != "test-session-123" {
+			t.Errorf("sessionID = %q, want test-session-123", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for OnGalleryCacheHit callback")
 	}
-	callbackMu.Unlock()
 }
 
 // TestGalleryCacheHit_SessionIDFromRemoteAddr verifies that sessionID falls back
@@ -1130,8 +1135,7 @@ func TestGalleryCacheHit_SessionIDFromRemoteAddr(t *testing.T) {
 		_, _ = w.Write([]byte("<html><body>gallery content</body></html>"))
 	})
 
-	var capturedSessionID string
-	var callbackMu sync.Mutex
+	sessionCh := make(chan string, 1)
 
 	cfg := cachelite.CacheConfig{
 		Enabled:         true,
@@ -1140,9 +1144,7 @@ func TestGalleryCacheHit_SessionIDFromRemoteAddr(t *testing.T) {
 		DefaultTTL:      time.Hour,
 		CacheableRoutes: []string{"/gallery"},
 		OnGalleryCacheHit: func(ctx context.Context, folderID int64, sessionID string) {
-			callbackMu.Lock()
-			capturedSessionID = sessionID
-			callbackMu.Unlock()
+			sessionCh <- sessionID
 		},
 		SessionCookieName:     "session-name",
 		SkipPreloadWhenHeader: "X-SFPG-Internal-Preload",
@@ -1163,13 +1165,14 @@ func TestGalleryCacheHit_SessionIDFromRemoteAddr(t *testing.T) {
 	w2 := httptest.NewRecorder()
 	mw.ServeHTTP(w2, req2)
 
-	time.Sleep(50 * time.Millisecond)
-
-	callbackMu.Lock()
-	if capturedSessionID != "192.168.1.100:54321" {
-		t.Errorf("sessionID = %q, want 192.168.1.100:54321", capturedSessionID)
+	select {
+	case got := <-sessionCh:
+		if got != "192.168.1.100:54321" {
+			t.Errorf("sessionID = %q, want 192.168.1.100:54321", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for OnGalleryCacheHit callback")
 	}
-	callbackMu.Unlock()
 }
 
 // TestGarbageBlobInDB_ReturnsMISS verifies that a cache row with unrecognizable body contents

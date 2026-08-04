@@ -2,6 +2,7 @@ package cachepreload
 
 import (
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -28,13 +29,17 @@ func TestSessionTracker_OnFolderOpen_IsolatedBySession(t *testing.T) {
 }
 
 func TestSessionTracker_Cleanup_RemovesStaleSessions(t *testing.T) {
-	st := &SessionTracker{}
-	st.OnFolderOpen("sess1", 1)
-	time.Sleep(2 * time.Millisecond) // ensure lastActivity is old
-	st.Cleanup(1 * time.Millisecond)
-	// sess1 should be removed; next open returns 0 for previous
-	prev := st.OnFolderOpen("sess1", 2)
-	if prev != 0 {
-		t.Errorf("expected stale session to be removed, previous=%d", prev)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		st := &SessionTracker{}
+		st.OnFolderOpen("sess1", 1)
+		// Bubble time: the fake clock advances instantly when the root goroutine
+		// is durably blocked, so 2ms elapses without any wall-clock waiting.
+		time.Sleep(2 * time.Millisecond)
+		st.Cleanup(1 * time.Millisecond)
+		// sess1 should be removed; next open returns 0 for previous
+		prev := st.OnFolderOpen("sess1", 2)
+		if prev != 0 {
+			t.Errorf("expected stale session to be removed, previous=%d", prev)
+		}
+	})
 }

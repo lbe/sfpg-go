@@ -122,12 +122,6 @@ type Config struct {
 	// allowed per IP address per 60-second window. 0 disables IP rate limiting.
 	LoginRateLimitPerIP int
 
-	// EnablePprof enables Go's net/http/pprof debug endpoints under /debug/pprof/.
-	// When false, pprof routes are not registered and cannot be accessed.
-	// When true (the default), pprof routes are registered and protected behind authentication.
-	// Requires restart to take effect.
-	EnablePprof bool
-
 	// HelpText and ExampleValues are populated by LoadFromDatabase from the
 	// metadata columns stored alongside each config row. Nil when loaded
 	// through other paths (DefaultConfig, YAML, CLI). Used by the config UI
@@ -184,9 +178,6 @@ func DefaultConfig() *Config {
 		// Discovery
 		RunFileDiscovery:  true,
 		DiscoveryQueueMax: 0, // 0 = unbounded (no maximum)
-
-		// Profiling
-		EnablePprof: true,
 
 		// Security
 		LockoutDuration:     3600, // 1 hour

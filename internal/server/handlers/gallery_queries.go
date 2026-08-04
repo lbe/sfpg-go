@@ -53,14 +53,14 @@ func (h *GalleryHandlers) fetchGalleryData(folderID int64) (GalleryData, error) 
 		return GalleryData{}, err
 	}
 
-	subFolders, err := qh.GetFoldersViewsByParentIDOrderByName(h.Ctx, sql.NullInt64{Int64: folderID, Valid: true})
+	subFolderRows, err := qh.GetGalleryFolderThumbRowsByParentID(h.Ctx, sql.NullInt64{Int64: folderID, Valid: true})
 	if err != nil {
 		return GalleryData{}, err
 	}
 
 	etagVersion := h.galleryOps.GetETagVersion()
 	thumbs := make([]DirectoryInfo, 0, 64)
-	for _, sf := range subFolders {
+	for _, sf := range subFolderRows {
 		thumbs = append(thumbs, DirectoryInfo{
 			ID:        sf.ID,
 			Path:      fmt.Sprintf("/gallery/%d", sf.ID),
@@ -70,12 +70,12 @@ func (h *GalleryHandlers) fetchGalleryData(folderID int64) (GalleryData, error) 
 		})
 	}
 
-	images, err := qh.GetFileViewsByFolderIDOrderByFileName(h.Ctx, sql.NullInt64{Int64: folderID, Valid: true})
+	fileRows, err := qh.GetGalleryFileThumbRowsByFolderID(h.Ctx, sql.NullInt64{Int64: folderID, Valid: true})
 	if err != nil {
 		return GalleryData{}, err
 	}
 
-	for i, img := range images {
+	for i, img := range fileRows {
 		thumbs = append(thumbs, DirectoryInfo{
 			ID:        img.ID,
 			Path:      fmt.Sprintf("/image/%d", img.ID),
@@ -94,7 +94,7 @@ func (h *GalleryHandlers) fetchGalleryData(folderID int64) (GalleryData, error) 
 	return GalleryData{
 		Breadcrumbs: breadcrumbs,
 		GalleryName: folder.Name,
-		ImageCount:  len(images),
+		ImageCount:  len(fileRows),
 		IsImageView: false,
 		Thumbs:      thumbs,
 	}, nil

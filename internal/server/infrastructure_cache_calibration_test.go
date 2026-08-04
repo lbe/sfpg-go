@@ -4,10 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"testing"
-	"time"
 
 	"log/slog"
 
@@ -32,6 +29,9 @@ func TestInfrastructureService_CalibrateCacheSizeNow_UsesROPool(t *testing.T) {
 		gotPool = pool
 		return 42, nil
 	}
+	infra.testSeams.GetCacheEntryCount = func(ctx context.Context, pool *dbconnpool.DbSQLConnPool) (int64, error) {
+		return 7, nil
+	}
 
 	infra.CalibrateCacheSizeNow(context.Background())
 
@@ -41,12 +41,12 @@ func TestInfrastructureService_CalibrateCacheSizeNow_UsesROPool(t *testing.T) {
 	if infra.cacheSizeBytes.Load() != 42 {
 		t.Fatalf("cacheSizeBytes = %d, want 42", infra.cacheSizeBytes.Load())
 	}
-	if !infra.CacheSizeCalibrated() {
-		t.Fatal("expected calibrated after success")
+	if infra.cacheEntryCount.Load() != 7 {
+		t.Fatalf("cacheEntryCount = %d, want 7", infra.cacheEntryCount.Load())
 	}
 }
 
-func TestInfrastructureService_StartCacheSizeCalibration_QuietTrigger(t *testing.T) {
+func TestInfrastructureService_CalibrateCacheSizeNow_EntryCountError(t *testing.T) {
 	infra := NewInfrastructureService()
 	infra.dbInitializer = &fakeDatabaseInitializer{
 		setupPaths: database.DatabasePaths{Main: "/tmp/fake/sfpg.db"},
@@ -54,98 +54,38 @@ func TestInfrastructureService_StartCacheSizeCalibration_QuietTrigger(t *testing
 		setupRo:    newFakePool(10, 2),
 	}
 	infra.SetupDB(context.Background(), config.DefaultConfig())
-	infra.testSeams.CacheCalibrationPollInterval = 5 * time.Millisecond
-	infra.testSeams.CacheCalibrationMaxWait = time.Hour
+
 	infra.testSeams.GetCacheSizeBytes = func(ctx context.Context, pool *dbconnpool.DbSQLConnPool) (int64, error) {
-		return 99, nil
+		return 55, nil
+	}
+	infra.testSeams.GetCacheEntryCount = func(ctx context.Context, pool *dbconnpool.DbSQLConnPool) (int64, error) {
+		return 0, errors.New("count error")
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	infra.CalibrateCacheSizeNow(context.Background())
 
-	var quietCalls atomic.Int32
-	quiet := func(ctx context.Context) bool {
-		if !infra.cacheCalibListening.Load() {
-			return false
-		}
-		return quietCalls.Add(1) >= 2
+	if infra.cacheSizeBytes.Load() != 55 {
+		t.Fatalf("cacheSizeBytes = %d, want 55", infra.cacheSizeBytes.Load())
 	}
-
-	var wg sync.WaitGroup
-	wg.Add(1)
-	infra.StartCacheSizeCalibration(ctx, quiet, func(fn func()) {
-		wg.Done()
-		go fn()
-	})
-	wg.Wait()
-
-	infra.SetCacheCalibrationListening(true)
-
-	deadline := time.Now().Add(2 * time.Second)
-	for !infra.CacheSizeCalibrated() && time.Now().Before(deadline) {
-		time.Sleep(5 * time.Millisecond)
-	}
-	if !infra.CacheSizeCalibrated() {
-		t.Fatal("expected quiet calibration to complete")
-	}
-	if infra.cacheSizeBytes.Load() != 99 {
-		t.Fatalf("cacheSizeBytes = %d, want 99", infra.cacheSizeBytes.Load())
+	if infra.cacheEntryCount.Load() != 0 {
+		t.Fatalf("cacheEntryCount = %d, want 0 after count error", infra.cacheEntryCount.Load())
 	}
 }
 
-func TestInfrastructureService_StartCacheSizeCalibration_TimeoutFallback(t *testing.T) {
-	infra := NewInfrastructureService()
-	infra.dbInitializer = &fakeDatabaseInitializer{
-		setupPaths: database.DatabasePaths{Main: "/tmp/fake/sfpg.db"},
-		setupRw:    newFakePool(10, 2),
-		setupRo:    newFakePool(10, 2),
-	}
-	infra.SetupDB(context.Background(), config.DefaultConfig())
-	infra.testSeams.CacheCalibrationPollInterval = time.Hour
-	infra.testSeams.CacheCalibrationMaxWait = 15 * time.Millisecond
-	infra.testSeams.GetCacheSizeBytes = func(ctx context.Context, pool *dbconnpool.DbSQLConnPool) (int64, error) {
-		return 7, nil
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	quiet := func(ctx context.Context) bool { return false }
-
-	var wg sync.WaitGroup
-	wg.Add(1)
-	infra.StartCacheSizeCalibration(ctx, quiet, func(fn func()) {
-		wg.Done()
-		go fn()
-	})
-	wg.Wait()
-
-	deadline := time.Now().Add(2 * time.Second)
-	for !infra.CacheSizeCalibrated() && time.Now().Before(deadline) {
-		time.Sleep(5 * time.Millisecond)
-	}
-	if !infra.CacheSizeCalibrated() {
-		t.Fatal("expected timeout calibration to complete")
-	}
-	if infra.cacheSizeBytes.Load() != 7 {
-		t.Fatalf("cacheSizeBytes = %d, want 7", infra.cacheSizeBytes.Load())
-	}
-}
-
-func TestInfrastructureService_InvalidateHTTPCache_MarksCalibrated(t *testing.T) {
+func TestInfrastructureService_InvalidateHTTPCache_ZerosCounters(t *testing.T) {
 	infra := NewInfrastructureService()
 	infra.dbRwPool = newFakePool(10, 2)
 	infra.cacheRotator = &fakeCacheRotator{}
 	infra.cacheSizeBytes.Store(123)
-	infra.cacheSizeCalibrated.Store(false)
+	infra.cacheEntryCount.Store(9)
 
 	infra.InvalidateHTTPCache()
 
 	if infra.cacheSizeBytes.Load() != 0 {
 		t.Fatalf("cacheSizeBytes = %d, want 0", infra.cacheSizeBytes.Load())
 	}
-	if !infra.CacheSizeCalibrated() {
-		t.Fatal("InvalidateHTTPCache should mark counter calibrated")
+	if infra.cacheEntryCount.Load() != 0 {
+		t.Fatalf("cacheEntryCount = %d, want 0", infra.cacheEntryCount.Load())
 	}
 }
 
@@ -160,6 +100,9 @@ func TestInfrastructureService_resyncCacheSizeFromDB_UsesROPool(t *testing.T) {
 	infra.testSeams.GetCacheSizeBytes = func(ctx context.Context, pool *dbconnpool.DbSQLConnPool) (int64, error) {
 		gotPool = pool
 		return 55, nil
+	}
+	infra.testSeams.GetCacheEntryCount = func(ctx context.Context, pool *dbconnpool.DbSQLConnPool) (int64, error) {
+		return 4, nil
 	}
 
 	infra.resyncCacheSizeFromDB(context.Background())

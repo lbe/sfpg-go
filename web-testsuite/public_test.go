@@ -7,11 +7,12 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 )
 
 // =========================================================================
-// Section 1: Public Routes (no auth required) — 17 tests
+// Section 1: Public Routes (no auth required) — 18 tests
 // =========================================================================
 
 func TestPublicRoutes(t *testing.T) {
@@ -135,15 +136,26 @@ func TestPublicRoutes(t *testing.T) {
 			num: 14, name: "theme-modal", method: "GET", path: "/theme/modal",
 			expected: http.StatusOK,
 		},
-		// #15: POST /theme → 200 (same-origin COP)
+		// #15: GET /about-modal → 200, Cache-Control contains no-store
 		{
-			num: 15, name: "theme-post", method: "POST", path: "/theme",
+			num: 15, name: "about-modal", method: "GET", path: "/about-modal",
+			expected: http.StatusOK,
+			check: func(t *testing.T, resp *http.Response) {
+				cc := resp.Header.Get("Cache-Control")
+				if cc == "" || !strings.Contains(cc, "no-store") {
+					t.Errorf("expected Cache-Control with no-store, got %q", cc)
+				}
+			},
+		},
+		// #16: POST /theme → 200 (same-origin COP)
+		{
+			num: 16, name: "theme-post", method: "POST", path: "/theme",
 			body:     url.Values{"theme": {"dark"}},
 			expected: http.StatusOK,
 		},
-		// #16: POST /login (fail) → 200, login form with error
+		// #17: POST /login (fail) → 200, login form with error
 		{
-			num: 16, name: "login-fail", method: "POST",
+			num: 17, name: "login-fail", method: "POST",
 			expected: http.StatusOK,
 			check: func(t *testing.T, resp *http.Response) {
 				// Verify we get an HTML form with login-error-message
@@ -157,9 +169,9 @@ func TestPublicRoutes(t *testing.T) {
 				}
 			},
 		},
-		// #17: POST /login (success) → 200, HX-Trigger: auth-changed
+		// #18: POST /login (success) → 200, HX-Trigger: auth-changed
 		{
-			num: 17, name: "auth-changed", method: "POST",
+			num: 18, name: "auth-changed", method: "POST",
 			expected: http.StatusOK,
 			check: func(t *testing.T, resp *http.Response) {
 				if resp.Header.Get("Hx-Trigger") != "auth-changed" {
@@ -193,19 +205,19 @@ func TestPublicRoutes(t *testing.T) {
 				path = "/info/folder/" + folderParam(t)
 			case 13:
 				path = "/info/image/" + fileParam(t)
-			case 16, 17:
+			case 17, 18:
 				path = "/login"
 			}
 
 			// For login and theme tests, set form values directly
 			// (CrossOriginProtection handles request forgery at the router level).
-			if rt.num == 15 {
+			if rt.num == 16 {
 				rt.body = url.Values{
 					"theme": {"dark"},
 				}
-			} else if rt.num == 16 || rt.num == 17 {
+			} else if rt.num == 17 || rt.num == 18 {
 				pwd := "admin"
-				if rt.num == 16 {
+				if rt.num == 17 {
 					pwd = "wrong"
 				}
 				rt.body = url.Values{

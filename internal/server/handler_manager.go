@@ -85,7 +85,7 @@ func (m *HandlerManager) Build(
 	)
 
 	m.serverHandlers = handlers.NewServerHandlers(sm, app, app.AddCommonTemplateData, app.ServerError)
-	m.menuHandlers = handlers.NewMenuHandlers(sm, app.ServerError)
+	m.menuHandlers = handlers.NewMenuHandlers(sm, app.AddCommonTemplateData, app.ServerError)
 	m.themeHandlers = handlers.NewThemeHandlers(sm, app.GetConfig, app.AddCommonTemplateData, app.ServerError)
 
 	return nil

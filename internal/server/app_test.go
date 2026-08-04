@@ -349,7 +349,16 @@ func TestConfigManager_GetETagVersion_And_UpdateConfigWithPrecedence(t *testing.
 func TestApp_ScheduleStaleCacheDrop(t *testing.T) {
 	app := newAppForUnlock(t)
 	app.scheduleStaleCacheDrop("test")
-	time.Sleep(50 * time.Millisecond)
+
+	// Wait until the async drop goroutine completes so it cannot race with
+	// the pool shutdown in t.Cleanup.
+	deadline := time.Now().Add(5 * time.Second)
+	for app.RuntimeManager.staleCacheDropInFlight.Load() {
+		if time.Now().After(deadline) {
+			t.Fatal("stale cache drop did not complete")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 func Test_GetAdminUsername_delegates_to_AuthService(t *testing.T) {
@@ -427,33 +436,6 @@ func TestParseConfigUITemplates_EmptyFS(t *testing.T) {
 }
 
 // --- merged from app_startup_mock_test.go ---
-func readStartupLogs(t *testing.T, app *App) string {
-	t.Helper()
-	if app.logger == nil {
-		t.Fatal("app.logger is nil")
-	}
-	data, err := os.ReadFile(app.logger.FilePath())
-	if err != nil {
-		t.Fatalf("failed to read startup log file: %v", err)
-	}
-	return string(data)
-}
-
-func installNoDiscoveryStatsDone(app *App) chan struct{} {
-	statsDone := make(chan struct{})
-	app.testSeams.NoDiscoveryStatsDone = statsDone
-	return statsDone
-}
-
-func waitForNoDiscoveryStats(t *testing.T, statsDone <-chan struct{}) {
-	t.Helper()
-	select {
-	case <-statsDone:
-	case <-time.After(5 * time.Second):
-		t.Fatal("no-discovery stats goroutine did not finish")
-	}
-}
-
 type safeLogBuf struct {
 	mu  sync.Mutex
 	buf bytes.Buffer
@@ -819,15 +801,6 @@ func TestApp_Run_NoDiscovery_RefreshesGalleryStats(t *testing.T) {
 
 	app.setRootDir(&tempDir)
 
-	expectedStats := GalleryStats{ImagesSize: 4242}
-	app.testSeams.GetGalleryStatistics = func(ctx context.Context) (GalleryStats, error) {
-		return expectedStats, nil
-	}
-
-	app.testSeams.GetLastStartedAt = func(ctx context.Context, module string) (int64, bool, error) {
-		return 12345, true, nil
-	}
-
 	serveHook := &recordingServeHook{}
 	app.testSeams.Serve = serveHook.Serve
 
@@ -835,65 +808,25 @@ func TestApp_Run_NoDiscovery_RefreshesGalleryStats(t *testing.T) {
 		t.Fatalf("Run failed: %v", err)
 	}
 
-	// Wait for the async stats refresh goroutine to complete.
-	var got *GalleryStats
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		got = app.GetGalleryStatsCached(12345)
-		if got != nil {
-			break
+	// Wait for startup stats goroutine to complete.
+	gs := app.RuntimeManager.GalleryStats()
+	deadline := time.Now().Add(5 * time.Second)
+	for gs.running.Load() != 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("startup stats goroutine did not complete within 5s")
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if got == nil {
-		t.Fatal("gallery stats cache was not refreshed for lastStarted=12345")
-	}
-	if got.ImagesSize != expectedStats.ImagesSize {
-		t.Errorf("ImagesSize = %d, want %d", got.ImagesSize, expectedStats.ImagesSize)
-	}
-}
 
-func TestApp_Run_NoDiscovery_NoPreviousRun(t *testing.T) {
-	tempDir := t.TempDir()
-	opt := getopt.Opt{
-		SessionSecret:    getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true},
-		RunFileDiscovery: getopt.OptBool{Bool: false, IsSet: true},
+	// Verify counters are populated with concrete values.
+	if got := gs.running.Load(); got != 0 {
+		t.Errorf("running = %d, want 0", got)
 	}
-	app := New(opt, "x.y.z")
-	defer app.Shutdown()
-
-	app.setRootDir(&tempDir)
-
-	expectedStats := GalleryStats{ImagesSize: 777}
-	app.testSeams.GetGalleryStatistics = func(ctx context.Context) (GalleryStats, error) {
-		return expectedStats, nil
+	if got := gs.Folders(); got == "N/A" {
+		t.Error("Folders() returned N/A after startup completed")
 	}
-
-	app.testSeams.GetLastStartedAt = func(ctx context.Context, module string) (int64, bool, error) {
-		return 0, false, nil
-	}
-
-	serveHook := &recordingServeHook{}
-	app.testSeams.Serve = serveHook.Serve
-
-	if err := app.Run(1, 1); err != nil {
-		t.Fatalf("Run failed: %v", err)
-	}
-
-	var got *GalleryStats
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		got = app.GetGalleryStatsCached(0)
-		if got != nil {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if got == nil {
-		t.Fatal("gallery stats cache was not refreshed for lastStarted=0")
-	}
-	if got.ImagesSize != expectedStats.ImagesSize {
-		t.Errorf("ImagesSize = %d, want %d", got.ImagesSize, expectedStats.ImagesSize)
+	if got := gs.Images(); got == "N/A" {
+		t.Error("Images() returned N/A after startup completed")
 	}
 }
 
@@ -959,8 +892,10 @@ func TestStartCacheBatchLoad_AllowedWhenIdle(t *testing.T) {
 	}
 
 	var runCalled atomic.Bool
+	runDone := make(chan struct{}, 1)
 	app.testSeams.BatchLoadManagerRun = func(ctx context.Context) error {
 		runCalled.Store(true)
+		runDone <- struct{}{}
 		return nil
 	}
 
@@ -975,8 +910,12 @@ func TestStartCacheBatchLoad_AllowedWhenIdle(t *testing.T) {
 		t.Errorf("Message = %q, want started", res.Message)
 	}
 
-	// Wait briefly for the goroutine to invoke the hook.
-	time.Sleep(50 * time.Millisecond)
+	// The hook runs in a background goroutine; wait for it deterministically.
+	select {
+	case <-runDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("batch load run was not invoked")
+	}
 	if !runCalled.Load() {
 		t.Error("batch load run was not invoked")
 	}
@@ -1078,76 +1017,6 @@ func TestApp_Run_RestoreLastKnownGood_DBGetFails(t *testing.T) {
 	}
 	if serveHook.called {
 		t.Error("Serve should not be called when restore DB get fails")
-	}
-}
-
-func TestApp_Run_NoDiscovery_GetLastStartedAtError(t *testing.T) {
-	tempDir := t.TempDir()
-	opt := getopt.Opt{
-		SessionSecret:    getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true},
-		RunFileDiscovery: getopt.OptBool{Bool: false, IsSet: true},
-	}
-	app := New(opt, "x.y.z")
-	defer app.Shutdown()
-
-	app.setRootDir(&tempDir)
-
-	app.testSeams.GetLastStartedAt = func(context.Context, string) (int64, bool, error) {
-		return 0, false, fmt.Errorf("module state error")
-	}
-	app.testSeams.GetGalleryStatistics = func(context.Context) (GalleryStats, error) {
-		return GalleryStats{ImagesSize: 1}, nil
-	}
-
-	serveHook := &recordingServeHook{}
-	app.testSeams.Serve = serveHook.Serve
-
-	statsDone := installNoDiscoveryStatsDone(app)
-
-	if err := app.Run(1, 1); err != nil {
-		t.Fatalf("Run failed: %v", err)
-	}
-
-	waitForNoDiscoveryStats(t, statsDone)
-
-	logs := readStartupLogs(t, app)
-	if !strings.Contains(logs, "failed to get last started at") {
-		t.Errorf("expected 'failed to get last started at' log, got: %s", logs)
-	}
-}
-
-func TestApp_Run_NoDiscovery_RefreshStatsError(t *testing.T) {
-	tempDir := t.TempDir()
-	opt := getopt.Opt{
-		SessionSecret:    getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true},
-		RunFileDiscovery: getopt.OptBool{Bool: false, IsSet: true},
-	}
-	app := New(opt, "x.y.z")
-	defer app.Shutdown()
-
-	app.setRootDir(&tempDir)
-
-	app.testSeams.GetLastStartedAt = func(context.Context, string) (int64, bool, error) {
-		return 12345, true, nil
-	}
-	app.testSeams.GetGalleryStatistics = func(context.Context) (GalleryStats, error) {
-		return GalleryStats{}, fmt.Errorf("stats failure")
-	}
-
-	serveHook := &recordingServeHook{}
-	app.testSeams.Serve = serveHook.Serve
-
-	statsDone := installNoDiscoveryStatsDone(app)
-
-	if err := app.Run(1, 1); err != nil {
-		t.Fatalf("Run failed: %v", err)
-	}
-
-	waitForNoDiscoveryStats(t, statsDone)
-
-	logs := readStartupLogs(t, app)
-	if !strings.Contains(logs, "failed to refresh gallery stats cache") {
-		t.Errorf("expected 'failed to refresh gallery stats cache' log, got: %s", logs)
 	}
 }
 

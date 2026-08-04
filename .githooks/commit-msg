@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Strip Cursor agent attribution trailers injected despite user opt-out.
 # Runs on every commit (including agent commits that use git hooks).
+#
+# Portable: no sed -i (GNU vs BSD differ). Filter via temp file + awk.
 
 set -euo pipefail
 
@@ -11,13 +13,23 @@ if [[ ! -f "$msgfile" ]]; then
   exit 1
 fi
 
+tmp="$(mktemp)"
+trap 'rm -f "$tmp"' EXIT
+
 # Remove known Cursor attribution lines (exact and common variants).
-sed -i \
+sed \
   -e '/^Co-authored-by: Cursor <cursoragent@cursor.com>[[:space:]]*$/d' \
   -e '/^Made-with: Cursor[[:space:]]*$/d' \
-  "$msgfile"
+  "$msgfile" > "$tmp"
 
-# Collapse excessive trailing blank lines left after removal.
-sed -i -e :a -e '/^\n*$/{$d;N;ba' -e '}' "$msgfile"
+# Collapse trailing blank lines left after removal (portable awk).
+awk '
+  { lines[NR] = $0 }
+  END {
+    n = NR
+    while (n > 0 && lines[n] ~ /^[[:space:]]*$/) n--
+    for (i = 1; i <= n; i++) print lines[i]
+  }
+' "$tmp" > "$msgfile"
 
 exit 0

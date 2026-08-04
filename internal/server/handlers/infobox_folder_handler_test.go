@@ -17,16 +17,14 @@ import (
 
 type infoBoxFolderQueries struct {
 	fakeHandlerQueries
-	fileViews   []gallerydb.FileView
-	folderViews []gallerydb.FolderView
+	infoCounts gallerydb.GetFolderInfoCountsByIDRow
 }
 
-func (i infoBoxFolderQueries) GetFileViewsByFolderIDOrderByFileName(ctx context.Context, folderID sql.NullInt64) ([]gallerydb.FileView, error) {
-	return i.fileViews, nil
-}
-
-func (i infoBoxFolderQueries) GetFoldersViewsByParentIDOrderByName(ctx context.Context, parent sql.NullInt64) ([]gallerydb.FolderView, error) {
-	return i.folderViews, nil
+func (i infoBoxFolderQueries) GetFolderInfoCountsByID(ctx context.Context, id int64) (gallerydb.GetFolderInfoCountsByIDRow, error) {
+	if i.getFolderInfoCountsErr != nil {
+		return gallerydb.GetFolderInfoCountsByIDRow{}, i.getFolderInfoCountsErr
+	}
+	return i.infoCounts, nil
 }
 
 // --- InfoBoxFolder Tests ---
@@ -67,11 +65,11 @@ func TestInfoBoxFolder_LastModifiedAndCounts(t *testing.T) {
 		fakeHandlerQueries: fakeHandlerQueries{
 			folder: gallerydb.Folder{ID: 1, Name: "Test Folder", UpdatedAt: updatedAt},
 		},
-		fileViews: []gallerydb.FileView{
-			{ID: 1, Path: "image.jpg"},
-			{ID: 2, Path: "notes.txt"},
+		infoCounts: gallerydb.GetFolderInfoCountsByIDRow{
+			DirCount:   1,
+			ImageCount: 1,
+			FileCount:  1,
 		},
-		folderViews: []gallerydb.FolderView{{ID: 2, Name: "Child"}},
 	}
 	gh := setupTestGalleryHandlers(t, qh)
 
@@ -84,6 +82,13 @@ func TestInfoBoxFolder_LastModifiedAndCounts(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", w.Code)
 	}
+
+	// Verify Content-Type
+	contentType := w.Header().Get("Content-Type")
+	if contentType != "text/html; charset=utf-8" {
+		t.Errorf("expected Content-Type: text/html; charset=utf-8, got %q", contentType)
+	}
+
 	if w.Header().Get("Last-Modified") != time.Unix(updatedAt, 0).UTC().Format(http.TimeFormat) {
 		t.Errorf("unexpected Last-Modified header: %q", w.Header().Get("Last-Modified"))
 	}
@@ -99,6 +104,9 @@ func TestInfoBoxFolder_LastModifiedAndCounts(t *testing.T) {
 	}
 	if testutil.FindElementByID(doc, "folder-file-count") == nil {
 		t.Fatal("missing #folder-file-count")
+	}
+	if testutil.FindElementByID(doc, "folder-dir-count") == nil {
+		t.Fatal("missing #folder-dir-count")
 	}
 }
 
@@ -116,23 +124,8 @@ func TestInfoBoxFolder_InvalidID(t *testing.T) {
 	}
 }
 
-func TestInfoBoxFolder_SubfolderQueryError(t *testing.T) {
-	qh := &fakeHandlerQueries{getSubFoldersErr: errors.New("db error")}
-	gh := setupTestGalleryHandlers(t, qh)
-
-	req := httptest.NewRequest(http.MethodGet, "/info/folder/1", nil)
-	req.SetPathValue("id", "1")
-	w := httptest.NewRecorder()
-
-	gh.InfoBoxFolder(w, req)
-
-	if w.Code != http.StatusInternalServerError {
-		t.Errorf("expected status 500, got %d", w.Code)
-	}
-}
-
-func TestInfoBoxFolder_FileListQueryError(t *testing.T) {
-	qh := &fakeHandlerQueries{getImagesErr: errors.New("db error")}
+func TestInfoBoxFolder_CountsQueryError(t *testing.T) {
+	qh := &fakeHandlerQueries{getFolderInfoCountsErr: errors.New("db error")}
 	gh := setupTestGalleryHandlers(t, qh)
 
 	req := httptest.NewRequest(http.MethodGet, "/info/folder/1", nil)

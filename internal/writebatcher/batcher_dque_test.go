@@ -121,8 +121,9 @@ func TestNew_WithDQueDirPath_CrashRecovery(t *testing.T) {
 			flushCh <- struct{}{}
 			return nil
 		},
-		DQueDirPath:  dir,
-		MaxBatchSize: 100,
+		DQueDirPath:    dir,
+		MaxBatchSize:   100,
+		DeferDQueDrain: true,
 	}
 	wb, err := New(context.Background(), cfg)
 	if err != nil {
@@ -314,14 +315,7 @@ func TestWorker_DrainsDQue(t *testing.T) {
 	// Unblock the worker — with new code it drains dque
 	gate.unblock()
 
-	// Wait until all items are flushed (pendingCount reaches 0)
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if wb.PendingCount() == 0 {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+	waitForPendingZero(t, wb, 2*time.Second)
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -408,13 +402,7 @@ func TestWorker_InterleavedDrain(t *testing.T) {
 	}
 
 	// Wait for all items to be flushed
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if wb.PendingCount() == 0 {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+	waitForPendingZero(t, wb, 2*time.Second)
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -491,13 +479,7 @@ func TestWorker_DqNotify_Wake(t *testing.T) {
 	}
 
 	// Wait for processing
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if wb.PendingCount() == 0 {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+	waitForPendingZero(t, wb, 2*time.Second)
 
 	mu.Lock()
 	if len(flushed) != 3 {
@@ -624,13 +606,7 @@ func TestWorker_FlushTimerDuringDrain(t *testing.T) {
 	gate.unblock()
 
 	// Wait for all items to be flushed
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if wb.PendingCount() == 0 {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+	waitForPendingZero(t, wb, 2*time.Second)
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -1103,6 +1079,7 @@ func TestClose_WithOverflowInFlight(t *testing.T) {
 	}
 
 	// Start concurrent Submitters that will try to overflow.
+	landed := make(chan struct{}, 1)
 	const concurrentCount = 20
 	var submitWg sync.WaitGroup
 	submitWg.Add(concurrentCount)
@@ -1112,12 +1089,21 @@ func TestClose_WithOverflowInFlight(t *testing.T) {
 			err := wb.Submit(inflightItem{Val: 100 + g})
 			if err == nil {
 				atomic.AddInt64(&successfulSubmit, 1)
+				select {
+				case landed <- struct{}{}:
+				default:
+				}
 			}
 		}(g)
 	}
 
-	// Give goroutines time to reach the overflow path.
-	time.Sleep(50 * time.Millisecond)
+	// Wait for at least one submitter to land (overflow path) so Close
+	// overlaps in-flight overflow Submits.
+	select {
+	case <-landed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no concurrent submitter completed before Close")
+	}
 
 	// Release the blocked flush so the worker starts draining.
 	gate.unblock()
@@ -1275,6 +1261,7 @@ func TestPendingCount_NeverNegative(t *testing.T) {
 		for {
 			err := wb.Submit(negItem{Val: i})
 			if errors.Is(err, ErrFull) {
+				// WALL_OK: ErrFull backoff — brief sleep before retrying a full channel.
 				time.Sleep(time.Millisecond)
 				continue
 			}
@@ -1286,15 +1273,7 @@ func TestPendingCount_NeverNegative(t *testing.T) {
 	}
 
 	// Wait for all items to flush.
-	deadline := time.After(10 * time.Second)
-	for wb.PendingCount() != 0 {
-		select {
-		case <-deadline:
-			t.Fatal("timed out waiting for pendingCount to reach 0")
-		default:
-			time.Sleep(10 * time.Millisecond)
-		}
-	}
+	waitForPendingZero(t, wb, 10*time.Second)
 
 	close(monitorDone)
 	monitorWg.Wait()
@@ -1357,6 +1336,7 @@ func TestPendingCount_CrashRecovery(t *testing.T) {
 		FlushInterval:       10 * time.Second,
 		DQueDirPath:         dir,
 		DQueItemsPerSegment: 10,
+		DeferDQueDrain:      true,
 	}
 
 	wb, err := New(context.Background(), cfg)
@@ -1650,15 +1630,7 @@ func Test_E2E_OverflowAbsorbsBurst(t *testing.T) {
 	}
 
 	// Wait for pendingCount to reach 0 (all items processed)
-	deadline := time.After(30 * time.Second)
-	for wb.PendingCount() != 0 {
-		select {
-		case <-deadline:
-			t.Fatal("timed out waiting for pendingCount to reach 0")
-		default:
-			time.Sleep(10 * time.Millisecond)
-		}
-	}
+	waitForPendingZero(t, wb, 30*time.Second)
 
 	// Verify all items were received by the flush callback
 	mu.Lock()
@@ -1715,6 +1687,7 @@ func Test_E2E_CrashRecovery(t *testing.T) {
 		FlushInterval:       10 * time.Second,
 		DQueDirPath:         dir,
 		DQueItemsPerSegment: 10,
+		DeferDQueDrain:      true,
 	}
 
 	wb, err := New(context.Background(), cfg)
@@ -1790,6 +1763,9 @@ func Test_E2E_CrashRecovery_OverCapacity(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
+	// Wait for the worker to drain and flush every recovered item.
+	waitForPendingZero(t, wb, 30*time.Second)
+
 	// Close must return promptly even when dque exceeds channel capacity.
 	closeStart := time.Now()
 	if err := wb.Close(); err != nil {
@@ -1799,8 +1775,9 @@ func Test_E2E_CrashRecovery_OverCapacity(t *testing.T) {
 		t.Errorf("Close took %v, want under 2s (non-blocking dque shutdown)", elapsed)
 	}
 
-	if got := persistedDQueSizeFor[capItem](t, dir); got != numItems {
-		t.Errorf("persisted dque size after Close = %d, want %d recovered items on disk", got, numItems)
+	// All recovered items were drained and flushed; nothing remains on disk.
+	if got := persistedDQueSizeFor[capItem](t, dir); got != 0 {
+		t.Errorf("persisted dque size after Close = %d, want 0 (all items drained and flushed)", got)
 	}
 }
 
@@ -1995,13 +1972,7 @@ func TestDrainDQueAll_DrainsItemsOnDqNotify(t *testing.T) {
 	default:
 	}
 
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if wb.PendingCount() == 0 {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	waitForPendingZero(t, wb, 2*time.Second)
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -2016,9 +1987,14 @@ func TestDrainDQueAll_DrainsItemsOnDqNotify(t *testing.T) {
 func TestDrainDQueAll_DQueDequeueError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
+	dequeueCalled := make(chan struct{}, 1)
 	mq := &mockDQue[int]{
 		sizeFn: func() int { return 1 },
 		dequeueFn: func() (*int, error) {
+			select {
+			case dequeueCalled <- struct{}{}:
+			default:
+			}
 			return nil, errors.New("dequeue denied")
 		},
 	}
@@ -2037,12 +2013,25 @@ func TestDrainDQueAll_DQueDequeueError(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
+	// Wait for the worker's startup drain to hit the dequeue error.
+	select {
+	case <-dequeueCalled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("worker did not attempt dque dequeue at startup")
+	}
+
 	select {
 	case wb.dqNotify <- struct{}{}:
 	default:
 	}
 
-	time.Sleep(50 * time.Millisecond)
+	// Wait for the dqNotify wake to drive another drain attempt that errors.
+	select {
+	case <-dequeueCalled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("worker did not attempt dque dequeue after dqNotify wake")
+	}
+
 	cancel()
 
 	select {

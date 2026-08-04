@@ -102,24 +102,6 @@ func TestIntegration_RuntimeManager_ServeAndShutdown(t *testing.T) {
 	}
 }
 
-// TestRefreshGalleryStatsCache_ErrorPath verifies that refreshGalleryStatsCache
-// returns an error and does not cache anything when getGalleryStatistics fails.
-func TestRefreshGalleryStatsCache_ErrorPath(t *testing.T) {
-	app := CreateApp(t)
-	app.testSeams.GetGalleryStatistics = func(context.Context) (GalleryStats, error) {
-		return GalleryStats{}, errors.New("stats failure")
-	}
-
-	_, err := app.refreshGalleryStatsCache(context.Background(), 12345)
-	if err == nil {
-		t.Fatal("expected error when getGalleryStatistics fails")
-	}
-
-	if got := app.GetGalleryStatsCached(12345); got != nil {
-		t.Error("expected no cached stats after error")
-	}
-}
-
 func waitForURLReady(url string) error {
 	client := &http.Client{Timeout: 100 * time.Millisecond}
 	deadline := time.Now().Add(2 * time.Second)

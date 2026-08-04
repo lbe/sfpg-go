@@ -76,7 +76,7 @@ func New(opt getopt.Opt, version string) *App {
 	// Default ImporterFactory constructs a normal gallerylib.Importer and
 	// returns it as the Importer interface.
 	app.ImporterFactory = func(conn *sql.Conn, q *gallerydb.CustomQueries) files.Importer {
-		return &gallerylib.Importer{Conn: conn, Q: q}
+		return &gallerylib.Importer{Conn: conn, Q: q, OnFolderCreated: app.OnFolderCreated}
 	}
 
 	// Initialize templates using the embedded filesystem

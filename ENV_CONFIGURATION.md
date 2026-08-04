@@ -48,7 +48,7 @@ Existing entries decode automatically via magic-prefix detection.
 ### `SFG_PROFILE`
 
 **Default**: `''`
-**Description**: Profiling mode: `cpu`, `mem`, `block`, etc. Enables pprof endpoints at `/debug/pprof/`.
+**Description**: Profiling mode: `cpu`, `mem`, `block`, etc. Enables the file-based profiler (`internal/profiler`), **not** HTTP `/debug/pprof/`.
 
 ### `SFG_UNLOCK_ACCOUNT`
 

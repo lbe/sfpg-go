@@ -17,16 +17,6 @@ func TestParseDashboard(t *testing.T) {
 <body>
 <div id="dashboard-container">
 	<div id="last-updated">22:30:00</div>
-	<div class="card">
-		<div class="card-title">discovery</div>
-		<div class="text-sm">discovery</div>
-		<span class="badge">active</span>
-	</div>
-	<div class="card">
-		<div class="card-title">cache_preload</div>
-		<div class="text-sm">cache_preload</div>
-		<span class="badge">active</span>
-	</div>
 	<!-- Memory Stats -->
 	<div>
 		<div class="stat-title">Allocated</div>
@@ -110,15 +100,6 @@ func TestParseDashboard(t *testing.T) {
 	<div>
 		<div class="stat-title">Queued Items</div>
 		<div id="queue-queued" class="stat-value">0</div>
-		<div id="queue-capacity-desc" class="stat-desc">of 10,000 items</div>
-	</div>
-	<div>
-		<div class="stat-title">Utilization</div>
-		<div id="queue-utilization" class="stat-value">0%</div>
-	</div>
-	<div>
-		<div class="stat-title">Available</div>
-		<div id="queue-available" class="stat-value">10,000</div>
 	</div>
 	<!-- File Processing Stats - DISTINCT value: 3,314 -->
 	<div>
@@ -213,17 +194,6 @@ func TestParseDashboard(t *testing.T) {
 		t.Errorf("LastUpdated = %q, want %q", metrics.LastUpdated, "22:30:00")
 	}
 
-	// Verify modules
-	if len(metrics.Modules) != 2 {
-		t.Fatalf("len(Modules) = %d, want 2", len(metrics.Modules))
-	}
-	if metrics.Modules[0].Name != "discovery" {
-		t.Errorf("Modules[0].Name = %q, want %q", metrics.Modules[0].Name, "discovery")
-	}
-	if metrics.Modules[0].Status != "active" {
-		t.Errorf("Modules[0].Status = %q, want %q", metrics.Modules[0].Status, "active")
-	}
-
 	// Verify memory stats
 	if metrics.Memory.Allocated != "15.0 MiB" {
 		t.Errorf("Memory.Allocated = %q, want %q", metrics.Memory.Allocated, "15.0 MiB")
@@ -295,15 +265,6 @@ func TestParseDashboard(t *testing.T) {
 	// Verify queue
 	if metrics.Queue.Queued != "0" {
 		t.Errorf("Queue.Queued = %q, want %q", metrics.Queue.Queued, "0")
-	}
-	if metrics.Queue.Capacity != "10,000" {
-		t.Errorf("Queue.Capacity = %q, want %q", metrics.Queue.Capacity, "10,000")
-	}
-	if metrics.Queue.Utilization != "0%" {
-		t.Errorf("Queue.Utilization = %q, want %q", metrics.Queue.Utilization, "0%")
-	}
-	if metrics.Queue.Available != "10,000" {
-		t.Errorf("Queue.Available = %q, want %q", metrics.Queue.Available, "10,000")
 	}
 
 	// Verify file processing - DISTINCT from Worker Pool Completed
@@ -532,79 +493,5 @@ func TestExtractLastUpdated_Missing(t *testing.T) {
 	}
 	if metrics.LastUpdated != "" {
 		t.Errorf("LastUpdated = %q, want empty string", metrics.LastUpdated)
-	}
-}
-
-// TestParseModuleCard_MissingName filters cards without a name element.
-func TestParseModuleCard_MissingName(t *testing.T) {
-	html := `<!DOCTYPE html><html><body><div id="dashboard-container">
-		<div class="card"><span class="badge">active</span></div>
-	</div></body></html>`
-
-	metrics, err := ParseDashboard(strings.NewReader(html))
-	if err != nil {
-		t.Fatalf("ParseDashboard failed: %v", err)
-	}
-	if len(metrics.Modules) != 0 {
-		t.Errorf("len(Modules) = %d, want 0", len(metrics.Modules))
-	}
-}
-
-// TestParseModuleCard_MissingBadge filters cards without a status badge.
-func TestParseModuleCard_MissingBadge(t *testing.T) {
-	html := `<!DOCTYPE html><html><body><div id="dashboard-container">
-		<div class="card"><div class="text-sm">discovery</div></div>
-	</div></body></html>`
-
-	metrics, err := ParseDashboard(strings.NewReader(html))
-	if err != nil {
-		t.Fatalf("ParseDashboard failed: %v", err)
-	}
-	if len(metrics.Modules) != 0 {
-		t.Errorf("len(Modules) = %d, want 0", len(metrics.Modules))
-	}
-}
-
-// TestParseModuleCard_InvalidActivityCount leaves ActivityCount at zero.
-func TestParseModuleCard_InvalidActivityCount(t *testing.T) {
-	html := `<!DOCTYPE html><html><body><div id="dashboard-container">
-		<div class="card">
-			<div class="text-sm">discovery</div>
-			<span class="badge">active</span>
-			<div>Activity count: not-a-number</div>
-		</div>
-	</div></body></html>`
-
-	metrics, err := ParseDashboard(strings.NewReader(html))
-	if err != nil {
-		t.Fatalf("ParseDashboard failed: %v", err)
-	}
-	if len(metrics.Modules) != 1 {
-		t.Fatalf("len(Modules) = %d, want 1", len(metrics.Modules))
-	}
-	if metrics.Modules[0].ActivityCount != 0 {
-		t.Errorf("ActivityCount = %d, want 0", metrics.Modules[0].ActivityCount)
-	}
-}
-
-// TestParseModuleCard_ValidActivityCount parses comma-separated counts.
-func TestParseModuleCard_ValidActivityCount(t *testing.T) {
-	html := `<!DOCTYPE html><html><body><div id="dashboard-container">
-		<div class="card">
-			<div class="text-sm">discovery</div>
-			<span class="badge">active</span>
-			<div>Activity count: 1,234</div>
-		</div>
-	</div></body></html>`
-
-	metrics, err := ParseDashboard(strings.NewReader(html))
-	if err != nil {
-		t.Fatalf("ParseDashboard failed: %v", err)
-	}
-	if len(metrics.Modules) != 1 {
-		t.Fatalf("len(Modules) = %d, want 1", len(metrics.Modules))
-	}
-	if metrics.Modules[0].ActivityCount != 1234 {
-		t.Errorf("ActivityCount = %d, want 1234", metrics.Modules[0].ActivityCount)
 	}
 }

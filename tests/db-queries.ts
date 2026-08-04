@@ -107,11 +107,11 @@ export function getFirstFolderWithImages(minCount: number): number | null {
   return row?.folder_id ?? null;
 }
 
-/** Ordered list of file IDs in a folder (for first/last-image assertions). */
+/** Ordered list of file IDs in a folder (lightbox nav order: filename, id). */
 export function getFileIDsInFolder(folderID: number): number[] {
   const db = getDB();
   const rows = db
-    .prepare("SELECT id FROM files WHERE folder_id = ? ORDER BY id")
+    .prepare("SELECT id FROM files WHERE folder_id = ? ORDER BY filename, id")
     .all(folderID) as Array<{ id: number }>;
   db.close();
   return rows.map((r) => r.id);

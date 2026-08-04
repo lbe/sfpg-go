@@ -187,6 +187,7 @@ func TestRenderTemplate_AllTemplates(t *testing.T) {
 		{"infobox-image.html.tmpl", true},
 		{"hamburger-menu-items.html.tmpl", false},
 		{"theme-modal.html.tmpl", false},
+		{"about-modal.html.tmpl", false},
 	}
 
 	for _, tmpl := range templates {

@@ -273,15 +273,15 @@ test.describe.serial("Configuration", () => {
     const fileInput = page.locator("#import-file-input");
     await fileInput.setInputFiles(tmpFile);
 
-    // The preview modal opens showing the diff
+    // Wait for HTMX preview content first (toggle alone can race on fast Macs),
+    // then assert the modal is open.
+    await expect(page.locator("#import-diff-modal .modal-box")).toContainText(
+      "Import Configuration Preview",
+      { timeout: 15000 },
+    );
     await expect(page.locator("#import-diff-modal-toggle")).toBeChecked({
       timeout: 5000,
     });
-    // Verify the diff shows both Current and Imported sections
-    await expect(page.locator("#import-diff-modal .modal-box")).toContainText(
-      "Import Configuration Preview",
-      { timeout: 3000 },
-    );
 
     // Close the preview modal
     await page
@@ -304,6 +304,10 @@ test.describe.serial("Configuration", () => {
     // Upload file → triggers preview modal
     const fileInput = page.locator("#import-file-input");
     await fileInput.setInputFiles(tmpFile);
+    await expect(page.locator("#import-diff-modal .modal-box")).toContainText(
+      "Import Configuration Preview",
+      { timeout: 15000 },
+    );
     await expect(page.locator("#import-diff-modal-toggle")).toBeChecked({
       timeout: 5000,
     });

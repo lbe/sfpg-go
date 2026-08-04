@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -14,13 +15,22 @@ import (
 	"github.com/lbe/sfpg-go/internal/dbconnpool"
 )
 
+// HTTPCacheCounterState holds in-memory HTTP cache metrics owned by the caller
+// (InfrastructureService). BaselineRunning counts in-flight baseline queries;
+// while it is >0 and a counter is 0 the getters report -1 ("N/A").
+type HTTPCacheCounterState struct {
+	SizeBytes       *atomic.Int64
+	EntryCount      *atomic.Int64
+	BaselineRunning *atomic.Int32
+}
+
 // HTTPCacheMiddleware is the SQLite-backed HTTP cache handler.
 type HTTPCacheMiddleware struct {
-	db          *dbconnpool.DbSQLConnPool
-	config      CacheConfig
-	sizeCounter *atomic.Int64         // Shared atomic counter for cache size
-	submitFunc  func(*HTTPCacheEntry) // Optional custom submit function
-	syncMode    bool                  // If true, submitFunc is called directly (for tests)
+	db         *dbconnpool.DbSQLConnPool
+	config     CacheConfig
+	counters   *HTTPCacheCounterState
+	submitFunc func(*HTTPCacheEntry) // Optional custom submit function
+	syncMode   bool                  // If true, submitFunc is called directly (for tests)
 }
 
 // cacheCapturingWriter buffers response data for caching.
@@ -51,17 +61,57 @@ func (ccw *cacheCapturingWriter) Write(p []byte) (int, error) {
 	return ccw.ResponseWriter.Write(p)
 }
 
+// captureBodySink is an io.Writer that appends captured body bytes to the
+// cacheCapturingWriter's body buffer without writing to the client or
+// committing a status code. This defers the HTTP status to CommitCapturedBody
+// so that a failed render can still produce a 500 response.
+type captureBodySink struct{ ccw *cacheCapturingWriter }
+
+// Write appends p to the capturer body only. It does NOT call
+// ResponseWriter.Write or WriteHeader, so the HTTP status stays uncommitted
+// until CommitCapturedBody is called.
+func (s *captureBodySink) Write(p []byte) (int, error) {
+	s.ccw.body = append(s.ccw.body, p...)
+	return len(p), nil
+}
+
+// CaptureBodyWriter returns an io.Writer that appends captured body bytes
+// to the internal buffer without writing through to the underlying
+// ResponseWriter and without committing a status code. Call
+// CommitCapturedBody after a successful render to flush body + status.
+func (ccw *cacheCapturingWriter) CaptureBodyWriter() io.Writer {
+	return &captureBodySink{ccw: ccw}
+}
+
+// CommitCapturedBody writes the HTTP status (200 if not already set) and the
+// captured body to the underlying ResponseWriter. After commit, ccw.body is
+// left intact for the middleware to move into a cache entry.
+func (ccw *cacheCapturingWriter) CommitCapturedBody() error {
+	if !ccw.wroteHeader {
+		ccw.WriteHeader(http.StatusOK)
+	}
+	_, err := ccw.ResponseWriter.Write(ccw.body)
+	return err
+}
+
+// ResetCapturedBody clears the captured body length while retaining the
+// backing array capacity. It does NOT change wroteHeader or statusCode,
+// allowing a subsequent WriteHeader (e.g. 500) to take effect.
+func (ccw *cacheCapturingWriter) ResetCapturedBody() {
+	ccw.body = ccw.body[:0]
+}
+
 // NewHTTPCacheMiddleware constructs the cache middleware with a custom submit function instead of a queue.
-func NewHTTPCacheMiddleware(db *dbconnpool.DbSQLConnPool, cfg CacheConfig, sizeCounter *atomic.Int64, submit func(*HTTPCacheEntry)) *HTTPCacheMiddleware {
+func NewHTTPCacheMiddleware(db *dbconnpool.DbSQLConnPool, cfg CacheConfig, counters *HTTPCacheCounterState, submit func(*HTTPCacheEntry)) *HTTPCacheMiddleware {
 	// In production, submitFunc is mandatory
 	if submit == nil {
 		panic("HTTPCacheMiddleware: submitFunc is required in production - use unified batcher")
 	}
 	return &HTTPCacheMiddleware{
-		db:          db,
-		config:      cfg,
-		sizeCounter: sizeCounter,
-		submitFunc:  submit,
+		db:         db,
+		config:     cfg,
+		counters:   counters,
+		submitFunc: submit,
 	}
 }
 
@@ -70,15 +120,15 @@ func NewHTTPCacheMiddleware(db *dbconnpool.DbSQLConnPool, cfg CacheConfig, sizeC
 func NewHTTPCacheMiddlewareForTest(
 	db *dbconnpool.DbSQLConnPool,
 	cfg CacheConfig,
-	sizeCounter *atomic.Int64,
+	counters *HTTPCacheCounterState,
 	submitFunc func(*HTTPCacheEntry), // test-only: accepts nil submitFunc
 ) *HTTPCacheMiddleware {
 	return &HTTPCacheMiddleware{
-		db:          db,
-		config:      cfg,
-		sizeCounter: sizeCounter,
-		submitFunc:  submitFunc,
-		syncMode:    true,
+		db:         db,
+		config:     cfg,
+		counters:   counters,
+		submitFunc: submitFunc,
+		syncMode:   true,
 	}
 }
 
@@ -114,28 +164,48 @@ func (hcm *HTTPCacheMiddleware) UpdatePool(newPool *dbconnpool.DbSQLConnPool) {
 	}
 }
 
-// GetSizeBytes returns the current cache size in bytes.
-// Queries the database directly for accurate size (the atomic counter is only
-// used for runtime eviction calculations, not for reporting metrics).
+// GetSizeBytes returns the cache size from the in-memory counter, or -1 if
+// the baseline is still running and the counter is 0. No database access.
 func (hcm *HTTPCacheMiddleware) GetSizeBytes() int64 {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	size, err := GetCacheSizeBytes(ctx, hcm.db)
-	if err != nil {
+	c := hcm.counters
+	if c == nil || c.BaselineRunning == nil {
+		return -1
+	}
+	if c.SizeBytes == nil {
 		return 0
 	}
-	return size
+	v := c.SizeBytes.Load()
+	if v == 0 && c.BaselineRunning.Load() > 0 {
+		return -1
+	}
+	return v
 }
 
-// GetEntryCount returns the number of entries in the cache.
+// GetEntryCount returns the entry count from the in-memory counter, or -1 if
+// the baseline is still running and the counter is 0. No database access.
 func (hcm *HTTPCacheMiddleware) GetEntryCount() int64 {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	count, err := CountCacheEntries(ctx, hcm.db)
-	if err != nil {
+	c := hcm.counters
+	if c == nil || c.BaselineRunning == nil {
+		return -1
+	}
+	if c.EntryCount == nil {
 		return 0
 	}
-	return count
+	v := c.EntryCount.Load()
+	if v == 0 && c.BaselineRunning.Load() > 0 {
+		return -1
+	}
+	return v
+}
+
+// HTTPCacheCountersForTest builds a counter state around an existing size
+// counter with BaselineRunning set to 0 (not running), for tests that only
+// track bytes. The signature is unchanged so callers unaffected.
+func HTTPCacheCountersForTest(size *atomic.Int64) *HTTPCacheCounterState {
+	if size == nil {
+		return nil
+	}
+	return &HTTPCacheCounterState{SizeBytes: size, EntryCount: &atomic.Int64{}, BaselineRunning: &atomic.Int32{}}
 }
 
 // parseGalleryFolderID extracts folder ID from a gallery path like /gallery/{id}.
@@ -287,10 +357,8 @@ func (hcm *HTTPCacheMiddleware) Middleware(next http.Handler) http.Handler {
 
 		// Cache miss: buffer response and store if eligible
 		w.Header().Set("X-Cache", "MISS")
-		buf := &cacheCapturingWriter{
-			ResponseWriter: w,
-			body:           make([]byte, 0, 4096),
-		}
+		buf := getCacheCapturingWriter(w)
+		defer putCacheCapturingWriter(buf)
 
 		next.ServeHTTP(buf, r)
 
@@ -325,7 +393,7 @@ func (hcm *HTTPCacheMiddleware) Middleware(next http.Handler) http.Handler {
 			expiresAt = sql.NullInt64{Int64: now + int64(hcm.config.DefaultTTL.Seconds()), Valid: true}
 		}
 
-		// Get entry from pool (Body already has 8KB capacity)
+		// Get entry from pool (Body may have retained capacity from a prior capture)
 		newEntry := GetHTTPCacheEntry()
 		newEntry.Key = cacheKey
 		newEntry.Method = r.Method
@@ -339,8 +407,9 @@ func (hcm *HTTPCacheMiddleware) Middleware(next http.Handler) http.Handler {
 		newEntry.ETag = sql.NullString{String: buf.Header().Get("ETag"), Valid: buf.Header().Get("ETag") != ""}
 		newEntry.LastModified = sql.NullString{String: buf.Header().Get("Last-Modified"), Valid: buf.Header().Get("Last-Modified") != ""}
 		newEntry.Vary = sql.NullString{String: buf.Header().Get("Vary"), Valid: buf.Header().Get("Vary") != ""}
-		// Copy body using append - reuses backing array if capacity suffices
-		newEntry.Body = append(newEntry.Body[:0], buf.body...)
+		// Move body from capturer to entry (zero-copy) — complete before Put via defer
+		newEntry.Body = buf.body
+		buf.body = make([]byte, 0, defaultCapturerBodyCapacity) // Fresh buffer before deferred Put
 		newEntry.ContentLength = sql.NullInt64{Int64: bodySize, Valid: true}
 		newEntry.CreatedAt = now
 		newEntry.ExpiresAt = expiresAt

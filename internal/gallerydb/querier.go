@@ -26,6 +26,9 @@ type Querier interface {
 	GetConfigs(ctx context.Context) ([]Config, error)
 	GetExifByFile(ctx context.Context, fileID int64) (ExifMetadatum, error)
 	GetFileByPath(ctx context.Context, path string) (File, error)
+	GetFileCountAndTimestamps(ctx context.Context) (GetFileCountAndTimestampsRow, error)
+	GetFileFolderIndexByID(ctx context.Context, id int64) (GetFileFolderIndexByIDRow, error)
+	GetFileSizeSum(ctx context.Context) (int64, error)
 	GetFileViewByID(ctx context.Context, id int64) (FileView, error)
 	GetFileViewsByFolderIDOrderByFileName(ctx context.Context, folderID sql.NullInt64) ([]FileView, error)
 	// -- name: PopulateMissingTileID :exec
@@ -49,11 +52,14 @@ type Querier interface {
 	//    );
 	GetFolderByID(ctx context.Context, id int64) (Folder, error)
 	GetFolderByPath(ctx context.Context, path string) (Folder, error)
+	GetFolderCount(ctx context.Context) (int64, error)
 	GetFolderIDByPath(ctx context.Context, path string) (int64, error)
+	GetFolderInfoCountsByID(ctx context.Context, id int64) (GetFolderInfoCountsByIDRow, error)
 	GetFolderTileExistsViewByPath(ctx context.Context, path string) (bool, error)
 	GetFolderViewByID(ctx context.Context, id int64) (FolderView, error)
 	GetFoldersViewsByParentIDOrderByName(ctx context.Context, parentID sql.NullInt64) ([]FolderView, error)
-	GetGalleryStatistics(ctx context.Context) (GetGalleryStatisticsRow, error)
+	GetGalleryFileThumbRowsByFolderID(ctx context.Context, folderID sql.NullInt64) ([]GetGalleryFileThumbRowsByFolderIDRow, error)
+	GetGalleryFolderThumbRowsByParentID(ctx context.Context, parentID sql.NullInt64) ([]GetGalleryFolderThumbRowsByParentIDRow, error)
 	// queries for HTTP cache table operations
 	GetHttpCacheByKey(ctx context.Context, key string) (HttpCache, error)
 	GetHttpCacheOldestCreated(ctx context.Context, limit int64) ([]GetHttpCacheOldestCreatedRow, error)
@@ -61,6 +67,7 @@ type Querier interface {
 	GetIPTCByFile(ctx context.Context, fileID int64) (IptcMetadatum, error)
 	GetIPTCKeywords(ctx context.Context, fileID int64) ([]IptcKeyword, error)
 	GetInvalidFileByPath(ctx context.Context, path string) (InvalidFile, error)
+	GetLightboxNavByFileID(ctx context.Context, id int64) (GetLightboxNavByFileIDRow, error)
 	GetLoginAttempt(ctx context.Context, username string) (LoginAttempt, error)
 	GetModuleState(ctx context.Context, name string) (ModuleState, error)
 	GetThumbnailExistsViewByID(ctx context.Context, id int64) (bool, error)

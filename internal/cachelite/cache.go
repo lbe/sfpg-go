@@ -323,34 +323,36 @@ func DropStaleCacheTableIfExists(ctx context.Context, db *dbconnpool.DbSQLConnPo
 
 // EvictLRU removes oldest cache entries until at least targetFreeBytes are available.
 // Uses LRU (Least Recently Used) strategy based on created_at timestamp.
-// Returns the actual number of bytes freed.
-func EvictLRU(ctx context.Context, db *dbconnpool.DbSQLConnPool, targetFreeBytes int64) (int64, error) {
+// Returns the actual number of bytes freed and the number of entries deleted.
+func EvictLRU(ctx context.Context, db *dbconnpool.DbSQLConnPool, targetFreeBytes int64) (freedBytes int64, entriesDeleted int64, err error) {
 	// Check for already-canceled context before starting database operations.
 	// This prevents panics in database/sql when rows.Next() is called with a canceled context.
-	if err := ctx.Err(); err != nil {
-		return 0, fmt.Errorf("context canceled before eviction: %w", err)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return 0, 0, fmt.Errorf("context canceled before eviction: %w", ctxErr)
 	}
 
 	cpc, err := db.Get()
 	if err != nil {
-		return 0, fmt.Errorf("failed to get connection: %w", err)
+		return 0, 0, fmt.Errorf("failed to get connection: %w", err)
 	}
 	defer db.Put(cpc)
 
 	oldest, err := cpc.Queries.GetHttpCacheOldestCreated(ctx, 1000)
 	if err != nil {
-		return 0, fmt.Errorf("GetHttpCacheOldestCreated failed: %w", err)
+		return 0, 0, fmt.Errorf("GetHttpCacheOldestCreated failed: %w", err)
 	}
 
-	freedBytes := int64(0)
+	freedBytes = int64(0)
 	for _, row := range oldest {
 		if freedBytes >= targetFreeBytes {
 			break
 		}
 
 		if err := cpc.Queries.DeleteHttpCacheByID(ctx, row.ID); err != nil {
-			return freedBytes, fmt.Errorf("DeleteHttpCacheByID failed: %w", err)
+			return freedBytes, entriesDeleted, fmt.Errorf("DeleteHttpCacheByID failed: %w", err)
 		}
+
+		entriesDeleted++
 
 		// Add actual stored length from LENGTH(body) (handle NULL as 0)
 		if row.StoredLength.Valid {
@@ -358,7 +360,7 @@ func EvictLRU(ctx context.Context, db *dbconnpool.DbSQLConnPool, targetFreeBytes
 		}
 	}
 
-	return freedBytes, nil
+	return freedBytes, entriesDeleted, nil
 }
 
 // GetCacheSizeBytes returns the total size of all cache entries in bytes.

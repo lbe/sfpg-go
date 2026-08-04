@@ -71,7 +71,12 @@ func (s *InfrastructureService) InitializeHTTPCache(config *config.Config) {
 	if s.writeBatcher != nil {
 		submitFunc = s.submitCacheWrite
 	}
-	s.cacheMW = cachelite.NewHTTPCacheMiddleware(s.dbRoPool, cfg, &s.cacheSizeBytes, submitFunc)
+	counters := &cachelite.HTTPCacheCounterState{
+		SizeBytes:       &s.cacheSizeBytes,
+		EntryCount:      &s.cacheEntryCount,
+		BaselineRunning: &s.cacheBaselineRunning,
+	}
+	s.cacheMW = cachelite.NewHTTPCacheMiddleware(s.dbRoPool, cfg, counters, submitFunc)
 	s.cacheMWForEvict = s.cacheMW
 }
 
@@ -93,7 +98,7 @@ func (s *InfrastructureService) InvalidateHTTPCache() {
 		return
 	}
 	s.cacheSizeBytes.Store(0)
-	s.cacheSizeCalibrated.Store(true)
+	s.cacheEntryCount.Store(0)
 }
 
 func (s *InfrastructureService) submitCacheWrite(entry *cachelite.HTTPCacheEntry) {
@@ -138,12 +143,15 @@ func (s *InfrastructureService) maybeEvictCacheEntries(batch []BatchedWrite) {
 		defer cancel()
 
 		targetFree := currentSize - cfg.MaxTotalSize + cfg.MaxTotalSize/10
-		freed, evErr := s.testSeams.EvictLRU(ctx, s.dbRwPool, targetFree)
+		freed, deleted, evErr := s.testSeams.EvictLRU(ctx, s.dbRwPool, targetFree)
 		if evErr != nil {
 			slog.Warn("cache eviction failed", "err", evErr, "target", targetFree, "freed", freed)
 		}
 		if freed > 0 {
 			s.cacheSizeBytes.Add(-freed)
+		}
+		if deleted > 0 {
+			s.cacheEntryCount.Add(-deleted)
 		}
 	}
 }

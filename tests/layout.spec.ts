@@ -52,41 +52,54 @@ test.describe("Layout & Static Assets", () => {
     await goToGallery(page);
     await openMenu(page);
 
-    await page
-      .locator('#hamburger-menu-items label[aria-label="About"]')
-      .click();
-    // about_modal is a checkbox input — checking it reveals the sibling .modal
+    await page.locator('#hamburger-menu-items a[aria-label="About"]').click();
+    await expect(page.locator("#about-modal-container")).toBeAttached({
+      timeout: 5000,
+    });
     await expect(page.locator("#about_modal")).toBeChecked({ timeout: 5000 });
-    // Version text is inside .modal-box (sibling of the checkbox), not on the checkbox itself
-    // Scope to the about modal's .modal-box (sibling of #about_modal checkbox)
     await expect(
       page.locator(".modal-box").filter({ hasText: "Version" }),
     ).toBeVisible({ timeout: 3000 });
   });
 
+  test("6b: About modal endpoint is no-store", async ({ page }) => {
+    const response = await page.request.get("/about-modal");
+    expect(response.status()).toBe(200);
+    const cacheControl = response.headers()["cache-control"] || "";
+    expect(
+      cacheControl.includes("no-store") || cacheControl.includes("no-cache"),
+    ).toBeTruthy();
+  });
+
   test("7: About modal closes via Escape", async ({ page }) => {
     await goToGallery(page);
     await openMenu(page);
-    await page
-      .locator('#hamburger-menu-items label[aria-label="About"]')
-      .click();
+    await page.locator('#hamburger-menu-items a[aria-label="About"]').click();
+    await expect(page.locator("#about-modal-container")).toBeAttached({
+      timeout: 5000,
+    });
     await expect(page.locator("#about_modal")).toBeChecked({ timeout: 5000 });
 
     await page.keyboard.press("Escape");
     await expect(page.locator("#about_modal")).not.toBeChecked({
       timeout: 3000,
     });
+    await expect(page.locator("#about-modal-container")).not.toBeAttached({
+      timeout: 3000,
+    });
   });
 
-  test("8: Pprof unauthenticated returns 400", async ({ page }) => {
+  test("8: Pprof unauthenticated returns 401", async ({ page }) => {
     const response = await page.goto("/debug/pprof/");
-    expect(response?.status()).toBe(400);
+    expect(response?.status()).toBe(401);
   });
 
-  test("9: Pprof disabled when authenticated", async ({ page }) => {
+  test("9: Pprof returns 200 when authenticated on loopback", async ({
+    page,
+  }) => {
     await loginViaUI(page);
     const response = await page.goto("/debug/pprof/");
-    expect(response?.status()).toBe(400);
+    expect(response?.status()).toBe(200);
   });
 
   test("10: HTML title is not empty", async ({ page }) => {

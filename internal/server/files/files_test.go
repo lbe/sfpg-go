@@ -1108,7 +1108,12 @@ func (f *fakeProcessor) ProcessFile(ctx context.Context, path string) (*File, er
 	if exists {
 		return &File{Path: path, Exists: true}, nil
 	}
-	return &File{Path: path}, nil
+	return &File{
+		Path: path,
+		File: gallerydb.File{
+			SizeBytes: sql.NullInt64{Int64: 1024, Valid: true},
+		},
+	}, nil
 }
 
 func (f *fakeProcessor) ProcessFileWithConn(ctx context.Context, path string, cpcRwRo *dbconnpool.CpConn) (*File, error) {

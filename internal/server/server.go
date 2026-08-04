@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/lbe/sfpg-go/internal/gallerydb"
@@ -224,9 +225,11 @@ func (app *App) authMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// AddCommonTemplateData adds common template data (auth state, theme, and gallery statistics) to template data map.
-// When partial is true, skips GalleryStats (expensive getGalleryStatistics) since partials (HTMX swaps, modals, toasts)
-// don't include the about modal. Full pages need GalleryStats for the about modal in the layout.
+// AddCommonTemplateData adds common template data (auth state, theme, version, and gallery statistics)
+// to the template data map. GalleryStats is always included regardless of partial/full page:
+// partial HTMX responses (dashboard polls, modal swaps) now render cards that need GalleryStats.
+// GalleryStats is a live atomic-counter cache populated by async startup queries and
+// incremental discovery updates.
 func (app *App) AddCommonTemplateData(w http.ResponseWriter, r *http.Request, data map[string]any, partial bool) map[string]any {
 	authenticated := app.IsAuthenticated(w, r)
 	data = template.AddCommonData(data, authenticated)
@@ -240,114 +243,96 @@ func (app *App) AddCommonTemplateData(w http.ResponseWriter, r *http.Request, da
 	data["Theme"] = currentTheme
 	data["Version"] = app.RuntimeManager.version
 
-	if !partial {
-		// Add gallery statistics for the about modal (full pages only)
-		if app.SubsystemManager.moduleStateService == nil {
-			stats, err := app.getGalleryStatistics(r.Context())
-			if err != nil {
-				slog.Warn("failed to get gallery statistics", "err", err)
-				data["GalleryStats"] = GalleryStats{}
-			} else {
-				data["GalleryStats"] = stats
-			}
-		} else {
-			ctx := r.Context()
-			var isActive bool
-			var aErr error
-			if app.testSeams.AddCommonDataIsActive != nil {
-				isActive, aErr = app.testSeams.AddCommonDataIsActive(ctx, "discovery")
-			} else {
-				isActive, aErr = app.SubsystemManager.moduleStateService.IsActive(ctx, "discovery")
-			}
-			if aErr != nil {
-				slog.Error("failed to check discovery active state", "err", aErr)
-			}
-			var lastStarted int64
-			var lsErr error
-			if app.testSeams.AddCommonDataLastStarted != nil {
-				lastStarted, _, lsErr = app.testSeams.AddCommonDataLastStarted(ctx, "discovery")
-			} else {
-				lastStarted, _, lsErr = app.SubsystemManager.moduleStateService.GetLastStartedAt(ctx, "discovery")
-			}
-			if lsErr != nil {
-				slog.Error("failed to get discovery last started at", "err", lsErr)
-			}
-			if isActive {
-				if cached := app.getGalleryStatsCached(lastStarted); cached != nil {
-					data["GalleryStats"] = *cached
-				} else {
-					data["GalleryStats"] = GalleryStats{}
-				}
-			} else {
-				if cached := app.getGalleryStatsCached(lastStarted); cached != nil {
-					data["GalleryStats"] = *cached
-				} else {
-					stats, err := app.refreshGalleryStatsCache(ctx, lastStarted)
-					if err != nil {
-						slog.Warn("failed to get gallery statistics", "err", err)
-						data["GalleryStats"] = GalleryStats{}
-					} else {
-						data["GalleryStats"] = stats
-					}
-				}
-			}
-		}
-	}
+	data["GalleryStats"] = app.RuntimeManager.GalleryStats()
 
 	return data
 }
 
-// GalleryStats holds statistics about the gallery for display in the about modal.
+// GalleryStats holds live atomic counters for gallery statistics.
+// Display methods return "N/A" when the counter is zero and a population
+// process is running, or formatted values otherwise.
 type GalleryStats struct {
-	Folders        string
-	Images         string
-	ImagesSize     int64
-	FirstDiscovery string
-	LastDiscovery  string
+	folders    atomic.Int64
+	images     atomic.Int64
+	imagesSize atomic.Int64
+	firstDisc  atomic.Int64 // epoch seconds
+	lastDisc   atomic.Int64 // epoch seconds
+	running    atomic.Int32 // active population processes
 }
 
-// getGalleryStatistics retrieves gallery statistics from the database.
-func (app *App) getGalleryStatistics(ctx context.Context) (GalleryStats, error) {
-	if app.testSeams.GetGalleryStatistics != nil {
-		return app.testSeams.GetGalleryStatistics(ctx)
+// Folders returns the formatted folder count or "N/A" if unpopulated.
+func (gs *GalleryStats) Folders() string {
+	c := gs.folders.Load()
+	if c == 0 && gs.running.Load() > 0 {
+		return "N/A"
 	}
-
-	cpcRo, err := app.dbRoPool.Get()
-	if err != nil {
-		return GalleryStats{}, fmt.Errorf("failed to get database connection: %w", err)
-	}
-	defer app.dbRoPool.Put(cpcRo)
-
-	stats, err := cpcRo.Queries.GetGalleryStatistics(ctx)
-	if err != nil {
-		return GalleryStats{}, fmt.Errorf("failed to get gallery statistics: %w", err)
-	}
-
-	// Convert the database result to GalleryStats with formatted numbers
-	result := GalleryStats{
-		Folders:    humanize.Comma(stats.CtFolders).String(),
-		Images:     humanize.Comma(stats.CtFiles).String(),
-		ImagesSize: int64(stats.SzFiles.Float64),
-	}
-
-	// Convert timestamps to strings if they exist
-	if stats.MinCreatedAt != nil {
-		if ts, ok := stats.MinCreatedAt.(int64); ok {
-			result.FirstDiscovery = time.Unix(ts, 0).Format("2006-01-02 15:04:05")
-		} else {
-			slog.Warn("stats.MinCreatedAt is not int64", "type", fmt.Sprintf("%T", stats.MinCreatedAt))
-		}
-	}
-	if stats.MaxUpdatedAt != nil {
-		if ts, ok := stats.MaxUpdatedAt.(int64); ok {
-			result.LastDiscovery = time.Unix(ts, 0).Format("2006-01-02 15:04:05")
-		} else {
-			slog.Warn("stats.MaxUpdatedAt is not int64", "type", fmt.Sprintf("%T", stats.MaxUpdatedAt))
-		}
-	}
-
-	return result, nil
+	return humanize.Comma(c).String()
 }
+
+// Images returns the formatted image count or "N/A" if unpopulated.
+func (gs *GalleryStats) Images() string {
+	c := gs.images.Load()
+	if c == 0 && gs.running.Load() > 0 {
+		return "N/A"
+	}
+	return humanize.Comma(c).String()
+}
+
+// ImagesSize returns the total image size in bytes, or -1 if stats are
+// still being populated (running > 0 and counter is 0).
+func (gs *GalleryStats) ImagesSize() int64 {
+	if gs.imagesSize.Load() == 0 && gs.running.Load() > 0 {
+		return -1
+	}
+	return gs.imagesSize.Load()
+}
+
+// FoldersCount returns the raw folder count for expected-total calculations.
+func (gs *GalleryStats) FoldersCount() int64 { return gs.folders.Load() }
+
+// ImagesCount returns the raw image count for expected-total calculations.
+func (gs *GalleryStats) ImagesCount() int64 { return gs.images.Load() }
+
+// FirstDiscovery returns the formatted timestamp of the first discovered file.
+func (gs *GalleryStats) FirstDiscovery() string {
+	ts := gs.firstDisc.Load()
+	if ts == 0 {
+		return ""
+	}
+	return time.Unix(ts, 0).Format("2006-01-02 15:04:05")
+}
+
+// LastDiscovery returns the formatted timestamp of the last discovered file.
+func (gs *GalleryStats) LastDiscovery() string {
+	ts := gs.lastDisc.Load()
+	if ts == 0 {
+		return ""
+	}
+	return time.Unix(ts, 0).Format("2006-01-02 15:04:05")
+}
+
+// Internal helpers.
+func (gs *GalleryStats) addFolder()         { gs.folders.Add(1) }
+func (gs *GalleryStats) setFolders(n int64) { gs.folders.Add(n) }
+func (gs *GalleryStats) addFile(size int64) {
+	gs.images.Add(1)
+	gs.imagesSize.Add(size)
+	gs.firstDisc.CompareAndSwap(0, time.Now().Unix())
+	gs.lastDisc.Store(time.Now().Unix())
+}
+func (gs *GalleryStats) setFileStats(countCt, sizeBytes, minCreated, maxUpdated int64) {
+	gs.images.Add(countCt)
+	gs.imagesSize.Add(sizeBytes)
+	gs.firstDisc.CompareAndSwap(0, minCreated)
+	gs.lastDisc.Store(maxUpdated)
+}
+func (gs *GalleryStats) setFileCountAndTimestamps(countCt, minCreated, maxUpdated int64) {
+	gs.images.Add(countCt)
+	gs.firstDisc.CompareAndSwap(0, minCreated)
+	gs.lastDisc.Store(maxUpdated)
+}
+func (gs *GalleryStats) addImagesSize(n int64) { gs.imagesSize.Add(n) }
+func (gs *GalleryStats) markRunning(d int32)   { gs.running.Add(d) }
 
 // GetUser retrieves the stored user details from the database for authentication.
 // It returns a session.User struct containing the username and the stored password hash.
@@ -397,6 +382,9 @@ func (app *App) TriggerDiscovery() {
 	app.discoveryRunning.Store(true)
 	defer app.discoveryRunning.Store(false)
 
+	app.RuntimeManager.GalleryStats().markRunning(1)
+	defer app.RuntimeManager.GalleryStats().markRunning(-1)
+
 	if app.SubsystemManager.moduleStateService != nil {
 		if err := app.SubsystemManager.moduleStateService.SetActive(ctx, "discovery", true); err != nil {
 			slog.Error("failed to set discovery active in module_state", "err", err)
@@ -417,15 +405,5 @@ func (app *App) TriggerDiscovery() {
 		Q:              app.SubsystemManager.q,
 	})
 
-	// Refresh gallery stats cache after discovery completes (covers both startup and server menu)
-	if app.SubsystemManager.moduleStateService != nil {
-		if lastStarted, ok, gsErr := app.SubsystemManager.moduleStateService.GetLastStartedAt(ctx, "discovery"); ok && gsErr == nil {
-			if _, refreshErr := app.refreshGalleryStatsCache(ctx, lastStarted); refreshErr != nil {
-				slog.Error("failed to refresh gallery stats cache", "err", refreshErr)
-			}
-		} else if gsErr != nil {
-			slog.Error("failed to get discovery last started at", "err", gsErr)
-		}
-	}
 	app.scheduleStaleCacheDrop("discovery-complete")
 }

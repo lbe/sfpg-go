@@ -2,7 +2,6 @@ package getopt
 
 import (
 	"errors"
-	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -26,7 +25,7 @@ func resetEnv() {
 }
 
 func resetFlags() {
-	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+	// Do NOT replace flag.CommandLine: flag.Parsed() is false on a fresh set, which breaks testing.Verbose under -count>1 on the second pass.
 	os.Args = []string{"cmd"}
 }
 

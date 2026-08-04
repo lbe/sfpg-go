@@ -256,9 +256,9 @@ func processFileContents(file *File) error {
 
 // NewPoolFuncWithProcessor returns a worker pool function that uses FileProcessor service.
 // The returned function matches the signature expected by workerpool.StartWorkerPool.
-func NewPoolFuncWithProcessor(processor FileProcessor, q queue.Dequeuer[string], normalizedImagesDir string, removePrefix func(normalizedDir, path string) (string, error), stats *ProcessingStats) workerpool.PoolFunc {
+func NewPoolFuncWithProcessor(processor FileProcessor, q queue.Dequeuer[string], normalizedImagesDir string, removePrefix func(normalizedDir, path string) (string, error), stats *ProcessingStats, onFileInserted func(int64)) workerpool.PoolFunc {
 	return func(ctx context.Context, wc workerpool.WorkerContext, dbRoPool, dbRwPool dbconnpool.ConnectionPool, queueLength func() int, id int) error {
-		return runPoolWorkerWithProcessor(ctx, wc, dbRoPool, queueLength, id, processor, q, normalizedImagesDir, removePrefix, stats)
+		return runPoolWorkerWithProcessor(ctx, wc, dbRoPool, queueLength, id, processor, q, normalizedImagesDir, removePrefix, stats, onFileInserted)
 	}
 }
 
@@ -271,7 +271,8 @@ func runPoolWorkerWithProcessor(ctx context.Context,
 	q queue.Dequeuer[string],
 	normalizedImagesDir string,
 	removePrefix func(normalizedDir, path string) (string, error),
-	stats *ProcessingStats) error {
+	stats *ProcessingStats,
+	onFileInserted func(int64)) error {
 	select {
 	case <-ctx.Done():
 		slog.Debug("Context cancelled before starting worker", "id", id)
@@ -400,6 +401,9 @@ func runPoolWorkerWithProcessor(ctx context.Context,
 			wc.AddFailed()
 		} else {
 			wc.AddSuccessful()
+			if onFileInserted != nil && file.File.SizeBytes.Valid {
+				onFileInserted(file.File.SizeBytes.Int64)
+			}
 		}
 		if stats != nil {
 			stats.InFlight.Add(-1)

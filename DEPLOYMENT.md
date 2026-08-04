@@ -320,8 +320,8 @@ WantedBy=multi-user.target
 - Security Hardening
   - [ ] Review the [Symlink Trust Model](#symlink-trust-model) and apply filesystem hardening if needed
   - [ ] Review the [Public Image URLs](#public-image-urls-capability-url-model) capability-URL model and assess risk for your content
-  - [ ] Pprof is enabled by default; disable via `enable_pprof: false` if you do not need runtime profiling. Pprof endpoints (`/debug/pprof/`) are protected behind authentication
-  - [ ] Consider restricting pprof access further via reverse-proxy rules (e.g., allow only localhost or internal IP ranges)
+  - [ ] Pprof is always available on loopback only (127.0.0.1 / ::1); access via SSH tunnel or local curl. Requires admin auth even on loopback. Public hostname returns 404
+  - [ ] Consider restricting pprof access further via reverse-proxy rules (e.g., allow only localhost or internal IP ranges; the application's loopback check already blocks remote access)
 
 ## Local Development vs Production
 
@@ -408,19 +408,7 @@ curl -f -H "Host: gallery.example.com" \
 
 The application exposes Go's standard `net/http/pprof` debugging endpoints under `/debug/pprof/`.
 
-**Default: enabled.** Pprof is enabled by default (`enable_pprof: true`). To disable it, set `enable_pprof: false` in the config file or database (via the Config UI) and restart the application.
-
-**Security:** All pprof routes are protected behind the application's authentication middleware — only authenticated admin sessions can access them.
-
-**Hardening (optional):** For defence-in-depth, you can restrict pprof access further at the reverse-proxy level:
-
-```nginx
-# Nginx: block pprof from external access
-location /debug/pprof/ {
-    allow 127.0.0.1;
-    deny all;
-}
-```
+**Availability:** Always available on loopback only (`127.0.0.1` / `::1`). Access requires admin authentication even on loopback. The public hostname returns **404** even with a valid session cookie — you must access via SSH tunnel or local `curl` to `http://127.0.0.1:<port>/debug/pprof/...`.
 
 **Available endpoints:**
 

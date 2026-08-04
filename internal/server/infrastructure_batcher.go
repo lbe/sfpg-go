@@ -53,14 +53,18 @@ func (s *InfrastructureService) buildWriteBatcher(ctx context.Context, maxBatchS
 				cpcRw = nil
 			}
 			s.batcherQueries = nil
-			var totalAdded int64
+			var totalAdded, entriesAdded int64
 			for _, bw := range batch {
 				if bw.CacheEntry != nil {
 					totalAdded += int64(len(bw.CacheEntry.Body))
+					entriesAdded++
 				}
 			}
 			if totalAdded > 0 {
 				s.cacheSizeBytes.Add(totalAdded)
+			}
+			if entriesAdded > 0 {
+				s.cacheEntryCount.Add(entriesAdded)
 			}
 			s.maybeEvictCacheEntries(batch)
 			cleanupBatchedWriteResources(batch)
@@ -116,7 +120,7 @@ func (s *InfrastructureService) flushBatchedWrites(ctx context.Context, tx *sql.
 	}
 
 	qtx := s.batcherQueries.WithTx(tx)
-	imp := &gallerylib.Importer{Q: qtx}
+	imp := &gallerylib.Importer{Q: qtx, OnFolderCreated: s.OnFolderCreated}
 	for _, f := range fileWrites {
 		if err := files.WriteFileInTx(ctx, imp, f); err != nil {
 			return fmt.Errorf("write file %s: %w", f.Path, err)

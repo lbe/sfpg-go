@@ -24,7 +24,7 @@ func TestHTTPCacheMiddleware_MetricsMethods(t *testing.T) {
 			MaxEntrySize: 100_000,
 			MaxTotalSize: 1_000_000,
 			Enabled:      true,
-		}, &sizeCounter, nil)
+		}, cachelite.HTTPCacheCountersForTest(&sizeCounter), nil)
 
 		if !cache.IsEnabled() {
 			t.Error("expected IsEnabled true")
@@ -37,7 +37,7 @@ func TestHTTPCacheMiddleware_MetricsMethods(t *testing.T) {
 			MaxEntrySize: 100_000,
 			MaxTotalSize: 1_000_000,
 			Enabled:      false,
-		}, &sizeCounter, nil)
+		}, cachelite.HTTPCacheCountersForTest(&sizeCounter), nil)
 
 		if cache.IsEnabled() {
 			t.Error("expected IsEnabled false")
@@ -50,7 +50,7 @@ func TestHTTPCacheMiddleware_MetricsMethods(t *testing.T) {
 			MaxEntrySize: 100_000,
 			MaxTotalSize: 1_000_000,
 			Enabled:      true,
-		}, &sizeCounter, nil)
+		}, cachelite.HTTPCacheCountersForTest(&sizeCounter), nil)
 
 		if cache.MaxEntrySize() != 100_000 {
 			t.Errorf("MaxEntrySize: got %d, want 100000", cache.MaxEntrySize())
@@ -60,9 +60,18 @@ func TestHTTPCacheMiddleware_MetricsMethods(t *testing.T) {
 		}
 	})
 
-	t.Run("GetSizeBytes and GetEntryCount do not panic with a real DB pool", func(t *testing.T) {
+	t.Run("GetSizeBytes and GetEntryCount read from counters, not DB", func(t *testing.T) {
 		app := newAppForUnlock(t)
 		var sizeCounter atomic.Int64
+		sizeCounter.Store(12345)
+		var entryCounter atomic.Int64
+		entryCounter.Store(67)
+		var br atomic.Int32
+		counter := &cachelite.HTTPCacheCounterState{
+			SizeBytes:       &sizeCounter,
+			EntryCount:      &entryCounter,
+			BaselineRunning: &br,
+		}
 		cache := cachelite.NewHTTPCacheMiddleware(app.dbRoPool, cachelite.CacheConfig{
 			Enabled:      true,
 			MaxEntrySize: 100_000,
@@ -71,10 +80,14 @@ func TestHTTPCacheMiddleware_MetricsMethods(t *testing.T) {
 			CacheableRoutes: []string{
 				"/gallery/", "/lightbox/", "/info/folder/", "/info/image/",
 			},
-		}, &sizeCounter, func(*cachelite.HTTPCacheEntry) {})
+		}, counter, func(*cachelite.HTTPCacheEntry) {})
 
-		_ = cache.GetSizeBytes()
-		_ = cache.GetEntryCount()
+		if got := cache.GetSizeBytes(); got != 12345 {
+			t.Errorf("GetSizeBytes = %d, want 12345 (from counter, not DB)", got)
+		}
+		if got := cache.GetEntryCount(); got != 67 {
+			t.Errorf("GetEntryCount = %d, want 67 (from counter, not DB)", got)
+		}
 	})
 }
 

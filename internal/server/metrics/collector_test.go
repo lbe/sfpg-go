@@ -99,9 +99,7 @@ func TestNewCollector(t *testing.T) {
 	if c == nil {
 		t.Fatal("NewCollector() returned nil")
 	}
-	if c.moduleActivities == nil {
-		t.Error("moduleActivities map not initialized")
-	}
+
 }
 
 func TestCollector_SetWriteBatcher(t *testing.T) {
@@ -185,63 +183,6 @@ func TestCollector_SetQueueInfo(t *testing.T) {
 	}
 }
 
-func TestCollector_RecordModuleActivity(t *testing.T) {
-	c := NewCollector()
-
-	// Record activity for a module
-	c.RecordModuleActivity("discovery", true)
-
-	// Check module was recorded
-	if _, exists := c.moduleActivities["discovery"]; !exists {
-		t.Error("module activity not recorded")
-	}
-
-	// Record more activity
-	c.RecordModuleActivity("discovery", false)
-
-	activity := c.moduleActivities["discovery"]
-	if activity.activityCount != 2 {
-		t.Errorf("activityCount = %d, want 2", activity.activityCount)
-	}
-	if activity.isActive != false {
-		t.Error("isActive should be false")
-	}
-}
-
-func TestCollector_GetModuleStatuses(t *testing.T) {
-	c := NewCollector()
-
-	// Record activities with different states
-	c.RecordModuleActivity("discovery", true)
-	c.RecordModuleActivity("cache_preload", false)
-	c.RecordModuleActivity("old_module", false)
-
-	// Manually set old_module's last active time to more than an hour ago
-	c.moduleActivities["old_module"].lastActiveAt = time.Now().Add(-2 * time.Hour)
-
-	statuses := c.GetModuleStatuses()
-
-	if len(statuses) != 3 {
-		t.Fatalf("expected 3 module statuses, got %d", len(statuses))
-	}
-
-	// Check status mapping
-	statusMap := make(map[string]string)
-	for _, s := range statuses {
-		statusMap[s.Name] = s.Status
-	}
-
-	if statusMap["discovery"] != "active" {
-		t.Errorf("discovery status = %s, want active", statusMap["discovery"])
-	}
-	if statusMap["cache_preload"] != "recent" {
-		t.Errorf("cache_preload status = %s, want recent", statusMap["cache_preload"])
-	}
-	if statusMap["old_module"] != "idle" {
-		t.Errorf("old_module status = %s, want idle", statusMap["old_module"])
-	}
-}
-
 func TestCollector_Collect(t *testing.T) {
 	c := NewCollector()
 	ctx := context.Background()
@@ -310,9 +251,6 @@ func TestCollector_Collect(t *testing.T) {
 	c.SetHTTPCache(hc)
 
 	c.SetQueueInfo(func() int { return 25 }, 100)
-
-	// Record some module activity
-	c.RecordModuleActivity("discovery", true)
 
 	// Collect metrics
 	snapshot := c.Collect(ctx)
@@ -407,10 +345,6 @@ func TestCollector_Collect(t *testing.T) {
 		t.Errorf("QueueCapacity = %d, want 100", snapshot.QueueCapacity)
 	}
 
-	// Verify modules
-	if len(snapshot.Modules) != 1 {
-		t.Errorf("len(Modules) = %d, want 1", len(snapshot.Modules))
-	}
 }
 
 func TestCollector_Collect_RuntimeMetrics(t *testing.T) {

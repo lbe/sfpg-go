@@ -426,6 +426,43 @@ func TestUpsertPathChain(t *testing.T) {
 	}()
 }
 
+func TestUpsertPathChain_OnFolderCreated(t *testing.T) {
+	db, q, ctx := setupTestDB(t)
+	defer db.Close()
+
+	var folderCreatedCalls int
+	imp := &gallerylib.Importer{
+		Q: q,
+		OnFolderCreated: func() {
+			folderCreatedCalls++
+		},
+	}
+
+	path := filepath.Join(string(os.PathSeparator), "photos", "2025", "beach.jpg")
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if rbErr := tx.Rollback(); rbErr != nil {
+			t.Logf("tx.Rollback: %v", rbErr)
+		}
+	}()
+	imp.Q = q.WithTx(tx)
+
+	mtime := time.Now().Unix()
+	_, err = imp.UpsertPathChain(ctx, path, mtime, 1024, "md5", 12345, 1920, 1080, "image/jpeg")
+	if err != nil {
+		t.Fatalf("UpsertPathChain: %v", err)
+	}
+
+	// The path "photos/2025/beach.jpg" should create folders "photos" and "2025".
+	if folderCreatedCalls != 2 {
+		t.Errorf("OnFolderCreated called %d times, want 2 (photos + 2025)", folderCreatedCalls)
+	}
+}
+
 func TestRootFile(t *testing.T) {
 	db, q, ctx := setupTestDB(t)
 	defer db.Close()

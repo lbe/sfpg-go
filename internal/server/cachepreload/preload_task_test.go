@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/lbe/sfpg-go/internal/scheduler"
@@ -93,40 +94,51 @@ func TestPreloadTask_Run_RecordsFailure(t *testing.T) {
 }
 
 func TestPreloadTask_SchedulerIntegration(t *testing.T) {
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
+	synctest.Test(t, func(t *testing.T) {
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})
+		tt := &TaskTracker{}
+		key := "GET:/test?v=x"
+		tt.RegisterTask(key, "sess", "task1")
+
+		task := &PreloadTask{
+			CacheKey:    key,
+			Path:        "/test",
+			TaskTracker: tt,
+			RequestConfig: InternalRequestConfig{
+				Handler:     handler,
+				ETagVersion: "x",
+			},
+			Metrics: nil,
+		}
+
+		sched := scheduler.NewScheduler(2)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			_ = sched.Start(ctx)
+		}()
+
+		// AddTask before the scheduler goroutine begins its select is safe:
+		// the wake channel is buffered, so the wake signal is not lost.
+		_, err := sched.AddTask(task, scheduler.OneTime, time.Now())
+		if err != nil {
+			t.Fatalf("AddTask: %v", err)
+		}
+
+		// Wait for the scheduler to execute the task to completion.
+		synctest.Wait()
+		if tt.IsTaskPending(key) {
+			t.Error("expected task to complete and unregister")
+		}
+
+		cancel()
+		<-done
 	})
-	tt := &TaskTracker{}
-	key := "GET:/test?v=x"
-	tt.RegisterTask(key, "sess", "task1")
-
-	task := &PreloadTask{
-		CacheKey:    key,
-		Path:        "/test",
-		TaskTracker: tt,
-		RequestConfig: InternalRequestConfig{
-			Handler:     handler,
-			ETagVersion: "x",
-		},
-		Metrics: nil,
-	}
-
-	sched := scheduler.NewScheduler(2)
-	ctx := t.Context()
-
-	go sched.Start(ctx)
-	time.Sleep(20 * time.Millisecond) // let scheduler start
-
-	id, err := sched.AddTask(task, scheduler.OneTime, time.Now())
-	if err != nil {
-		t.Fatalf("AddTask: %v", err)
-	}
-	_ = id
-
-	time.Sleep(50 * time.Millisecond) // let task run
-	if tt.IsTaskPending(key) {
-		t.Error("expected task to complete and unregister")
-	}
 }
 
 func TestPreloadTask_UnregistersAfterRun(t *testing.T) {

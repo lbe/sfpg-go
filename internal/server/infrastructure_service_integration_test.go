@@ -17,6 +17,7 @@ import (
 	"github.com/lbe/sfpg-go/internal/dbconnpool"
 	"github.com/lbe/sfpg-go/internal/server/config"
 	"github.com/lbe/sfpg-go/internal/server/files"
+	"github.com/lbe/sfpg-go/internal/writebatcher"
 
 	_ "github.com/ncruces/go-sqlite3/driver"
 )
@@ -32,6 +33,20 @@ func newIntegratedService(t *testing.T, ctx context.Context, cfg *config.Config)
 	infra.CalibrateCacheSizeNow(ctx)
 	infra.StartWriteBatcher(ctx, true)
 	return infra
+}
+
+// waitForBatcherDrain blocks until the write batcher has flushed all pending
+// items. PendingCount reaches zero only after the flush (and its success/error
+// side effects) completes, so this is a safe wait before asserting on counters.
+func waitForBatcherDrain(t *testing.T, wb *writebatcher.WriteBatcher[BatchedWrite]) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for wb.PendingCount() > 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("timeout waiting for write batcher to drain")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 func TestInfrastructureService_SetupDB_RealPools(t *testing.T) {
@@ -119,8 +134,8 @@ func TestInfrastructureService_buildWriteBatcher_BeginTxError(t *testing.T) {
 		if err := infra.writeBatcher.Submit(BatchedWrite{CacheEntry: entry}); err != nil {
 			t.Fatalf("submit: %v", err)
 		}
-		// Give the worker a moment to attempt BeginTx and run OnError.
-		time.Sleep(100 * time.Millisecond)
+		// Close drains remaining items synchronously: the worker attempts
+		// BeginTx, runs OnError, and re-enqueues before Close returns.
 		if err := infra.writeBatcher.Close(); err != nil {
 			t.Fatalf("close batcher: %v", err)
 		}
@@ -254,23 +269,15 @@ func TestInfrastructureService_buildWriteBatcher_OnSuccessCacheEntry(t *testing.
 		t.Fatalf("submit: %v", err)
 	}
 
-	done := make(chan struct{})
-	go func() {
-		for infra.writeBatcher.PendingCount() > 0 {
-			time.Sleep(5 * time.Millisecond)
-		}
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("timeout waiting for batcher")
-	}
+	waitForBatcherDrain(t, infra.writeBatcher)
 
 	// Counter must use len(Body) = 40, not ContentLength = 100
 	if infra.cacheSizeBytes.Load() != 40 {
 		t.Fatalf("cacheSizeBytes = %d, want 40 (len(Body), not ContentLength 100)",
 			infra.cacheSizeBytes.Load())
+	}
+	if infra.cacheEntryCount.Load() != 1 {
+		t.Fatalf("cacheEntryCount = %d, want 1", infra.cacheEntryCount.Load())
 	}
 }
 
@@ -296,10 +303,8 @@ func TestInfrastructureService_buildWriteBatcher_OnErrorFileFlush(t *testing.T) 
 		if err := infra.writeBatcher.Submit(BatchedWrite{File: file}); err != nil {
 			t.Fatalf("submit: %v", err)
 		}
-		// Give the worker time to attempt the flush and invoke OnError. The
-		// batcher re-enqueues on error, so we close it rather than wait for
-		// PendingCount to reach zero.
-		time.Sleep(100 * time.Millisecond)
+		// Close drains remaining items synchronously: the flush fails, OnError
+		// runs, and the batch is re-enqueued before Close returns.
 		if err := infra.writeBatcher.Close(); err != nil {
 			t.Fatalf("close batcher: %v", err)
 		}
@@ -334,18 +339,7 @@ func TestInfrastructureService_buildWriteBatcher_OnSuccessFileStats(t *testing.T
 		}
 	}
 
-	done := make(chan struct{})
-	go func() {
-		for infra.writeBatcher.PendingCount() > 0 {
-			time.Sleep(5 * time.Millisecond)
-		}
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("timeout waiting for batcher")
-	}
+	waitForBatcherDrain(t, infra.writeBatcher)
 }
 
 func TestInfrastructureService_buildWriteBatcher_OnSuccessEvicts(t *testing.T) {
@@ -396,18 +390,7 @@ func TestInfrastructureService_buildWriteBatcher_OnSuccessEvicts(t *testing.T) {
 		t.Fatalf("submit: %v", err)
 	}
 
-	done := make(chan struct{})
-	go func() {
-		for infra.writeBatcher.PendingCount() > 0 {
-			time.Sleep(5 * time.Millisecond)
-		}
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("timeout waiting for batcher")
-	}
+	waitForBatcherDrain(t, infra.writeBatcher)
 
 	// Actual DB size should be within the configured limit.
 	size, err := infra.cacheStore.SizeBytes(ctx)
@@ -500,6 +483,9 @@ func TestInfrastructureService_InvalidateHTTPCache_RealPool(t *testing.T) {
 	if infra.cacheSizeBytes.Load() != 0 {
 		t.Fatalf("cacheSizeBytes = %d, want 0", infra.cacheSizeBytes.Load())
 	}
+	if infra.cacheEntryCount.Load() != 0 {
+		t.Fatalf("cacheEntryCount = %d, want 0", infra.cacheEntryCount.Load())
+	}
 	size, err := infra.cacheStore.SizeBytes(ctx)
 	if err != nil {
 		t.Fatalf("SizeBytes: %v", err)
@@ -537,6 +523,7 @@ func TestInfrastructureService_IncrementETag_RealPool(t *testing.T) {
 		t.Fatalf("store cache: %v", storeErr)
 	}
 	infra.cacheSizeBytes.Store(10)
+	infra.cacheEntryCount.Store(1)
 
 	newETag, err := infra.IncrementETag(ctx, cfgService)
 	if err != nil {
@@ -555,6 +542,9 @@ func TestInfrastructureService_IncrementETag_RealPool(t *testing.T) {
 	}
 	if infra.cacheSizeBytes.Load() != 0 {
 		t.Fatalf("cacheSizeBytes = %d, want 0", infra.cacheSizeBytes.Load())
+	}
+	if infra.cacheEntryCount.Load() != 0 {
+		t.Fatalf("cacheEntryCount = %d, want 0", infra.cacheEntryCount.Load())
 	}
 	size, err := infra.cacheStore.SizeBytes(ctx)
 	if err != nil {

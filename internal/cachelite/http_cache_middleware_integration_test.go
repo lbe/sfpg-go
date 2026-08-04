@@ -4,15 +4,14 @@ package cachelite
 
 import (
 	"context"
-	"database/sql"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -162,6 +161,7 @@ func TestHTTPCacheMiddleware_SetOnGalleryCacheHit(t *testing.T) {
 		sessionID string
 	}
 	var callbackMu sync.Mutex
+	callbackDone := make(chan struct{}, 1)
 
 	cfg := CacheConfig{
 		Enabled:               true,
@@ -182,6 +182,7 @@ func TestHTTPCacheMiddleware_SetOnGalleryCacheHit(t *testing.T) {
 			sessionID string
 		}{folderID, sessionID})
 		callbackMu.Unlock()
+		callbackDone <- struct{}{}
 	})
 
 	router := mw.Middleware(handler)
@@ -203,7 +204,12 @@ func TestHTTPCacheMiddleware_SetOnGalleryCacheHit(t *testing.T) {
 		t.Fatalf("second request X-Cache = %q, want HIT", w2.Header().Get("X-Cache"))
 	}
 
-	time.Sleep(50 * time.Millisecond)
+	// The callback fires in a goroutine; wait for it deterministically.
+	select {
+	case <-callbackDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for OnGalleryCacheHit callback")
+	}
 
 	callbackMu.Lock()
 	defer callbackMu.Unlock()
@@ -298,75 +304,205 @@ func TestHTTPCacheMiddleware_UpdatePool_NilIgnored(t *testing.T) {
 func TestHTTPCacheMiddleware_GetSizeBytes(t *testing.T) {
 	db := createTestDBPoolInternal(t)
 	cfg := defaultIntegrationConfig()
-	mw := NewHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
 
-	if got := mw.GetSizeBytes(); got != 0 {
-		t.Fatalf("empty cache GetSizeBytes = %d, want 0", got)
-	}
+	t.Run("uncalibrated returns -1", func(t *testing.T) {
+		var sizeBytes atomic.Int64
+		counter := &HTTPCacheCounterState{
+			SizeBytes:  &sizeBytes,
+			EntryCount: &atomic.Int64{},
+			// BaselineRunning left nil
+		}
+		mw := NewHTTPCacheMiddlewareForTest(db, cfg, counter, createSyncSubmitFuncForIntegration(t, db))
+		if got := mw.GetSizeBytes(); got != -1 {
+			t.Fatalf("uncalibrated GetSizeBytes = %d, want -1", got)
+		}
+	})
 
-	ctx := context.Background()
-	entry := &HTTPCacheEntry{
-		Key:           NewCacheKey(CacheKeyParams{Method: "GET", Path: "/size"}),
-		Method:        "GET",
-		Path:          "/size",
-		Status:        200,
-		Body:          []byte("12345"),
-		ContentLength: sql.NullInt64{Int64: 5, Valid: true},
-		CreatedAt:     time.Now().Unix(),
-	}
-	if err := StoreCacheEntry(ctx, db, entry); err != nil {
-		t.Fatalf("StoreCacheEntry: %v", err)
-	}
+	t.Run("calibrated seeded value without rows", func(t *testing.T) {
+		var sizeBytes atomic.Int64
+		var br atomic.Int32
+		sizeBytes.Store(42)
+		counter := &HTTPCacheCounterState{
+			SizeBytes:       &sizeBytes,
+			EntryCount:      &atomic.Int64{},
+			BaselineRunning: &br,
+		}
+		mw := NewHTTPCacheMiddlewareForTest(db, cfg, counter, createSyncSubmitFuncForIntegration(t, db))
+		// No rows inserted into DB — value comes from atomics only.
+		if got := mw.GetSizeBytes(); got != 42 {
+			t.Fatalf("calibrated GetSizeBytes = %d, want 42", got)
+		}
+	})
 
-	if got := mw.GetSizeBytes(); got < 5 {
-		t.Fatalf("GetSizeBytes = %d, want >= 5", got)
-	}
+	t.Run("running baseline returns -1 when size is 0", func(t *testing.T) {
+		var sizeBytes atomic.Int64
+		var br atomic.Int32
+		br.Store(1) // baseline running, size is 0
+		counter := &HTTPCacheCounterState{
+			SizeBytes:       &sizeBytes,
+			EntryCount:      &atomic.Int64{},
+			BaselineRunning: &br,
+		}
+		mw := NewHTTPCacheMiddlewareForTest(db, cfg, counter, createSyncSubmitFuncForIntegration(t, db))
+		if got := mw.GetSizeBytes(); got != -1 {
+			t.Fatalf("running baseline GetSizeBytes = %d, want -1 (N/A)", got)
+		}
+	})
 
-	db.Close()
-	if got := mw.GetSizeBytes(); got != 0 {
-		t.Fatalf("closed pool GetSizeBytes = %d, want 0", got)
-	}
+	t.Run("running baseline returns value when size > 0", func(t *testing.T) {
+		var sizeBytes atomic.Int64
+		var br atomic.Int32
+		sizeBytes.Store(500)
+		br.Store(1) // baseline running, size > 0
+		counter := &HTTPCacheCounterState{
+			SizeBytes:       &sizeBytes,
+			EntryCount:      &atomic.Int64{},
+			BaselineRunning: &br,
+		}
+		mw := NewHTTPCacheMiddlewareForTest(db, cfg, counter, createSyncSubmitFuncForIntegration(t, db))
+		if got := mw.GetSizeBytes(); got != 500 {
+			t.Fatalf("running baseline GetSizeBytes = %d, want 500", got)
+		}
+	})
+
+	t.Run("not running returns 0 when size is 0", func(t *testing.T) {
+		var sizeBytes atomic.Int64
+		var br atomic.Int32
+		// br is 0 (not running), sizeBytes is 0
+		counter := &HTTPCacheCounterState{
+			SizeBytes:       &sizeBytes,
+			EntryCount:      &atomic.Int64{},
+			BaselineRunning: &br,
+		}
+		mw := NewHTTPCacheMiddlewareForTest(db, cfg, counter, createSyncSubmitFuncForIntegration(t, db))
+		if got := mw.GetSizeBytes(); got != 0 {
+			t.Fatalf("not running GetSizeBytes = %d, want 0", got)
+		}
+	})
+
+	t.Run("closed pool still returns seeded value", func(t *testing.T) {
+		var sizeBytes atomic.Int64
+		var br atomic.Int32
+		sizeBytes.Store(99)
+		counter := &HTTPCacheCounterState{
+			SizeBytes:       &sizeBytes,
+			EntryCount:      &atomic.Int64{},
+			BaselineRunning: &br,
+		}
+		mw := NewHTTPCacheMiddlewareForTest(db, cfg, counter, createSyncSubmitFuncForIntegration(t, db))
+		db.Close()
+		if got := mw.GetSizeBytes(); got != 99 {
+			t.Fatalf("closed pool GetSizeBytes = %d, want 99 (getters must not touch DB)", got)
+		}
+	})
+
+	t.Run("nil counters returns -1", func(t *testing.T) {
+		mw := NewHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
+		if got := mw.GetSizeBytes(); got != -1 {
+			t.Fatalf("nil counters GetSizeBytes = %d, want -1", got)
+		}
+	})
 }
 
 func TestHTTPCacheMiddleware_GetEntryCount(t *testing.T) {
 	db := createTestDBPoolInternal(t)
 	cfg := defaultIntegrationConfig()
-	mw := NewHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
 
-	if got := mw.GetEntryCount(); got != 0 {
-		t.Fatalf("empty cache GetEntryCount = %d, want 0", got)
-	}
-
-	ctx := context.Background()
-	now := time.Now().Unix()
-	for i := 0; i < 3; i++ {
-		key := NewCacheKey(CacheKeyParams{Method: "GET", Path: fmt.Sprintf("/count/%d", i)})
-		entry := &HTTPCacheEntry{
-			Key:       key,
-			Method:    "GET",
-			Path:      fmt.Sprintf("/count/%d", i),
-			Status:    200,
-			Body:      []byte("x"),
-			CreatedAt: now,
+	t.Run("uncalibrated returns -1", func(t *testing.T) {
+		var entryCount atomic.Int64
+		counter := &HTTPCacheCounterState{
+			SizeBytes:  &atomic.Int64{},
+			EntryCount: &entryCount,
+			// BaselineRunning left nil
 		}
-		if err := StoreCacheEntry(ctx, db, entry); err != nil {
-			t.Fatalf("StoreCacheEntry: %v", err)
+		mw := NewHTTPCacheMiddlewareForTest(db, cfg, counter, createSyncSubmitFuncForIntegration(t, db))
+		if got := mw.GetEntryCount(); got != -1 {
+			t.Fatalf("uncalibrated GetEntryCount = %d, want -1", got)
 		}
-	}
+	})
 
-	if got := mw.GetEntryCount(); got != 3 {
-		t.Fatalf("GetEntryCount = %d, want 3", got)
-	}
+	t.Run("calibrated seeded value without rows", func(t *testing.T) {
+		var entryCount atomic.Int64
+		var br atomic.Int32
+		entryCount.Store(7)
+		counter := &HTTPCacheCounterState{
+			SizeBytes:       &atomic.Int64{},
+			EntryCount:      &entryCount,
+			BaselineRunning: &br,
+		}
+		mw := NewHTTPCacheMiddlewareForTest(db, cfg, counter, createSyncSubmitFuncForIntegration(t, db))
+		// No rows inserted into DB — value comes from atomics only.
+		if got := mw.GetEntryCount(); got != 7 {
+			t.Fatalf("calibrated GetEntryCount = %d, want 7", got)
+		}
+	})
 
-	if err := ClearCache(ctx, db); err != nil {
-		t.Fatalf("ClearCache: %v", err)
-	}
-	if got := mw.GetEntryCount(); got != 0 {
-		t.Fatalf("after ClearCache GetEntryCount = %d, want 0", got)
-	}
+	t.Run("running baseline returns -1 when entry count is 0", func(t *testing.T) {
+		var entryCount atomic.Int64
+		var br atomic.Int32
+		br.Store(1) // baseline running, entry count is 0
+		counter := &HTTPCacheCounterState{
+			SizeBytes:       &atomic.Int64{},
+			EntryCount:      &entryCount,
+			BaselineRunning: &br,
+		}
+		mw := NewHTTPCacheMiddlewareForTest(db, cfg, counter, createSyncSubmitFuncForIntegration(t, db))
+		if got := mw.GetEntryCount(); got != -1 {
+			t.Fatalf("running baseline GetEntryCount = %d, want -1 (N/A)", got)
+		}
+	})
 
-	db.Close()
-	if got := mw.GetEntryCount(); got != 0 {
-		t.Fatalf("closed pool GetEntryCount = %d, want 0", got)
-	}
+	t.Run("running baseline returns value when entry count > 0", func(t *testing.T) {
+		var entryCount atomic.Int64
+		var br atomic.Int32
+		entryCount.Store(25)
+		br.Store(1) // baseline running, entry count > 0
+		counter := &HTTPCacheCounterState{
+			SizeBytes:       &atomic.Int64{},
+			EntryCount:      &entryCount,
+			BaselineRunning: &br,
+		}
+		mw := NewHTTPCacheMiddlewareForTest(db, cfg, counter, createSyncSubmitFuncForIntegration(t, db))
+		if got := mw.GetEntryCount(); got != 25 {
+			t.Fatalf("running baseline GetEntryCount = %d, want 25", got)
+		}
+	})
+
+	t.Run("not running returns 0 when entry count is 0", func(t *testing.T) {
+		var entryCount atomic.Int64
+		var br atomic.Int32
+		// br is 0 (not running), entryCount is 0
+		counter := &HTTPCacheCounterState{
+			SizeBytes:       &atomic.Int64{},
+			EntryCount:      &entryCount,
+			BaselineRunning: &br,
+		}
+		mw := NewHTTPCacheMiddlewareForTest(db, cfg, counter, createSyncSubmitFuncForIntegration(t, db))
+		if got := mw.GetEntryCount(); got != 0 {
+			t.Fatalf("not running GetEntryCount = %d, want 0", got)
+		}
+	})
+
+	t.Run("closed pool still returns seeded value", func(t *testing.T) {
+		var entryCount atomic.Int64
+		var br atomic.Int32
+		entryCount.Store(3)
+		counter := &HTTPCacheCounterState{
+			SizeBytes:       &atomic.Int64{},
+			EntryCount:      &entryCount,
+			BaselineRunning: &br,
+		}
+		mw := NewHTTPCacheMiddlewareForTest(db, cfg, counter, createSyncSubmitFuncForIntegration(t, db))
+		db.Close()
+		if got := mw.GetEntryCount(); got != 3 {
+			t.Fatalf("closed pool GetEntryCount = %d, want 3 (getters must not touch DB)", got)
+		}
+	})
+
+	t.Run("nil counters returns -1", func(t *testing.T) {
+		mw := NewHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
+		if got := mw.GetEntryCount(); got != -1 {
+			t.Fatalf("nil counters GetEntryCount = %d, want -1", got)
+		}
+	})
 }

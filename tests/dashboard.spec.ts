@@ -26,14 +26,8 @@ test("Test 1: Dashboard layout is consistent across initial load and polled refr
 
   // ── Verify all major dashboard sections are rendered ────────────
   // Header
-  await expect(page.getByText("System Dashboard")).toBeVisible();
-  await expect(
-    page.getByText("Real-time performance and health metrics"),
-  ).toBeVisible();
+  await expect(page.getByText("Performance & Health Dashboard")).toBeVisible();
   await expect(page.locator("#last-updated")).toBeVisible();
-
-  // Module Status
-  await expect(page.getByText("Module Status")).toBeVisible();
 
   // Memory section
   await expect(page.getByText("Memory")).toBeVisible();
@@ -64,12 +58,11 @@ test("Test 1: Dashboard layout is consistent across initial load and polled refr
   await expect(page.locator("#wp-successful")).toBeVisible();
   await expect(page.locator("#wp-failed")).toBeVisible();
 
-  // File Queue
-  await expect(page.getByText("File Queue")).toBeVisible();
+  // Gallery Statistics
+  await expect(page.locator("#card-gallery-stats")).toBeVisible();
+
+  // Queued Items
   await expect(page.locator("#queue-queued")).toBeVisible();
-  await expect(page.locator("#queue-capacity-desc")).toBeVisible();
-  await expect(page.locator("#queue-utilization")).toBeVisible();
-  await expect(page.locator("#queue-available")).toBeVisible();
 
   // File Processing
   await expect(page.getByText("File Processing")).toBeVisible();
@@ -117,7 +110,7 @@ test("Test 1: Dashboard layout is consistent across initial load and polled refr
   await expect(containers).toHaveCount(1);
 
   // The dashboard-container should still be visible with content
-  await expect(page.getByText("System Dashboard")).toBeVisible();
+  await expect(page.getByText("Performance & Health Dashboard")).toBeVisible();
   await expect(page.locator("#last-updated")).toBeVisible();
 
   // Layout bounding box must still match initial load (no shift from nesting)
@@ -201,7 +194,9 @@ test("Test 2: Open dashboard in new tab, refresh, and hard refresh", async ({
 
   // Verify content renders
   await expect(newTab.locator("#dashboard-container")).toHaveCount(1);
-  await expect(newTab.getByText("System Dashboard")).toBeVisible();
+  await expect(
+    newTab.getByText("Performance & Health Dashboard"),
+  ).toBeVisible();
   await expect(newTab.locator('[hx-get="/dashboard"]')).toBeAttached();
   await expect(newTab.locator("#last-updated")).toBeVisible();
 
@@ -218,7 +213,9 @@ test("Test 2: Open dashboard in new tab, refresh, and hard refresh", async ({
 
   // Verify still works after refresh
   await expect(newTab.locator("#dashboard-container")).toHaveCount(1);
-  await expect(newTab.getByText("System Dashboard")).toBeVisible();
+  await expect(
+    newTab.getByText("Performance & Health Dashboard"),
+  ).toBeVisible();
   await expect(newTab.locator("#mem-allocated")).toBeVisible();
 
   // ── Hard refresh (skip cache) ────────────────────────────────────
@@ -234,14 +231,18 @@ test("Test 2: Open dashboard in new tab, refresh, and hard refresh", async ({
 
   // Verify still works after hard refresh
   await expect(newTab.locator("#dashboard-container")).toHaveCount(1);
-  await expect(newTab.getByText("System Dashboard")).toBeVisible();
+  await expect(
+    newTab.getByText("Performance & Health Dashboard"),
+  ).toBeVisible();
   await expect(newTab.locator("#mem-allocated")).toBeVisible();
   await expect(newTab.locator("#runtime-goroutines")).toBeVisible();
 
   // Polling should still work after hard refresh - wait one cycle
   await newTab.waitForTimeout(6000);
   await expect(newTab.locator("#dashboard-container")).toHaveCount(1);
-  await expect(newTab.getByText("System Dashboard")).toBeVisible();
+  await expect(
+    newTab.getByText("Performance & Health Dashboard"),
+  ).toBeVisible();
 
   await newTab.close();
 });
@@ -282,7 +283,8 @@ test("Test 4: Partial HTMX response", async ({ page }) => {
   expect(body).not.toContain("</html>");
   expect(body).not.toContain("<body");
   // But should contain dashboard content (header text visible in partial)
-  expect(body).toContain("System Dashboard");
+  // raw HTML uses &amp; (Go html/template escapes & inside <h1>)
+  expect(body).toContain("Performance &amp; Health Dashboard");
 });
 
 test("Test 5: Metric values are numeric", async ({ page }) => {
@@ -350,4 +352,69 @@ test("Test 8: Server actions from menu survive (auth intact)", async ({
   await expect(
     menu(page).getByText("Login", { exact: true }),
   ).not.toBeVisible();
+});
+
+// ───────────────────────────────────────────────────────────────────
+// Test 9: Dashboard fits on one page at 1920×1080
+// ───────────────────────────────────────────────────────────────────
+
+test("Test 9: Dashboard content fits on one page at 1920×1080", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await loginViaUI(page);
+  await goToDashboard(page);
+
+  // The scroll parent of #dashboard-container is #gallery-content
+  // (h-full overflow-y-auto). Assert the content fits without scrolling.
+  const scrollHeight = await page
+    .locator("#gallery-content")
+    .evaluate((el: HTMLElement) => el.scrollHeight);
+  const clientHeight = await page
+    .locator("#gallery-content")
+    .evaluate((el: HTMLElement) => el.clientHeight);
+
+  expect(scrollHeight).toBeLessThanOrEqual(clientHeight);
+});
+
+// ───────────────────────────────────────────────────────────────────
+// Test 10a: Gallery discovery dates are hover-only (no permanent timestamps)
+// ───────────────────────────────────────────────────────────────────
+
+test("discovery tooltip shows dates on hover", async ({ page }) => {
+  await loginViaUI(page);
+  await goToDashboard(page);
+
+  const tip = page.locator("#gallery-discovery-tip");
+  await expect(tip).toBeVisible();
+  const tipText = await tip.getAttribute("data-tip");
+  expect(tipText ?? "").toMatch(/First:|Last:|Discovery: unknown/);
+  // No permanent ISO-ish timestamps as body text under the dashboard container
+  // (About modal lives outside #dashboard-container; #last-updated is time-only.)
+  await expect(
+    page
+      .locator("#dashboard-container")
+      .getByText(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/),
+  ).toHaveCount(0);
+});
+
+// ───────────────────────────────────────────────────────────────────
+// Test 10: Dashboard spacing tokens are actually applied (computed-style proof)
+// ───────────────────────────────────────────────────────────────────
+
+test("Test 10: dashboard spacing tokens are actually applied", async ({
+  page,
+}) => {
+  await loginViaUI(page);
+  await goToDashboard(page);
+  const rowGap = await page
+    .locator("#dashboard-container > div")
+    .nth(1)
+    .evaluate((el) => getComputedStyle(el).marginTop);
+  expect(parseFloat(rowGap)).toBeGreaterThan(0);
+  const bodyPad = await page
+    .locator("#dashboard-container .card-body")
+    .first()
+    .evaluate((el) => getComputedStyle(el).paddingTop);
+  expect(parseFloat(bodyPad)).toBeLessThan(16);
 });

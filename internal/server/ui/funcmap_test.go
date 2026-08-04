@@ -231,8 +231,47 @@ func TestFuncMap_WriteBatcherQueuePercent(t *testing.T) {
 	}
 }
 
-// TestFuncMap_CacheBatchLoadProgressPercent tests the cacheBatchLoadProgressPercent function
-func TestFuncMap_CacheBatchLoadProgressPercent(t *testing.T) {
+// testGalleryCounts implements galleryCounts for testing cache batch load functions.
+type testGalleryCounts struct {
+	folders int64
+	images  int64
+}
+
+func (t testGalleryCounts) FoldersCount() int64 { return t.folders }
+func (t testGalleryCounts) ImagesCount() int64  { return t.images }
+
+// TestFuncMap_CacheBatchLoadExpectedTotal tests the cacheBatchLoadExpectedTotal function.
+func TestFuncMap_CacheBatchLoadExpectedTotal(t *testing.T) {
+	if err := ParseTemplates(web.FS); err != nil {
+		t.Fatalf("ParseTemplates failed: %v", err)
+	}
+
+	tests := []struct {
+		name     string
+		gs       any
+		expected int64
+	}{
+		{"nil gs", nil, 0},
+		{"invalid type (string)", "not a gallery counts", 0},
+		{"zero counts", testGalleryCounts{}, 0},
+		{"10 folders 100 images", testGalleryCounts{folders: 10, images: 100}, 230},
+		{"only folders", testGalleryCounts{folders: 5}, 15},
+		{"only images", testGalleryCounts{images: 50}, 100},
+	}
+
+	fn := funcMap["cacheBatchLoadExpectedTotal"].(func(any) int64)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := fn(tt.gs)
+			if result != tt.expected {
+				t.Errorf("cacheBatchLoadExpectedTotal(%v) = %d, want %d", tt.gs, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestFuncMap_CacheBatchLoadDonePercent tests the cacheBatchLoadDonePercent function.
+func TestFuncMap_CacheBatchLoadDonePercent(t *testing.T) {
 	if err := ParseTemplates(web.FS); err != nil {
 		t.Fatalf("ParseTemplates failed: %v", err)
 	}
@@ -240,36 +279,71 @@ func TestFuncMap_CacheBatchLoadProgressPercent(t *testing.T) {
 	tests := []struct {
 		name     string
 		cbl      metrics.CacheBatchLoadMetrics
+		gs       any
 		expected int
 	}{
 		{
-			name:     "50% done",
-			cbl:      metrics.CacheBatchLoadMetrics{TargetsScheduled: 100, TargetsCompleted: 50, TargetsFailed: 0},
+			name:     "nil gs",
+			cbl:      metrics.CacheBatchLoadMetrics{TargetsCompleted: 50},
+			gs:       nil,
+			expected: 0,
+		},
+		{
+			name: "50% done (expected 230, done 115)",
+			cbl: metrics.CacheBatchLoadMetrics{
+				TargetsCompleted: 100,
+				TargetsFailed:    10,
+				TargetsSkipped:   5,
+			},
+			gs:       testGalleryCounts{folders: 10, images: 100},
 			expected: 50,
 		},
 		{
-			name:     "100% done",
-			cbl:      metrics.CacheBatchLoadMetrics{TargetsScheduled: 100, TargetsCompleted: 95, TargetsFailed: 5},
+			name: "100% done",
+			cbl: metrics.CacheBatchLoadMetrics{
+				TargetsCompleted: 200,
+				TargetsFailed:    20,
+				TargetsSkipped:   10,
+			},
+			gs:       testGalleryCounts{folders: 10, images: 100},
 			expected: 100,
 		},
 		{
-			name:     "zero scheduled",
-			cbl:      metrics.CacheBatchLoadMetrics{TargetsScheduled: 0},
+			name: "zero expected",
+			cbl: metrics.CacheBatchLoadMetrics{
+				TargetsCompleted: 50,
+			},
+			gs:       testGalleryCounts{},
 			expected: 0,
 		},
 		{
-			name:     "no progress",
-			cbl:      metrics.CacheBatchLoadMetrics{TargetsScheduled: 50, TargetsCompleted: 0, TargetsFailed: 0},
+			name: "no progress",
+			cbl: metrics.CacheBatchLoadMetrics{
+				TargetsCompleted: 0,
+				TargetsFailed:    0,
+				TargetsSkipped:   0,
+			},
+			gs:       testGalleryCounts{folders: 10, images: 100},
 			expected: 0,
+		},
+		{
+			name: "clamped to 100",
+			cbl: metrics.CacheBatchLoadMetrics{
+				TargetsCompleted: 300,
+				TargetsFailed:    0,
+				TargetsSkipped:   0,
+			},
+			gs:       testGalleryCounts{folders: 10, images: 100},
+			expected: 100,
 		},
 	}
 
-	fn := funcMap["cacheBatchLoadProgressPercent"].(func(metrics.CacheBatchLoadMetrics) int)
+	fn := funcMap["cacheBatchLoadDonePercent"].(func(metrics.CacheBatchLoadMetrics, any) int)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := fn(tt.cbl)
+			result := fn(tt.cbl, tt.gs)
 			if result != tt.expected {
-				t.Errorf("cacheBatchLoadProgressPercent(%+v) = %d, want %d", tt.cbl, result, tt.expected)
+				t.Errorf("cacheBatchLoadDonePercent(%+v, %v) = %d, want %d", tt.cbl, tt.gs, result, tt.expected)
 			}
 		})
 	}
@@ -339,6 +413,34 @@ func TestFuncMap_QueueUtilizationColor(t *testing.T) {
 	}
 }
 
+// TestFuncMap_FormatCountOrNA tests the formatCountOrNA function in funcMap
+func TestFuncMap_FormatCountOrNA(t *testing.T) {
+	// Initialize templates to populate funcMap
+	if err := ParseTemplates(web.FS); err != nil {
+		t.Fatalf("ParseTemplates failed: %v", err)
+	}
+
+	tests := []struct {
+		name     string
+		input    int64
+		expected string
+	}{
+		{"negative returns N/A", -1, "N/A"},
+		{"zero returns 0", 0, "0"},
+		{"positive returns formatted", 1234, "1,234"},
+	}
+
+	fn := funcMap["formatCountOrNA"].(func(int64) string)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := fn(tt.input)
+			if result != tt.expected {
+				t.Errorf("formatCountOrNA(%d) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
 // TestFuncMap_HttpCacheUtilizationPercent tests the httpCacheUtilizationPercent function
 func TestFuncMap_HttpCacheUtilizationPercent(t *testing.T) {
 	// Initialize templates to populate funcMap
@@ -382,6 +484,14 @@ func TestFuncMap_HttpCacheUtilizationPercent(t *testing.T) {
 				MaxTotalSize: 100,
 			},
 			expected: 0,
+		},
+		{
+			name: "negative size returns -1",
+			cache: metrics.HTTPCacheMetrics{
+				SizeBytes:    -1,
+				MaxTotalSize: 100,
+			},
+			expected: -1,
 		},
 	}
 

@@ -190,17 +190,12 @@ func TestIntegration_GalleryCache_AnonymousDoesNotReceiveAuthBody(t *testing.T) 
 		t.Fatalf("authenticated gallery: X-Cache %q, want MISS", w1.Header().Get("X-Cache"))
 	}
 
-	// Cache writes are async via WriteBatcher; allow flush before anonymous replay check.
-	time.Sleep(100 * time.Millisecond)
-
+	// Cache writes are async via the WriteBatcher; replay the anonymous
+	// request until it is served from the cache.
 	req2 := httptest.NewRequest(http.MethodGet, "/gallery/1", nil)
-	w2 := httptest.NewRecorder()
-	router.ServeHTTP(w2, req2)
+	w2 := waitForCacheStatus(t, router, req2, "HIT")
 	if w2.Code != http.StatusOK {
 		t.Fatalf("anonymous gallery: status %d, want 200", w2.Code)
-	}
-	if w2.Header().Get("X-Cache") != "HIT" {
-		t.Fatalf("anonymous gallery: X-Cache %q, want HIT", w2.Header().Get("X-Cache"))
 	}
 
 	doc, err := html.Parse(strings.NewReader(w2.Body.String()))
@@ -231,6 +226,159 @@ func integrationTestHasAnchorHref(n *html.Node, href string) bool {
 		}
 	}
 	return false
+}
+
+func TestIntegration_HTMLPartialRoutes_CacheHitPreservesContentType(t *testing.T) {
+	setenvForTest(t, "SEPG_SESSION_SECURE", "false")
+	opt := getopt.Opt{}
+	opt.SessionSecret.String = "gallery-cache-auth-isolation-test-secret-32b"
+	opt.SessionSecret.IsSet = true
+	opt.EnableHTTPCache = getopt.OptBool{Bool: true, IsSet: true}
+	app := CreateApp(t, WithGetoptOpt(opt))
+	defer app.Shutdown()
+
+	app.ConfigManager.ConfigMu.Lock()
+	if app.ConfigManager.Config == nil {
+		app.ConfigManager.Config = config.DefaultConfig()
+	}
+	app.ConfigManager.Config.EnableHTTPCache = true
+	app.ConfigManager.ConfigMu.Unlock()
+	app.StartWriteBatcher(app.RuntimeManager.ctx, true)
+	app.initializeHTTPCache()
+	if app.cacheMW == nil {
+		t.Fatal("expected cacheMW to be initialized")
+	}
+
+	router := app.getRouter()
+
+	// DB seed: one file under root folder.
+	ctx := app.RuntimeManager.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cpcRw, err := app.dbRwPool.Get()
+	if err != nil {
+		t.Fatalf("dbRwPool.Get: %v", err)
+	}
+	defer app.dbRwPool.Put(cpcRw)
+
+	rootFolderID, err := cpcRw.Queries.GetFolderIDByPath(ctx, "")
+	if err != nil {
+		t.Fatalf("GetFolderIDByPath root: %v", err)
+	}
+
+	filePath := "/content-type-test.jpg"
+	fpID, err := cpcRw.Queries.UpsertFilePathReturningID(ctx, filePath)
+	if err != nil {
+		t.Fatalf("UpsertFilePathReturningID: %v", err)
+	}
+	file, err := cpcRw.Queries.UpsertFileReturningFile(ctx, gallerydb.UpsertFileReturningFileParams{
+		FolderID:  sql.NullInt64{Int64: rootFolderID, Valid: true},
+		PathID:    fpID,
+		Filename:  "content-type-test.jpg",
+		CreatedAt: time.Now().Unix(),
+		UpdatedAt: time.Now().Unix(),
+	})
+	if err != nil {
+		t.Fatalf("UpsertFileReturningFile: %v", err)
+	}
+	fileID := file.ID
+
+	// Per-route subtests: MISS -> HIT with Content-Type assertion.
+	wantCT := "text/html; charset=utf-8"
+
+	t.Run("lightbox", func(t *testing.T) {
+		path := fmt.Sprintf("/lightbox/%d", fileID)
+		hxTarget := "lightbox_content"
+
+		req1 := httptest.NewRequest(http.MethodGet, path, nil)
+		req1.Header.Set("HX-Request", "true")
+		req1.Header.Set("HX-Target", hxTarget)
+		w1 := httptest.NewRecorder()
+		router.ServeHTTP(w1, req1)
+		if w1.Code != http.StatusOK {
+			t.Fatalf("MISS status = %d, want 200", w1.Code)
+		}
+		if w1.Header().Get("X-Cache") != "MISS" {
+			t.Fatalf("X-Cache = %q, want MISS", w1.Header().Get("X-Cache"))
+		}
+		if w1.Header().Get("Content-Type") != wantCT {
+			t.Fatalf("MISS Content-Type = %q, want %q", w1.Header().Get("Content-Type"), wantCT)
+		}
+
+		req2 := httptest.NewRequest(http.MethodGet, path, nil)
+		req2.Header.Set("HX-Request", "true")
+		req2.Header.Set("HX-Target", hxTarget)
+		w2 := waitForCacheStatus(t, router, req2, "HIT")
+		if w2.Code != http.StatusOK {
+			t.Fatalf("HIT status = %d, want 200", w2.Code)
+		}
+		if w2.Header().Get("Content-Type") != wantCT {
+			t.Fatalf("HIT Content-Type = %q, want %q", w2.Header().Get("Content-Type"), wantCT)
+		}
+	})
+
+	t.Run("info_image", func(t *testing.T) {
+		path := fmt.Sprintf("/info/image/%d", fileID)
+		hxTarget := "box_info"
+
+		req1 := httptest.NewRequest(http.MethodGet, path, nil)
+		req1.Header.Set("HX-Request", "true")
+		req1.Header.Set("HX-Target", hxTarget)
+		w1 := httptest.NewRecorder()
+		router.ServeHTTP(w1, req1)
+		if w1.Code != http.StatusOK {
+			t.Fatalf("MISS status = %d, want 200", w1.Code)
+		}
+		if w1.Header().Get("X-Cache") != "MISS" {
+			t.Fatalf("X-Cache = %q, want MISS", w1.Header().Get("X-Cache"))
+		}
+		if w1.Header().Get("Content-Type") != wantCT {
+			t.Fatalf("MISS Content-Type = %q, want %q", w1.Header().Get("Content-Type"), wantCT)
+		}
+
+		req2 := httptest.NewRequest(http.MethodGet, path, nil)
+		req2.Header.Set("HX-Request", "true")
+		req2.Header.Set("HX-Target", hxTarget)
+		w2 := waitForCacheStatus(t, router, req2, "HIT")
+		if w2.Code != http.StatusOK {
+			t.Fatalf("HIT status = %d, want 200", w2.Code)
+		}
+		if w2.Header().Get("Content-Type") != wantCT {
+			t.Fatalf("HIT Content-Type = %q, want %q", w2.Header().Get("Content-Type"), wantCT)
+		}
+	})
+
+	t.Run("info_folder", func(t *testing.T) {
+		path := fmt.Sprintf("/info/folder/%d", rootFolderID)
+		hxTarget := "box_info"
+
+		req1 := httptest.NewRequest(http.MethodGet, path, nil)
+		req1.Header.Set("HX-Request", "true")
+		req1.Header.Set("HX-Target", hxTarget)
+		w1 := httptest.NewRecorder()
+		router.ServeHTTP(w1, req1)
+		if w1.Code != http.StatusOK {
+			t.Fatalf("MISS status = %d, want 200", w1.Code)
+		}
+		if w1.Header().Get("X-Cache") != "MISS" {
+			t.Fatalf("X-Cache = %q, want MISS", w1.Header().Get("X-Cache"))
+		}
+		if w1.Header().Get("Content-Type") != wantCT {
+			t.Fatalf("MISS Content-Type = %q, want %q", w1.Header().Get("Content-Type"), wantCT)
+		}
+
+		req2 := httptest.NewRequest(http.MethodGet, path, nil)
+		req2.Header.Set("HX-Request", "true")
+		req2.Header.Set("HX-Target", hxTarget)
+		w2 := waitForCacheStatus(t, router, req2, "HIT")
+		if w2.Code != http.StatusOK {
+			t.Fatalf("HIT status = %d, want 200", w2.Code)
+		}
+		if w2.Header().Get("Content-Type") != wantCT {
+			t.Fatalf("HIT Content-Type = %q, want %q", w2.Header().Get("Content-Type"), wantCT)
+		}
+	})
 }
 
 func TestIntegration_ConfigCache_ServerUsesConfig(t *testing.T) {
@@ -711,6 +859,26 @@ func tableExists(ctx context.Context, app *App, tableName string) (bool, error) 
 	return exists == 1, nil
 }
 
+// waitForCacheStatus replays req until the HTTP cache middleware reports the
+// wanted X-Cache status. Cache writes are asynchronous via the WriteBatcher,
+// so a HIT is only observable after the entry has been flushed to the database.
+func waitForCacheStatus(t *testing.T, router http.Handler, req *http.Request, want string) *httptest.ResponseRecorder {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	var last *httptest.ResponseRecorder
+	for {
+		last = httptest.NewRecorder()
+		router.ServeHTTP(last, req.Clone(req.Context()))
+		if last.Header().Get("X-Cache") == want {
+			return last
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for X-Cache %q, last response X-Cache = %q", want, last.Header().Get("X-Cache"))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func waitForTableExistence(t *testing.T, ctx context.Context, app *App, tableName string, wantExists bool) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
@@ -1131,6 +1299,44 @@ func TestWalkImageDir_DropsStaleCacheTable(t *testing.T) {
 
 	app.TriggerDiscovery()
 	waitForTableExistence(t, ctx, app, "http_cache_to_be_dropped", false)
+}
+
+func TestIntegration_PprofLoopbackAndAuth(t *testing.T) {
+	setenvForTest(t, "SEPG_SESSION_SECURE", "false")
+	app := CreateApp(t)
+	defer app.Shutdown()
+	router := app.getRouter()
+	authCookie := MakeAuthCookie(t, app)
+
+	subtests := []struct {
+		name       string
+		remoteAddr string
+		useAuth    bool
+		want       int
+	}{
+		{"loopback_v4_unauth", "127.0.0.1:12345", false, http.StatusUnauthorized},
+		{"loopback_v4_auth", "127.0.0.1:12345", true, http.StatusOK},
+		{"loopback_v6_unauth", "[::1]:12345", false, http.StatusUnauthorized},
+		{"loopback_v6_auth", "[::1]:12345", true, http.StatusOK},
+		{"remote_unauth", "198.51.100.1:12345", false, http.StatusNotFound},
+		{"remote_auth", "198.51.100.1:12345", true, http.StatusNotFound},
+		{"mapped_v4_unauth", "[::ffff:127.0.0.1]:12345", false, http.StatusNotFound},
+		{"mapped_v4_auth", "[::ffff:127.0.0.1]:12345", true, http.StatusNotFound},
+	}
+	for _, st := range subtests {
+		t.Run(st.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil)
+			req.RemoteAddr = st.remoteAddr
+			if st.useAuth {
+				req.AddCookie(authCookie)
+			}
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			if w.Code != st.want {
+				t.Fatalf("status = %d, want %d", w.Code, st.want)
+			}
+		})
+	}
 }
 
 // TestLoginRateLimitPerIP_Returns429AfterLimit verifies the configured per-IP

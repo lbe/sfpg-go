@@ -112,6 +112,20 @@ func (fakeBatchQueries) HttpCacheExistsByKey(ctx context.Context, key string) (b
 	return false, nil
 }
 
+// waitForProcessedPaths waits until the recording file processor has recorded
+// at least want processed paths. The pool dequeues items before processing
+// them, so queue length alone is not a reliable completion signal.
+func waitForProcessedPaths(t *testing.T, fp *recordingFileProcessor, want int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for len(fp.ProcessedPaths()) < want {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %d processed path(s), got %d", want, len(fp.ProcessedPaths()))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func TestSubsystemManager_Start(t *testing.T) {
 	defaultRoutes := []string{"/gallery/", "/lightbox/", "/info/folder/", "/info/image/"}
 
@@ -310,7 +324,7 @@ func TestSubsystemManager_StartPool(t *testing.T) {
 	mgr, app := startTestManager(t, 0, 0, cfg)
 
 	done := make(chan struct{})
-	mgr.StartPool(context.Background(), done, app.normalizedImagesDir, removeImagesDirPrefix, app.SubsystemManager.fileProcessor)
+	mgr.StartPool(context.Background(), done, app.normalizedImagesDir, removeImagesDirPrefix, app.SubsystemManager.fileProcessor, nil)
 
 	app.RuntimeManager.cancel()
 	select {
@@ -331,18 +345,15 @@ func TestSubsystemManager_StartPool_ProcessesFile(t *testing.T) {
 	defer mgr.Shutdown()
 
 	done := make(chan struct{})
-	mgr.StartPool(context.Background(), done, app.normalizedImagesDir, removeImagesDirPrefix, fp)
+	mgr.StartPool(context.Background(), done, app.normalizedImagesDir, removeImagesDirPrefix, fp, nil)
 
 	relPath := filepath.Join(app.normalizedImagesDir, "test.jpg")
 	mgr.q.Enqueue(relPath)
 
-	deadline := time.Now().Add(5 * time.Second)
-	for mgr.q.Len() > 0 {
-		if time.Now().After(deadline) {
-			t.Fatal("queue did not drain")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	// Wait until the pool worker has processed the file. The queue can drain
+	// before processing completes, so wait on the recorded result instead of
+	// the queue length.
+	waitForProcessedPaths(t, fp, 1)
 
 	processed := fp.ProcessedPaths()
 	if len(processed) != 1 || processed[0] != "test.jpg" {
@@ -368,17 +379,13 @@ func TestSubsystemManager_StartPool_UsesProvidedPools(t *testing.T) {
 	defer mgr.Shutdown()
 
 	done := make(chan struct{})
-	mgr.StartPool(context.Background(), done, app.normalizedImagesDir, removeImagesDirPrefix, fp)
+	mgr.StartPool(context.Background(), done, app.normalizedImagesDir, removeImagesDirPrefix, fp, nil)
 
 	mgr.q.Enqueue(filepath.Join(app.normalizedImagesDir, "test.jpg"))
 
-	deadline := time.Now().Add(5 * time.Second)
-	for mgr.q.Len() > 0 {
-		if time.Now().After(deadline) {
-			t.Fatal("queue did not drain")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	// Wait until the file has been processed; this also guarantees the RO
+	// connection was passed to ProcessFileWithConn.
+	waitForProcessedPaths(t, fp, 1)
 
 	if fp.ConnUsed() == nil {
 		t.Fatal("expected a RO connection to be passed to ProcessFileWithConn")

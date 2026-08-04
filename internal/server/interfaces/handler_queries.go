@@ -24,6 +24,9 @@ type HandlerQueries interface {
 	// GetPreloadRoutesByFolderID returns routes to preload for a folder (source of truth: direct children only).
 	// Returns *sql.Rows; each row contains a route string to scan.
 	GetPreloadRoutesByFolderID(ctx context.Context, parentID sql.NullInt64) (*sql.Rows, error)
-	// GetGalleryStatistics returns aggregate statistics about the gallery (folder count, file count, total size, timestamps).
-	GetGalleryStatistics(ctx context.Context) (gallerydb.GetGalleryStatisticsRow, error)
+	GetFileFolderIndexByID(ctx context.Context, id int64) (gallerydb.GetFileFolderIndexByIDRow, error)
+	GetLightboxNavByFileID(ctx context.Context, id int64) (gallerydb.GetLightboxNavByFileIDRow, error)
+	GetFolderInfoCountsByID(ctx context.Context, id int64) (gallerydb.GetFolderInfoCountsByIDRow, error)
+	GetGalleryFileThumbRowsByFolderID(ctx context.Context, folderID sql.NullInt64) ([]gallerydb.GetGalleryFileThumbRowsByFolderIDRow, error)
+	GetGalleryFolderThumbRowsByParentID(ctx context.Context, parentID sql.NullInt64) ([]gallerydb.GetGalleryFolderThumbRowsByParentIDRow, error)
 }

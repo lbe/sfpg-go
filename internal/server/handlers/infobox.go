@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/lbe/sfpg-go/internal/gallerydb"
-	"github.com/lbe/sfpg-go/internal/server/files"
 	"github.com/lbe/sfpg-go/internal/server/ui"
 )
 
@@ -46,25 +45,10 @@ func (h *GalleryHandlers) InfoBoxFolder(w http.ResponseWriter, r *http.Request) 
 	// Do NOT set HX-Push-URL for info box: loading info into #box_info (e.g. from lightbox) must not change the URL,
 	// so that back/j after closing lightbox goes to the previous folder (desired behavior at 0d6377c).
 
-	subFolders, err := qh.GetFoldersViewsByParentIDOrderByName(h.Ctx, sql.NullInt64{Int64: folderID, Valid: true})
+	counts, err := qh.GetFolderInfoCountsByID(h.Ctx, folderID)
 	if err != nil {
 		h.ServerError(w, r, err)
 		return
-	}
-
-	fileViews, err := qh.GetFileViewsByFolderIDOrderByFileName(h.Ctx, sql.NullInt64{Int64: folderID, Valid: true})
-	if err != nil {
-		h.ServerError(w, r, err)
-		return
-	}
-
-	var imageCount, fileCount int
-	for _, f := range fileViews {
-		if files.IsImageFile(f.Path) {
-			imageCount++
-		} else {
-			fileCount++
-		}
 	}
 
 	data := struct {
@@ -76,11 +60,12 @@ func (h *GalleryHandlers) InfoBoxFolder(w http.ResponseWriter, r *http.Request) 
 	}{
 		Folder:         folder,
 		FormattedMtime: time.Unix(updatedAt, 0).Format(time.ANSIC),
-		DirCount:       len(subFolders),
-		ImageCount:     imageCount,
-		FileCount:      fileCount,
+		DirCount:       int(counts.DirCount),
+		ImageCount:     int(counts.ImageCount),
+		FileCount:      int(counts.FileCount),
 	}
 
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := ui.RenderTemplate(w, "infobox-folder.html.tmpl", data); err != nil {
 		h.ServerError(w, r, err)
 	}
@@ -118,18 +103,18 @@ func (h *GalleryHandlers) InfoBoxImage(w http.ResponseWriter, r *http.Request) {
 	// Do NOT set HX-Push-URL for info box: the lightbox loads /info/image/{id} into #box_info on open;
 	// pushing that URL would change the address bar and make back/j return to lightbox after close (bug).
 
-	imagesInFolder, err := qh.GetFileViewsByFolderIDOrderByFileName(h.Ctx, file.FolderID)
-	if err != nil {
+	imageIndex := -1
+	imageCount := 0
+	idx, err := qh.GetFileFolderIndexByID(h.Ctx, fileID)
+	switch {
+	case err == nil:
+		imageIndex = int(idx.ImageIndex)
+		imageCount = int(idx.ImageCount)
+	case errors.Is(err, sql.ErrNoRows):
+		// orphan file (folder_id IS NULL): preserve legacy -1 / 0 and render 200
+	default:
 		h.ServerError(w, r, err)
 		return
-	}
-
-	imageIndex := -1
-	for i, img := range imagesInFolder {
-		if img.ID == fileID {
-			imageIndex = i + 1
-			break
-		}
 	}
 
 	mq := h.galleryOps.GetMetadataQueries(cpcRo)
@@ -160,9 +145,10 @@ func (h *GalleryHandlers) InfoBoxImage(w http.ResponseWriter, r *http.Request) {
 		Exif:       exif,
 		Iptc:       iptc,
 		ImageIndex: imageIndex,
-		ImageCount: len(imagesInFolder),
+		ImageCount: imageCount,
 	}
 
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := ui.RenderTemplate(w, "infobox-image.html.tmpl", data); err != nil {
 		h.ServerError(w, r, err)
 	}

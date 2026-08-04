@@ -57,6 +57,12 @@ SELECT *
   FROM folder_view
  WHERE id = ?;
 
+-- name: GetGalleryFolderThumbRowsByParentID :many
+SELECT fv.id AS id, fv.name AS name
+  FROM folder_view fv
+ WHERE fv.parent_id = ?
+ ORDER BY fv.name;
+
 -- name: GetFoldersViewsByParentIDOrderByName :many
 SELECT * 
   FROM folder_view
@@ -67,4 +73,45 @@ SELECT *
 SELECT found 
   FROM folder_tile_exists_view
  WHERE path = ?;
+
+-- name: GetFolderInfoCountsByID :one
+SELECT
+  CAST((
+    SELECT COUNT(*) FROM folder_view sf
+     WHERE sf.parent_id = f.id
+  ) AS INTEGER) AS dir_count,
+  CAST((
+    SELECT COUNT(*) FROM file_view fv
+     WHERE fv.folder_id = f.id
+       AND (
+            LOWER(fv.filename) LIKE '%.jpg'
+         OR LOWER(fv.filename) LIKE '%.jpeg'
+         OR LOWER(fv.filename) LIKE '%.png'
+         OR LOWER(fv.filename) LIKE '%.gif'
+         OR LOWER(fv.filename) LIKE '%.webp'
+         OR LOWER(fv.filename) LIKE '%.avif'
+         OR LOWER(fv.filename) LIKE '%.heic'
+         OR LOWER(fv.filename) LIKE '%.heif'
+         OR LOWER(fv.filename) LIKE '%.tif'
+         OR LOWER(fv.filename) LIKE '%.tiff'
+       )
+  ) AS INTEGER) AS image_count,
+  CAST((
+    SELECT COUNT(*) FROM file_view fv
+     WHERE fv.folder_id = f.id
+       AND NOT (
+            LOWER(fv.filename) LIKE '%.jpg'
+         OR LOWER(fv.filename) LIKE '%.jpeg'
+         OR LOWER(fv.filename) LIKE '%.png'
+         OR LOWER(fv.filename) LIKE '%.gif'
+         OR LOWER(fv.filename) LIKE '%.webp'
+         OR LOWER(fv.filename) LIKE '%.avif'
+         OR LOWER(fv.filename) LIKE '%.heic'
+         OR LOWER(fv.filename) LIKE '%.heif'
+         OR LOWER(fv.filename) LIKE '%.tif'
+         OR LOWER(fv.filename) LIKE '%.tiff'
+       )
+  ) AS INTEGER) AS file_count
+FROM folders f
+WHERE f.id = ?;
 

@@ -184,9 +184,6 @@ func TestViewDashboard(t *testing.T) {
 	m := Model{
 		metrics: &parser.DashboardMetrics{
 			LastUpdated: "22:30:00",
-			Modules: []parser.ModuleStatus{
-				{Name: "discovery", Status: "active"},
-			},
 			Memory: parser.MemoryStats{
 				Allocated: "15.0 MiB",
 			},
@@ -206,10 +203,6 @@ func TestViewDashboard(t *testing.T) {
 		t.Error("View should contain last updated time")
 	}
 
-	// Check module status on one line
-	if !strings.Contains(view, "Module Status") {
-		t.Error("View should contain Module Status")
-	}
 }
 
 // TestViewLogin renders login form

@@ -453,7 +453,7 @@ func TestNewPoolFunc_RunPoolWorkerSuccess(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	poolFunc := NewPoolFuncWithProcessor(processor, q, filepath.ToSlash(imagesDir), testRemovePrefix, nil)
+	poolFunc := NewPoolFuncWithProcessor(processor, q, filepath.ToSlash(imagesDir), testRemovePrefix, nil, nil)
 	done := make(chan error, 1)
 	baseline := pool.Stats.CompletedTasks.Load()
 

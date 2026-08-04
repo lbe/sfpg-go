@@ -55,6 +55,26 @@ func (m *mockFolderQueries) GetThumbnailBlobDataByID(ctx context.Context, id int
 	return nil, sql.ErrNoRows
 }
 
+func (m *mockFolderQueries) GetFileFolderIndexByID(ctx context.Context, id int64) (gallerydb.GetFileFolderIndexByIDRow, error) {
+	return gallerydb.GetFileFolderIndexByIDRow{}, sql.ErrNoRows
+}
+
+func (m *mockFolderQueries) GetLightboxNavByFileID(ctx context.Context, id int64) (gallerydb.GetLightboxNavByFileIDRow, error) {
+	return gallerydb.GetLightboxNavByFileIDRow{}, sql.ErrNoRows
+}
+
+func (m *mockFolderQueries) GetFolderInfoCountsByID(ctx context.Context, id int64) (gallerydb.GetFolderInfoCountsByIDRow, error) {
+	return gallerydb.GetFolderInfoCountsByIDRow{}, sql.ErrNoRows
+}
+
+func (m *mockFolderQueries) GetGalleryFileThumbRowsByFolderID(ctx context.Context, folderID sql.NullInt64) ([]gallerydb.GetGalleryFileThumbRowsByFolderIDRow, error) {
+	return nil, sql.ErrNoRows
+}
+
+func (m *mockFolderQueries) GetGalleryFolderThumbRowsByParentID(ctx context.Context, parentID sql.NullInt64) ([]gallerydb.GetGalleryFolderThumbRowsByParentIDRow, error) {
+	return nil, sql.ErrNoRows
+}
+
 func (m *mockFolderQueries) GetPreloadRoutesByFolderID(ctx context.Context, parentID sql.NullInt64) (*sql.Rows, error) {
 	// Build routes from mock data
 	var routes []string
@@ -87,10 +107,6 @@ func (m *mockFolderQueries) GetPreloadRoutesByFolderID(ctx context.Context, pare
 	return m.db.Query("SELECT route FROM mock_preload_routes")
 }
 
-func (m *mockFolderQueries) GetGalleryStatistics(ctx context.Context) (gallerydb.GetGalleryStatisticsRow, error) {
-	return gallerydb.GetGalleryStatisticsRow{}, sql.ErrNoRows
-}
-
 // TestFolderPreloadTask_ImagesPreloadInfoAndLightbox verifies that FolderPreloadTask
 // schedules preloads for both /info/image/{id} and /lightbox/{id} for each image.
 func TestFolderPreloadTask_ImagesPreloadInfoAndLightbox(t *testing.T) {
@@ -106,12 +122,19 @@ func TestFolderPreloadTask_ImagesPreloadInfoAndLightbox(t *testing.T) {
 	// Get DB handle for creating mock rows
 	mockDB := dbRoPool.DB()
 
+	// One image schedules exactly two routes: /info/image/42 and /lightbox/42.
+	const wantRequests = 2
+	done := make(chan struct{})
 	var requestedPaths []string
 	var pathsMu sync.Mutex
 	handlerFunc := func(w http.ResponseWriter, r *http.Request) {
 		pathsMu.Lock()
 		requestedPaths = append(requestedPaths, r.URL.Path)
+		n := len(requestedPaths)
 		pathsMu.Unlock()
+		if n == wantRequests {
+			close(done)
+		}
 		w.WriteHeader(200)
 	}
 
@@ -125,7 +148,8 @@ func TestFolderPreloadTask_ImagesPreloadInfoAndLightbox(t *testing.T) {
 	schedCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go sched.Start(schedCtx)
-	time.Sleep(20 * time.Millisecond)
+	// No "let scheduler start" sleep: AddTask before the scheduler goroutine
+	// begins its select is safe (the wake channel is buffered).
 
 	task := &FolderPreloadTask{
 		FolderID:        1,
@@ -148,8 +172,13 @@ func TestFolderPreloadTask_ImagesPreloadInfoAndLightbox(t *testing.T) {
 		t.Fatalf("FolderPreloadTask.Run: %v", err)
 	}
 
-	// Wait for PreloadTasks to run (they're scheduled async)
-	time.Sleep(200 * time.Millisecond)
+	// The scheduled PreloadTasks run asynchronously in the scheduler's
+	// goroutines; wait for the handler to observe all of them.
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for scheduled preload tasks to run")
+	}
 
 	pathsMu.Lock()
 	paths := append([]string(nil), requestedPaths...)
@@ -187,12 +216,20 @@ func TestFolderPreloadTask_SkipsAlreadyCachedRoutes(t *testing.T) {
 
 	mockDB := dbRoPool.DB()
 
+	// /info/image/42 is skipped at schedule time (cache entry exists), so the
+	// handler is expected to see exactly one request: /lightbox/42.
+	const wantRequests = 1
+	done := make(chan struct{})
 	var requestedPaths []string
 	var pathsMu sync.Mutex
 	handlerFunc := func(w http.ResponseWriter, r *http.Request) {
 		pathsMu.Lock()
 		requestedPaths = append(requestedPaths, r.URL.Path)
+		n := len(requestedPaths)
 		pathsMu.Unlock()
+		if n == wantRequests {
+			close(done)
+		}
 		w.WriteHeader(200)
 	}
 
@@ -232,7 +269,8 @@ func TestFolderPreloadTask_SkipsAlreadyCachedRoutes(t *testing.T) {
 	schedCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go sched.Start(schedCtx)
-	time.Sleep(20 * time.Millisecond)
+	// No "let scheduler start" sleep: AddTask before the scheduler goroutine
+	// begins its select is safe (the wake channel is buffered).
 
 	task := &FolderPreloadTask{
 		FolderID:        1,
@@ -255,8 +293,13 @@ func TestFolderPreloadTask_SkipsAlreadyCachedRoutes(t *testing.T) {
 		t.Fatalf("FolderPreloadTask.Run: %v", err)
 	}
 
-	// Wait for PreloadTasks to run
-	time.Sleep(200 * time.Millisecond)
+	// The scheduled PreloadTask runs asynchronously in the scheduler's
+	// goroutine; wait for the handler to observe it.
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for scheduled preload task to run")
+	}
 
 	pathsMu.Lock()
 	paths := append([]string(nil), requestedPaths...)

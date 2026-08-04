@@ -67,15 +67,21 @@ func TestHTTPCacheEntryPool_ResetClearsAllFields(t *testing.T) {
 
 func TestHTTPCacheEntryPool_BodyCapacityReused(t *testing.T) {
 	entry := GetHTTPCacheEntry()
-	// entry.Body starts with cap == defaultBodyCapacity (8 KiB)
-	// Append ~5 KiB without changing capacity
+	// Record the starting capacity (varies based on prior pool reuse)
+	originalCap := cap(entry.Body)
+	if originalCap < defaultBodyCapacity {
+		t.Fatalf("Body cap = %d, want >= %d", originalCap, defaultBodyCapacity)
+	}
+
+	// Append ~5 KiB — this should not grow the capacity if there's room
 	entry.Body = append(entry.Body[:0], make([]byte, 5000)...)
 
 	PutHTTPCacheEntry(entry)
 	entry2 := GetHTTPCacheEntry()
 
-	if cap(entry2.Body) != defaultBodyCapacity {
-		t.Errorf("Body capacity after Put/Get = %d, want %d", cap(entry2.Body), defaultBodyCapacity)
+	// Capacity should be at least the original (reuse, not shrink or reset)
+	if cap(entry2.Body) < originalCap {
+		t.Errorf("Body capacity after Put/Get = %d, want >= %d", cap(entry2.Body), originalCap)
 	}
 
 	PutHTTPCacheEntry(entry2)
@@ -98,22 +104,122 @@ func TestHTTPCacheEntryPool_UndersizedBodyGrown(t *testing.T) {
 	PutHTTPCacheEntry(entry2)
 }
 
-func TestHTTPCacheEntryPool_NonDefaultCapacityReset(t *testing.T) {
+func TestHTTPCacheEntryPool_NonDefaultCapacityRetained(t *testing.T) {
 	entry := GetHTTPCacheEntry()
 
-	// Simulate a body with non-standard capacity (12 KiB, which is > defaultBodyCapacity,
-	// covers both the old 8-16 KiB band and oversized cases)
+	// Simulate a body with non-standard capacity (12 KiB, which falls between
+	// defaultBodyCapacity and maxRetainedCaptureCap — should be retained).
 	entry.Body = make([]byte, 0, 12*1024)
 	entry.Body = append(entry.Body, make([]byte, 10000)...)
+
+	// sync.Pool is nondeterministic: under -race, Put randomly drops ~25% of
+	// items (see sync/pool.go), and Get may return an unrelated pooled entry.
+	// Re-Put the 12 KiB entry each iteration until Get hands it back, holding
+	// non-matching entries aside so a recycled entry cannot loop forever.
+	var matched *HTTPCacheEntry
+	var leftovers []*HTTPCacheEntry
+	lastCaps := make([]int, 0, 8)
+	for range 64 {
+		PutHTTPCacheEntry(entry)
+		got := GetHTTPCacheEntry()
+		if cap(got.Body) == 12*1024 {
+			matched = got
+			break
+		}
+		lastCaps = append(lastCaps, cap(got.Body))
+		leftovers = append(leftovers, got)
+	}
+	// Return the matched 12 KiB entry first so it lands in the private slot
+	// (consumed by the next test's first Get) rather than leaking a
+	// non-default body into the shared lists where other pool tests could
+	// observe it after a race-dropped Put.
+	if matched != nil {
+		PutHTTPCacheEntry(matched)
+	}
+	for _, e := range leftovers {
+		PutHTTPCacheEntry(e)
+	}
+	if matched == nil {
+		t.Fatalf("Non-default capacity not retained: observed caps %v, want %d", lastCaps, 12*1024)
+	}
+}
+
+func TestHTTPCacheEntryPool_OversizedBodyReset(t *testing.T) {
+	entry := GetHTTPCacheEntry()
+
+	// Simulate a body with capacity > maxRetainedCaptureCap — should be reset.
+	entry.Body = make([]byte, 0, 300*1024) // 300 KiB, > 256 KiB max
+	entry.Body = append(entry.Body, make([]byte, 250000)...)
 
 	PutHTTPCacheEntry(entry)
 	entry2 := GetHTTPCacheEntry()
 
 	if cap(entry2.Body) != defaultBodyCapacity {
-		t.Errorf("Non-default capacity not reset: cap = %d, want %d", cap(entry2.Body), defaultBodyCapacity)
+		t.Errorf("Oversized body not reset: cap = %d, want %d", cap(entry2.Body), defaultBodyCapacity)
 	}
 
 	PutHTTPCacheEntry(entry2)
+}
+
+func TestCacheCapturerPool_GetPut(t *testing.T) {
+	ccw := getCacheCapturingWriter(nil)
+	if ccw == nil {
+		t.Fatal("getCacheCapturingWriter returned nil")
+	}
+	if cap(ccw.body) == 0 {
+		t.Error("capturer body has zero capacity")
+	}
+
+	// Write some data
+	ccw.body = append(ccw.body, []byte("test data")...)
+	if len(ccw.body) == 0 {
+		t.Error("capturer body should have data after write")
+	}
+
+	putCacheCapturingWriter(ccw)
+
+	// Get again — should be recycled (clean body, nil ResponseWriter)
+	ccw2 := getCacheCapturingWriter(nil)
+	if len(ccw2.body) != 0 {
+		t.Error("recycled capturer body should be empty")
+	}
+	if ccw2.ResponseWriter != nil {
+		t.Error("recycled capturer ResponseWriter should be nil")
+	}
+	if ccw2.wroteHeader {
+		t.Error("recycled capturer wroteHeader should be false")
+	}
+	if ccw2.statusCode != 0 {
+		t.Error("recycled capturer statusCode should be 0")
+	}
+
+	putCacheCapturingWriter(ccw2)
+}
+
+func TestCacheCapturerPool_OversizeReset(t *testing.T) {
+	ccw := getCacheCapturingWriter(nil)
+
+	// Simulate growing past maxRetainedCaptureCap
+	ccw.body = make([]byte, 0, 300*1024) // 300 KiB, > 256 KiB max
+	ccw.body = append(ccw.body, make([]byte, 250000)...)
+
+	putCacheCapturingWriter(ccw)
+
+	// Get again — body should be reset to clean 64 KiB
+	ccw2 := getCacheCapturingWriter(nil)
+	if len(ccw2.body) != 0 {
+		t.Error("oversized recycled capturer body should be empty")
+	}
+	if cap(ccw2.body) < 64*1024 {
+		t.Errorf("oversized recycled capturer cap = %d, want >= %d", cap(ccw2.body), 64*1024)
+	}
+
+	putCacheCapturingWriter(ccw2)
+}
+
+func TestCacheCapturerPool_PutNilSafe(t *testing.T) {
+	// Should not panic
+	putCacheCapturingWriter(nil)
 }
 
 func TestHTTPCacheEntryPool_PutNilSafe(t *testing.T) {

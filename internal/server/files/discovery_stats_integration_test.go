@@ -61,7 +61,7 @@ func TestDiscoveryStats_ExistingFilesNotCountedAsNew(t *testing.T) {
 	// Create pool func with stats
 	poolFunc := NewPoolFuncWithProcessor(fp, q, tmpDir, func(_, path string) (string, error) {
 		return filepath.Base(path), nil
-	}, stats)
+	}, stats, nil)
 
 	// Run workers
 	var wg sync.WaitGroup
@@ -73,8 +73,16 @@ func TestDiscoveryStats_ExistingFilesNotCountedAsNew(t *testing.T) {
 		}(i)
 	}
 
-	// Wait for all files to be processed
-	time.Sleep(100 * time.Millisecond)
+	// Wait until all three files have been fully processed: TotalFound is
+	// incremented on dequeue and InFlight is decremented only after the
+	// processor returns, so the combination guarantees all work is done.
+	deadline := time.Now().Add(5 * time.Second)
+	for stats.TotalFound.Load() < 3 || stats.InFlight.Load() > 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for discovery to process files")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	cancel()
 	wg.Wait()
 

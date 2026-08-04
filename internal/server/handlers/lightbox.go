@@ -36,27 +36,15 @@ func (h *GalleryHandlers) LightboxByID(w http.ResponseWriter, r *http.Request) {
 	// Do NOT set HX-Push-URL for lightbox: opening the lightbox should not create a history
 	// entry, so that after closing, back/j goes to the previous folder (desired behavior at 0d6377c).
 
-	images, err := qh.GetFileViewsByFolderIDOrderByFileName(h.Ctx, file.FolderID)
-	if err != nil {
-		h.ServerError(w, r, err)
+	nav, err := qh.GetLightboxNavByFileID(h.Ctx, fileID)
+	if h.handleDBError(w, r, err) {
 		return
 	}
 
-	imageCount := len(images)
-	if imageCount == 0 {
+	// Defensive only: a successful nav row always has ImageCount >= 1, since ErrNoRows
+	// above already covers the empty/orphan case.
+	if nav.ImageCount == 0 {
 		http.NotFound(w, r)
-		return
-	}
-
-	currentIndex := -1
-	for i, img := range images {
-		if img.ID == fileID {
-			currentIndex = i
-			break
-		}
-	}
-	if currentIndex == -1 {
-		h.ServerError(w, r, fmt.Errorf("could not find file in folder view"))
 		return
 	}
 
@@ -73,34 +61,32 @@ func (h *GalleryHandlers) LightboxByID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := LightboxData{
-		GalleryName:    folder.Name,
 		CurrentImageID: fileID,
-		CurrentIndex:   currentIndex,
-		ImageCount:     imageCount,
-		FirstIndex:     int(images[0].ID),
-		LastIndex:      int(images[imageCount-1].ID),
+		CurrentIndex:   int(nav.CurrentIndex),
+		ImageCount:     int(nav.ImageCount),
+		FirstIndex:     int(nav.FirstID), // field name is Index but value is file ID (legacy)
+		LastIndex:      int(nav.LastID),
+		GalleryName:    folder.Name,
 		Breadcrumbs:    breadcrumbs,
 	}
 
-	if imageCount > 1 {
-		data.HasPrev = true
-		if currentIndex > 0 {
-			data.PrevIndex = int(images[currentIndex-1].ID)
+	if nav.ImageCount > 1 {
+		data.HasPrev, data.HasNext = true, true
+		if nav.PrevID.Valid {
+			data.PrevIndex = int(nav.PrevID.Int64)
 		} else {
-			data.PrevIndex = int(images[imageCount-1].ID)
+			data.PrevIndex = int(nav.LastID)
+		}
+		if nav.NextID.Valid {
+			data.NextIndex = int(nav.NextID.Int64)
+		} else {
+			data.NextIndex = int(nav.FirstID)
 		}
 		data.PreloadPrevPath = fmt.Sprintf("/raw-image/%d", data.PrevIndex)
-	}
-	if imageCount > 1 {
-		data.HasNext = true
-		if currentIndex < imageCount-1 {
-			data.NextIndex = int(images[currentIndex+1].ID)
-		} else {
-			data.NextIndex = int(images[0].ID)
-		}
 		data.PreloadNextPath = fmt.Sprintf("/raw-image/%d", data.NextIndex)
 	}
 
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := ui.RenderTemplate(w, "lightbox-content.html.tmpl", data); err != nil {
 		h.ServerError(w, r, err)
 	}

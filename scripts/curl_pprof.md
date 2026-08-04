@@ -1,6 +1,12 @@
 # Accessing Profiling Endpoints with curl
 
-The application exposes standard Go `pprof` profiling endpoints, which are protected by the same authentication system as the administrative interface. This guide explains how to authenticate via `curl` and capture profiling data.
+The application exposes standard Go `pprof` profiling endpoints, which are protected by
+the same authentication system as the administrative interface. This guide explains how
+to authenticate via `curl` and capture profiling data.
+
+> **Important:** Pprof is available on **loopback only** (`127.0.0.1` / `::1`). The
+> public hostname will **not** work — you will receive a `404` regardless of your
+> session cookie.
 
 ## 1. Authentication
 
@@ -10,64 +16,44 @@ Since the endpoints are protected by `authMiddleware`, you must first obtain a s
 Replace `admin` with your actual credentials if you have changed them. The application allows login without a CSRF token for new sessions, making it `curl`-friendly.
 
 ```bash
-curl -c /tmp/sfpg_cookies.txt
--d "username=admin"
--d "password=admin"
-http://localhost:8081/login
+curl -c /tmp/sfpg_cookies.txt \
+  -d "username=admin" \
+  -d "password=admin" \
+  http://127.0.0.1:8081/login
 ```
 
 ## 2. Accessing Profiling Endpoints
 
-Once you have the cookie in `/tmp/sfpg_cookies.txt`, you can use it to access any `/debug/pprof/` endpoint.
+Once you have the cookie in `/tmp/sfpg_cookies.txt`, you can use it to access any `/debug/pprof/` endpoint. All examples use `127.0.0.1` — replace the port as needed.
 
 ### CPU Profile (30 seconds)
 
-This will download a 30-second CPU profile to a file named `cpu.prof`.
-
 ```bash
-curl -b /tmp/sfpg_cookies.txt
-"http://localhost:8081/debug/pprof/profile?seconds=30"
--o cpu.prof
-```
-
-### Memory (Heap) Profile
-
-Capture the current heap memory usage.
-
-```bash
-curl -b /tmp/sfpg_cookies.txt
-"http://localhost:8081/debug/pprof/heap"
--o heap.prof
-```
-
-### Goroutine Stack Traces
-
-Get a snapshot of all current goroutines.
-
-```bash
-curl -b /tmp/sfpg_cookies.txt
-"http://localhost:8081/debug/pprof/goroutine?debug=1"
--o goroutines.txt
+curl -b /tmp/sfpg_cookies.txt \
+  "http://127.0.0.1:8081/debug/pprof/profile?seconds=30" \
+  -o cpu.prof
 ```
 
 ### Execution Trace (5 seconds)
 
-Capture an execution trace for detailed concurrency analysis.
-
 ```bash
-curl -b /tmp/sfpg_cookies.txt
-"http://localhost:8081/debug/pprof/trace?seconds=5"
--o trace.out
+curl -b /tmp/sfpg_cookies.txt \
+  "http://127.0.0.1:8081/debug/pprof/trace?seconds=5" \
+  -o trace.out
 ```
 
-### Allocation Profile
-
-Capture recent memory allocations.
+### Command-Line Arguments
 
 ```bash
-curl -b /tmp/sfpg_cookies.txt
-"http://localhost:8081/debug/pprof/allocs"
--o allocs.prof
+curl -b /tmp/sfpg_cookies.txt \
+  "http://127.0.0.1:8081/debug/pprof/cmdline"
+```
+
+### Symbol Lookup
+
+```bash
+curl -b /tmp/sfpg_cookies.txt \
+  "http://127.0.0.1:8081/debug/pprof/symbol"
 ```
 
 ## 3. Analyzing the Profiles
@@ -82,8 +68,6 @@ go tool pprof cpu.prof
 
 ### Web Interface (Visual Graph)
 
-This will open your browser with an interactive graph of the profile.
-
 ```bash
 go tool pprof -http=:8082 cpu.prof
 ```
@@ -96,13 +80,12 @@ go tool trace trace.out
 
 ## Available Endpoints Summary
 
-| Endpoint                 | Description                                                     |
-| :----------------------- | :-------------------------------------------------------------- |
-| `/debug/pprof/`          | Index page listing all available profiles                       |
-| `/debug/pprof/profile`   | CPU profile (default 30s)                                       |
-| `/debug/pprof/heap`      | Memory allocation of live objects                               |
-| `/debug/pprof/allocs`    | Past memory allocations                                         |
-| `/debug/pprof/goroutine` | Stack traces of all current goroutines                          |
-| `/debug/pprof/block`     | Stack traces that led to blocking on synchronization primitives |
-| `/debug/pprof/mutex`     | Stack traces of holders of contended mutexes                    |
-| `/debug/pprof/trace`     | Execution trace                                                 |
+Only the following five routes are registered:
+
+| Endpoint               | Description                     |
+| :--------------------- | :------------------------------ |
+| `/debug/pprof/`        | Index page listing all profiles |
+| `/debug/pprof/cmdline` | Command-line arguments          |
+| `/debug/pprof/profile` | CPU profile (default 30s)       |
+| `/debug/pprof/symbol`  | Symbol lookup                   |
+| `/debug/pprof/trace`   | Execution trace                 |

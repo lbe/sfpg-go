@@ -55,7 +55,8 @@ func (s *SQLiteCacheStore) Delete(ctx context.Context, key string) error {
 
 // EvictLRU removes least-recently-used entries to free targetBytes.
 func (s *SQLiteCacheStore) EvictLRU(ctx context.Context, targetBytes int64) (int64, error) {
-	return EvictLRU(ctx, s.pool.(*dbconnpool.DbSQLConnPool), targetBytes)
+	freed, _, err := EvictLRU(ctx, s.pool.(*dbconnpool.DbSQLConnPool), targetBytes)
+	return freed, err
 }
 
 // SizeBytes returns the total size of cached data.

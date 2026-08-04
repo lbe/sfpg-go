@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"image"
 	"image/jpeg"
@@ -15,12 +14,10 @@ import (
 
 	"github.com/lbe/sfpg-go/internal/dbconnpool"
 	"github.com/lbe/sfpg-go/internal/getopt"
-	"github.com/lbe/sfpg-go/internal/humanize"
 	"github.com/lbe/sfpg-go/internal/server/config"
 	"github.com/lbe/sfpg-go/internal/server/files"
 	"github.com/lbe/sfpg-go/internal/server/handlers"
 	"github.com/lbe/sfpg-go/internal/server/interfaces"
-	"github.com/lbe/sfpg-go/internal/server/modulestate"
 	"github.com/lbe/sfpg-go/internal/server/session"
 	"github.com/lbe/sfpg-go/internal/testutil"
 	"github.com/lbe/sfpg-go/web"
@@ -114,27 +111,7 @@ func TestSetConfigDefaultsLegacy_Coverage(t *testing.T) {
 	}
 }
 
-func TestAddCommonTemplateData_Additional(t *testing.T) {
-	app := New(getopt.Opt{
-		SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true},
-	}, "x.y.z")
-	app.ensureSession()
-	app.testSeams.GetGalleryStatistics = func(ctx context.Context) (GalleryStats, error) {
-		return GalleryStats{}, nil
-	}
-
-	data := make(map[string]any)
-	req := httptest.NewRequest("GET", "/test", nil)
-	rr := httptest.NewRecorder()
-
-	result := app.AddCommonTemplateData(rr, req, data, false)
-
-	if _, ok := result["IsAuthenticated"]; !ok {
-		t.Error("Expected IsAuthenticated in template data")
-	}
-}
-
-func TestAddCommonTemplateData_PartialSkipsGalleryStats(t *testing.T) {
+func TestAddCommonTemplateData_PartialIncludesGalleryStats(t *testing.T) {
 	app := New(getopt.Opt{
 		SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true},
 	}, "x.y.z")
@@ -149,56 +126,9 @@ func TestAddCommonTemplateData_PartialSkipsGalleryStats(t *testing.T) {
 	if _, ok := result["IsAuthenticated"]; !ok {
 		t.Error("Expected IsAuthenticated in template data")
 	}
-	// GalleryStats must NOT be present when partial=true
-	if _, ok := result["GalleryStats"]; ok {
-		t.Error("Expected GalleryStats to be absent when partial=true")
-	}
-}
-
-func TestRefreshGalleryStatsCache_AndGetCached(t *testing.T) {
-	app := New(getopt.Opt{
-		SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true},
-	}, "x.y.z")
-	app.testSeams.GetGalleryStatistics = func(ctx context.Context) (GalleryStats, error) {
-		return GalleryStats{Folders: "1,234", Images: "5,678", ImagesSize: 999}, nil
-	}
-
-	ctx := context.Background()
-	lastStarted := int64(12345)
-
-	stats, err := app.refreshGalleryStatsCache(ctx, lastStarted)
-	if err != nil {
-		t.Fatalf("refreshGalleryStatsCache: %v", err)
-	}
-	if stats.Folders != "1,234" || stats.Images != "5,678" {
-		t.Errorf("unexpected stats: %+v", stats)
-	}
-
-	cached := app.getGalleryStatsCached(lastStarted)
-	if cached == nil {
-		t.Fatal("expected cached stats when LastStartedAt matches")
-	}
-	if cached.Folders != stats.Folders || cached.Images != stats.Images {
-		t.Error("cached stats should match refresh result")
-	}
-}
-
-func TestGetGalleryStatsCached_ReturnsNilWhenStale(t *testing.T) {
-	app := New(getopt.Opt{
-		SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true},
-	}, "x.y.z")
-	app.testSeams.GetGalleryStatistics = func(ctx context.Context) (GalleryStats, error) {
-		return GalleryStats{Folders: "100", Images: "200"}, nil
-	}
-
-	ctx := context.Background()
-	_, err := app.refreshGalleryStatsCache(ctx, 11111)
-	if err != nil {
-		t.Fatalf("refreshGalleryStatsCache: %v", err)
-	}
-
-	if got := app.getGalleryStatsCached(22222); got != nil {
-		t.Error("expected nil when LastStartedAt differs")
+	// GalleryStats must be present when partial=true (dashboard polls need it)
+	if gs, ok := result["GalleryStats"].(*GalleryStats); !ok || gs == nil {
+		t.Error("Expected non-nil GalleryStats when partial=true")
 	}
 }
 
@@ -207,343 +137,160 @@ func TestAddCommonTemplateData_FullPageIncludesGalleryStats(t *testing.T) {
 		SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true},
 	}, "x.y.z")
 	app.ensureSession()
-	app.testSeams.GetGalleryStatistics = func(ctx context.Context) (GalleryStats, error) {
-		return GalleryStats{Folders: "99", Images: "88"}, nil
-	}
 
 	data := make(map[string]any)
 	req := httptest.NewRequest("GET", "/test", nil)
 	rr := httptest.NewRecorder()
 
 	result := app.AddCommonTemplateData(rr, req, data, false)
-	if _, ok := result["GalleryStats"]; !ok {
-		t.Error("Expected GalleryStats when moduleStateService is nil and partial=false")
+	if gs, ok := result["GalleryStats"].(*GalleryStats); !ok || gs == nil {
+		t.Error("Expected non-nil GalleryStats when partial=false")
 	}
 }
 
-func TestAddCommonTemplateData_EdgeCases(t *testing.T) {
-	app := New(getopt.Opt{
-		SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true},
-	}, "x.y.z")
-	app.ensureSession()
-	app.testSeams.GetGalleryStatistics = func(ctx context.Context) (GalleryStats, error) {
-		return GalleryStats{}, nil
-	}
-
-	t.Run("nil data map", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/test", nil)
-		rr := httptest.NewRecorder()
-
-		result := app.AddCommonTemplateData(rr, req, nil, false)
-		if result == nil {
-			t.Error("Expected non-nil result")
-		}
-		if _, ok := result["IsAuthenticated"]; !ok {
-			t.Error("Expected IsAuthenticated in result")
-		}
-	})
-}
-
-func TestAddCommonTemplateData_ModuleStateNil_StatsSuccess(t *testing.T) {
+func TestAddCommonTemplateData_AboutModalGetsN_A(t *testing.T) {
 	app := New(getopt.Opt{
 		SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true},
 	}, "x.y.z")
 	app.ensureSession()
 
-	app.SubsystemManager.moduleStateService = nil
-	app.testSeams.GetGalleryStatistics = func(ctx context.Context) (GalleryStats, error) {
-		return GalleryStats{Folders: "1", Images: "2", ImagesSize: 3}, nil
-	}
-
-	req := httptest.NewRequest("GET", "/test", nil)
-	rr := httptest.NewRecorder()
-
-	result := app.AddCommonTemplateData(rr, req, nil, false)
-	stats, ok := result["GalleryStats"].(GalleryStats)
-	if !ok {
-		t.Fatalf("expected GalleryStats, got %T", result["GalleryStats"])
-	}
-	if stats.Folders != "1" || stats.Images != "2" || stats.ImagesSize != 3 {
-		t.Errorf("stats = %+v, want Folders=1 Images=2 ImagesSize=3", stats)
-	}
-}
-
-func TestAddCommonTemplateData_ModuleStateNil_StatsError(t *testing.T) {
-	app := New(getopt.Opt{
-		SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true},
-	}, "x.y.z")
-	app.ensureSession()
-
-	app.SubsystemManager.moduleStateService = nil
-	app.testSeams.GetGalleryStatistics = func(ctx context.Context) (GalleryStats, error) {
-		return GalleryStats{}, errors.New("stats failed")
-	}
-
-	req := httptest.NewRequest("GET", "/test", nil)
-	rr := httptest.NewRecorder()
-
-	result := app.AddCommonTemplateData(rr, req, nil, false)
-	stats, ok := result["GalleryStats"].(GalleryStats)
-	if !ok {
-		t.Fatalf("expected GalleryStats, got %T", result["GalleryStats"])
-	}
-	if stats != (GalleryStats{}) {
-		t.Errorf("stats = %+v, want zero GalleryStats", stats)
-	}
-}
-
-func TestAddCommonTemplateData_ModuleStateActive_CachedHit(t *testing.T) {
-	app := New(getopt.Opt{
-		SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true},
-	}, "x.y.z")
-	app.ensureSession()
-	app.SubsystemManager.moduleStateService = modulestate.NewService(nil)
-
-	app.testSeams.AddCommonDataIsActive = func(ctx context.Context, name string) (bool, error) {
-		return true, nil
-	}
-	app.testSeams.AddCommonDataLastStarted = func(ctx context.Context, name string) (int64, bool, error) {
-		return 12345, true, nil
-	}
-	app.SetGalleryStatsCache(&GalleryStats{Folders: "5"}, 12345)
-
-	req := httptest.NewRequest("GET", "/test", nil)
-	rr := httptest.NewRecorder()
-
-	result := app.AddCommonTemplateData(rr, req, nil, false)
-	stats := result["GalleryStats"].(GalleryStats)
-	if stats.Folders != "5" {
-		t.Errorf("Folders = %q, want %q", stats.Folders, "5")
-	}
-}
-
-func TestAddCommonTemplateData_ModuleStateActive_CachedMiss(t *testing.T) {
-	app := New(getopt.Opt{
-		SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true},
-	}, "x.y.z")
-	app.ensureSession()
-	app.SubsystemManager.moduleStateService = modulestate.NewService(nil)
-
-	app.testSeams.AddCommonDataIsActive = func(ctx context.Context, name string) (bool, error) {
-		return true, nil
-	}
-	app.testSeams.AddCommonDataLastStarted = func(ctx context.Context, name string) (int64, bool, error) {
-		return 12345, true, nil
-	}
-
-	req := httptest.NewRequest("GET", "/test", nil)
-	rr := httptest.NewRecorder()
-
-	result := app.AddCommonTemplateData(rr, req, nil, false)
-	stats := result["GalleryStats"].(GalleryStats)
-	if stats != (GalleryStats{}) {
-		t.Errorf("stats = %+v, want zero GalleryStats", stats)
-	}
-}
-
-func TestAddCommonTemplateData_ModuleStateInactive_CachedHit(t *testing.T) {
-	app := New(getopt.Opt{
-		SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true},
-	}, "x.y.z")
-	app.ensureSession()
-	app.SubsystemManager.moduleStateService = modulestate.NewService(nil)
-
-	app.testSeams.AddCommonDataIsActive = func(ctx context.Context, name string) (bool, error) {
-		return false, nil
-	}
-	app.testSeams.AddCommonDataLastStarted = func(ctx context.Context, name string) (int64, bool, error) {
-		return 67890, true, nil
-	}
-	app.SetGalleryStatsCache(&GalleryStats{Images: "9"}, 67890)
-
-	req := httptest.NewRequest("GET", "/test", nil)
-	rr := httptest.NewRecorder()
-
-	result := app.AddCommonTemplateData(rr, req, nil, false)
-	stats := result["GalleryStats"].(GalleryStats)
-	if stats.Images != "9" {
-		t.Errorf("Images = %q, want %q", stats.Images, "9")
-	}
-}
-
-func TestAddCommonTemplateData_ModuleStateInactive_CachedMiss_RefreshSuccess(t *testing.T) {
-	app := New(getopt.Opt{
-		SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true},
-	}, "x.y.z")
-	app.ensureSession()
-	app.SubsystemManager.moduleStateService = modulestate.NewService(nil)
-
-	app.testSeams.AddCommonDataIsActive = func(ctx context.Context, name string) (bool, error) {
-		return false, nil
-	}
-	app.testSeams.AddCommonDataLastStarted = func(ctx context.Context, name string) (int64, bool, error) {
-		return 11111, true, nil
-	}
-	app.testSeams.GetGalleryStatistics = func(ctx context.Context) (GalleryStats, error) {
-		return GalleryStats{Folders: "3"}, nil
-	}
-
-	req := httptest.NewRequest("GET", "/test", nil)
-	rr := httptest.NewRecorder()
-
-	result := app.AddCommonTemplateData(rr, req, nil, false)
-	stats := result["GalleryStats"].(GalleryStats)
-	if stats.Folders != "3" {
-		t.Errorf("Folders = %q, want %q", stats.Folders, "3")
-	}
-
-	cached := app.getGalleryStatsCached(11111)
-	if cached == nil || cached.Folders != "3" {
-		t.Error("expected cache to be seeded with refreshed stats")
-	}
-}
-
-func TestAddCommonTemplateData_ModuleStateInactive_CachedMiss_RefreshError(t *testing.T) {
-	app := New(getopt.Opt{
-		SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true},
-	}, "x.y.z")
-	app.ensureSession()
-	app.SubsystemManager.moduleStateService = modulestate.NewService(nil)
-
-	app.testSeams.AddCommonDataIsActive = func(ctx context.Context, name string) (bool, error) {
-		return false, nil
-	}
-	app.testSeams.AddCommonDataLastStarted = func(ctx context.Context, name string) (int64, bool, error) {
-		return 22222, true, nil
-	}
-	app.testSeams.GetGalleryStatistics = func(ctx context.Context) (GalleryStats, error) {
-		return GalleryStats{}, errors.New("refresh failed")
-	}
-
-	req := httptest.NewRequest("GET", "/test", nil)
-	rr := httptest.NewRecorder()
-
-	result := app.AddCommonTemplateData(rr, req, nil, false)
-	stats := result["GalleryStats"].(GalleryStats)
-	if stats != (GalleryStats{}) {
-		t.Errorf("stats = %+v, want zero GalleryStats", stats)
-	}
-}
-
-func TestAddCommonTemplateData_ModuleStateIsActiveError(t *testing.T) {
-	app := New(getopt.Opt{
-		SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true},
-	}, "x.y.z")
-	app.ensureSession()
-	app.SubsystemManager.moduleStateService = modulestate.NewService(nil)
-
-	app.testSeams.AddCommonDataIsActive = func(ctx context.Context, name string) (bool, error) {
-		return false, errors.New("isactive failed")
-	}
-	app.testSeams.AddCommonDataLastStarted = func(ctx context.Context, name string) (int64, bool, error) {
-		return 0, false, nil
-	}
-	app.testSeams.GetGalleryStatistics = func(ctx context.Context) (GalleryStats, error) {
-		return GalleryStats{}, nil
-	}
-
-	req := httptest.NewRequest("GET", "/test", nil)
-	rr := httptest.NewRecorder()
-
-	result := app.AddCommonTemplateData(rr, req, nil, false)
-	stats := result["GalleryStats"].(GalleryStats)
-	if stats != (GalleryStats{}) {
-		t.Errorf("stats = %+v, want zero GalleryStats", stats)
-	}
-}
-
-func TestAddCommonTemplateData_ModuleStateLastStartedError(t *testing.T) {
-	app := New(getopt.Opt{
-		SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true},
-	}, "x.y.z")
-	app.ensureSession()
-	app.SubsystemManager.moduleStateService = modulestate.NewService(nil)
-
-	app.testSeams.AddCommonDataIsActive = func(ctx context.Context, name string) (bool, error) {
-		return true, nil
-	}
-	app.testSeams.AddCommonDataLastStarted = func(ctx context.Context, name string) (int64, bool, error) {
-		return 0, false, errors.New("laststarted failed")
-	}
-
-	req := httptest.NewRequest("GET", "/test", nil)
-	rr := httptest.NewRecorder()
-
-	result := app.AddCommonTemplateData(rr, req, nil, false)
-	stats := result["GalleryStats"].(GalleryStats)
-	if stats != (GalleryStats{}) {
-		t.Errorf("stats = %+v, want zero GalleryStats", stats)
-	}
-}
-
-func TestAddCommonTemplateData_AboutModal(t *testing.T) {
-	app := New(getopt.Opt{
-		SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true},
-	}, "x.y.z")
-	app.ensureSession()
-
-	app.testSeams.GetGalleryStatistics = func(ctx context.Context) (GalleryStats, error) {
-		return GalleryStats{
-			Folders:        "1,234",
-			Images:         "56,789",
-			ImagesSize:     1048576,
-			FirstDiscovery: "2023-01-15 10:30:00",
-			LastDiscovery:  "2024-06-20 14:45:00",
-		}, nil
-	}
-
-	req := httptest.NewRequest("GET", "/gallery/1", nil)
-	rr := httptest.NewRecorder()
+	gs := app.RuntimeManager.GalleryStats()
+	gs.markRunning(1)
+	defer gs.markRunning(-1)
 
 	data := make(map[string]any)
+	req := httptest.NewRequest("GET", "/test", nil)
+	rr := httptest.NewRecorder()
+
 	result := app.AddCommonTemplateData(rr, req, data, false)
+	stats, ok := result["GalleryStats"].(*GalleryStats)
+	if !ok || stats == nil {
+		t.Fatal("expected GalleryStats in result")
+	}
+	if got := stats.Folders(); got != "N/A" {
+		t.Errorf("Folders() = %q, want N/A (running>0 and count=0)", got)
+	}
+	if got := stats.Images(); got != "N/A" {
+		t.Errorf("Images() = %q, want N/A (running>0 and count=0)", got)
+	}
+}
 
-	if version, ok := result["Version"].(string); !ok {
-		t.Errorf("Expected Version to be string, got %T", result["Version"])
-	} else if version == "" {
-		t.Error("Expected Version to be non-empty")
+func TestGalleryStats_DisplayN_A(t *testing.T) {
+	gs := &GalleryStats{}
+	gs.markRunning(1)
+	if got := gs.Folders(); got != "N/A" {
+		t.Errorf("Folders() = %q, want N/A", got)
 	}
+	if got := gs.Images(); got != "N/A" {
+		t.Errorf("Images() = %q, want N/A", got)
+	}
+}
 
-	if _, ok := result["IsAuthenticated"].(bool); !ok {
-		t.Errorf("Expected IsAuthenticated to be bool, got %T", result["IsAuthenticated"])
+func TestGalleryStats_DisplayZero(t *testing.T) {
+	gs := &GalleryStats{}
+	// running=0 by default; counters are zero
+	if got := gs.Folders(); got != "0" {
+		t.Errorf("Folders() = %q, want 0", got)
 	}
+	if got := gs.Images(); got != "0" {
+		t.Errorf("Images() = %q, want 0", got)
+	}
+}
 
-	if theme, ok := result["Theme"].(string); !ok {
-		t.Errorf("Expected Theme to be string, got %T", result["Theme"])
-	} else if theme == "" {
-		t.Error("Expected Theme to be non-empty")
+func TestGalleryStats_DisplayFormatted(t *testing.T) {
+	gs := &GalleryStats{}
+	gs.setFolders(1234567)
+	gs.setFileStats(98765, 0, 0, 0)
+	if got := gs.Folders(); got != "1,234,567" {
+		t.Errorf("Folders() = %q, want 1,234,567", got)
 	}
+	if got := gs.Images(); got != "98,765" {
+		t.Errorf("Images() = %q, want 98,765", got)
+	}
+}
 
-	galleryStats, ok := result["GalleryStats"].(GalleryStats)
-	if !ok {
-		t.Fatalf("Expected GalleryStats to be GalleryStats struct, got %T", result["GalleryStats"])
+func TestGalleryStats_RunningCounter(t *testing.T) {
+	gs := &GalleryStats{}
+	gs.markRunning(1)
+	gs.markRunning(1)
+	if got := gs.running.Load(); got != 2 {
+		t.Errorf("running = %d, want 2", got)
 	}
+	gs.markRunning(-1)
+	gs.markRunning(-1)
+	if got := gs.running.Load(); got != 0 {
+		t.Errorf("running = %d, want 0", got)
+	}
+}
 
-	if _, ok := interface{}(galleryStats.Folders).(string); !ok {
-		t.Errorf("Expected GalleryStats.Folders to be string, got %T", galleryStats.Folders)
+func TestGalleryStats_addFile(t *testing.T) {
+	gs := &GalleryStats{}
+	gs.addFile(1024)
+	if got := gs.Images(); got != "1" {
+		t.Errorf("Images() = %q, want 1", got)
 	}
-	if _, ok := interface{}(galleryStats.Images).(string); !ok {
-		t.Errorf("Expected GalleryStats.Images to be string, got %T", galleryStats.Images)
+	if got := gs.ImagesSize(); got != 1024 {
+		t.Errorf("ImagesSize() = %d, want 1024", got)
 	}
-	if galleryStats.ImagesSize < 0 {
-		t.Errorf("Expected GalleryStats.ImagesSize to be non-negative int64, got %d", galleryStats.ImagesSize)
+	if got := gs.FirstDiscovery(); got == "" {
+		t.Error("FirstDiscovery() should be non-empty after addFile")
 	}
-	if galleryStats.FirstDiscovery != "" {
-		if _, ok := interface{}(galleryStats.FirstDiscovery).(string); !ok {
-			t.Errorf("Expected GalleryStats.FirstDiscovery to be string, got %T", galleryStats.FirstDiscovery)
-		}
+	if got := gs.LastDiscovery(); got == "" {
+		t.Error("LastDiscovery() should be non-empty after addFile")
 	}
-	if galleryStats.LastDiscovery != "" {
-		if _, ok := interface{}(galleryStats.LastDiscovery).(string); !ok {
-			t.Errorf("Expected GalleryStats.LastDiscovery to be string, got %T", galleryStats.LastDiscovery)
-		}
+	// firstDisc uses CAS — second addFile should NOT overwrite it.
+	first := gs.FirstDiscovery()
+	gs.addFile(2048)
+	if got := gs.FirstDiscovery(); got != first {
+		t.Errorf("FirstDiscovery() = %q, want %q (should not change after CAS)", got, first)
 	}
+	if got := gs.Images(); got != "2" {
+		t.Errorf("Images() = %q, want 2 after second addFile", got)
+	}
+	if got := gs.ImagesSize(); got != 3072 {
+		t.Errorf("ImagesSize() = %d, want 3072", got)
+	}
+}
 
-	testNum := int64(1234567)
-	formatted := humanize.Comma(testNum).String()
-	expected := "1,234,567"
-	if formatted != expected {
-		t.Errorf("Expected humanize.Comma(%d) to return %q, got %q", testNum, expected, formatted)
+func TestGalleryStats_FirstLastDiscovery(t *testing.T) {
+	gs := &GalleryStats{}
+	if got := gs.FirstDiscovery(); got != "" {
+		t.Errorf("FirstDiscovery() = %q, want empty", got)
+	}
+	if got := gs.LastDiscovery(); got != "" {
+		t.Errorf("LastDiscovery() = %q, want empty", got)
+	}
+	gs.addFile(100)
+	first := gs.FirstDiscovery()
+	last := gs.LastDiscovery()
+	if first == "" || last == "" {
+		t.Fatal("FirstDiscovery and LastDiscovery should be set after addFile")
+	}
+	if first == last {
+		// Both set at roughly the same time; this is expected for first file.
+		t.Log("FirstDiscovery and LastDiscovery match (expected for single file)")
+	}
+}
+
+func TestGalleryStats_ImagesSize_NAWhileRunning(t *testing.T) {
+	gs := &GalleryStats{}
+	gs.markRunning(1)
+	gs.setFolders(5)
+	if got := gs.Folders(); got != "5" {
+		t.Errorf("Folders() = %q, want 5", got)
+	}
+	if got := gs.Images(); got != "N/A" {
+		t.Errorf("Images() = %q, want N/A while running", got)
+	}
+	if got := gs.ImagesSize(); got != -1 {
+		t.Errorf("ImagesSize() = %d, want -1 (N/A) while running", got)
+	}
+	gs.markRunning(-1)
+	if got := gs.Images(); got != "0" {
+		t.Errorf("Images() = %q, want 0 after running", got)
+	}
+	if got := gs.ImagesSize(); got != 0 {
+		t.Errorf("ImagesSize() = %d, want 0 after running", got)
 	}
 }
 

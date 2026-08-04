@@ -125,7 +125,7 @@ func TestRunPoolWorkerWithProcessor_DoesNotSubmitExistingFiles(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	poolFunc := NewPoolFuncWithProcessor(fp, q, "/tmp/Images", testRemovePrefix, stats)
+	poolFunc := NewPoolFuncWithProcessor(fp, q, "/tmp/Images", testRemovePrefix, stats, nil)
 	done := make(chan error, 1)
 	go func() {
 		done <- poolFunc(ctx, pool, nil, nil, q.Len, 1)
@@ -183,8 +183,7 @@ func TestNewPoolFuncWithProcessor_Stats(t *testing.T) {
 	defer cancel()
 
 	// Create pool func with stats
-	// NOTE: This will fail compilation until I update the signature of NewPoolFuncWithProcessor
-	poolFunc := NewPoolFuncWithProcessor(fp, q, "/tmp/Images", testRemovePrefix, stats)
+	poolFunc := NewPoolFuncWithProcessor(fp, q, "/tmp/Images", testRemovePrefix, stats, nil)
 
 	done := make(chan error, 1)
 

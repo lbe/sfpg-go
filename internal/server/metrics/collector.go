@@ -89,14 +89,6 @@ type FileProcessorSource interface {
 	GetStats() FileProcessingMetrics
 }
 
-// ModuleStatus represents the status of a module.
-type ModuleStatus struct {
-	Name          string    `json:"name"`
-	Status        string    `json:"status"` // "active", "idle", "recent"
-	LastActiveAt  time.Time `json:"last_active_at"`
-	ActivityCount int64     `json:"activity_count"`
-}
-
 // RuntimeMetrics holds Go runtime statistics.
 type RuntimeMetrics struct {
 	NumGoroutine    int           `json:"num_goroutine"`
@@ -163,38 +155,28 @@ type Snapshot struct {
 	CacheBatchLoad CacheBatchLoadMetrics `json:"cache_batch_load"`
 	FileProcessing FileProcessingMetrics `json:"file_processing"`
 	HTTPCache      HTTPCacheMetrics      `json:"http_cache"`
-	Modules        []ModuleStatus        `json:"modules"`
 	QueueLength    int                   `json:"queue_length"`
 	QueueCapacity  int                   `json:"queue_capacity"`
 }
 
 // Collector aggregates metrics from various sources.
 type Collector struct {
-	mu               sync.RWMutex
-	startTime        time.Time
-	writeBatcher     WriteBatcherSource
-	workerPool       WorkerPoolSource
-	cachePreload     CachePreloadSource
-	cacheBatchLoad   CacheBatchLoadSource
-	fileProcessor    FileProcessorSource
-	httpCache        HTTPCacheSource
-	queueLength      func() int
-	queueCapacity    int
-	moduleActivities map[string]*moduleActivity
-}
-
-// moduleActivity tracks activity for a module.
-type moduleActivity struct {
-	lastActiveAt  time.Time
-	activityCount int64
-	isActive      bool
+	mu             sync.RWMutex
+	startTime      time.Time
+	writeBatcher   WriteBatcherSource
+	workerPool     WorkerPoolSource
+	cachePreload   CachePreloadSource
+	cacheBatchLoad CacheBatchLoadSource
+	fileProcessor  FileProcessorSource
+	httpCache      HTTPCacheSource
+	queueLength    func() int
+	queueCapacity  int
 }
 
 // NewCollector creates a new metrics collector.
 func NewCollector() *Collector {
 	return &Collector{
-		startTime:        time.Now(),
-		moduleActivities: make(map[string]*moduleActivity),
+		startTime: time.Now(),
 	}
 }
 
@@ -246,51 +228,6 @@ func (c *Collector) SetQueueInfo(length func() int, capacity int) {
 	defer c.mu.Unlock()
 	c.queueLength = length
 	c.queueCapacity = capacity
-}
-
-// RecordModuleActivity records activity for a module.
-func (c *Collector) RecordModuleActivity(name string, isActive bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.moduleActivities[name] == nil {
-		c.moduleActivities[name] = &moduleActivity{}
-	}
-
-	activity := c.moduleActivities[name]
-	activity.lastActiveAt = time.Now()
-	activity.activityCount++
-	activity.isActive = isActive
-}
-
-// GetModuleStatuses returns the current status of all tracked modules.
-func (c *Collector) GetModuleStatuses() []ModuleStatus {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	now := time.Now()
-	statuses := make([]ModuleStatus, 0, len(c.moduleActivities))
-
-	for name, activity := range c.moduleActivities {
-		status := ModuleStatus{
-			Name:          name,
-			LastActiveAt:  activity.lastActiveAt,
-			ActivityCount: activity.activityCount,
-		}
-
-		switch {
-		case activity.isActive:
-			status.Status = "active"
-		case now.Sub(activity.lastActiveAt) < time.Hour:
-			status.Status = "recent"
-		default:
-			status.Status = "idle"
-		}
-
-		statuses = append(statuses, status)
-	}
-
-	return statuses
 }
 
 // Collect gathers all metrics into a snapshot.
@@ -373,8 +310,6 @@ func (c *Collector) Collect(ctx context.Context) Snapshot {
 		snapshot.QueueLength = c.queueLength()
 		snapshot.QueueCapacity = c.queueCapacity
 	}
-
-	snapshot.Modules = c.GetModuleStatuses()
 
 	return snapshot
 }

@@ -154,54 +154,11 @@ func TestRuntimeManager_ExecRestart_ExecError(t *testing.T) {
 	}
 }
 
-func TestRuntimeManager_GetGalleryStatsCached_Missing(t *testing.T) {
+func TestRuntimeManager_GalleryStats_NeverNil(t *testing.T) {
 	t.Parallel()
 	m := NewRuntimeManager(context.Background())
-	if got := m.GetGalleryStatsCached(123); got != nil {
-		t.Errorf("GetGalleryStatsCached should return nil when cache is empty, got %+v", got)
-	}
-}
-
-func TestRuntimeManager_GetGalleryStatsCached_Stale(t *testing.T) {
-	t.Parallel()
-	m := NewRuntimeManager(context.Background())
-	m.SetGalleryStatsCache(&GalleryStats{Folders: "1"}, 123)
-	if got := m.GetGalleryStatsCached(456); got != nil {
-		t.Error("GetGalleryStatsCached should return nil when discoveryLastStartedAt mismatches")
-	}
-}
-
-func TestRuntimeManager_GetGalleryStatsCached_Hit(t *testing.T) {
-	t.Parallel()
-	m := NewRuntimeManager(context.Background())
-	stats := &GalleryStats{Folders: "42", Images: "100"}
-	m.SetGalleryStatsCache(stats, 123)
-
-	got := m.GetGalleryStatsCached(123)
-	if got == nil {
-		t.Fatal("GetGalleryStatsCached should return cached stats when key matches")
-	}
-	if got.Folders != stats.Folders || got.Images != stats.Images {
-		t.Errorf("cached stats mismatch: got %+v, want %+v", got, stats)
-	}
-
-	// Mutating the returned copy must not affect the cache.
-	got.Folders = "999"
-	got2 := m.GetGalleryStatsCached(123)
-	if got2.Folders != stats.Folders {
-		t.Error("GetGalleryStatsCached should return a copy, not the original pointer")
-	}
-}
-
-func TestRuntimeManager_SetGalleryStatsCache(t *testing.T) {
-	t.Parallel()
-	m := NewRuntimeManager(context.Background())
-	stats := &GalleryStats{Folders: "5"}
-	m.SetGalleryStatsCache(stats, 999)
-
-	got := m.GetGalleryStatsCached(999)
-	if got == nil || got.Folders != "5" {
-		t.Errorf("SetGalleryStatsCache did not store stats correctly: got %+v", got)
+	if gs := m.GalleryStats(); gs == nil {
+		t.Fatal("GalleryStats() should never return nil")
 	}
 }
 
@@ -233,15 +190,22 @@ func TestRuntimeManager_Exit_FallsBackToOsExit(t *testing.T) {
 func TestRuntimeManager_Serve_DefaultCoverage(t *testing.T) {
 	m := NewRuntimeManager(context.Background())
 
-	var beforeListen bool
-	m.testSeams.BeforeListen = func() { beforeListen = true }
+	// BeforeListen is invoked before the server starts listening; closing the
+	// channel lets the test cancel Serve deterministically instead of sleeping.
+	started := make(chan struct{})
+	m.testSeams.BeforeListen = func() { close(started) }
 
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- m.Serve(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), "127.0.0.1:0")
 	}()
 
-	time.Sleep(100 * time.Millisecond)
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for server to start listening")
+	}
+
 	m.cancel()
 
 	select {
@@ -251,9 +215,5 @@ func TestRuntimeManager_Serve_DefaultCoverage(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for Serve to return")
-	}
-
-	if !beforeListen {
-		t.Error("testSeams.BeforeListen was not called")
 	}
 }

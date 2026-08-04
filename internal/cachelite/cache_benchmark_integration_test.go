@@ -56,7 +56,7 @@ func BenchmarkE2E_CacheWritePath(b *testing.B) {
 	}
 
 	var sizeCounter atomic.Int64
-	cacheMW := NewHTTPCacheMiddlewareForTest(db, cfg, &sizeCounter, createSyncSubmitForBenchmark(db))
+	cacheMW := NewHTTPCacheMiddlewareForTest(db, cfg, HTTPCacheCountersForTest(&sizeCounter), createSyncSubmitForBenchmark(db))
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		w.Header().Set("Cache-Control", "public, max-age=3600")

@@ -1,0 +1,155 @@
+{{ define "dashboard-cache-row" }}
+  <!-- Cache Row -->
+  <div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
+    <!-- Cache Preload -->
+    <div class="card border border-base-300/60 bg-base-200 shadow-none">
+      <div class="card-body gap-2 !p-2.5">
+        <div class="flex items-center justify-between">
+          <h3
+            id="card-cache-preload"
+            class="flex items-center gap-2 text-xs font-semibold tracking-wide"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              class="h-4 w-4 shrink-0 opacity-70"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M13 10V3L4 14h7v7l9-11h-7z"
+              />
+            </svg>
+            Cache Preload
+          </h3>
+          {{ if .Metrics.CachePreload.IsEnabled }}
+            <span id="preload-status" class="badge badge-success badge-sm"
+              >Enabled</span
+            >
+          {{ else }}
+            <span id="preload-status" class="badge badge-ghost badge-sm"
+              >Disabled</span
+            >
+          {{ end }}
+        </div>
+        <div
+          class="stats stats-vertical w-full bg-transparent lg:stats-horizontal"
+        >
+          <div class="stat gap-0 !px-2 !py-1">
+            <div class="stat-title !text-[11px] opacity-60">Scheduled</div>
+            <div
+              id="preload-scheduled"
+              class="stat-value text-sm font-semibold"
+            >
+              {{ formatCount .Metrics.CachePreload.TasksScheduled }}
+            </div>
+          </div>
+          <div class="stat gap-0 !px-2 !py-1">
+            <div class="stat-title !text-[11px] opacity-60">Completed</div>
+            <div
+              id="preload-completed"
+              class="stat-value text-sm font-semibold text-success"
+            >
+              {{ formatCount .Metrics.CachePreload.TasksCompleted }}
+            </div>
+          </div>
+          <div class="stat gap-0 !px-2 !py-1">
+            <div class="stat-title !text-[11px] opacity-60">Failed</div>
+            <div
+              id="preload-failed"
+              class="{{ if gt .Metrics.CachePreload.TasksFailed 0 }}
+                text-error
+              {{ end }} stat-value text-sm font-semibold"
+            >
+              {{ formatCount .Metrics.CachePreload.TasksFailed }}
+            </div>
+          </div>
+          <div class="stat gap-0 !px-2 !py-1">
+            <div class="stat-title !text-[11px] opacity-60">Skipped</div>
+            <div id="preload-skipped" class="stat-value text-sm font-semibold">
+              {{ formatCount .Metrics.CachePreload.TasksSkipped }}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {{ template "dashboard-cache-batch-load" . }}
+
+
+    <!-- HTTP Cache -->
+    <div class="card border border-base-300/60 bg-base-200 shadow-none">
+      <div class="card-body gap-2 !p-2.5">
+        <div class="flex items-center justify-between">
+          <h3
+            id="card-http-cache"
+            class="flex items-center gap-2 text-xs font-semibold tracking-wide"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              class="h-4 w-4 shrink-0 opacity-70"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2"
+              />
+            </svg>
+            HTTP Cache
+          </h3>
+          {{ if .Metrics.HTTPCache.Enabled }}
+            <span id="http-status" class="badge badge-success badge-sm"
+              >Enabled</span
+            >
+          {{ else }}
+            <span id="http-status" class="badge badge-ghost badge-sm"
+              >Disabled</span
+            >
+          {{ end }}
+        </div>
+        <div
+          class="stats stats-vertical grid w-full grid-cols-2 gap-2 bg-transparent"
+        >
+          <div class="stat gap-0 !px-2 !py-1">
+            <div class="stat-title !text-[11px] opacity-60">Entries</div>
+            <div id="http-entries" class="stat-value text-sm font-semibold">
+              {{ formatCountOrNA .Metrics.HTTPCache.EntryCount }}
+            </div>
+          </div>
+          <div class="stat gap-0 !px-2 !py-1">
+            <div class="stat-title !text-[11px] opacity-60">Size</div>
+            <div id="http-size" class="stat-value text-sm font-semibold">
+              {{ formatBytesInt64 .Metrics.HTTPCache.SizeBytes }}
+            </div>
+          </div>
+          <div class="stat gap-0 !px-2 !py-1">
+            <div class="stat-title !text-[11px] opacity-60">Max Total</div>
+            <div id="http-max-total" class="stat-value text-sm font-semibold">
+              {{ formatBytesInt64 .Metrics.HTTPCache.MaxTotalSize }}
+            </div>
+          </div>
+          <div class="stat gap-0 !px-2 !py-1">
+            <div class="stat-title !text-[11px] opacity-60">Max Entry</div>
+            <div id="http-max-entry" class="stat-value text-sm font-semibold">
+              {{ formatBytesInt64 .Metrics.HTTPCache.MaxEntrySize }}
+            </div>
+          </div>
+          <div class="stat col-span-2 gap-0 !px-2 !py-1">
+            <div class="stat-title !text-[11px] opacity-60">Utilization</div>
+            <div id="http-utilization" class="stat-value text-sm font-semibold">
+              {{ $u := httpCacheUtilizationPercent .Metrics.HTTPCache }}
+              {{ if lt $u 0 }}N/A{{ else }}{{ $u }}%{{ end }}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+{{ end }}

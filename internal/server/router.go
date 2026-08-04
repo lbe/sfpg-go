@@ -45,6 +45,8 @@ func (app *App) getRouter() http.Handler {
 	mux.HandleFunc("GET /theme/modal", app.HandlerManager.themeHandlers.ThemeModalHandler)
 	mux.HandleFunc("POST /theme", app.HandlerManager.themeHandlers.ThemePostHandler)
 
+	mux.HandleFunc("GET /about-modal", app.HandlerManager.menuHandlers.AboutModal)
+
 	mux.HandleFunc("GET /hamburger-menu", app.HandlerManager.menuHandlers.HamburgerMenu)
 	mux.HandleFunc("GET /login-form", app.HandlerManager.authHandlers.LoginFormHandler)
 	mux.HandleFunc("GET /logout-form", app.HandlerManager.authHandlers.LogoutFormHandler)
@@ -81,7 +83,6 @@ func (app *App) getRouter() http.Handler {
 		handler http.HandlerFunc
 	}{
 		{http.MethodGet, "/dashboard", app.HandlerManager.dashboardHandlers.DashboardGet},
-		{http.MethodGet, "/api/metrics", app.HandlerManager.dashboardHandlers.MetricsJSON},
 		{http.MethodPost, "/server/shutdown", app.HandlerManager.serverHandlers.ServerShutdownPost},
 		{http.MethodPost, "/server/discovery", app.HandlerManager.serverHandlers.ServerDiscoveryPost},
 		{http.MethodPost, "/server/cache-batch-load", app.HandlerManager.serverHandlers.ServerCacheBatchLoadPost},
@@ -111,23 +112,14 @@ func (app *App) getRouter() http.Handler {
 	mux.Handle("GET /raw-image/{id}", http.HandlerFunc(app.HandlerManager.galleryHandlers.RawImageByID))
 	mux.Handle("GET /thumbnail/folder/{id}", http.HandlerFunc(app.HandlerManager.galleryHandlers.FolderThumbnailByID))
 
-	// Read EnablePprof from runtime config (or fall back to default=true if config not loaded)
-	app.ConfigManager.ConfigMu.RLock()
-	enablePprof := true
-	if app.ConfigManager.Config != nil {
-		enablePprof = app.ConfigManager.Config.EnablePprof
-	}
-	app.ConfigManager.ConfigMu.RUnlock()
-
-	if enablePprof {
-		// Register pprof routes (protected by authentication)
-		// These expose profiling data and should only be accessible to authenticated users
-		mux.Handle("GET /debug/pprof/", app.authMiddleware(http.HandlerFunc(pprof.Index)))
-		mux.Handle("GET /debug/pprof/cmdline", app.authMiddleware(http.HandlerFunc(pprof.Cmdline)))
-		mux.Handle("GET /debug/pprof/profile", app.authMiddleware(http.HandlerFunc(pprof.Profile)))
-		mux.Handle("GET /debug/pprof/symbol", app.authMiddleware(http.HandlerFunc(pprof.Symbol)))
-		mux.Handle("GET /debug/pprof/trace", app.authMiddleware(http.HandlerFunc(pprof.Trace)))
-	}
+	// Register pprof routes (loopback-only with authentication)
+	// Always registered; loopback middleware runs first (non-loopback → 404),
+	// then auth middleware enforces login (loopback → 401 unauth / 200 auth)
+	mux.Handle("GET /debug/pprof/", middleware.LoopbackOnly(app.authMiddleware(http.HandlerFunc(pprof.Index))))
+	mux.Handle("GET /debug/pprof/cmdline", middleware.LoopbackOnly(app.authMiddleware(http.HandlerFunc(pprof.Cmdline))))
+	mux.Handle("GET /debug/pprof/profile", middleware.LoopbackOnly(app.authMiddleware(http.HandlerFunc(pprof.Profile))))
+	mux.Handle("GET /debug/pprof/symbol", middleware.LoopbackOnly(app.authMiddleware(http.HandlerFunc(pprof.Symbol))))
+	mux.Handle("GET /debug/pprof/trace", middleware.LoopbackOnly(app.authMiddleware(http.HandlerFunc(pprof.Trace))))
 
 	// Build middleware chain from innermost to outermost
 	var handler http.Handler = mux

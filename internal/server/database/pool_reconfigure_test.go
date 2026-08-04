@@ -8,7 +8,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/sqlite"
@@ -87,6 +86,7 @@ func TestPoolReconfiguration_NoCloseWhileActive(t *testing.T) {
 	var wg sync.WaitGroup
 	errorCh := make(chan error, 1)
 	holderDone := make(chan struct{})
+	release := make(chan struct{})
 
 	wg.Add(1)
 	go func() {
@@ -110,8 +110,8 @@ func TestPoolReconfiguration_NoCloseWhileActive(t *testing.T) {
 		// Signal that we're holding the connection
 		close(holderDone)
 
-		// Hold the connection for a bit to ensure reconfiguration happens while active
-		time.Sleep(100 * time.Millisecond)
+		// Hold the connection until reconfiguration has completed
+		<-release
 
 		// Cleanup
 		_ = tx.Rollback()
@@ -129,6 +129,9 @@ func TestPoolReconfiguration_NoCloseWhileActive(t *testing.T) {
 
 	// RecreatePoolsWithConfig should handle active connections gracefully
 	newRwPool, newRoPool, reconfigErr := RecreatePoolsWithConfig(ctx, DatabasePaths{Main: dbPath, Thumbs: thumbsDBPath}, newCfg, rwPool, roPool)
+
+	// Release the holder now that reconfiguration has completed.
+	close(release)
 
 	// Check if any errors occurred in the holder goroutine
 	select {

@@ -39,6 +39,68 @@ func (q *Queries) GetFileByPath(ctx context.Context, path string) (File, error) 
 	return i, err
 }
 
+const getFileCountAndTimestamps = `-- name: GetFileCountAndTimestamps :one
+SELECT COUNT(*)                                  AS ct_files
+     , CAST(COALESCE(MIN(created_at), 0) AS INTEGER) AS min_created_at
+     , CAST(COALESCE(MAX(updated_at), 0) AS INTEGER) AS max_updated_at
+  FROM files
+`
+
+type GetFileCountAndTimestampsRow struct {
+	CtFiles      int64
+	MinCreatedAt int64
+	MaxUpdatedAt int64
+}
+
+func (q *Queries) GetFileCountAndTimestamps(ctx context.Context) (GetFileCountAndTimestampsRow, error) {
+	row := q.queryRow(ctx, q.getFileCountAndTimestampsStmt, getFileCountAndTimestamps)
+	var i GetFileCountAndTimestampsRow
+	err := row.Scan(&i.CtFiles, &i.MinCreatedAt, &i.MaxUpdatedAt)
+	return i, err
+}
+
+const getFileFolderIndexByID = `-- name: GetFileFolderIndexByID :one
+WITH target AS (
+  SELECT fv.folder_id AS folder_id, fv.id AS id
+    FROM file_view fv
+   WHERE fv.id = ?
+),
+ordered AS (
+  SELECT fv.id AS id,
+         CAST(ROW_NUMBER() OVER (ORDER BY fv.filename, fv.id) AS INTEGER) AS image_index,
+         CAST(COUNT(*) OVER () AS INTEGER) AS image_count
+    FROM file_view fv
+         INNER JOIN target t ON fv.folder_id = t.folder_id
+)
+SELECT o.image_index, o.image_count
+  FROM ordered o
+       INNER JOIN target t ON o.id = t.id
+`
+
+type GetFileFolderIndexByIDRow struct {
+	ImageIndex int64
+	ImageCount int64
+}
+
+func (q *Queries) GetFileFolderIndexByID(ctx context.Context, id int64) (GetFileFolderIndexByIDRow, error) {
+	row := q.queryRow(ctx, q.getFileFolderIndexByIDStmt, getFileFolderIndexByID, id)
+	var i GetFileFolderIndexByIDRow
+	err := row.Scan(&i.ImageIndex, &i.ImageCount)
+	return i, err
+}
+
+const getFileSizeSum = `-- name: GetFileSizeSum :one
+SELECT CAST(COALESCE(SUM(size_bytes), 0) AS INTEGER) AS sz_files
+  FROM files
+`
+
+func (q *Queries) GetFileSizeSum(ctx context.Context) (int64, error) {
+	row := q.queryRow(ctx, q.getFileSizeSumStmt, getFileSizeSum)
+	var sz_files int64
+	err := row.Scan(&sz_files)
+	return sz_files, err
+}
+
 const getFileViewByID = `-- name: GetFileViewByID :one
 SELECT id, folder_id, folder_path, path, filename, size_bytes, mtime, md5, phash, mime_type, width, height, created_at, updated_at
   FROM file_view
@@ -112,40 +174,96 @@ func (q *Queries) GetFileViewsByFolderIDOrderByFileName(ctx context.Context, fol
 	return items, nil
 }
 
-const getGalleryStatistics = `-- name: GetGalleryStatistics :one
-WITH fo AS (
-    SELECT COUNT(*) AS ct_folders
-      FROM folders
-)
-, fi AS (
-    SELECT COUNT(*) AS ct_files
-         , SUM(size_bytes) AS sz_files
-         , MIN(created_at) AS min_created_at
-         , MAX(updated_at) AS max_updated_at
-      FROM files
-)
-SELECT (SELECT ct_folders FROM fo) AS ct_folders
-     , ct_files, sz_files, min_created_at, max_updated_at
-  FROM fi
+const getFolderCount = `-- name: GetFolderCount :one
+SELECT COUNT(*) AS ct FROM folders
 `
 
-type GetGalleryStatisticsRow struct {
-	CtFolders    int64
-	CtFiles      int64
-	SzFiles      sql.NullFloat64
-	MinCreatedAt interface{}
-	MaxUpdatedAt interface{}
+func (q *Queries) GetFolderCount(ctx context.Context) (int64, error) {
+	row := q.queryRow(ctx, q.getFolderCountStmt, getFolderCount)
+	var ct int64
+	err := row.Scan(&ct)
+	return ct, err
 }
 
-func (q *Queries) GetGalleryStatistics(ctx context.Context) (GetGalleryStatisticsRow, error) {
-	row := q.queryRow(ctx, q.getGalleryStatisticsStmt, getGalleryStatistics)
-	var i GetGalleryStatisticsRow
+const getGalleryFileThumbRowsByFolderID = `-- name: GetGalleryFileThumbRowsByFolderID :many
+SELECT fv.id AS id, fv.filename AS filename
+  FROM file_view fv
+ WHERE fv.folder_id = ?
+ ORDER BY fv.filename
+`
+
+type GetGalleryFileThumbRowsByFolderIDRow struct {
+	ID       int64
+	Filename string
+}
+
+func (q *Queries) GetGalleryFileThumbRowsByFolderID(ctx context.Context, folderID sql.NullInt64) ([]GetGalleryFileThumbRowsByFolderIDRow, error) {
+	rows, err := q.query(ctx, q.getGalleryFileThumbRowsByFolderIDStmt, getGalleryFileThumbRowsByFolderID, folderID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetGalleryFileThumbRowsByFolderIDRow
+	for rows.Next() {
+		var i GetGalleryFileThumbRowsByFolderIDRow
+		if err := rows.Scan(&i.ID, &i.Filename); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getLightboxNavByFileID = `-- name: GetLightboxNavByFileID :one
+WITH target AS (
+  SELECT fv.folder_id AS folder_id, fv.id AS id
+    FROM file_view fv
+   WHERE fv.id = ?
+),
+ordered AS (
+  SELECT fv.id AS id,
+         CAST(ROW_NUMBER() OVER (ORDER BY fv.filename, fv.id) - 1 AS INTEGER) AS current_index,
+         CAST(COUNT(*) OVER () AS INTEGER) AS image_count,
+         CAST(LAG(fv.id) OVER (ORDER BY fv.filename, fv.id) AS INTEGER) AS prev_id,
+         CAST(LEAD(fv.id) OVER (ORDER BY fv.filename, fv.id) AS INTEGER) AS next_id,
+         CAST(FIRST_VALUE(fv.id) OVER (ORDER BY fv.filename, fv.id) AS INTEGER) AS first_id,
+         CAST(LAST_VALUE(fv.id) OVER (
+           ORDER BY fv.filename, fv.id
+           ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+         ) AS INTEGER) AS last_id
+    FROM file_view fv
+         INNER JOIN target t ON fv.folder_id = t.folder_id
+)
+SELECT o.current_index, o.image_count, o.first_id, o.last_id, o.prev_id, o.next_id
+  FROM ordered o
+       INNER JOIN target t ON o.id = t.id
+`
+
+type GetLightboxNavByFileIDRow struct {
+	CurrentIndex int64
+	ImageCount   int64
+	FirstID      int64
+	LastID       int64
+	PrevID       sql.NullInt64
+	NextID       sql.NullInt64
+}
+
+func (q *Queries) GetLightboxNavByFileID(ctx context.Context, id int64) (GetLightboxNavByFileIDRow, error) {
+	row := q.queryRow(ctx, q.getLightboxNavByFileIDStmt, getLightboxNavByFileID, id)
+	var i GetLightboxNavByFileIDRow
 	err := row.Scan(
-		&i.CtFolders,
-		&i.CtFiles,
-		&i.SzFiles,
-		&i.MinCreatedAt,
-		&i.MaxUpdatedAt,
+		&i.CurrentIndex,
+		&i.ImageCount,
+		&i.FirstID,
+		&i.LastID,
+		&i.PrevID,
+		&i.NextID,
 	)
 	return i, err
 }

@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -36,12 +35,6 @@ func (m *mockCollector) Collect(ctx context.Context) metrics.Snapshot {
 	return m.snapshot
 }
 
-func (m *mockCollector) RecordModuleActivity(name string, isActive bool) {}
-
-func (m *mockCollector) GetModuleStatuses() []metrics.ModuleStatus {
-	return m.snapshot.Modules
-}
-
 func TestDashboardHandlers_DashboardGet_Unauthorized(t *testing.T) {
 	// Test that unauthorized requests get 401
 	sessionMgr := &mockSessionManager{isAuthenticated: false}
@@ -67,9 +60,6 @@ func TestDashboardHandlers_DashboardGet_Authorized(t *testing.T) {
 		Runtime: metrics.RuntimeMetrics{
 			NumGoroutine: 10,
 			NumCPU:       4,
-		},
-		Modules: []metrics.ModuleStatus{
-			{Name: "discovery", Status: "active"},
 		},
 	}
 
@@ -162,94 +152,6 @@ func TestDashboardHandlers_DashboardGet_HTMXPartial(t *testing.T) {
 	}
 }
 
-func TestDashboardHandlers_MetricsJSON_Unauthorized(t *testing.T) {
-	sessionMgr := &mockSessionManager{isAuthenticated: false}
-	handlers := NewDashboardHandlers(sessionMgr, nil, nil, nil)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/metrics", nil)
-	rr := httptest.NewRecorder()
-
-	handlers.MetricsJSON(rr, req)
-
-	if rr.Code != http.StatusUnauthorized {
-		t.Errorf("expected status 401, got %d", rr.Code)
-	}
-
-	var body map[string]string
-	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode error body: %v", err)
-	}
-	if body["error"] != "Unauthorized" {
-		t.Errorf("error = %q, want %q", body["error"], "Unauthorized")
-	}
-}
-
-func TestDashboardHandlers_MetricsJSON_Authorized(t *testing.T) {
-	snapshot := metrics.Snapshot{
-		Timestamp: time.Now(),
-		Runtime: metrics.RuntimeMetrics{
-			NumGoroutine: 10,
-			NumCPU:       4,
-		},
-		Modules: []metrics.ModuleStatus{
-			{Name: "discovery", Status: "active"},
-		},
-	}
-
-	sessionMgr := &mockSessionManager{isAuthenticated: true}
-	collector := &mockCollector{snapshot: snapshot}
-	handlers := NewDashboardHandlers(sessionMgr, collector, nil, nil)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/metrics", nil)
-	rr := httptest.NewRecorder()
-
-	handlers.MetricsJSON(rr, req)
-
-	if rr.Code != http.StatusOK {
-		t.Errorf("expected status 200, got %d", rr.Code)
-	}
-	if ct := rr.Header().Get("Content-Type"); ct != "application/json; charset=utf-8" {
-		t.Errorf("Content-Type = %q, want %q", ct, "application/json; charset=utf-8")
-	}
-
-	var got metrics.Snapshot
-	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
-		t.Fatalf("decode metrics JSON: %v", err)
-	}
-	if got.Runtime.NumGoroutine != snapshot.Runtime.NumGoroutine {
-		t.Errorf("NumGoroutine = %d, want %d", got.Runtime.NumGoroutine, snapshot.Runtime.NumGoroutine)
-	}
-	if got.Runtime.NumCPU != snapshot.Runtime.NumCPU {
-		t.Errorf("NumCPU = %d, want %d", got.Runtime.NumCPU, snapshot.Runtime.NumCPU)
-	}
-	if len(got.Modules) != 1 || got.Modules[0].Name != "discovery" {
-		t.Errorf("Modules = %+v, want [discovery]", got.Modules)
-	}
-}
-
-func TestDashboardHandlers_MetricsJSON_EncodeError(t *testing.T) {
-	snapshot := metrics.Snapshot{
-		Timestamp: time.Now(),
-		Runtime: metrics.RuntimeMetrics{
-			NumGoroutine: 10,
-		},
-	}
-
-	sessionMgr := &mockSessionManager{isAuthenticated: true}
-	collector := &mockCollector{snapshot: snapshot}
-	handlers := NewDashboardHandlers(sessionMgr, collector, nil, nil)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/metrics", nil)
-	w := &errorResponseWriter{}
-
-	// The handler logs the encode error; it must not panic.
-	handlers.MetricsJSON(w, req)
-
-	if w.status != http.StatusOK {
-		t.Errorf("expected WriteHeader status 200 before encode error, got %d", w.status)
-	}
-}
-
 // TestDashboardHandlers_DashboardGet_PageRendering verifies that the dashboard
 // page renders successfully for an authenticated user with text/html content type.
 func TestDashboardHandlers_DashboardGet_PageRendering(t *testing.T) {
@@ -299,8 +201,8 @@ func TestDashboardHandlers_DashboardGet_PageRendering(t *testing.T) {
 	if h1 == nil {
 		t.Fatal("dashboard page missing h1 element")
 	}
-	if got := strings.TrimSpace(testutil.GetTextContent(h1)); got != "System Dashboard" {
-		t.Errorf("dashboard h1 text = %q, want %q", got, "System Dashboard")
+	if got := strings.TrimSpace(testutil.GetTextContent(h1)); got != "Performance & Health Dashboard" {
+		t.Errorf("dashboard h1 text = %q, want %q", got, "Performance & Health Dashboard")
 	}
 }
 
@@ -357,8 +259,8 @@ func TestDashboardHandlers_PollingPersistsAcrossMultipleRequests(t *testing.T) {
 		h1 := testutil.FindElementByTag(doc, "h1")
 		if h1 == nil {
 			t.Errorf("poll %d: dashboard partial missing h1 element", i+1)
-		} else if got := strings.TrimSpace(testutil.GetTextContent(h1)); got != "System Dashboard" {
-			t.Errorf("poll %d: dashboard h1 text = %q, want %q", i+1, got, "System Dashboard")
+		} else if got := strings.TrimSpace(testutil.GetTextContent(h1)); got != "Performance & Health Dashboard" {
+			t.Errorf("poll %d: dashboard h1 text = %q, want %q", i+1, got, "Performance & Health Dashboard")
 		}
 
 		// The polling element must be outside the swapped container to survive swaps.
@@ -367,6 +269,104 @@ func TestDashboardHandlers_PollingPersistsAcrossMultipleRequests(t *testing.T) {
 		})
 		if len(pollers) != 0 {
 			t.Errorf("poll %d: polling element should NOT be in partial response", i+1)
+		}
+	}
+}
+
+// fakeGalleryStats is a locally defined fake that satisfies every method
+// the dashboard templates call on GalleryStats. It is used to render the
+// dashboard partial without importing internal/server.
+type fakeGalleryStats struct{}
+
+func (fakeGalleryStats) Folders() string        { return "10" }
+func (fakeGalleryStats) Images() string         { return "100" }
+func (fakeGalleryStats) ImagesSize() int64      { return 1024 }
+func (fakeGalleryStats) FirstDiscovery() string { return "2026-01-01 00:00:00" }
+func (fakeGalleryStats) LastDiscovery() string  { return "2026-01-02 00:00:00" }
+func (fakeGalleryStats) FoldersCount() int64    { return 10 }
+func (fakeGalleryStats) ImagesCount() int64     { return 100 }
+
+// TestDashboardHandlers_CardTitleOrder renders the dashboard as an HTMX partial
+// (HX-Request: true, HX-Target: dashboard-container) and asserts that all card
+// titles appear in the correct diagram order. It uses a locally defined
+// fakeGalleryStats so the {{ if .GalleryStats }} cards render without importing
+// internal/server.
+func TestDashboardHandlers_CardTitleOrder(t *testing.T) {
+	if err := ui.ParseTemplates(web.FS); err != nil {
+		t.Fatalf("ParseTemplates failed: %v", err)
+	}
+
+	sessionMgr := &mockSessionManager{isAuthenticated: true}
+	snapshot := metrics.Snapshot{
+		Timestamp: time.Now(),
+		Runtime: metrics.RuntimeMetrics{
+			NumGoroutine: 10,
+			NumCPU:       4,
+		},
+	}
+	collector := &mockCollector{snapshot: snapshot}
+
+	addCommonData := func(w http.ResponseWriter, r *http.Request, data map[string]any, _ bool) map[string]any {
+		data["IsAuthenticated"] = true
+		data["Version"] = "0.0.0-test"
+		data["GalleryStats"] = fakeGalleryStats{}
+		return data
+	}
+	serverError := func(w http.ResponseWriter, r *http.Request, err error) {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+
+	handlers := NewDashboardHandlers(sessionMgr, collector, addCommonData, serverError)
+
+	// Render as HTMX partial so the About modal's duplicate "Gallery Statistics"
+	// text is NOT in the document.
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	req.Header.Set("HX-Request", "true")
+	req.Header.Set("HX-Target", "dashboard-container")
+	rr := httptest.NewRecorder()
+
+	handlers.DashboardGet(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	doc, err := testutil.ParseHTML(rr.Body)
+	if err != nil {
+		t.Fatalf("failed to parse partial HTML: %v", err)
+	}
+
+	// Collect all h3 element text content in document order.
+	var titles []string
+	h3Nodes := testutil.FindAllElements(doc, func(n *html.Node) bool {
+		return n.Data == "h3"
+	})
+	for _, h3 := range h3Nodes {
+		text := strings.TrimSpace(testutil.GetTextContent(h3))
+		if text != "" {
+			titles = append(titles, text)
+		}
+	}
+
+	expected := []string{
+		"Memory",
+		"Runtime",
+		"Gallery Statistics",
+		"File Processing",
+		"Cache Preload",
+		"Cache Batch Load",
+		"HTTP Cache",
+		"Worker Pool",
+		"Write Batcher",
+	}
+
+	if len(titles) != len(expected) {
+		t.Errorf("expected %d card titles, got %d\ngot:  %q", len(expected), len(titles), titles)
+	} else {
+		for i := range expected {
+			if titles[i] != expected[i] {
+				t.Errorf("title[%d] = %q, want %q\nfull list: %q", i, titles[i], expected[i], titles)
+			}
 		}
 	}
 }

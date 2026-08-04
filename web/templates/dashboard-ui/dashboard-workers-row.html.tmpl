@@ -1,0 +1,153 @@
+{{ define "dashboard-workers-row" }}
+  <!-- Workers Row -->
+  <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
+    <!-- Worker Pool Stats -->
+    <div class="card border border-base-300/60 bg-base-200 shadow-none">
+      <div class="card-body gap-2 !p-2.5">
+        <h3 class="flex items-center gap-2 text-xs font-semibold tracking-wide">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            class="h-4 w-4 shrink-0 opacity-70"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"
+            />
+          </svg>
+          Worker Pool
+        </h3>
+        <div
+          class="stats stats-vertical w-full bg-transparent lg:stats-horizontal"
+        >
+          <div class="stat gap-0 !px-2 !py-1">
+            <div class="stat-title !text-[11px] opacity-60">
+              Running Workers
+            </div>
+            <div id="wp-running" class="stat-value text-sm font-semibold">
+              {{ formatCount .Metrics.WorkerPool.RunningWorkers }} /
+              {{ formatCount .Metrics.WorkerPool.MaxWorkers }}
+            </div>
+          </div>
+          <div class="stat gap-0 !px-2 !py-1">
+            <div class="stat-title !text-[11px] opacity-60">
+              Completed Tasks
+            </div>
+            <div id="wp-completed" class="stat-value text-sm font-semibold">
+              {{ formatCount .Metrics.WorkerPool.CompletedTasks }}
+            </div>
+          </div>
+          <div class="stat gap-0 !px-2 !py-1">
+            <div class="stat-title !text-[11px] opacity-60">Successful</div>
+            <div
+              id="wp-successful"
+              class="stat-value text-sm font-semibold text-success"
+            >
+              {{ formatCount .Metrics.WorkerPool.SuccessfulTasks }}
+            </div>
+          </div>
+          <div class="stat gap-0 !px-2 !py-1">
+            <div class="stat-title !text-[11px] opacity-60">Failed</div>
+            <div
+              id="wp-failed"
+              class="{{ if gt .Metrics.WorkerPool.FailedTasks 0 }}
+                text-error
+              {{ end }} stat-value text-sm font-semibold"
+            >
+              {{ formatCount .Metrics.WorkerPool.FailedTasks }}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- WriteBatcher Stats -->
+    <div class="card border border-base-300/60 bg-base-200 shadow-none">
+      <div class="card-body gap-2 !p-2.5">
+        <h3 class="flex items-center gap-2 text-xs font-semibold tracking-wide">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            class="h-4 w-4 shrink-0 opacity-70"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+            />
+          </svg>
+          Write Batcher
+        </h3>
+        <div
+          class="stats stats-vertical w-full bg-transparent lg:stats-horizontal"
+        >
+          <div class="stat gap-0 !px-2 !py-1">
+            <div class="stat-title !text-[11px] opacity-60">Pending</div>
+            <div id="wb-pending" class="stat-value text-sm font-semibold">
+              {{ formatCount .Metrics.WriteBatcher.PendingCount }}
+            </div>
+            <div id="wb-channel-size-desc" class="stat-desc text-xs">
+              of
+              {{ formatCount .Metrics.WriteBatcher.ChannelSize }}
+            </div>
+            <progress
+              class="progress progress-primary mt-2 w-full"
+              value="{{ writeBatcherQueuePercent .Metrics.WriteBatcher }}"
+              max="100"
+            ></progress>
+          </div>
+          <div class="stat gap-0 !px-2 !py-1">
+            <div class="stat-title !text-[11px] opacity-60">Total Flushed</div>
+            <div id="wb-flushed" class="stat-value text-sm font-semibold">
+              {{ formatCount .Metrics.WriteBatcher.TotalFlushed }}
+            </div>
+          </div>
+          <div class="stat gap-0 !px-2 !py-1">
+            <div class="stat-title !text-[11px] opacity-60">Errors</div>
+            <div
+              id="wb-errors"
+              class="{{ if gt .Metrics.WriteBatcher.TotalErrors 0 }}
+                text-error
+              {{ end }} stat-value text-sm font-semibold"
+            >
+              {{ formatCount .Metrics.WriteBatcher.TotalErrors }}
+            </div>
+          </div>
+          <div class="stat gap-0 !px-2 !py-1">
+            <div class="stat-title !text-[11px] opacity-60">Batch Size</div>
+            <div id="wb-batch-size" class="stat-value text-sm font-semibold">
+              {{ formatCount .Metrics.WriteBatcher.MaxBatchSize }}
+            </div>
+          </div>
+          <div class="stat gap-0 !px-2 !py-1">
+            <div class="stat-title !text-[11px] opacity-60">DQue Overflow</div>
+            <div id="wb-dque" class="stat-value text-sm font-semibold">
+              {{ if .Metrics.WriteBatcher.DQueEnabled }}
+                <span class="text-success">Enabled</span>
+              {{ else }}
+                <span class="text-warning">Off</span>
+              {{ end }}
+            </div>
+            <div class="stat-desc text-xs">
+              <span id="wb-dque-size"
+                >{{ formatCount .Metrics.WriteBatcher.DQueSize }}</span
+              >
+              queued,
+              <span id="wb-dque-overflow"
+                >{{ formatCount .Metrics.WriteBatcher.OverflowCount }}</span
+              >
+              overflowed
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+{{ end }}

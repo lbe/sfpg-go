@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 	"net/http"
 
@@ -87,24 +86,5 @@ func (h *DashboardHandlers) DashboardGet(w http.ResponseWriter, r *http.Request)
 		} else {
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		}
-	}
-}
-
-// MetricsJSON handles GET /api/metrics, returning a JSON snapshot of all metrics.
-// Requires authentication. Intended for programmatic consumers such as the test
-// global setup and external monitoring scripts.
-func (h *DashboardHandlers) MetricsJSON(w http.ResponseWriter, r *http.Request) {
-	if !h.sessionManager.IsAuthenticated(w, r) {
-		http.Error(w, `{"error":"Unauthorized"}`, http.StatusUnauthorized)
-		return
-	}
-
-	ctx := r.Context()
-	snapshot := h.collector.Collect(ctx)
-
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	if err := json.NewEncoder(w).Encode(snapshot); err != nil {
-		slog.Error("failed to encode metrics JSON", "err", err)
 	}
 }

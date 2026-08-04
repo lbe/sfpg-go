@@ -23,26 +23,26 @@ import (
 // and file-system paths. No context is stored — ctx is received as a
 // parameter where needed.
 type InfrastructureService struct {
-	dbPaths             database.DatabasePaths
-	dbRwPool            *dbconnpool.DbSQLConnPool
-	dbRoPool            *dbconnpool.DbSQLConnPool
-	cacheStore          cachelite.CacheStore
-	cacheSizeBytes      atomic.Int64
-	cacheMW             *cachelite.HTTPCacheMiddleware
-	writeBatcher        *writebatcher.WriteBatcher[BatchedWrite]
-	batcherQueries      *gallerydb.CustomQueries
-	dqueDirPath         string
-	rootDir             string
-	imagesDir           string
-	normalizedImagesDir string
-	ImporterFactory     func(conn *sql.Conn, q *gallerydb.CustomQueries) files.Importer
-	dbInitializer       databaseInitializer
-	cacheMWForEvict     cacheMiddlewareForEvict
-	cacheRotator        cacheRotator
-	testSeams           InfrastructureTestSeams
-	cacheSizeCalibrated atomic.Bool
-	cacheCalibListening atomic.Bool
-	cacheCalibStarted   atomic.Bool
+	dbPaths              database.DatabasePaths
+	dbRwPool             *dbconnpool.DbSQLConnPool
+	dbRoPool             *dbconnpool.DbSQLConnPool
+	cacheStore           cachelite.CacheStore
+	cacheSizeBytes       atomic.Int64
+	cacheEntryCount      atomic.Int64
+	cacheMW              *cachelite.HTTPCacheMiddleware
+	writeBatcher         *writebatcher.WriteBatcher[BatchedWrite]
+	batcherQueries       *gallerydb.CustomQueries
+	dqueDirPath          string
+	rootDir              string
+	imagesDir            string
+	normalizedImagesDir  string
+	OnFolderCreated      func()
+	ImporterFactory      func(conn *sql.Conn, q *gallerydb.CustomQueries) files.Importer
+	dbInitializer        databaseInitializer
+	cacheMWForEvict      cacheMiddlewareForEvict
+	cacheRotator         cacheRotator
+	testSeams            InfrastructureTestSeams
+	cacheBaselineRunning atomic.Int32
 
 	startupPragmaOptimizeStarted atomic.Bool
 	pragmaOptimizeListening      atomic.Bool
@@ -54,15 +54,16 @@ type InfrastructureService struct {
 // NewInfrastructureService constructs the infrastructure service with production defaults.
 func NewInfrastructureService() *InfrastructureService {
 	s := &InfrastructureService{
-		ImporterFactory: func(conn *sql.Conn, q *gallerydb.CustomQueries) files.Importer {
-			return &gallerylib.Importer{Conn: conn, Q: q}
-		},
 		dbInitializer: defaultDatabaseInitializer{},
 		cacheRotator:  defaultCacheRotator{},
 		testSeams: InfrastructureTestSeams{
-			GetCacheSizeBytes: cachelite.GetCacheSizeBytes,
-			EvictLRU:          cachelite.EvictLRU,
+			GetCacheSizeBytes:  cachelite.GetCacheSizeBytes,
+			GetCacheEntryCount: cachelite.CountCacheEntries,
+			EvictLRU:           cachelite.EvictLRU,
 		},
+	}
+	s.ImporterFactory = func(conn *sql.Conn, q *gallerydb.CustomQueries) files.Importer {
+		return &gallerylib.Importer{Conn: conn, Q: q, OnFolderCreated: s.OnFolderCreated}
 	}
 	return s
 }
@@ -151,6 +152,7 @@ func (s *InfrastructureService) IncrementETag(ctx context.Context, cfgService co
 		slog.Warn("failed to rotate HTTP cache after ETag increment", "err", err)
 	} else {
 		s.cacheSizeBytes.Store(0)
+		s.cacheEntryCount.Store(0)
 	}
 	return newETag, nil
 }

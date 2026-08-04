@@ -211,7 +211,7 @@ func CreateApp(t testing.TB, opts ...AppOption) *App {
 		app.SubsystemManager.pool.MinWorkers = 1
 		app.SubsystemManager.pool.MaxWorkers = 1
 		app.RuntimeManager.poolDone = make(chan struct{})
-		pf := files.NewPoolFuncWithProcessor(app.SubsystemManager.fileProcessor, app.SubsystemManager.q, app.normalizedImagesDir, removeImagesDirPrefix, nil)
+		pf := files.NewPoolFuncWithProcessor(app.SubsystemManager.fileProcessor, app.SubsystemManager.q, app.normalizedImagesDir, removeImagesDirPrefix, nil, nil)
 		go func() {
 			defer close(app.RuntimeManager.poolDone)
 			app.SubsystemManager.pool.StartWorkerPool(pf, app.dbRoPool, app.dbRwPool, app.SubsystemManager.q.Len)

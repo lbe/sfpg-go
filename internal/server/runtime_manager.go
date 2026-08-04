@@ -36,9 +36,7 @@ type RuntimeManager struct {
 	shutdownOnce     sync.Once
 	poolDone         chan struct{}
 
-	galleryStatsMu         sync.RWMutex
-	galleryStatsCache      *GalleryStats
-	galleryStatsAt         int64
+	galleryStats           *GalleryStats
 	staleCacheDropInFlight atomic.Bool
 
 	testSeams RuntimeManagerTestSeams
@@ -49,9 +47,10 @@ type RuntimeManager struct {
 func NewRuntimeManager(parent context.Context) *RuntimeManager {
 	ctx, cancel := context.WithCancel(parent)
 	return &RuntimeManager{
-		ctx:         ctx,
-		cancel:      cancel,
-		execCommand: syscall.Exec,
+		ctx:          ctx,
+		cancel:       cancel,
+		execCommand:  syscall.Exec,
+		galleryStats: &GalleryStats{},
 	}
 }
 
@@ -181,21 +180,5 @@ func (m *RuntimeManager) exit(code int) {
 
 // ─── Gallery stats ──────────────────────────────────────────────────
 
-// GetGalleryStatsCached returns cached gallery stats when still valid for the given discovery timestamp.
-func (m *RuntimeManager) GetGalleryStatsCached(discoveryLastStartedAt int64) *GalleryStats {
-	m.galleryStatsMu.RLock()
-	defer m.galleryStatsMu.RUnlock()
-	if m.galleryStatsCache == nil || m.galleryStatsAt != discoveryLastStartedAt {
-		return nil
-	}
-	c := *m.galleryStatsCache
-	return &c
-}
-
-// SetGalleryStatsCache stores gallery stats with the discovery timestamp used for invalidation.
-func (m *RuntimeManager) SetGalleryStatsCache(stats *GalleryStats, at int64) {
-	m.galleryStatsMu.Lock()
-	m.galleryStatsCache = stats
-	m.galleryStatsAt = at
-	m.galleryStatsMu.Unlock()
-}
+// GalleryStats returns the live atomic-counter cache, never nil.
+func (m *RuntimeManager) GalleryStats() *GalleryStats { return m.galleryStats }

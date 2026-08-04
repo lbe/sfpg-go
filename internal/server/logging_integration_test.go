@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/lbe/sfpg-go/internal/server/config"
 )
@@ -113,9 +112,6 @@ func TestFileAlignment_ConfigLogsContinuation(t *testing.T) {
 	// Log a message after config reload
 	slog.Info("config phase message")
 
-	// Wait a bit for flush
-	time.Sleep(10 * time.Millisecond)
-
 	// Bootstrap log should not have the config phase message
 	bootstrapContent, err := os.ReadFile(bootstrapPath)
 	if err != nil {
@@ -181,9 +177,6 @@ func TestFileAlignment_BootstrapFileNotModified(t *testing.T) {
 	_ = statBefore // Used to verify file exists before reload
 	sizeBefore := statBefore.Size()
 
-	// Wait to ensure file times would differ
-	time.Sleep(100 * time.Millisecond)
-
 	// Create new logs directory
 	newLogsDir := filepath.Join(tmpDir, "logs_prod")
 	if mkdirErr := os.MkdirAll(newLogsDir, 0755); mkdirErr != nil {
@@ -203,9 +196,6 @@ func TestFileAlignment_BootstrapFileNotModified(t *testing.T) {
 
 	// Log config message (goes to new file, not bootstrap)
 	slog.Info("config only")
-
-	// Wait for logging to flush
-	time.Sleep(100 * time.Millisecond)
 
 	// Check bootstrap file hasn't changed (size should be same or close)
 	statAfter, err := os.Stat(bootstrapPath)

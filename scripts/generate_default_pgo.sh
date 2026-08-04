@@ -4,6 +4,8 @@
 # Flow: discovery → e2eweb + Playwright → cache batch load (Playwright teardown)
 #       → SIGTERM → write default.pgo
 #
+# Shared wait/parse helpers are in generate_default_pgo-wait.sh (sourced below).
+#
 # Defaults (override via environment variables):
 #   SFPG_PGO_ROOT        Root directory (default: <module>/tmp)
 #   SFPG_PGO_PORT        Listen port (default: 8083)
@@ -34,14 +36,8 @@ SERVER_PID=""
 mkdir -p "${LOG_DIR}" "${BACKUP_DIR}"
 exec > >(tee -a "${MAIN_LOG}") 2>&1
 
-log() {
-  printf '[%s] %s\n' "$(date -Iseconds)" "$*"
-}
-
-die() {
-  log "ERROR: $*"
-  exit 1
-}
+# Source shared helpers (log, die, login_admin, dashboard_html, wait functions)
+source "${SCRIPT_DIR}/generate_default_pgo-wait.sh"
 
 port_in_use() {
   if command -v ss > /dev/null 2>&1; then
@@ -83,122 +79,6 @@ backup_existing_pgo() {
   backup="${BACKUP_DIR}/default.pgo.${ts}"
   cp -a "${OUTPUT_PGO}" "${backup}"
   log "Backed up ${OUTPUT_PGO} to ${backup}"
-}
-
-login_admin() {
-  curl -fsS -c "${COOKIE_JAR}" -X POST "${BASE_URL}/login" \
-    -H "Content-Type: application/x-www-form-urlencoded" \
-    -H "Origin: ${BASE_URL}" \
-    -d "username=admin&password=admin" > /dev/null
-}
-
-metrics_json() {
-  curl -fsS -b "${COOKIE_JAR}" "${BASE_URL}/api/metrics"
-}
-
-discovery_complete() {
-  local metrics="$1"
-  perl -MJSON::PP=decode_json -e '
-    my $data = decode_json($ARGV[0]);
-    my $fp = $data->{file_processing} // {};
-    print(($fp->{total_found} // 0) > 0 && ($fp->{in_flight} // 0) == 0 ? 1 : 0);
-  ' "${metrics}"
-}
-
-in_flight() {
-  local metrics="$1"
-  perl -MJSON::PP=decode_json -e '
-    my $data = decode_json($ARGV[0]);
-    print $data->{file_processing}{in_flight} // 0;
-  ' "${metrics}"
-}
-
-cache_batch_complete() {
-  local metrics="$1"
-  perl -MJSON::PP=decode_json -e '
-    my $data = decode_json($ARGV[0]);
-    my $hc = $data->{http_cache} // {};
-    if (!($hc->{enabled} // 0)) { print 1; exit }
-    my $c = $data->{cache_batch_load} // {};
-    my $done = ($c->{targets_completed} // 0)
-             + ($c->{targets_failed} // 0)
-             + ($c->{targets_skipped} // 0);
-    my $total = $c->{targets_total} // 0;
-    my $running = $c->{is_running} ? 1 : 0;
-    print(($total > 0 && $done >= $total && !$running) ? 1 : 0);
-  ' "${metrics}"
-}
-
-cache_batch_running() {
-  local metrics="$1"
-  perl -MJSON::PP=decode_json -e '
-    my $data = decode_json($ARGV[0]);
-    print $data->{cache_batch_load}{is_running} ? 1 : 0;
-  ' "${metrics}"
-}
-
-wait_for_health() {
-  local deadline=$((SECONDS + 30))
-  while [[ "${SECONDS}" -lt "${deadline}" ]]; do
-    if curl -fsS "${BASE_URL}/health" > /dev/null 2>&1; then
-      return 0
-    fi
-    sleep 0.5
-  done
-  die "/health did not return 200 within 30s"
-}
-
-wait_for_discovery() {
-  login_admin
-  local deadline=$((SECONDS + 120))
-  local triggered=0
-  while [[ "${SECONDS}" -lt "${deadline}" ]]; do
-    local metrics
-    metrics="$(metrics_json)"
-    if [[ "$(discovery_complete "${metrics}")" == "1" ]]; then
-      log "Discovery complete"
-      return 0
-    fi
-    if [[ "$(in_flight "${metrics}")" == "0" && "${triggered}" -eq 0 ]]; then
-      log "POST /server/discovery"
-      curl -fsS -b "${COOKIE_JAR}" -X POST "${BASE_URL}/server/discovery" \
-        -H "Origin: ${BASE_URL}" > /dev/null || true
-      triggered=1
-    fi
-    sleep 1
-  done
-  die "Discovery did not complete within 120s"
-}
-
-wait_for_cache_batch_load() {
-  login_admin
-  local deadline=$((SECONDS + 120))
-  local triggered=0
-  while [[ "${SECONDS}" -lt "${deadline}" ]]; do
-    local metrics
-    metrics="$(metrics_json)"
-    if [[ "$(cache_batch_complete "${metrics}")" == "1" ]]; then
-      log "Cache batch load complete"
-      return 0
-    fi
-    if [[ "$(cache_batch_running "${metrics}")" == "0" && "${triggered}" -eq 0 ]]; then
-      log "POST /server/cache-batch-load"
-      local code
-      code="$(curl -sS -o /dev/null -w '%{http_code}' -b "${COOKIE_JAR}" \
-        -X POST "${BASE_URL}/server/cache-batch-load" \
-        -H "Origin: ${BASE_URL}")"
-      if [[ "${code}" == "200" ]]; then
-        triggered=1
-      elif [[ "${code}" == "409" ]]; then
-        sleep 1
-        continue
-      else
-        die "POST /server/cache-batch-load returned ${code}"
-      fi
-    fi
-    sleep 1
-  done
-  die "Cache batch load did not complete within 120s"
 }
 
 execute_tests() {

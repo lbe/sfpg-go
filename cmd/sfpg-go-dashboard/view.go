@@ -193,7 +193,6 @@ func (m Model) viewDashboard() string {
 	b.WriteString(header)
 	b.WriteString("\n")
 
-	b.WriteString(m.renderModules())
 	b.WriteString(m.renderMemoryRuntime())
 	b.WriteString(m.renderWriteBatcher())
 	b.WriteString(m.renderWorkerPoolQueue())
@@ -245,40 +244,6 @@ func (m Model) viewDashboard() string {
 
 	visibleLines := lines[start:end]
 	return strings.Join(visibleLines, "\n") + "\n"
-}
-
-// renderModules renders the module status section on a single line.
-// Active modules show with a filled circle (●), inactive with empty (○).
-func (m Model) renderModules() string {
-	var b strings.Builder
-
-	b.WriteString(titleInCardStyle.Render("Module Status: "))
-
-	if len(m.metrics.Modules) == 0 {
-		b.WriteString(dimStyle.Render("No modules registered"))
-		b.WriteString("\n")
-		return b.String()
-	}
-
-	for i, mod := range m.metrics.Modules {
-		if i > 0 {
-			b.WriteString("  ")
-		}
-		statusStyle := dimStyle
-		statusIcon := "○"
-		switch mod.Status {
-		case "active":
-			statusStyle = successStyle
-			statusIcon = "●"
-		case "recent":
-			statusStyle = warningStyle
-			statusIcon = "●"
-		}
-
-		fmt.Fprintf(&b, "%s %s %s", statusIcon, mod.Name, statusStyle.Render(mod.Status))
-	}
-	b.WriteString("\n")
-	return b.String()
 }
 
 // renderMemoryRuntime renders Memory and Runtime cards side by side.
@@ -342,9 +307,9 @@ func (m Model) renderWriteBatcher() string {
 	return b.String()
 }
 
-// renderWorkerPoolQueue renders Worker Pool and File Queue cards side by side.
+// renderWorkerPoolQueue renders Worker Pool and Queued Items cards side by side.
 // Worker Pool: Running/Max, Completed, Successful, Failed
-// File Queue: Queued/Capacity, Utilization, Available
+// Queued Items: Queued queue length
 func (m Model) renderWorkerPoolQueue() string {
 	var b strings.Builder
 
@@ -361,15 +326,12 @@ func (m Model) renderWorkerPoolQueue() string {
 		labelStyle.Render("Failed"), failedStyle.Render(m.metrics.WorkerPool.Failed),
 	)
 
-	queueContent := fmt.Sprintf("%s: %s/%s\n%s: %s\n%s: %s",
+	queueContent := fmt.Sprintf("%s: %s",
 		labelStyle.Render("Queued"), valueStyle.Render(m.metrics.Queue.Queued),
-		valueStyle.Render(m.metrics.Queue.Capacity),
-		labelStyle.Render("Utilization"), valueStyle.Render(m.metrics.Queue.Utilization),
-		labelStyle.Render("Available"), valueStyle.Render(m.metrics.Queue.Available),
 	)
 
 	poolCard := cardStyle.Render(titleInCardStyle.Render("Worker Pool") + "\n" + poolContent)
-	queueCard := cardStyle.Render(titleInCardStyle.Render("File Queue") + "\n" + queueContent)
+	queueCard := cardStyle.Render(titleInCardStyle.Render("Queued Items") + "\n" + queueContent)
 
 	row := lipgloss.JoinHorizontal(lipgloss.Top, poolCard, "  ", queueCard)
 	b.WriteString(row)

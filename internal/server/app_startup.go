@@ -1,12 +1,15 @@
 package server
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"runtime/debug"
 	"time"
 
 	"github.com/lbe/sfpg-go/internal/cachelite"
+	"github.com/lbe/sfpg-go/internal/dbconnpool"
 	"github.com/lbe/sfpg-go/internal/profiler"
 	"github.com/lbe/sfpg-go/internal/scheduler"
 	"github.com/lbe/sfpg-go/internal/server/cachebatch"
@@ -180,7 +183,6 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 	}
 
 	app.StartWriteBatcher(app.RuntimeManager.ctx, true)
-	app.startCacheSizeCalibration()
 	app.startStartupPragmaOptimize()
 
 	// Apply config to app fields
@@ -212,41 +214,44 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 	if app.ConfigManager.Config != nil {
 		runDiscovery = app.ConfigManager.Config.RunFileDiscovery
 	}
+
+	app.startGalleryStatsBaselines()
+
+	app.ConfigManager.ConfigMu.RLock()
+	httpCacheEnabled := app.ConfigManager.Config != nil && app.ConfigManager.Config.EnableHTTPCache
+	app.ConfigManager.ConfigMu.RUnlock()
+	if httpCacheEnabled {
+		app.startHTTPCacheBaselines(app.getCtx())
+	}
+
+	// Incremental gallery stats counters are wired through two different
+	// patterns below. The split is structurally necessary:
+	//
+	//   Folders — simple field callback (OnFolderCreated). The importer
+	//   lives in gallerylib which has no import restrictions, so a func()
+	//   field on InfrastructureService works directly.
+	//
+	//   Files — drilled callback (onFileInserted). internal/server/files
+	//   cannot import internal/server (circular), so a plain func(int64)
+	//   is threaded through StartPool → NewPoolFuncWithProcessor →
+	//   runPoolWorkerWithProcessor, where it fires on SubmitFileForWrite
+	//   success.
+	app.OnFolderCreated = func() {
+		app.RuntimeManager.GalleryStats().addFolder()
+	}
+
 	if runDiscovery {
-		app.discoveryRunning.Store(true)
-		go app.TriggerDiscovery()
-	} else if app.SubsystemManager.moduleStateService != nil || app.testSeams.GetLastStartedAt != nil {
-		go func() {
-			if app.testSeams.NoDiscoveryStatsDone != nil {
-				defer close(app.testSeams.NoDiscoveryStatsDone)
-			}
-			ctx := app.getCtx()
-			var lastStarted int64
-			var ok bool
-			var err error
-			if app.testSeams.GetLastStartedAt != nil {
-				lastStarted, ok, err = app.testSeams.GetLastStartedAt(ctx, "discovery")
-			} else {
-				lastStarted, ok, err = app.SubsystemManager.moduleStateService.GetLastStartedAt(ctx, "discovery")
-			}
-			if err != nil {
-				slog.Error("failed to get last started at", "err", err)
-			}
-			if ok {
-				if _, err := app.refreshGalleryStatsCache(ctx, lastStarted); err != nil {
-					slog.Error("failed to refresh gallery stats cache", "err", err)
-				}
-			} else {
-				if _, err := app.refreshGalleryStatsCache(ctx, 0); err != nil {
-					slog.Error("failed to refresh gallery stats cache", "err", err)
-				}
-			}
-		}()
+		if app.testSeams.TriggerDiscovery != nil {
+			go app.testSeams.TriggerDiscovery()
+		} else {
+			go app.TriggerDiscovery()
+		}
 	}
 
 	// Worker pool startup
 	app.RuntimeManager.poolDone = make(chan struct{})
-	app.StartPool(app.RuntimeManager.ctx, app.RuntimeManager.poolDone, app.normalizedImagesDir, removeImagesDirPrefix, app.SubsystemManager.fileProcessor)
+	app.StartPool(app.RuntimeManager.ctx, app.RuntimeManager.poolDone, app.normalizedImagesDir, removeImagesDirPrefix, app.SubsystemManager.fileProcessor,
+		func(size int64) { app.RuntimeManager.GalleryStats().addFile(size) })
 
 	// Completion monitor for initial batch processing
 	if runDiscovery {
@@ -350,9 +355,6 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 		queueSize = app.ConfigManager.Config.QueueSize
 	}
 	app.RuntimeManager.metricsCollector.SetQueueInfo(func() int { return app.SubsystemManager.q.Len() }, queueSize)
-	app.RuntimeManager.metricsCollector.RecordModuleActivity("discovery", runDiscovery)
-	app.RuntimeManager.metricsCollector.RecordModuleActivity("cache_preload",
-		app.ConfigManager.Config != nil && app.ConfigManager.Config.EnableCachePreload)
 	app.logStartupConfigSummary(queueSize, runDiscovery)
 
 	// Ensure the session store and manager exist before building handlers.
@@ -400,4 +402,61 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 	}
 
 	return nil
+}
+
+// startGalleryStatsBaselines launches three parallel goroutines to populate
+// gallery statistics (folders, file count/timestamps, file size sum) from
+// the database asynchronously. Each goroutine increments the running counter
+// synchronously before launching so that display helpers see running > 0
+// immediately (rendering "N/A" for unpopulated fields).
+func (app *App) startGalleryStatsBaselines() {
+	if app.testSeams.GalleryStatsStartup != nil {
+		app.testSeams.GalleryStatsStartup()
+		return
+	}
+	gs := app.RuntimeManager.GalleryStats()
+	ctx := app.getCtx()
+
+	runBaseline := func(name string, fn func(ctx context.Context, cpc *dbconnpool.CpConn) error) {
+		gs.markRunning(1)
+		go func() {
+			defer gs.markRunning(-1)
+			cpcRo, err := app.dbRoPool.Get()
+			if err != nil {
+				slog.Error("gallery stats baseline: DB connection failed", "query", name, "err", err)
+				return
+			}
+			defer app.dbRoPool.Put(cpcRo)
+			if err := fn(ctx, cpcRo); err != nil {
+				if !errors.Is(err, context.DeadlineExceeded) {
+					slog.Error("gallery stats baseline failed", "query", name, "err", err)
+				}
+			}
+		}()
+	}
+
+	runBaseline("folder_count", func(ctx context.Context, cpc *dbconnpool.CpConn) error {
+		ct, err := cpc.Queries.GetFolderCount(ctx)
+		if err != nil {
+			return err
+		}
+		gs.setFolders(ct)
+		return nil
+	})
+	runBaseline("file_count", func(ctx context.Context, cpc *dbconnpool.CpConn) error {
+		row, err := cpc.Queries.GetFileCountAndTimestamps(ctx)
+		if err != nil {
+			return err
+		}
+		gs.setFileCountAndTimestamps(row.CtFiles, row.MinCreatedAt, row.MaxUpdatedAt)
+		return nil
+	})
+	runBaseline("file_size_sum", func(ctx context.Context, cpc *dbconnpool.CpConn) error {
+		sz, err := cpc.Queries.GetFileSizeSum(ctx)
+		if err != nil {
+			return err
+		}
+		gs.addImagesSize(sz)
+		return nil
+	})
 }

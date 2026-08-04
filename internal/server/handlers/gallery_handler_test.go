@@ -1,13 +1,16 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -62,8 +65,8 @@ func TestGalleryByID_FolderNotFound(t *testing.T) {
 	}
 }
 
-func TestGalleryByID_SubFoldersQueryError(t *testing.T) {
-	qh := &fakeHandlerQueries{getSubFoldersErr: errors.New("db error")}
+func TestGalleryByID_FolderThumbsQueryError(t *testing.T) {
+	qh := &fakeHandlerQueries{getGalleryFolderThumbsErr: errors.New("db error")}
 	gh := setupTestGalleryHandlers(t, qh)
 
 	req := httptest.NewRequest(http.MethodGet, "/gallery/1", nil)
@@ -77,8 +80,8 @@ func TestGalleryByID_SubFoldersQueryError(t *testing.T) {
 	}
 }
 
-func TestGalleryByID_ImagesQueryError(t *testing.T) {
-	qh := &fakeHandlerQueries{getImagesErr: errors.New("db error")}
+func TestGalleryByID_FileThumbsQueryError(t *testing.T) {
+	qh := &fakeHandlerQueries{getGalleryFileThumbsErr: errors.New("db error")}
 	gh := setupTestGalleryHandlers(t, qh)
 
 	req := httptest.NewRequest(http.MethodGet, "/gallery/1", nil)
@@ -233,6 +236,82 @@ func TestGalleryByID_RenderPageError(t *testing.T) {
 	}
 }
 
+// captureErrorWriter implements http.ResponseWriter + bodyCaptureWriter where
+// CaptureBodyWriter returns a sink that writes to a buffer but returns a write
+// error, so the template exec function fails after writing bytes. This triggers
+// the ResetCapturedBody path in renderGalleryInto.
+type captureErrorWriter struct {
+	status int
+	header http.Header
+	reset  bool
+	sink   bytes.Buffer
+}
+
+func (w *captureErrorWriter) Header() http.Header {
+	if w.header == nil {
+		w.header = http.Header{}
+	}
+	return w.header
+}
+
+func (w *captureErrorWriter) WriteHeader(status int) {
+	w.status = status
+}
+
+func (w *captureErrorWriter) Write(p []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	return len(p), nil
+}
+
+func (w *captureErrorWriter) CaptureBodyWriter() io.Writer {
+	return &captureSinkWriter{parent: w}
+}
+
+func (w *captureErrorWriter) CommitCapturedBody() error {
+	return nil
+}
+
+func (w *captureErrorWriter) ResetCapturedBody() {
+	w.reset = true
+	w.sink.Reset()
+}
+
+// captureSinkWriter writes bytes to the parent sink buffer but always returns
+// a write error. This simulates template execution failing after partial output
+// has been written to the capture sink.
+type captureSinkWriter struct {
+	parent *captureErrorWriter
+}
+
+func (sw *captureSinkWriter) Write(p []byte) (int, error) {
+	n, _ := sw.parent.sink.Write(p)
+	return n, errors.New("template exec: write failed")
+}
+
+// TestGalleryByID_RenderPageError_CaptureWriter verifies that a gallery render
+// failure through a capture writer still results in a 500 response.
+// The capture writer's sink is written before the template exec fails, so
+// ResetCapturedBody is called (not CommitCapturedBody) and the handler
+// responds with 500 via ServerError.
+func TestGalleryByID_RenderPageError_CaptureWriter(t *testing.T) {
+	gh := setupTestGalleryHandlers(t, &fakeHandlerQueries{})
+
+	req := httptest.NewRequest(http.MethodGet, "/gallery/1", nil)
+	req.SetPathValue("id", "1")
+	w := &captureErrorWriter{}
+
+	gh.GalleryByID(w, req)
+
+	if w.status != http.StatusInternalServerError {
+		t.Errorf("expected status 500, got %d", w.status)
+	}
+	if !w.reset {
+		t.Error("expected ResetCapturedBody to be called after exec error")
+	}
+}
+
 func TestGalleryByID_SchedulesPreload(t *testing.T) {
 	preload := &mockPreloadService{called: make(chan struct{}, 1)}
 	gh := setupTestGalleryHandlers(t, &fakeHandlerQueries{})
@@ -270,8 +349,24 @@ func TestGalleryByID_DBConnectionError(t *testing.T) {
 	}
 }
 
+// countingPreloadService is a PreloadService mock that counts schedule calls
+// with an atomic counter. The internal-preload header check happens
+// synchronously inside GalleryByID before any goroutine is spawned, so the
+// count can be asserted immediately after the handler returns — no timing wait.
+type countingPreloadService struct {
+	scheduleCount atomic.Int32
+}
+
+func (c *countingPreloadService) ScheduleFolderPreload(ctx context.Context, folderID int64, sessionID string) {
+	c.scheduleCount.Add(1)
+}
+
+func (c *countingPreloadService) SetEnabled(enabled bool) {}
+
+func (c *countingPreloadService) IsEnabled() bool { return true }
+
 func TestGalleryByID_SkipsPreloadForInternalRequest(t *testing.T) {
-	preload := &mockPreloadService{called: make(chan struct{}, 1)}
+	preload := &countingPreloadService{}
 	gh := setupTestGalleryHandlers(t, &fakeHandlerQueries{})
 	gh.PreloadService = preload
 
@@ -282,10 +377,8 @@ func TestGalleryByID_SkipsPreloadForInternalRequest(t *testing.T) {
 
 	gh.GalleryByID(w, req)
 
-	select {
-	case <-preload.called:
-		t.Fatal("did not expect preload to be scheduled for internal request")
-	case <-time.After(200 * time.Millisecond):
+	if got := preload.scheduleCount.Load(); got != 0 {
+		t.Errorf("expected no preload scheduled for internal request, got %d schedule calls", got)
 	}
 }
 
@@ -339,20 +432,20 @@ func TestGalleryByID_ETagAndVary(t *testing.T) {
 	}
 }
 
-// sortOrderFake is a fakeHandlerQueries that returns ordered subfolders and files
-// for testing gallery sort order in rendered HTML.
+// sortOrderFake is a fakeHandlerQueries that returns ordered folder and file
+// thumb rows for testing gallery sort order in rendered HTML.
 type sortOrderFake struct {
 	fakeHandlerQueries
-	folders []gallerydb.FolderView
-	files   []gallerydb.FileView
+	folderThumbRows []gallerydb.GetGalleryFolderThumbRowsByParentIDRow
+	fileThumbRows   []gallerydb.GetGalleryFileThumbRowsByFolderIDRow
 }
 
-func (s *sortOrderFake) GetFoldersViewsByParentIDOrderByName(ctx context.Context, parent sql.NullInt64) ([]gallerydb.FolderView, error) {
-	return s.folders, nil
+func (s *sortOrderFake) GetGalleryFolderThumbRowsByParentID(ctx context.Context, parent sql.NullInt64) ([]gallerydb.GetGalleryFolderThumbRowsByParentIDRow, error) {
+	return s.folderThumbRows, nil
 }
 
-func (s *sortOrderFake) GetFileViewsByFolderIDOrderByFileName(ctx context.Context, folderID sql.NullInt64) ([]gallerydb.FileView, error) {
-	return s.files, nil
+func (s *sortOrderFake) GetGalleryFileThumbRowsByFolderID(ctx context.Context, folderID sql.NullInt64) ([]gallerydb.GetGalleryFileThumbRowsByFolderIDRow, error) {
+	return s.fileThumbRows, nil
 }
 
 // TestGalleryByIDHandler_SortOrder verifies that folders and files within a
@@ -362,14 +455,14 @@ func TestGalleryByIDHandler_SortOrder(t *testing.T) {
 	// Create fake queries returning ordered data: folders then files,
 	// each group alphabetically sorted.
 	fq := &sortOrderFake{
-		folders: []gallerydb.FolderView{
-			{ID: 10, Name: "FolderA", ParentID: sql.NullInt64{Int64: 1, Valid: true}},
-			{ID: 11, Name: "FolderB", ParentID: sql.NullInt64{Int64: 1, Valid: true}},
+		folderThumbRows: []gallerydb.GetGalleryFolderThumbRowsByParentIDRow{
+			{ID: 10, Name: "FolderA"},
+			{ID: 11, Name: "FolderB"},
 		},
-		files: []gallerydb.FileView{
-			{ID: 1, Path: "FileA.gif", Filename: "FileA.gif", FolderID: sql.NullInt64{Int64: 1, Valid: true}},
-			{ID: 2, Path: "FileB.png", Filename: "FileB.png", FolderID: sql.NullInt64{Int64: 1, Valid: true}},
-			{ID: 3, Path: "FileC.jpg", Filename: "FileC.jpg", FolderID: sql.NullInt64{Int64: 1, Valid: true}},
+		fileThumbRows: []gallerydb.GetGalleryFileThumbRowsByFolderIDRow{
+			{ID: 1, Filename: "FileA.gif"},
+			{ID: 2, Filename: "FileB.png"},
+			{ID: 3, Filename: "FileC.jpg"},
 		},
 	}
 

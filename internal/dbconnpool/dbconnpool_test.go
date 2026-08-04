@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -224,17 +225,26 @@ func TestMonitor(t *testing.T) {
 		}
 		poolWithCancel.Put(cpc)
 
-		go poolWithCancel.monitor()
+		monitorDone := make(chan struct{})
+		go func() {
+			defer close(monitorDone)
+			poolWithCancel.monitor()
+		}()
 		cancel() // Cancel immediately
 
-		// Monitor should have stopped, connection count should remain the same
-		initialCount := poolWithCancel.NumIdleConnections()
-		time.Sleep(100 * time.Millisecond)
-		finalCount := poolWithCancel.NumIdleConnections()
+		// Monitor should stop when the context is cancelled. Wait for it to
+		// return instead of sleeping.
+		select {
+		case <-monitorDone:
+			// Monitor stopped on context cancellation.
+		case <-time.After(3 * time.Second):
+			t.Fatal("monitor did not stop after context cancel")
+		}
 
-		if finalCount != initialCount {
-			t.Errorf("connection count changed after context cancel: initial=%d, final=%d",
-				initialCount, finalCount)
+		// The single returned connection must still be idle; the monitor must
+		// not have changed the pool after cancellation.
+		if n := poolWithCancel.NumIdleConnections(); n != 1 {
+			t.Errorf("connection count changed after context cancel: got %d, want 1", n)
 		}
 
 		// Cleanup
@@ -419,22 +429,36 @@ func waitForIdleAtMost(t *testing.T, pool *DbSQLConnPool, want int, timeout time
 	return pool.NumIdleConnections()
 }
 
-// stabilizeIdle polls briefly to let the concurrent monitor settle before a
-// pre-condition check. It waits until idle count stays stable for two consecutive
-// reads or the short timeout expires.
-func stabilizeIdle(t *testing.T, pool *DbSQLConnPool, timeout time.Duration) int {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	prev := -1
-	for time.Now().Before(deadline) {
-		n := pool.NumIdleConnections()
-		if n == prev && n >= 0 {
-			return n
+// logSignalHandler forwards records to an inner handler and signals a buffered
+// channel (non-blocking) the first time a record message contains the given
+// substring. Tests use it to observe a background goroutine (e.g. the monitor)
+// hitting a specific error path without sleeping.
+type logSignalHandler struct {
+	inner slog.Handler
+	msg   string
+	sig   chan struct{}
+}
+
+func (h *logSignalHandler) Enabled(ctx context.Context, level slog.Level) bool {
+	return h.inner.Enabled(ctx, level)
+}
+
+func (h *logSignalHandler) Handle(ctx context.Context, r slog.Record) error {
+	if strings.Contains(r.Message, h.msg) {
+		select {
+		case h.sig <- struct{}{}:
+		default:
 		}
-		prev = n
-		time.Sleep(50 * time.Millisecond)
 	}
-	return pool.NumIdleConnections()
+	return h.inner.Handle(ctx, r)
+}
+
+func (h *logSignalHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return &logSignalHandler{inner: h.inner.WithAttrs(attrs), msg: h.msg, sig: h.sig}
+}
+
+func (h *logSignalHandler) WithGroup(name string) slog.Handler {
+	return &logSignalHandler{inner: h.inner.WithGroup(name), msg: h.msg, sig: h.sig}
 }
 
 func TestMonitor_Scaling(t *testing.T) {
@@ -495,14 +519,10 @@ func TestMonitor_Scaling(t *testing.T) {
 			}
 			conns[i] = c
 		}
-		// Put them back and let the monitor settle before checking.
+		// Put them all back; the pool now holds 5 idle connections, above
+		// minIdle. The auto-started monitor must drain the excess.
 		for _, c := range conns {
 			pool.Put(c)
-		}
-
-		// Allow the channel to settle before the pre-condition check.
-		if n := stabilizeIdle(t, pool, 500*time.Millisecond); n < 5 {
-			t.Fatalf("pre-condition failed: expected at least 5 idle connections, got %d", n)
 		}
 
 		// Monitor auto-starts because MonitorInterval > 0.
@@ -760,16 +780,21 @@ func TestConcurrency(t *testing.T) {
 		const numGoroutines = 10
 		const iterations = 5
 
-		done := make(chan struct{})
+		var wg sync.WaitGroup
 		errChan := make(chan error, numGoroutines)
 
 		for range numGoroutines {
+			wg.Add(1)
 			go func() {
+				defer wg.Done()
 				for range iterations {
 					cpc, err := pool.Get()
 					if err != nil {
 						if !errors.Is(err, ErrConnectionUnavailable) && !errors.Is(err, ErrPoolClosed) {
-							errChan <- err
+							select {
+							case errChan <- err:
+							default:
+							}
 						}
 						continue
 					}
@@ -779,20 +804,15 @@ func TestConcurrency(t *testing.T) {
 
 					pool.Put(cpc)
 				}
-				done <- struct{}{}
 			}()
 		}
 
-		// Wait for all goroutines to finish
-		for range numGoroutines {
-			select {
-			case err := <-errChan:
-				t.Errorf("goroutine error: %v", err)
-			case <-done:
-				// goroutine completed successfully
-			case <-time.After(5 * time.Second):
-				t.Fatal("test timed out")
-			}
+		// Wait for all goroutines to complete; WaitGroup completion is the
+		// synchronization point (no sleep-based assert).
+		wg.Wait()
+		close(errChan)
+		for err := range errChan {
+			t.Errorf("goroutine error: %v", err)
 		}
 	})
 
@@ -1573,9 +1593,13 @@ func TestGet_BlockedWaitHealthCheckFailure(t *testing.T) {
 	}
 
 	// Start a Get that will block until the broken connection is returned.
+	// With MaxConnections=1 and the only connection checked out, Get must wait
+	// on the acquire channel, so no sleep is needed to reach the blocked state.
+	started := make(chan struct{})
 	gotConn := make(chan *CpConn, 1)
 	gotErr := make(chan error, 1)
 	go func() {
+		close(started)
 		c, err := pool.Get()
 		if err != nil {
 			gotErr <- err
@@ -1583,9 +1607,7 @@ func TestGet_BlockedWaitHealthCheckFailure(t *testing.T) {
 		}
 		gotConn <- c
 	}()
-
-	// Give the goroutine time to block.
-	time.Sleep(100 * time.Millisecond)
+	<-started
 
 	// Return the broken connection; Get should discard it and create a replacement.
 	pool.Put(cpc)
@@ -1643,14 +1665,16 @@ func TestGet_BlockedWaitNewConnectionFailure(t *testing.T) {
 		t.Fatalf("failed to close underlying DB: %v", err)
 	}
 
+	// With MaxConnections=1 and the only connection checked out, Get must wait
+	// on the acquire channel, so no sleep is needed to reach the blocked state.
+	started := make(chan struct{})
 	gotErr := make(chan error, 1)
 	go func() {
+		close(started)
 		_, err := pool.Get()
 		gotErr <- err
 	}()
-
-	// Give the goroutine time to block.
-	time.Sleep(100 * time.Millisecond)
+	<-started
 
 	// Return the broken connection; Get should ping it, fail, then fail to create a new one.
 	pool.Put(cpc)
@@ -1827,17 +1851,37 @@ func TestMonitor_NewCpConnFailure(t *testing.T) {
 		t.Fatalf("failed to close underlying DB: %v", closeErr)
 	}
 
+	// Watch the default logger for the monitor's connection-failure message so
+	// we can wait for the failure path deterministically instead of sleeping.
+	attempted := make(chan struct{}, 1)
+	prevDefault := slog.Default()
+	slog.SetDefault(slog.New(&logSignalHandler{
+		inner: prevDefault.Handler(),
+		msg:   "failed to create connection",
+		sig:   attempted,
+	}))
+	defer slog.SetDefault(prevDefault)
+
 	// Start the monitor with a short interval after the DB is already closed.
 	pool.monitorInterval = 50 * time.Millisecond
 	go pool.monitor()
 
-	// Give the monitor time to attempt growth and hit the newCpConn error path.
-	time.Sleep(200 * time.Millisecond)
+	// Wait until the monitor has attempted growth and hit the newCpConn error
+	// path (signalled via its failure log).
+	select {
+	case <-attempted:
+	case <-time.After(3 * time.Second):
+		t.Fatal("monitor never attempted to create a connection")
+	}
 
 	// The pool should not have grown to minIdleConnections.
 	if pool.NumConnections() >= int64(config.MinIdleConnections) {
 		t.Errorf("expected pool to remain below minIdle after monitor failure, got %d", pool.NumConnections())
 	}
+
+	// Stop the monitor. The underlying DB is already closed, so Close's final
+	// db.Close() returns an error; ignore it.
+	_ = pool.Close()
 }
 
 func TestMonitor_ClosedEarlyReturn(t *testing.T) {

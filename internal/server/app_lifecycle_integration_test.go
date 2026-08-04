@@ -18,7 +18,6 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -40,7 +39,7 @@ func createStartedApp(t testing.TB) *App {
 	app := CreateApp(t)
 	app.Start(app.RuntimeManager.ctx, app.ConfigManager.Config, 1, 2, app.imagesDir, app.normalizedImagesDir, removeImagesDirPrefix, app.getRouter, app.GetHandlerQueries, app.GetETagVersion)
 	app.RuntimeManager.poolDone = make(chan struct{})
-	app.StartPool(app.RuntimeManager.ctx, app.RuntimeManager.poolDone, app.normalizedImagesDir, removeImagesDirPrefix, app.SubsystemManager.fileProcessor)
+	app.StartPool(app.RuntimeManager.ctx, app.RuntimeManager.poolDone, app.normalizedImagesDir, removeImagesDirPrefix, app.SubsystemManager.fileProcessor, nil)
 	return app
 }
 
@@ -206,16 +205,14 @@ func TestSetDB(t *testing.T) {
 		}
 	})
 
-	// Close writeBatcher first to release any database connections
+	// Close writeBatcher first to release any database connections. Close is
+	// synchronous: it waits for the worker to flush and exit, so connections
+	// are back in the pool before the pools are closed below.
 	if app.writeBatcher != nil {
 		if err := app.writeBatcher.Close(); err != nil {
 			t.Errorf("failed to close writeBatcher: %v", err)
 		}
 	}
-
-	// Give a moment for connections to be fully returned to the pool
-	// This helps avoid "database is locked" errors with SQLite
-	time.Sleep(100 * time.Millisecond)
 
 	// Close pools at end of test
 	roErr := app.dbRoPool.Close()
@@ -1349,6 +1346,54 @@ func TestApp_LogProfileLocation(t *testing.T) {
 	if !strings.Contains(logs, "Profile artifacts written") {
 		t.Errorf("Expected profile log, got: %s", logs)
 	}
+
+	app.LogProfileLocation() // second call must be no-op
+	if app.RuntimeManager.stopProfiler != nil {
+		t.Error("stopProfiler should remain nil after second LogProfileLocation")
+	}
+}
+
+func TestApp_Shutdown_FlushesCPUProfile(t *testing.T) {
+	opt := getopt.Opt{
+		SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true},
+	}
+	app := New(opt, "x.y.z")
+
+	stopProfiler, err := profiler.Start(profiler.Config{Mode: "cpu"})
+	if err != nil {
+		t.Fatalf("profiler.Start failed: %v", err)
+	}
+	app.RuntimeManager.stopProfiler = stopProfiler
+	// pkg/profile uses a package-level started flag; if Start succeeds but the test
+	// fails before Stop, the next profiler.Start in the suite fatals the binary.
+	t.Cleanup(func() {
+		if app.RuntimeManager.stopProfiler != nil {
+			app.RuntimeManager.stopProfiler()
+		}
+	})
+	defer app.Shutdown()
+
+	profileDir := profiler.Dir()
+	if profileDir == "" {
+		t.Fatal("expected profiler.Dir() to be set")
+	}
+	profilePath := filepath.Join(profileDir, "cpu.pprof")
+
+	app.Shutdown()
+
+	if _, err := os.Stat(profilePath); err != nil {
+		t.Fatalf("expected %s after Shutdown: %v", profilePath, err)
+	}
+	info, err := os.Stat(profilePath)
+	if err != nil {
+		t.Fatalf("stat profile: %v", err)
+	}
+	if info.Size() == 0 {
+		t.Fatalf("expected non-empty %s", profilePath)
+	}
+	if app.RuntimeManager.stopProfiler != nil {
+		t.Error("stopProfiler should be nil after Shutdown")
+	}
 }
 
 // --- merged from app_serve_test.go ---
@@ -1478,6 +1523,25 @@ func (r *recordingMemoryReclaimerIntegration) Reclaim(cfg MemoryReclaimerConfig)
 	r.cfg = cfg
 }
 
+// waitForGoroutinesToSettle polls until the goroutine count drops back to the
+// baseline (allowing a small margin for runtime background threads) or the
+// deadline expires. This replaces a fixed Sleep before goroutine-leak asserts.
+func waitForGoroutinesToSettle(t *testing.T, baseline int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		remaining := runtime.NumGoroutine()
+		if remaining <= baseline+2 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Errorf("goroutine leak: baseline=%d remaining=%d", baseline, remaining)
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func TestRun_Integration_FullStartupAndShutdown(t *testing.T) {
 	tempDir := t.TempDir()
 	opt := getopt.Opt{SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true}}
@@ -1523,13 +1587,9 @@ func TestRun_Integration_FullStartupAndShutdown(t *testing.T) {
 
 	app.Shutdown()
 
-	// Give goroutines a moment to exit, then allow a small margin for
-	// runtime background threads that we do not control.
-	time.Sleep(100 * time.Millisecond)
-	remaining := runtime.NumGoroutine()
-	if remaining > baseline+2 {
-		t.Errorf("goroutine leak: baseline=%d remaining=%d", baseline, remaining)
-	}
+	// Wait for spawned goroutines to exit before counting; allow a small
+	// margin for runtime background threads that we do not control.
+	waitForGoroutinesToSettle(t, baseline)
 }
 
 func TestRun_Integration_HTTPCacheCleanupGoroutineStarts(t *testing.T) {
@@ -1611,11 +1671,9 @@ func TestRun_Integration_HTTPCacheCleanupGoroutineExits(t *testing.T) {
 
 	app.Shutdown()
 
-	time.Sleep(100 * time.Millisecond)
-	remaining := runtime.NumGoroutine()
-	if remaining > baseline+2 {
-		t.Errorf("goroutine leak: baseline=%d remaining=%d", baseline, remaining)
-	}
+	// Wait for spawned goroutines to exit before counting; allow a small
+	// margin for runtime background threads that we do not control.
+	waitForGoroutinesToSettle(t, baseline)
 }
 
 func TestRun_Integration_BatchLoadManagerCreatedWhenCacheEnabled(t *testing.T) {
@@ -1940,17 +1998,6 @@ func TestStartup_OrderingConstraint(t *testing.T) {
 	// is loaded, indicating improper initialization ordering.
 }
 
-// --- merged from app_startup_test.go ---
-type recordingMemoryReclaimer struct {
-	called atomic.Bool
-	cfg    MemoryReclaimerConfig
-}
-
-func (r *recordingMemoryReclaimer) Reclaim(cfg MemoryReclaimerConfig) {
-	r.called.Store(true)
-	r.cfg = cfg
-}
-
 func TestApp_Run_DefaultStartup(t *testing.T) {
 	tempDir := t.TempDir()
 	opt := getopt.Opt{SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true}}
@@ -1962,7 +2009,7 @@ func TestApp_Run_DefaultStartup(t *testing.T) {
 	serveHook := &recordingServeHook{}
 	app.testSeams.Serve = serveHook.Serve
 
-	reclaimer := &recordingMemoryReclaimer{}
+	reclaimer := &recordingMemoryReclaimerIntegration{started: make(chan struct{})}
 	app.testSeams.MemoryReclaimer = reclaimer.Reclaim
 
 	if err := app.Run(1, 2); err != nil {
@@ -2002,7 +2049,9 @@ func TestApp_Run_DefaultStartup(t *testing.T) {
 	if !strings.Contains(serveHook.addr, ":") {
 		t.Errorf("Serve addr = %q, expected listener address", serveHook.addr)
 	}
-	if !reclaimer.called.Load() {
+	select {
+	case <-reclaimer.started:
+	case <-time.After(500 * time.Millisecond):
 		t.Error("memory reclaimer was not started")
 	}
 
@@ -2111,21 +2160,39 @@ func TestApp_Run_DiscoveryMonitor_CompletionLog(t *testing.T) {
 
 	app.setRootDir(&tempDir)
 
+	// Stub out real directory walking: the completion monitor only needs
+	// the fake sender/stats below, and real discovery would race this test.
+	app.testSeams.TriggerDiscovery = func() {}
+
 	// Pretend a discovery sender is active so the monitor enters the end-loop.
 	app.SubsystemManager.qSendersActive.Store(1)
 
 	app.testSeams.Serve = func(h http.Handler, addr string) error {
-		// Let the monitor enter the end-loop, then clear the sender so it
-		// observes completion and logs the summary before cancellation.
-		time.Sleep(150 * time.Millisecond)
+		// processingStats is initialized by SubsystemManager.Start, which runs
+		// before Serve. Prime the found counter so the monitor's phase-1 gate
+		// is satisfied even if the sender was cleared before its first poll.
+		app.SubsystemManager.processingStats.TotalFound.Store(1)
+
+		// Clear the active sender; the monitor observes completion on its next
+		// poll and logs the summary. Wait for that log before canceling.
 		app.SubsystemManager.qSendersActive.Store(0)
-		time.Sleep(150 * time.Millisecond)
-		app.RuntimeManager.cancel()
-		return nil
+
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			data, err := os.ReadFile(app.logger.FilePath())
+			if err == nil && strings.Contains(string(data), "File processing completed") {
+				app.RuntimeManager.cancel()
+				return nil
+			}
+			if time.Now().After(deadline) {
+				app.RuntimeManager.cancel()
+				t.Fatal("monitor did not log 'File processing completed'")
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
 	}
 
-	reclaimer := &recordingMemoryReclaimer{}
-	app.testSeams.MemoryReclaimer = reclaimer.Reclaim
+	app.testSeams.MemoryReclaimer = (&recordingMemoryReclaimerIntegration{}).Reclaim
 
 	if err := app.Run(1, 1); err != nil {
 		t.Fatalf("Run failed: %v", err)
@@ -2270,4 +2337,16 @@ func TestApp_ApplyConfig_SyncsLoginRateLimitMax(t *testing.T) {
 			t.Fatalf("attempt %d: got %d, want 429", i+1, w.Code)
 		}
 	}
+}
+
+func readStartupLogs(t *testing.T, app *App) string {
+	t.Helper()
+	if app.logger == nil {
+		t.Fatal("app.logger is nil")
+	}
+	data, err := os.ReadFile(app.logger.FilePath())
+	if err != nil {
+		t.Fatalf("failed to read startup log file: %v", err)
+	}
+	return string(data)
 }

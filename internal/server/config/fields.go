@@ -350,7 +350,7 @@ func themesField() configField {
 	}
 }
 
-// fields returns the single source of truth for all 38 config fields.
+// fields returns the single source of truth for all 37 config fields.
 // The table is the sole definition used by ToMap, SetValueFromString,
 // ExportToYAML, IdentifyChanges, restartRequiredKeys, MergeDefaults,
 // and RecoverFromCorruption.
@@ -391,14 +391,13 @@ func fields() []configField {
 			intField("login_rate_limit_per_ip", "login-rate-limit-per-ip", func(c *Config) *int { return &c.LoginRateLimitPerIP }, parseIntNonNeg("login rate limit per IP", "login rate limit per IP"), false).toConfigField(),
 			intField("discovery_queue_max", "discovery-queue-max", func(c *Config) *int { return &c.DiscoveryQueueMax }, parseIntNonNeg("discovery queue max", "discovery queue max"), false).toConfigField(),
 
-			// --- Bool fields (7) ---
+			// --- Bool fields (5) ---
 			// Note: third arg is human-readable name for error messages, not dbKey.
 			boolField("session_http_only", "session-http-only", "session http only", func(c *Config) *bool { return &c.SessionHttpOnly }, true, true).toConfigField(),
 			boolField("session_secure", "session-secure", "session secure", func(c *Config) *bool { return &c.SessionSecure }, true, true).toConfigField(),
 			boolField("enable_http_cache", "http-cache", "http cache enable", func(c *Config) *bool { return &c.EnableHTTPCache }, true, true).toConfigField(),
 			boolField("enable_cache_preload", "enable-cache-preload", "enable cache preload", func(c *Config) *bool { return &c.EnableCachePreload }, false, true).toConfigField(),
 			boolField("run_file_discovery", "discover", "run file discovery", func(c *Config) *bool { return &c.RunFileDiscovery }, false, true).toConfigField(),
-			boolField("enable_pprof", "enable-pprof", "enable pprof", func(c *Config) *bool { return &c.EnablePprof }, true, true).toConfigField(),
 
 			// --- Int64 fields (2) ---
 			int64Field("cache_max_size", "cache-max-size", func(c *Config) *int64 { return &c.CacheMaxSize }, parseInt64NonNeg("cache max size"), true).toConfigField(),

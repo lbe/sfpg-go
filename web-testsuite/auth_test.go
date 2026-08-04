@@ -54,7 +54,7 @@ func TestAuthRoutes_NoAuth(t *testing.T) {
 		{num: 47, name: "server-restart", method: "POST", path: "/server/restart", expCode: http.StatusUnauthorized},
 
 		// Debug
-		{num: 49, name: "pprof", method: "GET", path: "/debug/pprof/", expCode: http.StatusBadRequest},
+		{num: 49, name: "pprof", method: "GET", path: "/debug/pprof/", expCode: http.StatusUnauthorized},
 	}
 
 	for _, tt := range tests {
@@ -135,7 +135,7 @@ func TestAuthRoutes_Auth(t *testing.T) {
 			expCode: http.StatusOK},
 
 		// Debug
-		{num: 50, name: "pprof", method: "GET", path: "/debug/pprof/", expCode: http.StatusBadRequest},
+		{num: 50, name: "pprof", method: "GET", path: "/debug/pprof/", expCode: http.StatusOK},
 	}
 
 	for _, tt := range tests {
@@ -354,9 +354,6 @@ func TestRestart(t *testing.T) {
 			return
 		}
 
-		// Give the server a moment for all services to fully initialize
-		time.Sleep(2 * time.Second)
-
 		// Verify full functionality: login + dashboard
 		verifyClient := newClient()
 		login(t, verifyClient)
@@ -376,7 +373,6 @@ func TestRestart(t *testing.T) {
 		if !waitForServer(t, 5*time.Second) {
 			t.Fatal("server not reachable before restart test")
 		}
-		time.Sleep(1 * time.Second)
 
 		client := newClient()
 		login(t, client)
@@ -398,9 +394,6 @@ func TestRestart(t *testing.T) {
 			reportResult(t, 48, "/server/restart", "POST", "Yes", http.StatusOK, 0, "FAIL", "server did not respond after restart")
 			return
 		}
-
-		// Give the server a moment for all services to fully initialize
-		time.Sleep(2 * time.Second)
 
 		// Verify full functionality: login + gallery
 		verifyClient := newClient()

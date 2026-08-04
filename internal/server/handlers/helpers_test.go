@@ -132,16 +132,22 @@ func (f *fakeCredentialStore) UpdatePassword(ctx context.Context, passwordHash s
 
 // fakeHandlerQueries is a fake implementation of interfaces.HandlerQueries for testing.
 type fakeHandlerQueries struct {
-	folderView           gallerydb.FolderView
-	getFolderViewByIDErr error
-	getSubFoldersErr     error
-	getImagesErr         error
-	folder               gallerydb.Folder
-	getFolderByIDErr     error
-	fileView             gallerydb.FileView
-	getFileViewByIDErr   error
-	thumbByFileErr       error
-	thumbBlobErr         error
+	folderView                gallerydb.FolderView
+	getFolderViewByIDErr      error
+	getSubFoldersErr          error
+	getImagesErr              error
+	folder                    gallerydb.Folder
+	getFolderByIDErr          error
+	fileView                  gallerydb.FileView
+	getFileViewByIDErr        error
+	thumbByFileErr            error
+	thumbBlobErr              error
+	getFileIndexErr           error
+	getNavErr                 error
+	getFolderInfoCountsErr    error
+	folderInfoCounts          gallerydb.GetFolderInfoCountsByIDRow
+	getGalleryFileThumbsErr   error
+	getGalleryFolderThumbsErr error
 }
 
 func (f *fakeHandlerQueries) GetFolderViewByID(ctx context.Context, id int64) (gallerydb.FolderView, error) {
@@ -206,35 +212,64 @@ func (f *fakeHandlerQueries) GetPreloadRoutesByFolderID(ctx context.Context, par
 	return nil, nil
 }
 
-func (f *fakeHandlerQueries) GetGalleryStatistics(ctx context.Context) (gallerydb.GetGalleryStatisticsRow, error) {
-	return gallerydb.GetGalleryStatisticsRow{
-		CtFolders:    0,
-		CtFiles:      0,
-		SzFiles:      sql.NullFloat64{},
-		MinCreatedAt: nil,
-		MaxUpdatedAt: nil,
+func (f *fakeHandlerQueries) GetFileFolderIndexByID(ctx context.Context, id int64) (gallerydb.GetFileFolderIndexByIDRow, error) {
+	if f.getFileIndexErr != nil {
+		return gallerydb.GetFileFolderIndexByIDRow{}, f.getFileIndexErr
+	}
+	return gallerydb.GetFileFolderIndexByIDRow{ImageIndex: 1, ImageCount: 1}, nil
+}
+
+func (f *fakeHandlerQueries) GetLightboxNavByFileID(ctx context.Context, id int64) (gallerydb.GetLightboxNavByFileIDRow, error) {
+	if f.getNavErr != nil {
+		return gallerydb.GetLightboxNavByFileIDRow{}, f.getNavErr
+	}
+	return gallerydb.GetLightboxNavByFileIDRow{
+		CurrentIndex: 0, ImageCount: 1,
+		FirstID: 1, LastID: 1,
+		PrevID: sql.NullInt64{}, NextID: sql.NullInt64{},
 	}, nil
 }
 
-// --- Lightbox Test Helpers ---
+func (f *fakeHandlerQueries) GetFolderInfoCountsByID(ctx context.Context, id int64) (gallerydb.GetFolderInfoCountsByIDRow, error) {
+	if f.getFolderInfoCountsErr != nil {
+		return gallerydb.GetFolderInfoCountsByIDRow{}, f.getFolderInfoCountsErr
+	}
+	return f.folderInfoCounts, nil
+}
 
-// lightboxEmptyList is a fakeHandlerQueries that returns an empty image list.
-type lightboxEmptyList struct {
+func (f *fakeHandlerQueries) GetGalleryFileThumbRowsByFolderID(ctx context.Context, folderID sql.NullInt64) ([]gallerydb.GetGalleryFileThumbRowsByFolderIDRow, error) {
+	if f.getGalleryFileThumbsErr != nil {
+		return nil, f.getGalleryFileThumbsErr
+	}
+	return []gallerydb.GetGalleryFileThumbRowsByFolderIDRow{{ID: 1, Filename: "test.jpg"}}, nil
+}
+
+func (f *fakeHandlerQueries) GetGalleryFolderThumbRowsByParentID(ctx context.Context, parentID sql.NullInt64) ([]gallerydb.GetGalleryFolderThumbRowsByParentIDRow, error) {
+	if f.getGalleryFolderThumbsErr != nil {
+		return nil, f.getGalleryFolderThumbsErr
+	}
+	return []gallerydb.GetGalleryFolderThumbRowsByParentIDRow{}, nil
+}
+
+// --- Lightbox Nav Fakes ---
+
+// lightboxNoNav returns sql.ErrNoRows from the nav query (empty folder / no context).
+type lightboxNoNav struct {
 	fakeHandlerQueries
 }
 
-func (l lightboxEmptyList) GetFileViewsByFolderIDOrderByFileName(ctx context.Context, folderID sql.NullInt64) ([]gallerydb.FileView, error) {
-	return []gallerydb.FileView{}, nil
+func (l lightboxNoNav) GetLightboxNavByFileID(ctx context.Context, id int64) (gallerydb.GetLightboxNavByFileIDRow, error) {
+	return gallerydb.GetLightboxNavByFileIDRow{}, sql.ErrNoRows
 }
 
-// lightboxList is a fakeHandlerQueries that returns a specific image list.
-type lightboxList struct {
+// lightboxNav returns a specific nav row for lightbox wrap/success tests.
+type lightboxNav struct {
 	fakeHandlerQueries
-	images []gallerydb.FileView
+	navRow gallerydb.GetLightboxNavByFileIDRow
 }
 
-func (l lightboxList) GetFileViewsByFolderIDOrderByFileName(ctx context.Context, folderID sql.NullInt64) ([]gallerydb.FileView, error) {
-	return l.images, nil
+func (l lightboxNav) GetLightboxNavByFileID(ctx context.Context, id int64) (gallerydb.GetLightboxNavByFileIDRow, error) {
+	return l.navRow, nil
 }
 
 // --- Per-group narrow mocks ---

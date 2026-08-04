@@ -14,3 +14,7 @@ sql:
             go_type: "bool"
           - column: "*.route"
             go_type: "string"
+          - column: "*.prev_id"
+            go_type: "database/sql.NullInt64"
+          - column: "*.next_id"
+            go_type: "database/sql.NullInt64"

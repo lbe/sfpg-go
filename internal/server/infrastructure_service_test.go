@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -49,9 +50,26 @@ func TestFlushBatchedWrites_NilBatcherQueriesPanics(t *testing.T) {
 	}
 }
 
+type syncLogBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncLogBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncLogBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
+}
+
 func withLogCapture(t *testing.T, level slog.Level, fn func()) string {
 	t.Helper()
-	var buf bytes.Buffer
+	var buf syncLogBuffer
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: level}))
 	old := slog.Default()
 	slog.SetDefault(logger)
@@ -132,9 +150,6 @@ func TestInfrastructureService_CalibrateCacheSizeNow_Error(t *testing.T) {
 	})
 	if !strings.Contains(logs, "cache size calibration failed") {
 		t.Errorf("expected cache size calibration warning, got: %s", logs)
-	}
-	if infra.CacheSizeCalibrated() {
-		t.Fatal("counter should not be marked calibrated after error")
 	}
 }
 
@@ -343,7 +358,12 @@ func TestInfrastructureService_ReconfigurePools_UpdatesCacheMW(t *testing.T) {
 	}
 	infra.dbRwPool = newFakePool(10, 2)
 	infra.dbRoPool = newFakePool(10, 2)
-	infra.cacheMW = cachelite.NewHTTPCacheMiddlewareForTest(infra.dbRwPool, cachelite.CacheConfig{}, &infra.cacheSizeBytes, nil)
+	infra.cacheMW = cachelite.NewHTTPCacheMiddlewareForTest(infra.dbRwPool, cachelite.CacheConfig{},
+		&cachelite.HTTPCacheCounterState{
+			SizeBytes:       &infra.cacheSizeBytes,
+			EntryCount:      &infra.cacheEntryCount,
+			BaselineRunning: &infra.cacheBaselineRunning,
+		}, nil)
 
 	cfg := config.DefaultConfig()
 	cfg.DBMaxPoolSize = 20
@@ -407,9 +427,9 @@ func TestInfrastructureService_MaybeEvictCacheEntries_EarlyReturns(t *testing.T)
 			infra := NewInfrastructureService()
 			infra.cacheMWForEvict = tt.cmw
 			evictCalled := false
-			infra.testSeams.EvictLRU = func(ctx context.Context, pool *dbconnpool.DbSQLConnPool, targetFree int64) (int64, error) {
+			infra.testSeams.EvictLRU = func(ctx context.Context, pool *dbconnpool.DbSQLConnPool, targetFree int64) (int64, int64, error) {
 				evictCalled = true
-				return 0, nil
+				return 0, 0, nil
 			}
 
 			infra.maybeEvictCacheEntries(tt.batch)
@@ -425,9 +445,9 @@ func TestInfrastructureService_MaybeEvictCacheEntries_UnderLimit(t *testing.T) {
 	infra.cacheMWForEvict = &fakeCacheMiddlewareForEvict{cfg: cachelite.CacheConfig{MaxTotalSize: 1000}}
 	infra.cacheSizeBytes.Store(500)
 	evictCalled := false
-	infra.testSeams.EvictLRU = func(ctx context.Context, pool *dbconnpool.DbSQLConnPool, targetFree int64) (int64, error) {
+	infra.testSeams.EvictLRU = func(ctx context.Context, pool *dbconnpool.DbSQLConnPool, targetFree int64) (int64, int64, error) {
 		evictCalled = true
-		return 0, nil
+		return 0, 0, nil
 	}
 
 	infra.maybeEvictCacheEntries([]BatchedWrite{{CacheEntry: &cachelite.HTTPCacheEntry{Path: "/gallery/1"}}})
@@ -440,8 +460,8 @@ func TestInfrastructureService_MaybeEvictCacheEntries_EvictionError(t *testing.T
 	infra := NewInfrastructureService()
 	infra.cacheMWForEvict = &fakeCacheMiddlewareForEvict{cfg: cachelite.CacheConfig{MaxTotalSize: 1000}}
 	infra.cacheSizeBytes.Store(1500)
-	infra.testSeams.EvictLRU = func(ctx context.Context, pool *dbconnpool.DbSQLConnPool, targetFree int64) (int64, error) {
-		return 0, errors.New("eviction failed")
+	infra.testSeams.EvictLRU = func(ctx context.Context, pool *dbconnpool.DbSQLConnPool, targetFree int64) (int64, int64, error) {
+		return 0, 0, errors.New("eviction failed")
 	}
 
 	logs := withLogCapture(t, slog.LevelWarn, func() {
@@ -456,12 +476,13 @@ func TestInfrastructureService_MaybeEvictCacheEntries_OverLimit(t *testing.T) {
 	infra := NewInfrastructureService()
 	infra.cacheMWForEvict = &fakeCacheMiddlewareForEvict{cfg: cachelite.CacheConfig{MaxTotalSize: 1000}}
 	var evictTarget int64
-	infra.testSeams.EvictLRU = func(ctx context.Context, pool *dbconnpool.DbSQLConnPool, targetFree int64) (int64, error) {
+	infra.testSeams.EvictLRU = func(ctx context.Context, pool *dbconnpool.DbSQLConnPool, targetFree int64) (int64, int64, error) {
 		evictTarget = targetFree
-		return 600, nil
+		return 600, 2, nil
 	}
 
 	infra.cacheSizeBytes.Store(1500)
+	infra.cacheEntryCount.Store(10)
 	infra.maybeEvictCacheEntries([]BatchedWrite{{CacheEntry: &cachelite.HTTPCacheEntry{Path: "/gallery/1"}}})
 
 	wantTarget := int64(1500 - 1000 + 1000/10) // 600
@@ -470,6 +491,9 @@ func TestInfrastructureService_MaybeEvictCacheEntries_OverLimit(t *testing.T) {
 	}
 	if got := infra.cacheSizeBytes.Load(); got != 900 {
 		t.Fatalf("cacheSizeBytes = %d, want 900", got)
+	}
+	if got := infra.cacheEntryCount.Load(); got != 8 {
+		t.Fatalf("cacheEntryCount = %d, want 8", got)
 	}
 }
 
@@ -481,11 +505,48 @@ func TestInfrastructureService_MaybeEvictCacheEntries_UsesCounterNotQuery(t *tes
 		t.Fatal("GetCacheSizeBytes must not be called; eviction uses cacheSizeBytes counter")
 		return 0, nil
 	}
-	infra.testSeams.EvictLRU = func(ctx context.Context, pool *dbconnpool.DbSQLConnPool, targetFree int64) (int64, error) {
-		return 0, nil
+	infra.testSeams.EvictLRU = func(ctx context.Context, pool *dbconnpool.DbSQLConnPool, targetFree int64) (int64, int64, error) {
+		return 0, 0, nil
 	}
 
 	infra.maybeEvictCacheEntries([]BatchedWrite{{CacheEntry: &cachelite.HTTPCacheEntry{Path: "/gallery/1"}}})
+}
+
+func TestInfrastructureService_CacheMetrics_GettersDoNotQueryDB(t *testing.T) {
+	infra := NewInfrastructureService()
+	infra.cacheSizeBytes.Store(42)
+	infra.cacheEntryCount.Store(7)
+
+	// If the getters touch the DB, these t.Fatal seams will fire.
+
+	infra.testSeams.GetCacheSizeBytes = func(ctx context.Context, pool *dbconnpool.DbSQLConnPool) (int64, error) {
+		t.Fatal("GetCacheSizeBytes must not be called by metrics getters")
+		return 0, nil
+	}
+	infra.testSeams.GetCacheEntryCount = func(ctx context.Context, pool *dbconnpool.DbSQLConnPool) (int64, error) {
+		t.Fatal("GetCacheEntryCount must not be called by metrics getters")
+		return 0, nil
+	}
+
+	// Create a minimal cache middleware wired to the infra's counters.
+	infra.cacheMW = cachelite.NewHTTPCacheMiddlewareForTest(nil, cachelite.CacheConfig{
+		Enabled:      true,
+		MaxEntrySize: 100000,
+		MaxTotalSize: 1000000,
+		DefaultTTL:   60,
+	}, &cachelite.HTTPCacheCounterState{
+		SizeBytes:       &infra.cacheSizeBytes,
+		EntryCount:      &infra.cacheEntryCount,
+		BaselineRunning: &infra.cacheBaselineRunning,
+	}, nil)
+	infra.cacheMWForEvict = infra.cacheMW
+
+	if got := infra.cacheMW.GetSizeBytes(); got != 42 {
+		t.Fatalf("GetSizeBytes = %d, want 42", got)
+	}
+	if got := infra.cacheMW.GetEntryCount(); got != 7 {
+		t.Fatalf("GetEntryCount = %d, want 7", got)
+	}
 }
 
 func TestInfrastructureService_WalCheckpointAfterCommit_StatError(t *testing.T) {

@@ -60,7 +60,7 @@ func TestEvictLRU_StoredBytes(t *testing.T) {
 	// Evict 12 bytes — should remove key1 (7 bytes) and key2 (7 bytes) = 14 freed
 	// key1 alone (7) is not enough, so both oldest entries go.
 	targetFreeBytes := int64(12)
-	_, err = EvictLRU(ctx, pool, targetFreeBytes)
+	_, _, err = EvictLRU(ctx, pool, targetFreeBytes)
 	if err != nil {
 		t.Fatalf("EvictLRU failed: %v", err)
 	}
@@ -144,7 +144,7 @@ func TestEvictLRU_BytesBased(t *testing.T) {
 	// Evict 250 bytes - should remove key1 (100 bytes) and key2 (200 bytes)
 	// because we need 250 bytes and key1 alone is not enough
 	targetFreeBytes := int64(250)
-	_, err = EvictLRU(ctx, pool, targetFreeBytes)
+	_, _, err = EvictLRU(ctx, pool, targetFreeBytes)
 	if err != nil {
 		t.Fatalf("EvictLRU failed: %v", err)
 	}

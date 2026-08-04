@@ -192,7 +192,7 @@ func TestNewPoolFuncWithProcessor_Success(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	poolFunc := NewPoolFuncWithProcessor(fp, q, "/tmp/Images", testRemovePrefix, nil)
+	poolFunc := NewPoolFuncWithProcessor(fp, q, "/tmp/Images", testRemovePrefix, nil, nil)
 	done := make(chan error, 1)
 	baseline := pool.Stats.CompletedTasks.Load()
 
@@ -208,6 +208,46 @@ func TestNewPoolFuncWithProcessor_Success(t *testing.T) {
 	}
 	if pool.Stats.SuccessfulTasks.Load() == 0 {
 		t.Fatalf("expected successful task count to be > 0")
+	}
+}
+
+func TestRunPoolWorkerWithProcessor_OnFileInserted(t *testing.T) {
+	q := queue.NewQueue[string](1)
+	if err := q.Enqueue("/tmp/Images/test.jpg"); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+
+	fp := &fakeProcessor{}
+	pool := workerpool.NewPool(context.Background(), 1, 1, 10*time.Millisecond)
+	pool.Stats.RunningWorkers.Add(1)
+	stats := &ProcessingStats{}
+
+	var insertedSizes []int64
+	onFileInserted := func(size int64) {
+		insertedSizes = append(insertedSizes, size)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error, 1)
+	baseline := pool.Stats.CompletedTasks.Load()
+	go func() {
+		done <- runPoolWorkerWithProcessor(ctx, pool, nil, q.Len, 1, fp, q, "/tmp/Images", testRemovePrefix, stats, onFileInserted)
+	}()
+
+	waitForCompleted(t, pool, baseline+1)
+	cancel()
+
+	if err := <-done; err != nil {
+		t.Fatalf("runPoolWorkerWithProcessor returned error: %v", err)
+	}
+
+	if len(insertedSizes) != 1 {
+		t.Fatalf("onFileInserted called %d times, want 1", len(insertedSizes))
+	}
+	if insertedSizes[0] <= 0 {
+		t.Errorf("onFileInserted size = %d, want > 0", insertedSizes[0])
 	}
 }
 
@@ -228,7 +268,7 @@ func TestRunPoolWorkerWithProcessor_ErrorPaths(t *testing.T) {
 		done := make(chan error, 1)
 		baseline := pool.Stats.CompletedTasks.Load()
 		go func() {
-			done <- runPoolWorkerWithProcessor(ctx, pool, nil, q.Len, 1, fp, q, "/tmp/Images", testRemovePrefix, nil)
+			done <- runPoolWorkerWithProcessor(ctx, pool, nil, q.Len, 1, fp, q, "/tmp/Images", testRemovePrefix, nil, nil)
 		}()
 
 		waitForCompleted(t, pool, baseline+1)
@@ -268,7 +308,7 @@ func TestRunPoolWorkerWithProcessor_ErrorPaths(t *testing.T) {
 		done := make(chan error, 1)
 		baseline := pool.Stats.CompletedTasks.Load()
 		go func() {
-			done <- runPoolWorkerWithProcessor(ctx, pool, nil, q.Len, 1, fp, q, "/tmp/Images", testRemovePrefix, nil)
+			done <- runPoolWorkerWithProcessor(ctx, pool, nil, q.Len, 1, fp, q, "/tmp/Images", testRemovePrefix, nil, nil)
 		}()
 
 		waitForCompleted(t, pool, baseline+2)
@@ -295,7 +335,7 @@ func TestRunPoolWorker_ContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	poolFunc := NewPoolFuncWithProcessor(processor, q, "/tmp/Images", testRemovePrefix, nil)
+	poolFunc := NewPoolFuncWithProcessor(processor, q, "/tmp/Images", testRemovePrefix, nil, nil)
 	if err := poolFunc(ctx, pool, nil, nil, q.Len, 1); err != nil {
 		t.Fatalf("expected nil error on cancelled context, got %v", err)
 	}
@@ -319,7 +359,7 @@ func TestRunPoolWorkerWithProcessor_Stats(t *testing.T) {
 		done := make(chan error, 1)
 		baseline := pool.Stats.CompletedTasks.Load()
 		go func() {
-			done <- runPoolWorkerWithProcessor(ctx, pool, nil, q.Len, 1, fp, q, "/tmp/Images", testRemovePrefix, stats)
+			done <- runPoolWorkerWithProcessor(ctx, pool, nil, q.Len, 1, fp, q, "/tmp/Images", testRemovePrefix, stats, nil)
 		}()
 
 		waitForCompleted(t, pool, baseline+1)
@@ -353,7 +393,7 @@ func TestRunPoolWorkerWithProcessor_Stats(t *testing.T) {
 		done := make(chan error, 1)
 		baseline := pool.Stats.CompletedTasks.Load()
 		go func() {
-			done <- runPoolWorkerWithProcessor(ctx, pool, nil, q.Len, 1, fp, q, "/tmp/Images", testRemovePrefix, stats)
+			done <- runPoolWorkerWithProcessor(ctx, pool, nil, q.Len, 1, fp, q, "/tmp/Images", testRemovePrefix, stats, nil)
 		}()
 
 		waitForCompleted(t, pool, baseline+1)
@@ -381,7 +421,7 @@ func TestRunPoolWorkerWithProcessor_Stats(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		poolFunc := NewPoolFuncWithProcessor(fp, q, "/tmp/Images", testRemovePrefix, nil)
+		poolFunc := NewPoolFuncWithProcessor(fp, q, "/tmp/Images", testRemovePrefix, nil, nil)
 		if err := poolFunc(ctx, pool, nil, nil, q.Len, 1); err != nil {
 			t.Fatalf("expected nil error on closed queue, got %v", err)
 		}

@@ -29,9 +29,11 @@ func hasAttr(n *html.Node, key string) bool {
 // --- LightboxByID Tests ---
 
 func TestLightboxByID_NoImages(t *testing.T) {
-	qh := &lightboxEmptyList{fakeHandlerQueries{
-		fileView: gallerydb.FileView{ID: 1, Path: "test.jpg", FolderID: sql.NullInt64{Int64: 1, Valid: true}},
-	}}
+	qh := &lightboxNoNav{
+		fakeHandlerQueries: fakeHandlerQueries{
+			fileView: gallerydb.FileView{ID: 1, Path: "test.jpg", FolderID: sql.NullInt64{Int64: 1, Valid: true}},
+		},
+	}
 	gh := setupTestGalleryHandlers(t, qh)
 
 	req := httptest.NewRequest(http.MethodGet, "/lightbox/1", nil)
@@ -74,8 +76,8 @@ func TestLightboxByID_FileNotFound(t *testing.T) {
 	}
 }
 
-func TestLightboxByID_FolderListError(t *testing.T) {
-	qh := &fakeHandlerQueries{getImagesErr: errors.New("db error")}
+func TestLightboxByID_NavQueryError(t *testing.T) {
+	qh := &fakeHandlerQueries{getNavErr: errors.New("db error")}
 	gh := setupTestGalleryHandlers(t, qh)
 
 	req := httptest.NewRequest(http.MethodGet, "/lightbox/1", nil)
@@ -105,12 +107,8 @@ func TestLightboxByID_DBConnectionError(t *testing.T) {
 }
 
 func TestLightboxByID_SingleImageNoNavigation(t *testing.T) {
-	images := []gallerydb.FileView{{ID: 1}}
-	qh := &lightboxList{
-		fakeHandlerQueries: fakeHandlerQueries{
-			fileView: gallerydb.FileView{ID: 1, Path: "test.jpg", FolderID: sql.NullInt64{Int64: 1, Valid: true}},
-		},
-		images: images,
+	qh := &fakeHandlerQueries{
+		fileView: gallerydb.FileView{ID: 1, Path: "test.jpg", FolderID: sql.NullInt64{Int64: 1, Valid: true}},
 	}
 	gh := setupTestGalleryHandlers(t, qh)
 
@@ -181,12 +179,8 @@ func TestLightboxByID_BreadcrumbError(t *testing.T) {
 }
 
 func TestLightboxByID_RenderTemplateError(t *testing.T) {
-	images := []gallerydb.FileView{{ID: 1}}
-	qh := &lightboxList{
-		fakeHandlerQueries: fakeHandlerQueries{
-			fileView: gallerydb.FileView{ID: 1, Path: "test.jpg", FolderID: sql.NullInt64{Int64: 1, Valid: true}},
-		},
-		images: images,
+	qh := &fakeHandlerQueries{
+		fileView: gallerydb.FileView{ID: 1, Path: "test.jpg", FolderID: sql.NullInt64{Int64: 1, Valid: true}},
 	}
 	gh := setupTestGalleryHandlers(t, qh)
 
@@ -201,31 +195,16 @@ func TestLightboxByID_RenderTemplateError(t *testing.T) {
 	}
 }
 
-func TestLightboxByID_FileNotInFolderList(t *testing.T) {
-	qh := &fakeHandlerQueries{
-		fileView:     gallerydb.FileView{ID: 10, Path: "test.jpg", FolderID: sql.NullInt64{Int64: 1, Valid: true}},
-		getImagesErr: nil,
-	}
-	gh := setupTestGalleryHandlers(t, qh)
-
-	req := httptest.NewRequest(http.MethodGet, "/lightbox/10", nil)
-	req.SetPathValue("id", "10")
-	w := httptest.NewRecorder()
-
-	gh.LightboxByID(w, req)
-
-	if w.Code != http.StatusInternalServerError {
-		t.Errorf("expected status 500, got %d", w.Code)
-	}
-}
-
 func TestLightboxByID_Success(t *testing.T) {
-	images := []gallerydb.FileView{{ID: 1}, {ID: 2}, {ID: 3}}
-	qh := &lightboxList{
+	qh := &lightboxNav{
 		fakeHandlerQueries: fakeHandlerQueries{
 			fileView: gallerydb.FileView{ID: 2, Path: "test.jpg", FolderID: sql.NullInt64{Int64: 1, Valid: true}},
 		},
-		images: images,
+		navRow: gallerydb.GetLightboxNavByFileIDRow{
+			CurrentIndex: 1, ImageCount: 3,
+			FirstID: 1, LastID: 3,
+			PrevID: sql.NullInt64{Int64: 1, Valid: true}, NextID: sql.NullInt64{Int64: 3, Valid: true},
+		},
 	}
 	gh := setupTestGalleryHandlers(t, qh)
 
@@ -238,18 +217,28 @@ func TestLightboxByID_Success(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", w.Code)
 	}
+
+	// Verify Content-Type
+	contentType := w.Header().Get("Content-Type")
+	if contentType != "text/html; charset=utf-8" {
+		t.Errorf("expected Content-Type: text/html; charset=utf-8, got %q", contentType)
+	}
+
 	if w.Header().Get("HX-Push-URL") != "" {
 		t.Errorf("expected no HX-Push-URL, got %q", w.Header().Get("HX-Push-URL"))
 	}
 }
 
 func TestLightboxByID_WrapsPrevFromFirst(t *testing.T) {
-	images := []gallerydb.FileView{{ID: 1}, {ID: 2}, {ID: 3}}
-	qh := &lightboxList{
+	qh := &lightboxNav{
 		fakeHandlerQueries: fakeHandlerQueries{
 			fileView: gallerydb.FileView{ID: 1, Path: "test.jpg", FolderID: sql.NullInt64{Int64: 1, Valid: true}},
 		},
-		images: images,
+		navRow: gallerydb.GetLightboxNavByFileIDRow{
+			CurrentIndex: 0, ImageCount: 3,
+			FirstID: 1, LastID: 3,
+			PrevID: sql.NullInt64{}, NextID: sql.NullInt64{Int64: 2, Valid: true},
+		},
 	}
 	gh := setupTestGalleryHandlers(t, qh)
 
@@ -290,12 +279,15 @@ func TestLightboxByID_WrapsPrevFromFirst(t *testing.T) {
 }
 
 func TestLightboxByID_WrapsNextFromLast(t *testing.T) {
-	images := []gallerydb.FileView{{ID: 1}, {ID: 2}, {ID: 3}}
-	qh := &lightboxList{
+	qh := &lightboxNav{
 		fakeHandlerQueries: fakeHandlerQueries{
 			fileView: gallerydb.FileView{ID: 3, Path: "test.jpg", FolderID: sql.NullInt64{Int64: 1, Valid: true}},
 		},
-		images: images,
+		navRow: gallerydb.GetLightboxNavByFileIDRow{
+			CurrentIndex: 2, ImageCount: 3,
+			FirstID: 1, LastID: 3,
+			PrevID: sql.NullInt64{Int64: 2, Valid: true}, NextID: sql.NullInt64{},
+		},
 	}
 	gh := setupTestGalleryHandlers(t, qh)
 

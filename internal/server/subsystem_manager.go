@@ -145,9 +145,9 @@ func (m *SubsystemManager) Start(
 }
 
 // StartPool launches the worker pool goroutine.
-func (m *SubsystemManager) StartPool(ctx context.Context, poolDone chan struct{}, normalizedImagesDir string, removeImagesDirPrefixFn func(string, string) (string, error), processor files.FileProcessor) {
+func (m *SubsystemManager) StartPool(ctx context.Context, poolDone chan struct{}, normalizedImagesDir string, removeImagesDirPrefixFn func(string, string) (string, error), processor files.FileProcessor, onFileInserted func(int64)) {
 	pf := files.NewPoolFuncWithProcessor(
-		processor, m.q, normalizedImagesDir, removeImagesDirPrefixFn, m.processingStats,
+		processor, m.q, normalizedImagesDir, removeImagesDirPrefixFn, m.processingStats, onFileInserted,
 	)
 	go func() {
 		defer close(poolDone)

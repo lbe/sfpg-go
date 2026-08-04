@@ -72,8 +72,50 @@ var (
 	cacheBatchLoadStartedTemplate   *template.Template
 	shutdownModalTemplate           *template.Template
 	themeModalTemplate              *template.Template
+	aboutModalTemplate              *template.Template
 	funcMap                         template.FuncMap
 )
+
+// galleryCounts is a local interface that avoids importing internal/server.
+// It provides the raw count methods needed by cache batch load progress functions.
+type galleryCounts interface {
+	FoldersCount() int64
+	ImagesCount() int64
+}
+
+// cacheBatchLoadExpectedTotal computes the expected total of cache batch load targets
+// using the formula FoldersCount*3 + ImagesCount*2. If gs is nil or does not implement
+// galleryCounts, it returns 0.
+func cacheBatchLoadExpectedTotal(gs any) int64 {
+	if gs == nil {
+		return 0
+	}
+	counts, ok := gs.(galleryCounts)
+	if !ok {
+		return 0
+	}
+	return counts.FoldersCount()*3 + counts.ImagesCount()*2
+}
+
+// cacheBatchLoadDone returns the total number of completed, failed, and skipped targets.
+func cacheBatchLoadDone(cbl metrics.CacheBatchLoadMetrics) int64 {
+	return cbl.TargetsCompleted + cbl.TargetsFailed + cbl.TargetsSkipped
+}
+
+// cacheBatchLoadDonePercent computes the progress percentage of the cache batch load
+// as (completed + failed + skipped) / expectedTotal * 100, clamped to 100.
+func cacheBatchLoadDonePercent(cbl metrics.CacheBatchLoadMetrics, gs any) int {
+	expected := cacheBatchLoadExpectedTotal(gs)
+	if expected == 0 {
+		return 0
+	}
+	done := cacheBatchLoadDone(cbl)
+	pct := int(done * 100 / expected)
+	if pct > 100 {
+		return 100
+	}
+	return pct
+}
 
 // basenameWithoutExt extracts the filename from a path and removes its extension.
 func basenameWithoutExt(fullPath string) string {
@@ -120,6 +162,12 @@ func ParseTemplates(templateFS fs.FS) (err error) {
 		},
 		"formatInt": func(n int64) string {
 			return humanize.Comma(n).String()
+		},
+		"formatCountOrNA": func(v int64) string {
+			if v < 0 {
+				return "N/A"
+			}
+			return formatCountValue(v)
 		},
 		"formatCount": func(v any) string {
 			switch n := v.(type) {
@@ -179,23 +227,18 @@ func ParseTemplates(templateFS fs.FS) (err error) {
 			return "progress-error"
 		},
 		"httpCacheUtilizationPercent": func(cache metrics.HTTPCacheMetrics) int {
+			if cache.SizeBytes < 0 {
+				return -1
+			}
 			if cache.MaxTotalSize == 0 {
 				return 0
 			}
 			return int(float64(cache.SizeBytes) / float64(cache.MaxTotalSize) * 100)
 		},
-		"cacheBatchLoadProgressPercent": func(cbl metrics.CacheBatchLoadMetrics) int {
-			scheduled := cbl.TargetsScheduled
-			if scheduled == 0 {
-				return 0
-			}
-			done := cbl.TargetsCompleted + cbl.TargetsFailed
-			if done >= scheduled {
-				return 100
-			}
-			return int(float64(done) / float64(scheduled) * 100)
-		},
-		"cacheVersion": GetCacheVersion,
+		"cacheBatchLoadExpectedTotal": cacheBatchLoadExpectedTotal,
+		"cacheBatchLoadDone":          cacheBatchLoadDone,
+		"cacheBatchLoadDonePercent":   cacheBatchLoadDonePercent,
+		"cacheVersion":                GetCacheVersion,
 	}
 
 	baseTemplates := []string{
@@ -204,7 +247,6 @@ func ParseTemplates(templateFS fs.FS) (err error) {
 		"templates/login-modal.html.tmpl",
 		"templates/logout-modal.html.tmpl",
 		"templates/shutdown-modal.html.tmpl",
-		"templates/about-modal.html.tmpl",
 		"templates/layout-ui/hyperscript-global.html.tmpl",
 		"templates/layout-ui/hyperscript-restart.html.tmpl",
 		"templates/layout-ui/body-behavior.html.tmpl",
@@ -281,8 +323,10 @@ func ParseTemplates(templateFS fs.FS) (err error) {
 		ParseFS(templateFS, append(baseTemplates,
 			"templates/dashboard.html.tmpl",
 			"templates/dashboard-ui/dashboard-cache-batch-load.html.tmpl",
-			"templates/dashboard-ui/dashboard-discovery.html.tmpl",
+			"templates/dashboard-ui/dashboard-cache-row.html.tmpl",
+			"templates/dashboard-ui/dashboard-gallery-row.html.tmpl",
 			"templates/dashboard-ui/dashboard-sse-stats.html.tmpl",
+			"templates/dashboard-ui/dashboard-workers-row.html.tmpl",
 		)...))
 
 	dashboardPartialTemplate = dashboardTemplate.Lookup("body")
@@ -305,6 +349,9 @@ func ParseTemplates(templateFS fs.FS) (err error) {
 
 	themeModalTemplate = template.Must(template.New("theme-modal.html.tmpl").Funcs(funcMap).
 		ParseFS(templateFS, "templates/theme-modal.html.tmpl"))
+
+	aboutModalTemplate = template.Must(template.New("about-modal.html.tmpl").Funcs(funcMap).
+		ParseFS(templateFS, "templates/about-modal.html.tmpl"))
 
 	return nil
 }

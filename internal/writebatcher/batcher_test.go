@@ -122,6 +122,20 @@ func waitForFlushes(t *testing.T, ch <-chan struct{}, count int, timeout time.Du
 	}
 }
 
+// waitForPendingZero polls until PendingCount reaches zero or the timeout
+// elapses. It is used for drain-completion waits where flush signals are
+// impractical (e.g. dque drain tests with unknown flush counts).
+func waitForPendingZero[T any](t *testing.T, wb *WriteBatcher[T], timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for wb.PendingCount() != 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for PendingCount to reach 0 (got %d)", wb.PendingCount())
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 func TestFlush_OnMaxBatchSize(t *testing.T) {
 	db := testDB(t)
 	ctx := context.Background()
@@ -198,6 +212,7 @@ func TestFlush_OnMaxBatchBytes(t *testing.T) {
 
 	var mu sync.Mutex
 	var batches [][]testItem
+	flushCh := make(chan struct{}, 4)
 
 	cfg := Config[testItem]{
 		BeginTx: testBeginTx(db),
@@ -207,6 +222,7 @@ func TestFlush_OnMaxBatchBytes(t *testing.T) {
 			b := make([]testItem, len(batch))
 			copy(b, batch)
 			batches = append(batches, b)
+			flushCh <- struct{}{}
 			return nil
 		},
 		MaxBatchSize:  100,
@@ -234,8 +250,7 @@ func TestFlush_OnMaxBatchBytes(t *testing.T) {
 		t.Fatalf("Submit: %v", err)
 	}
 
-	// Wait briefly for worker to process
-	time.Sleep(1000 * time.Millisecond)
+	waitForFlushes(t, flushCh, 1, 20*time.Second)
 
 	mu.Lock()
 	if len(batches) != 1 {
@@ -250,7 +265,7 @@ func TestFlush_OnMaxBatchBytes(t *testing.T) {
 		t.Fatalf("Submit: %v", err)
 	}
 
-	time.Sleep(1000 * time.Millisecond)
+	waitForFlushes(t, flushCh, 1, 20*time.Second)
 
 	mu.Lock()
 	if len(batches) != 2 {
@@ -263,12 +278,14 @@ func TestFlush_BytesBeforeCount(t *testing.T) {
 	db := testDB(t)
 	var mu sync.Mutex
 	var batches [][]testItem
+	flushCh := make(chan struct{}, 4)
 	cfg := Config[testItem]{
 		BeginTx: testBeginTx(db),
 		Flush: func(ctx context.Context, tx *sql.Tx, b []testItem) error {
 			mu.Lock()
 			batches = append(batches, copyBatch(b))
 			mu.Unlock()
+			flushCh <- struct{}{}
 			return nil
 		},
 		MaxBatchSize:  10,
@@ -294,7 +311,8 @@ func TestFlush_BytesBeforeCount(t *testing.T) {
 		t.Fatalf("Submit: %v", err)
 	}
 
-	time.Sleep(1000 * time.Millisecond)
+	waitForFlushes(t, flushCh, 1, 20*time.Second)
+
 	mu.Lock()
 	if len(batches) != 1 {
 		t.Errorf("expected 1 flush, got %d", len(batches))
@@ -308,12 +326,14 @@ func TestFlush_CountBeforeBytes(t *testing.T) {
 	db := testDB(t)
 	var mu sync.Mutex
 	var batches [][]testItem
+	flushCh := make(chan struct{}, 4)
 	cfg := Config[testItem]{
 		BeginTx: testBeginTx(db),
 		Flush: func(ctx context.Context, tx *sql.Tx, b []testItem) error {
 			mu.Lock()
 			batches = append(batches, copyBatch(b))
 			mu.Unlock()
+			flushCh <- struct{}{}
 			return nil
 		},
 		MaxBatchSize:  3,
@@ -336,7 +356,8 @@ func TestFlush_CountBeforeBytes(t *testing.T) {
 		t.Fatalf("Submit: %v", err)
 	}
 
-	time.Sleep(1000 * time.Millisecond)
+	waitForFlushes(t, flushCh, 1, 20*time.Second)
+
 	mu.Lock()
 	if len(batches) != 1 {
 		t.Errorf("expected 1 flush, got %d", len(batches))
@@ -350,12 +371,14 @@ func TestFlush_TimeoutWithPartialBytes(t *testing.T) {
 	db := testDB(t)
 	var mu sync.Mutex
 	var batches [][]testItem
+	flushCh := make(chan struct{}, 4)
 	cfg := Config[testItem]{
 		BeginTx: testBeginTx(db),
 		Flush: func(ctx context.Context, tx *sql.Tx, b []testItem) error {
 			mu.Lock()
 			batches = append(batches, copyBatch(b))
 			mu.Unlock()
+			flushCh <- struct{}{}
 			return nil
 		},
 		MaxBatchSize:  100,
@@ -376,7 +399,8 @@ func TestFlush_TimeoutWithPartialBytes(t *testing.T) {
 		t.Fatalf("Submit: %v", err)
 	}
 
-	time.Sleep(150 * time.Millisecond)
+	waitForFlushes(t, flushCh, 1, 20*time.Second)
+
 	mu.Lock()
 	if len(batches) != 1 {
 		t.Errorf("expected 1 flush by timeout, got %d", len(batches))
@@ -464,13 +488,12 @@ func TestFlush_MaxBatchBytesZero_SizeFuncSet(t *testing.T) {
 	if err := wb.Submit(testItem{Size: 100}); err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
-	time.Sleep(150 * time.Millisecond)
-
-	mu.Lock()
-	if len(batches) != 0 {
-		t.Errorf("expected no flush (MaxBatchBytes=0), got %d", len(batches))
+	// No size-based flush can have occurred: MaxBatchBytes=0 never triggers,
+	// the batch is below MaxBatchSize, and FlushInterval is 10s. All three
+	// items must still be pending.
+	if pc := wb.PendingCount(); pc != 3 {
+		t.Errorf("expected all 3 items still pending (no size-based flush), got %d", pc)
 	}
-	mu.Unlock()
 
 	_ = wb.Close()
 	mu.Lock()
@@ -486,6 +509,7 @@ func TestFlush_OnInterval(t *testing.T) {
 
 	var mu sync.Mutex
 	var flushedItems []int
+	flushCh := make(chan struct{}, 4)
 
 	cfg := Config[int]{
 		BeginTx: testBeginTx(db),
@@ -493,6 +517,7 @@ func TestFlush_OnInterval(t *testing.T) {
 			mu.Lock()
 			flushedItems = append(flushedItems, batch...)
 			mu.Unlock()
+			flushCh <- struct{}{}
 			return nil
 		},
 		MaxBatchSize:  10,
@@ -509,8 +534,7 @@ func TestFlush_OnInterval(t *testing.T) {
 		t.Fatalf("Submit: %v", err)
 	}
 
-	// Wait for interval to pass
-	time.Sleep(250 * time.Millisecond)
+	waitForFlushes(t, flushCh, 1, 20*time.Second)
 
 	mu.Lock()
 	if len(flushedItems) != 1 {
@@ -571,6 +595,7 @@ func TestOnError(t *testing.T) {
 	var errReported error
 	var batchReported []int
 	expectedErr := errors.New("flush failed")
+	flushCh := make(chan struct{}, 8)
 
 	cfg := Config[int]{
 		BeginTx: testBeginTx(db),
@@ -582,6 +607,10 @@ func TestOnError(t *testing.T) {
 			errReported = err
 			batchReported = batch
 			mu.Unlock()
+			select {
+			case flushCh <- struct{}{}:
+			default:
+			}
 		},
 		MaxBatchSize: 1,
 	}
@@ -596,8 +625,7 @@ func TestOnError(t *testing.T) {
 		t.Fatalf("Submit: %v", err)
 	}
 
-	// Wait for worker
-	time.Sleep(1000 * time.Millisecond)
+	waitForFlushes(t, flushCh, 1, 20*time.Second)
 
 	mu.Lock()
 	if !errors.Is(errReported, expectedErr) {
@@ -642,12 +670,14 @@ func TestSubmit(t *testing.T) {
 		db := testDB(t)
 		var mu sync.Mutex
 		var flushed bool
+		flushCh := make(chan struct{}, 4)
 		cfg := Config[int]{
 			BeginTx: testBeginTx(db),
 			Flush: func(ctx context.Context, tx *sql.Tx, batch []int) error {
 				mu.Lock()
 				flushed = true
 				mu.Unlock()
+				flushCh <- struct{}{}
 				return nil
 			},
 			MaxBatchSize:  1,
@@ -664,8 +694,7 @@ func TestSubmit(t *testing.T) {
 			t.Errorf("unexpected error: %v", err)
 		}
 
-		// Wait briefly for worker to process and flush (since MaxBatchSize=1)
-		time.Sleep(1000 * time.Millisecond)
+		waitForFlushes(t, flushCh, 1, 20*time.Second)
 
 		mu.Lock()
 		if !flushed {
@@ -675,33 +704,48 @@ func TestSubmit(t *testing.T) {
 	})
 
 	t.Run("returns ErrFull when channel is full", func(t *testing.T) {
-		// Use a mutex to block the worker so it cannot drain the channel.
-		var blockMu sync.Mutex
-		blockMu.Lock() // Hold the lock so FlushFunc blocks
+		// Block the worker inside Flush so it cannot drain the channel. Sync on
+		// Flush entry before asserting ErrFull so a racing drain cannot return
+		// nil success.
+		var holdMu sync.Mutex
+		holdMu.Lock() // hold so Flush blocks until the test unlocks
+
+		enteredFlush := make(chan struct{})
+		var flushOnce sync.Once
 
 		db := testDB(t)
 		cfg := Config[int]{
 			BeginTx: testBeginTx(db),
 			Flush: func(ctx context.Context, tx *sql.Tx, batch []int) error {
-				blockMu.Lock() // blocks until test unlocks
+				flushOnce.Do(func() { close(enteredFlush) })
+				holdMu.Lock()  // blocks until test unlocks
 				_ = len(batch) // use batch so critical section is non-empty (SA2001)
-				blockMu.Unlock()
+				holdMu.Unlock()
 				return nil
 			},
 			MaxBatchSize: 1,
 			ChannelSize:  1,
+			// DQueDirPath is empty — no overflow absorb.
 		}
 		wb, err := New(ctx, cfg)
 		if err != nil {
 			t.Fatalf("New: %v", err)
 		}
 		defer func() {
-			blockMu.Unlock() // unblock the worker so Close() can complete
+			holdMu.Unlock() // unblock the worker so Close() can complete
 			wb.Close()
 		}()
 
-		_ = wb.Submit(1)   // fills channel OR gets picked up by worker (which blocks in FlushFunc)
-		_ = wb.Submit(2)   // fills channel (worker is blocked, so channel stays full)
+		_ = wb.Submit(1) // fills channel or is picked up by the worker
+
+		// Wait until the worker has consumed item 1 and is blocked in Flush.
+		select {
+		case <-enteredFlush:
+		case <-time.After(20 * time.Second):
+			t.Fatal("timed out waiting for Flush to block on the held mutex")
+		}
+
+		_ = wb.Submit(2)   // fills the channel (worker is blocked in Flush)
 		err = wb.Submit(3) // should return ErrFull
 		if !errors.Is(err, ErrFull) {
 			t.Errorf("expected ErrFull, got %v", err)
@@ -733,9 +777,14 @@ func TestOnError_NilCallback_DoesNotPanic(t *testing.T) {
 	db := testDB(t)
 	ctx := context.Background()
 
+	flushCh := make(chan struct{}, 8)
 	cfg := Config[int]{
 		BeginTx: testBeginTx(db),
 		Flush: func(ctx context.Context, tx *sql.Tx, batch []int) error {
+			select {
+			case flushCh <- struct{}{}:
+			default:
+			}
 			return errors.New("intentional failure")
 		},
 		OnError:      nil, // explicitly nil
@@ -753,7 +802,7 @@ func TestOnError_NilCallback_DoesNotPanic(t *testing.T) {
 	if err := wb.Submit(42); err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
-	time.Sleep(1000 * time.Millisecond)
+	waitForFlushes(t, flushCh, 1, 20*time.Second)
 }
 
 func TestClose_Idempotent(t *testing.T) {
@@ -844,12 +893,17 @@ func TestIntegration_RollbackOnError(t *testing.T) {
 
 	var mu sync.Mutex
 	var onErrorCalled bool
+	flushCh := make(chan struct{}, 8)
 
 	cfg := Config[string]{
 		BeginTx: testBeginTx(db),
 		Flush: func(ctx context.Context, tx *sql.Tx, batch []string) error {
 			// Insert one row, then return error.  The insert should be rolled back.
 			_, _ = tx.ExecContext(ctx, "INSERT INTO test_rollback (value) VALUES (?)", batch[0])
+			select {
+			case flushCh <- struct{}{}:
+			default:
+			}
 			return errors.New("intentional failure")
 		},
 		OnError: func(err error, batch []string) {
@@ -875,8 +929,7 @@ func TestIntegration_RollbackOnError(t *testing.T) {
 		t.Fatalf("Submit: %v", err)
 	}
 
-	// Wait for flush, then close
-	time.Sleep(1000 * time.Millisecond)
+	waitForFlushes(t, flushCh, 1, 20*time.Second)
 	_ = wb.Close()
 
 	mu.Lock()
@@ -900,6 +953,7 @@ func TestOnSuccess(t *testing.T) {
 
 	var mu sync.Mutex
 	var successBatch []int
+	flushCh := make(chan struct{}, 4)
 
 	cfg := Config[int]{
 		BeginTx: testBeginTx(db),
@@ -911,6 +965,10 @@ func TestOnSuccess(t *testing.T) {
 			successBatch = make([]int, len(batch))
 			copy(successBatch, batch)
 			mu.Unlock()
+			select {
+			case flushCh <- struct{}{}:
+			default:
+			}
 		},
 		MaxBatchSize: 2,
 	}
@@ -928,8 +986,7 @@ func TestOnSuccess(t *testing.T) {
 		t.Fatalf("Submit: %v", err)
 	}
 
-	// Wait for worker
-	time.Sleep(1000 * time.Millisecond)
+	waitForFlushes(t, flushCh, 1, 20*time.Second)
 
 	mu.Lock()
 	if len(successBatch) != 2 || successBatch[0] != 10 || successBatch[1] != 20 {
@@ -971,7 +1028,8 @@ func TestConcurrent_SubmitFromMultipleGoroutines(t *testing.T) {
 				for {
 					err := wb.Submit(base*itemsPerGoroutine + i)
 					if errors.Is(err, ErrFull) {
-						time.Sleep(time.Millisecond) // backoff
+						// WALL_OK: ErrFull backoff — brief sleep before retrying a full channel.
+						time.Sleep(time.Millisecond)
 						continue
 					}
 					if err != nil {
@@ -1122,6 +1180,7 @@ func TestBatchSliceReuse(t *testing.T) {
 
 	var mu sync.Mutex
 	var caps []int
+	flushCh := make(chan struct{}, 4)
 
 	cfg := Config[int]{
 		BeginTx: testBeginTx(db),
@@ -1129,6 +1188,7 @@ func TestBatchSliceReuse(t *testing.T) {
 			mu.Lock()
 			caps = append(caps, cap(batch))
 			mu.Unlock()
+			flushCh <- struct{}{}
 			return nil
 		},
 		MaxBatchSize:  5,
@@ -1147,7 +1207,7 @@ func TestBatchSliceReuse(t *testing.T) {
 			t.Fatalf("Submit: %v", err)
 		}
 	}
-	time.Sleep(1000 * time.Millisecond)
+	waitForFlushes(t, flushCh, 1, 20*time.Second)
 
 	// Second flush: 5 more items (batch slice should be reused)
 	for i := 5; i < 10; i++ {
@@ -1155,7 +1215,7 @@ func TestBatchSliceReuse(t *testing.T) {
 			t.Fatalf("Submit: %v", err)
 		}
 	}
-	time.Sleep(1000 * time.Millisecond)
+	waitForFlushes(t, flushCh, 1, 20*time.Second)
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -1233,6 +1293,7 @@ func TestFlush_FailureReEnqueuesBatch(t *testing.T) {
 	var mu sync.Mutex
 	var callCount int
 	var finalFlushed []int
+	flushCh := make(chan struct{}, 8)
 
 	db := testDB(t)
 	cfg := Config[int]{
@@ -1242,6 +1303,10 @@ func TestFlush_FailureReEnqueuesBatch(t *testing.T) {
 			callCount++
 			isFirstCall := callCount == 1
 			mu.Unlock()
+			select {
+			case flushCh <- struct{}{}:
+			default:
+			}
 			if isFirstCall {
 				return errors.New("simulated flush failure")
 			}
@@ -1266,14 +1331,9 @@ func TestFlush_FailureReEnqueuesBatch(t *testing.T) {
 		}
 	}
 
-	// Wait for all items to be flushed before closing.
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if wb.PendingCount() == 0 && callCount > 1 {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	// Wait for the failing flush (call 1) and the successful re-enqueued flush
+	// (call 2); any remaining items are flushed by Close below.
+	waitForFlushes(t, flushCh, 2, 20*time.Second)
 
 	if err := wb.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
@@ -1305,6 +1365,7 @@ func TestFlush_BeginTxFails(t *testing.T) {
 	var errReported error
 	var batchReported []int
 	beginAttempts := 0
+	onErrorCh := make(chan struct{}, 8)
 
 	cfg := Config[int]{
 		BeginTx: func(ctx context.Context) (*sql.Tx, error) {
@@ -1325,6 +1386,10 @@ func TestFlush_BeginTxFails(t *testing.T) {
 			defer mu.Unlock()
 			errReported = err
 			batchReported = append([]int(nil), batch...)
+			select {
+			case onErrorCh <- struct{}{}:
+			default:
+			}
 		},
 		MaxBatchSize: 1,
 	}
@@ -1339,7 +1404,11 @@ func TestFlush_BeginTxFails(t *testing.T) {
 		t.Fatalf("Submit: %v", err)
 	}
 
-	time.Sleep(500 * time.Millisecond)
+	select {
+	case <-onErrorCh:
+	case <-time.After(20 * time.Second):
+		t.Fatal("timed out waiting for OnError after BeginTx failure")
+	}
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -1438,6 +1507,7 @@ func TestFlush_RollbackAfterFlushErrorFails(t *testing.T) {
 
 	var mu sync.Mutex
 	var errReported error
+	onErrorCh := make(chan struct{}, 8)
 
 	cfg := Config[int]{
 		BeginTx: testBeginTx(db),
@@ -1448,6 +1518,10 @@ func TestFlush_RollbackAfterFlushErrorFails(t *testing.T) {
 			mu.Lock()
 			defer mu.Unlock()
 			errReported = err
+			select {
+			case onErrorCh <- struct{}{}:
+			default:
+			}
 		},
 		MaxBatchSize: 1,
 	}
@@ -1462,7 +1536,11 @@ func TestFlush_RollbackAfterFlushErrorFails(t *testing.T) {
 		t.Fatalf("Submit: %v", err)
 	}
 
-	time.Sleep(500 * time.Millisecond)
+	select {
+	case <-onErrorCh:
+	case <-time.After(20 * time.Second):
+		t.Fatal("timed out waiting for OnError after flush failure")
+	}
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -1484,6 +1562,7 @@ func TestFlush_RollbackAfterCommitErrorFails(t *testing.T) {
 
 	var mu sync.Mutex
 	var errReported error
+	onErrorCh := make(chan struct{}, 8)
 
 	cfg := Config[int]{
 		BeginTx: testBeginTx(db),
@@ -1494,6 +1573,10 @@ func TestFlush_RollbackAfterCommitErrorFails(t *testing.T) {
 			mu.Lock()
 			defer mu.Unlock()
 			errReported = err
+			select {
+			case onErrorCh <- struct{}{}:
+			default:
+			}
 		},
 		MaxBatchSize: 1,
 	}
@@ -1508,7 +1591,11 @@ func TestFlush_RollbackAfterCommitErrorFails(t *testing.T) {
 		t.Fatalf("Submit: %v", err)
 	}
 
-	time.Sleep(500 * time.Millisecond)
+	select {
+	case <-onErrorCh:
+	case <-time.After(20 * time.Second):
+		t.Fatal("timed out waiting for OnError after commit failure")
+	}
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -1528,6 +1615,7 @@ func TestWorker_MaintenanceTimer(t *testing.T) {
 		lastOptimize      time.Time
 		totalCommitted    int64
 	}
+	maintenanceCh := make(chan struct{}, 8)
 
 	cfg := Config[int]{
 		BeginTx: testBeginTx(db),
@@ -1543,6 +1631,10 @@ func TestWorker_MaintenanceTimer(t *testing.T) {
 				lastOptimize      time.Time
 				totalCommitted    int64
 			}{ctxCtx: ctx, lastWalCheckpoint: lastWalCheckpoint, lastOptimize: lastOptimize, totalCommitted: totalCommitted})
+			select {
+			case maintenanceCh <- struct{}{}:
+			default:
+			}
 		},
 		MaxBatchSize:        10,
 		FlushInterval:       10 * time.Second,
@@ -1559,7 +1651,9 @@ func TestWorker_MaintenanceTimer(t *testing.T) {
 		t.Fatalf("Submit: %v", err)
 	}
 
-	time.Sleep(200 * time.Millisecond)
+	// Wait for two OnAfterCommit maintenance calls: the first stores the
+	// timestamps, the second reports them as non-zero.
+	waitForFlushes(t, maintenanceCh, 2, 20*time.Second)
 
 	mu.Lock()
 	defer mu.Unlock()

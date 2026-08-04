@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/lbe/sfpg-go/internal/cachelite"
@@ -66,40 +66,45 @@ func TestManager_Run_BlocksWhenDiscoveryActive(t *testing.T) {
 }
 
 func TestManager_Run_BlocksWhenAlreadyRunning(t *testing.T) {
-	ctx := context.Background()
-	targets := []gallerydb.BatchLoadTarget{
-		{Path: "/gallery/1", Variant: "gallery-content"},
-	}
-	blockCh := make(chan struct{})
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		<-blockCh // block until test lets it proceed
-		w.WriteHeader(http.StatusOK)
-	})
-	q := &mockQueries{targets: targets}
+	synctest.Test(t, func(t *testing.T) {
+		ctx := context.Background()
+		targets := []gallerydb.BatchLoadTarget{
+			{Path: "/gallery/1", Variant: "gallery-content"},
+		}
+		blockCh := make(chan struct{})
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			<-blockCh // block until test lets it proceed
+			w.WriteHeader(http.StatusOK)
+		})
+		q := &mockQueries{targets: targets}
 
-	cfg := Config{
-		GetQueries:     func() (BatchLoadQueries, func()) { return q, nil },
-		GetHandler:     func() http.Handler { return handler },
-		GetETagVersion: func() string { return "v1" },
-	}
+		cfg := Config{
+			GetQueries:     func() (BatchLoadQueries, func()) { return q, nil },
+			GetHandler:     func() http.Handler { return handler },
+			GetETagVersion: func() string { return "v1" },
+		}
 
-	mgr := NewManager(cfg)
+		mgr := NewManager(cfg)
 
-	go func() {
-		_ = mgr.Run(ctx)
+		go func() {
+			_ = mgr.Run(ctx)
+		}()
+
+		// Wait returns only when the first Run goroutine is durably blocked
+		// (its worker is waiting in the handler on blockCh), which happens
+		// strictly after the running-lock CAS succeeded and IsRunning was set.
+		synctest.Wait()
+
+		// Second run should fail immediately
+		err := mgr.Run(ctx)
+		if !errors.Is(err, ErrAlreadyRunning) {
+			t.Errorf("Run() = %v, want ErrAlreadyRunning", err)
+		}
+
+		// Unblock the first run so it finishes and the bubble drains.
 		close(blockCh)
-	}()
-
-	// Wait until the first Run() has acquired the running lock.
-	for mgr.Metrics().Snapshot().IsRunning != 1 {
-		runtime.Gosched()
-	}
-
-	// Second run should fail immediately
-	err := mgr.Run(ctx)
-	if !errors.Is(err, ErrAlreadyRunning) {
-		t.Errorf("Run() = %v, want ErrAlreadyRunning", err)
-	}
+		synctest.Wait()
+	})
 }
 
 func TestManager_Run_SkipsCachedEntries(t *testing.T) {
@@ -438,105 +443,117 @@ func TestManager_Run_HttpCacheExistsByKeyError(t *testing.T) {
 }
 
 func TestManager_Run_BackpressureSkipsTargets(t *testing.T) {
-	origRunBatchWarm := runBatchWarm
-	origNumCPU := numCPU
-	origThrottleSleep := throttleSleep
-	defer func() {
-		runBatchWarm = origRunBatchWarm
-		numCPU = origNumCPU
-		throttleSleep = origThrottleSleep
-	}()
+	synctest.Test(t, func(t *testing.T) {
+		origRunBatchWarm := runBatchWarm
+		origNumCPU := numCPU
+		origThrottleSleep := throttleSleep
+		defer func() {
+			runBatchWarm = origRunBatchWarm
+			numCPU = origNumCPU
+			throttleSleep = origThrottleSleep
+		}()
 
-	blockCh := make(chan struct{})
-	runBatchWarm = func(ctx context.Context, cfg cachepreload.InternalRequestConfig, path, variant string) error {
-		<-blockCh
-		return nil
-	}
-	numCPU = func() int { return 1 }
-	throttleSleep = func(time.Duration) {}
+		blockCh := make(chan struct{})
+		runBatchWarm = func(ctx context.Context, cfg cachepreload.InternalRequestConfig, path, variant string) error {
+			<-blockCh
+			return nil
+		}
+		numCPU = func() int { return 1 }
+		throttleSleep = func(time.Duration) {}
 
-	ctx := context.Background()
-	targets := make([]gallerydb.BatchLoadTarget, 1200)
-	for i := range targets {
-		targets[i] = gallerydb.BatchLoadTarget{Path: "/gallery/1", Variant: "gallery-content"}
-	}
-	q := &mockQueries{targets: targets}
+		ctx := context.Background()
+		targets := make([]gallerydb.BatchLoadTarget, 1200)
+		for i := range targets {
+			targets[i] = gallerydb.BatchLoadTarget{Path: "/gallery/1", Variant: "gallery-content"}
+		}
+		q := &mockQueries{targets: targets}
 
-	cfg := Config{
-		GetQueries:     func() (BatchLoadQueries, func()) { return q, nil },
-		GetHandler:     func() http.Handler { return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}) },
-		GetETagVersion: func() string { return "v1" },
-	}
+		cfg := Config{
+			GetQueries:     func() (BatchLoadQueries, func()) { return q, nil },
+			GetHandler:     func() http.Handler { return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}) },
+			GetETagVersion: func() string { return "v1" },
+		}
 
-	mgr := NewManager(cfg)
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- mgr.Run(ctx)
-	}()
+		mgr := NewManager(cfg)
+		errCh := make(chan error, 1)
+		go func() {
+			errCh <- mgr.Run(ctx)
+		}()
 
-	for mgr.Metrics().Snapshot().BackpressureSkipped == 0 {
-		runtime.Gosched()
-	}
-	close(blockCh)
+		// Wait returns only when the Run goroutine is durably blocked in
+		// wg.Wait, i.e. after the producer loop processed every target and
+		// recorded all backpressure skips.
+		synctest.Wait()
+		if got := mgr.Metrics().Snapshot().BackpressureSkipped; got == 0 {
+			t.Error("BackpressureSkipped = 0, want > 0")
+		}
+		close(blockCh)
 
-	if err := <-errCh; err != nil {
-		t.Fatalf("Run() = %v", err)
-	}
+		if err := <-errCh; err != nil {
+			t.Fatalf("Run() = %v", err)
+		}
 
-	snap := mgr.Metrics().Snapshot()
-	if snap.BackpressureSkipped == 0 {
-		t.Error("BackpressureSkipped = 0, want > 0")
-	}
+		snap := mgr.Metrics().Snapshot()
+		if snap.BackpressureSkipped == 0 {
+			t.Error("BackpressureSkipped = 0, want > 0")
+		}
+	})
 }
 
 func TestManager_Run_ThrottleScheduling(t *testing.T) {
-	origRunBatchWarm := runBatchWarm
-	origNumCPU := numCPU
-	origThrottleSleep := throttleSleep
-	defer func() {
-		runBatchWarm = origRunBatchWarm
-		numCPU = origNumCPU
-		throttleSleep = origThrottleSleep
-	}()
+	synctest.Test(t, func(t *testing.T) {
+		origRunBatchWarm := runBatchWarm
+		origNumCPU := numCPU
+		origThrottleSleep := throttleSleep
+		defer func() {
+			runBatchWarm = origRunBatchWarm
+			numCPU = origNumCPU
+			throttleSleep = origThrottleSleep
+		}()
 
-	blockCh := make(chan struct{})
-	runBatchWarm = func(ctx context.Context, cfg cachepreload.InternalRequestConfig, path, variant string) error {
-		<-blockCh
-		return nil
-	}
-	numCPU = func() int { return 1 }
-	throttleSleep = func(time.Duration) {}
+		blockCh := make(chan struct{})
+		runBatchWarm = func(ctx context.Context, cfg cachepreload.InternalRequestConfig, path, variant string) error {
+			<-blockCh
+			return nil
+		}
+		numCPU = func() int { return 1 }
+		throttleSleep = func(time.Duration) {}
 
-	ctx := context.Background()
-	targets := make([]gallerydb.BatchLoadTarget, 850)
-	for i := range targets {
-		targets[i] = gallerydb.BatchLoadTarget{Path: "/gallery/1", Variant: "gallery-content"}
-	}
-	q := &mockQueries{targets: targets}
+		ctx := context.Background()
+		targets := make([]gallerydb.BatchLoadTarget, 850)
+		for i := range targets {
+			targets[i] = gallerydb.BatchLoadTarget{Path: "/gallery/1", Variant: "gallery-content"}
+		}
+		q := &mockQueries{targets: targets}
 
-	cfg := Config{
-		GetQueries:     func() (BatchLoadQueries, func()) { return q, nil },
-		GetHandler:     func() http.Handler { return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}) },
-		GetETagVersion: func() string { return "v1" },
-	}
+		cfg := Config{
+			GetQueries:     func() (BatchLoadQueries, func()) { return q, nil },
+			GetHandler:     func() http.Handler { return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}) },
+			GetETagVersion: func() string { return "v1" },
+		}
 
-	mgr := NewManager(cfg)
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- mgr.Run(ctx)
-	}()
+		mgr := NewManager(cfg)
+		errCh := make(chan error, 1)
+		go func() {
+			errCh <- mgr.Run(ctx)
+		}()
 
-	for mgr.Metrics().Snapshot().ThrottlesSkipped == 0 {
-		runtime.Gosched()
-	}
-	close(blockCh)
+		// Wait returns only when the Run goroutine is durably blocked in
+		// wg.Wait, i.e. after the producer loop processed every target and
+		// recorded all throttle skips.
+		synctest.Wait()
+		if got := mgr.Metrics().Snapshot().ThrottlesSkipped; got == 0 {
+			t.Error("ThrottlesSkipped = 0, want > 0")
+		}
+		close(blockCh)
 
-	if err := <-errCh; err != nil {
-		t.Fatalf("Run() = %v", err)
-	}
+		if err := <-errCh; err != nil {
+			t.Fatalf("Run() = %v", err)
+		}
 
-	snap := mgr.Metrics().Snapshot()
-	if snap.ThrottlesSkipped == 0 {
-		t.Error("ThrottlesSkipped = 0, want > 0")
-	}
+		snap := mgr.Metrics().Snapshot()
+		if snap.ThrottlesSkipped == 0 {
+			t.Error("ThrottlesSkipped = 0, want > 0")
+		}
+	})
 }

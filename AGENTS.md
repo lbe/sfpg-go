@@ -23,7 +23,7 @@ This is my fundamental operating principle. There are no exceptions.
 - **Do not manually edit `version.go`.** Never use Edit or Write on `version.go`.
 - **Do not stop, restart, or interfere with `air`.**
 - `version.go` is managed automatically by `scripts/gen_version.sh` (run via `go generate` / `air` rebuilds).
-- Before committing, **Read** the current value from `version.go`, include `version.go` in the commit if it has changed, and include that exact value in the commit message.
+- Before committing, **Read** the current value from `version.go`, include `version.go` in the commit if it has changed, and put that exact value in the commit message as a **footer line** `Version: X.Y.Z` — never as `(vX.Y.Z)` in the subject. See `plans/pi-runbook-sfpg-go.md` § Commit message format.
 
 ## Project Learnings
 
@@ -258,7 +258,17 @@ The project is configured to use `air` for live reloading during development.
 
 - **Run `gofmt` and `goimports` and `go build -o /dev/null .`** on go files and `prettier` on html.tmpl files immediately after edits.
 
-- **Commit Message Workflow:** Use file-based commits: `git commit -F tmp/commit_message.txt`.
+- **Commit Message Workflow:** Write `tmp/commit_message.txt` then `git commit -F tmp/commit_message.txt`. Required shape:
+
+  ```text
+  <type>(optional-scope): <imperative summary>
+
+  <body>
+
+  Version: <exact value from version.go>
+  ```
+
+  **Forbidden:** version in the subject (`(v0.10.124)`, `v0.10.124`). Plans that show `(v<version>)` in the subject are wrong — follow this format.
 
 ## Documentation Reference
 

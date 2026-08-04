@@ -72,6 +72,15 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getFileByPathStmt, err = db.PrepareContext(ctx, getFileByPath); err != nil {
 		return nil, fmt.Errorf("error preparing query GetFileByPath: %w", err)
 	}
+	if q.getFileCountAndTimestampsStmt, err = db.PrepareContext(ctx, getFileCountAndTimestamps); err != nil {
+		return nil, fmt.Errorf("error preparing query GetFileCountAndTimestamps: %w", err)
+	}
+	if q.getFileFolderIndexByIDStmt, err = db.PrepareContext(ctx, getFileFolderIndexByID); err != nil {
+		return nil, fmt.Errorf("error preparing query GetFileFolderIndexByID: %w", err)
+	}
+	if q.getFileSizeSumStmt, err = db.PrepareContext(ctx, getFileSizeSum); err != nil {
+		return nil, fmt.Errorf("error preparing query GetFileSizeSum: %w", err)
+	}
 	if q.getFileViewByIDStmt, err = db.PrepareContext(ctx, getFileViewByID); err != nil {
 		return nil, fmt.Errorf("error preparing query GetFileViewByID: %w", err)
 	}
@@ -84,8 +93,14 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getFolderByPathStmt, err = db.PrepareContext(ctx, getFolderByPath); err != nil {
 		return nil, fmt.Errorf("error preparing query GetFolderByPath: %w", err)
 	}
+	if q.getFolderCountStmt, err = db.PrepareContext(ctx, getFolderCount); err != nil {
+		return nil, fmt.Errorf("error preparing query GetFolderCount: %w", err)
+	}
 	if q.getFolderIDByPathStmt, err = db.PrepareContext(ctx, getFolderIDByPath); err != nil {
 		return nil, fmt.Errorf("error preparing query GetFolderIDByPath: %w", err)
+	}
+	if q.getFolderInfoCountsByIDStmt, err = db.PrepareContext(ctx, getFolderInfoCountsByID); err != nil {
+		return nil, fmt.Errorf("error preparing query GetFolderInfoCountsByID: %w", err)
 	}
 	if q.getFolderTileExistsViewByPathStmt, err = db.PrepareContext(ctx, getFolderTileExistsViewByPath); err != nil {
 		return nil, fmt.Errorf("error preparing query GetFolderTileExistsViewByPath: %w", err)
@@ -96,8 +111,11 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getFoldersViewsByParentIDOrderByNameStmt, err = db.PrepareContext(ctx, getFoldersViewsByParentIDOrderByName); err != nil {
 		return nil, fmt.Errorf("error preparing query GetFoldersViewsByParentIDOrderByName: %w", err)
 	}
-	if q.getGalleryStatisticsStmt, err = db.PrepareContext(ctx, getGalleryStatistics); err != nil {
-		return nil, fmt.Errorf("error preparing query GetGalleryStatistics: %w", err)
+	if q.getGalleryFileThumbRowsByFolderIDStmt, err = db.PrepareContext(ctx, getGalleryFileThumbRowsByFolderID); err != nil {
+		return nil, fmt.Errorf("error preparing query GetGalleryFileThumbRowsByFolderID: %w", err)
+	}
+	if q.getGalleryFolderThumbRowsByParentIDStmt, err = db.PrepareContext(ctx, getGalleryFolderThumbRowsByParentID); err != nil {
+		return nil, fmt.Errorf("error preparing query GetGalleryFolderThumbRowsByParentID: %w", err)
 	}
 	if q.getHttpCacheByKeyStmt, err = db.PrepareContext(ctx, getHttpCacheByKey); err != nil {
 		return nil, fmt.Errorf("error preparing query GetHttpCacheByKey: %w", err)
@@ -116,6 +134,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.getInvalidFileByPathStmt, err = db.PrepareContext(ctx, getInvalidFileByPath); err != nil {
 		return nil, fmt.Errorf("error preparing query GetInvalidFileByPath: %w", err)
+	}
+	if q.getLightboxNavByFileIDStmt, err = db.PrepareContext(ctx, getLightboxNavByFileID); err != nil {
+		return nil, fmt.Errorf("error preparing query GetLightboxNavByFileID: %w", err)
 	}
 	if q.getLoginAttemptStmt, err = db.PrepareContext(ctx, getLoginAttempt); err != nil {
 		return nil, fmt.Errorf("error preparing query GetLoginAttempt: %w", err)
@@ -277,6 +298,21 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getFileByPathStmt: %w", cerr)
 		}
 	}
+	if q.getFileCountAndTimestampsStmt != nil {
+		if cerr := q.getFileCountAndTimestampsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getFileCountAndTimestampsStmt: %w", cerr)
+		}
+	}
+	if q.getFileFolderIndexByIDStmt != nil {
+		if cerr := q.getFileFolderIndexByIDStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getFileFolderIndexByIDStmt: %w", cerr)
+		}
+	}
+	if q.getFileSizeSumStmt != nil {
+		if cerr := q.getFileSizeSumStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getFileSizeSumStmt: %w", cerr)
+		}
+	}
 	if q.getFileViewByIDStmt != nil {
 		if cerr := q.getFileViewByIDStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getFileViewByIDStmt: %w", cerr)
@@ -297,9 +333,19 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getFolderByPathStmt: %w", cerr)
 		}
 	}
+	if q.getFolderCountStmt != nil {
+		if cerr := q.getFolderCountStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getFolderCountStmt: %w", cerr)
+		}
+	}
 	if q.getFolderIDByPathStmt != nil {
 		if cerr := q.getFolderIDByPathStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getFolderIDByPathStmt: %w", cerr)
+		}
+	}
+	if q.getFolderInfoCountsByIDStmt != nil {
+		if cerr := q.getFolderInfoCountsByIDStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getFolderInfoCountsByIDStmt: %w", cerr)
 		}
 	}
 	if q.getFolderTileExistsViewByPathStmt != nil {
@@ -317,9 +363,14 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getFoldersViewsByParentIDOrderByNameStmt: %w", cerr)
 		}
 	}
-	if q.getGalleryStatisticsStmt != nil {
-		if cerr := q.getGalleryStatisticsStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing getGalleryStatisticsStmt: %w", cerr)
+	if q.getGalleryFileThumbRowsByFolderIDStmt != nil {
+		if cerr := q.getGalleryFileThumbRowsByFolderIDStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getGalleryFileThumbRowsByFolderIDStmt: %w", cerr)
+		}
+	}
+	if q.getGalleryFolderThumbRowsByParentIDStmt != nil {
+		if cerr := q.getGalleryFolderThumbRowsByParentIDStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getGalleryFolderThumbRowsByParentIDStmt: %w", cerr)
 		}
 	}
 	if q.getHttpCacheByKeyStmt != nil {
@@ -350,6 +401,11 @@ func (q *Queries) Close() error {
 	if q.getInvalidFileByPathStmt != nil {
 		if cerr := q.getInvalidFileByPathStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getInvalidFileByPathStmt: %w", cerr)
+		}
+	}
+	if q.getLightboxNavByFileIDStmt != nil {
+		if cerr := q.getLightboxNavByFileIDStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getLightboxNavByFileIDStmt: %w", cerr)
 		}
 	}
 	if q.getLoginAttemptStmt != nil {
@@ -532,21 +588,28 @@ type Queries struct {
 	getConfigsStmt                            *sql.Stmt
 	getExifByFileStmt                         *sql.Stmt
 	getFileByPathStmt                         *sql.Stmt
+	getFileCountAndTimestampsStmt             *sql.Stmt
+	getFileFolderIndexByIDStmt                *sql.Stmt
+	getFileSizeSumStmt                        *sql.Stmt
 	getFileViewByIDStmt                       *sql.Stmt
 	getFileViewsByFolderIDOrderByFileNameStmt *sql.Stmt
 	getFolderByIDStmt                         *sql.Stmt
 	getFolderByPathStmt                       *sql.Stmt
+	getFolderCountStmt                        *sql.Stmt
 	getFolderIDByPathStmt                     *sql.Stmt
+	getFolderInfoCountsByIDStmt               *sql.Stmt
 	getFolderTileExistsViewByPathStmt         *sql.Stmt
 	getFolderViewByIDStmt                     *sql.Stmt
 	getFoldersViewsByParentIDOrderByNameStmt  *sql.Stmt
-	getGalleryStatisticsStmt                  *sql.Stmt
+	getGalleryFileThumbRowsByFolderIDStmt     *sql.Stmt
+	getGalleryFolderThumbRowsByParentIDStmt   *sql.Stmt
 	getHttpCacheByKeyStmt                     *sql.Stmt
 	getHttpCacheOldestCreatedStmt             *sql.Stmt
 	getHttpCacheSizeBytesStmt                 *sql.Stmt
 	getIPTCByFileStmt                         *sql.Stmt
 	getIPTCKeywordsStmt                       *sql.Stmt
 	getInvalidFileByPathStmt                  *sql.Stmt
+	getLightboxNavByFileIDStmt                *sql.Stmt
 	getLoginAttemptStmt                       *sql.Stmt
 	getModuleStateStmt                        *sql.Stmt
 	getThumbnailExistsViewByIDStmt            *sql.Stmt
@@ -576,39 +639,46 @@ type Queries struct {
 
 func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 	return &Queries{
-		db:                          tx,
-		tx:                          tx,
-		clearHttpCacheStmt:          q.clearHttpCacheStmt,
-		clearLoginAttemptsStmt:      q.clearLoginAttemptsStmt,
-		configKeyExistsStmt:         q.configKeyExistsStmt,
-		countHttpCacheEntriesStmt:   q.countHttpCacheEntriesStmt,
-		deleteHttpCacheByIDStmt:     q.deleteHttpCacheByIDStmt,
-		deleteHttpCacheByKeyStmt:    q.deleteHttpCacheByKeyStmt,
-		deleteHttpCacheExpiredStmt:  q.deleteHttpCacheExpiredStmt,
-		deleteIPTCStmt:              q.deleteIPTCStmt,
-		deleteIPTCKeywordStmt:       q.deleteIPTCKeywordStmt,
-		deleteInvalidFileByPathStmt: q.deleteInvalidFileByPathStmt,
-		deleteXMPPropertyStmt:       q.deleteXMPPropertyStmt,
-		deleteXMPRawStmt:            q.deleteXMPRawStmt,
-		getConfigValueByKeyStmt:     q.getConfigValueByKeyStmt,
-		getConfigsStmt:              q.getConfigsStmt,
-		getExifByFileStmt:           q.getExifByFileStmt,
-		getFileByPathStmt:           q.getFileByPathStmt,
-		getFileViewByIDStmt:         q.getFileViewByIDStmt,
+		db:                                        tx,
+		tx:                                        tx,
+		clearHttpCacheStmt:                        q.clearHttpCacheStmt,
+		clearLoginAttemptsStmt:                    q.clearLoginAttemptsStmt,
+		configKeyExistsStmt:                       q.configKeyExistsStmt,
+		countHttpCacheEntriesStmt:                 q.countHttpCacheEntriesStmt,
+		deleteHttpCacheByIDStmt:                   q.deleteHttpCacheByIDStmt,
+		deleteHttpCacheByKeyStmt:                  q.deleteHttpCacheByKeyStmt,
+		deleteHttpCacheExpiredStmt:                q.deleteHttpCacheExpiredStmt,
+		deleteIPTCStmt:                            q.deleteIPTCStmt,
+		deleteIPTCKeywordStmt:                     q.deleteIPTCKeywordStmt,
+		deleteInvalidFileByPathStmt:               q.deleteInvalidFileByPathStmt,
+		deleteXMPPropertyStmt:                     q.deleteXMPPropertyStmt,
+		deleteXMPRawStmt:                          q.deleteXMPRawStmt,
+		getConfigValueByKeyStmt:                   q.getConfigValueByKeyStmt,
+		getConfigsStmt:                            q.getConfigsStmt,
+		getExifByFileStmt:                         q.getExifByFileStmt,
+		getFileByPathStmt:                         q.getFileByPathStmt,
+		getFileCountAndTimestampsStmt:             q.getFileCountAndTimestampsStmt,
+		getFileFolderIndexByIDStmt:                q.getFileFolderIndexByIDStmt,
+		getFileSizeSumStmt:                        q.getFileSizeSumStmt,
+		getFileViewByIDStmt:                       q.getFileViewByIDStmt,
 		getFileViewsByFolderIDOrderByFileNameStmt: q.getFileViewsByFolderIDOrderByFileNameStmt,
 		getFolderByIDStmt:                         q.getFolderByIDStmt,
 		getFolderByPathStmt:                       q.getFolderByPathStmt,
+		getFolderCountStmt:                        q.getFolderCountStmt,
 		getFolderIDByPathStmt:                     q.getFolderIDByPathStmt,
+		getFolderInfoCountsByIDStmt:               q.getFolderInfoCountsByIDStmt,
 		getFolderTileExistsViewByPathStmt:         q.getFolderTileExistsViewByPathStmt,
 		getFolderViewByIDStmt:                     q.getFolderViewByIDStmt,
 		getFoldersViewsByParentIDOrderByNameStmt:  q.getFoldersViewsByParentIDOrderByNameStmt,
-		getGalleryStatisticsStmt:                  q.getGalleryStatisticsStmt,
+		getGalleryFileThumbRowsByFolderIDStmt:     q.getGalleryFileThumbRowsByFolderIDStmt,
+		getGalleryFolderThumbRowsByParentIDStmt:   q.getGalleryFolderThumbRowsByParentIDStmt,
 		getHttpCacheByKeyStmt:                     q.getHttpCacheByKeyStmt,
 		getHttpCacheOldestCreatedStmt:             q.getHttpCacheOldestCreatedStmt,
 		getHttpCacheSizeBytesStmt:                 q.getHttpCacheSizeBytesStmt,
 		getIPTCByFileStmt:                         q.getIPTCByFileStmt,
 		getIPTCKeywordsStmt:                       q.getIPTCKeywordsStmt,
 		getInvalidFileByPathStmt:                  q.getInvalidFileByPathStmt,
+		getLightboxNavByFileIDStmt:                q.getLightboxNavByFileIDStmt,
 		getLoginAttemptStmt:                       q.getLoginAttemptStmt,
 		getModuleStateStmt:                        q.getModuleStateStmt,
 		getThumbnailExistsViewByIDStmt:            q.getThumbnailExistsViewByIDStmt,

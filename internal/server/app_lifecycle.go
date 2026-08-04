@@ -25,6 +25,7 @@ import (
 // closes database pools and the logger. Safe to call multiple times.
 func (app *App) Shutdown() {
 	app.RuntimeManager.shutdownOnce.Do(func() {
+		app.LogProfileLocation()
 		app.InfrastructureService.Shutdown()
 
 		if app.RuntimeManager.cancel != nil {
@@ -67,31 +68,18 @@ func (app *App) Shutdown() {
 
 // LogProfileLocation logs the profile directory and stops the profiler if active.
 // This should be called before shutdown to ensure profile location is logged to both console and file.
+// Idempotent: safe to call multiple times.
 func (app *App) LogProfileLocation() {
-	if app.RuntimeManager.stopProfiler != nil {
-		app.RuntimeManager.stopProfiler()
-		// Log after stopping to ensure profile is flushed
-		if dir := profiler.Dir(); dir != "" {
-			slog.Info("Profile artifacts written", "dir", dir)
-		}
+	stop := app.RuntimeManager.stopProfiler
+	if stop == nil {
+		return
 	}
-}
-
-// refreshGalleryStatsCache runs getGalleryStatistics, updates the in-memory cache,
-// and returns the stats. Uses discoveryLastStartedAt as the cache key.
-func (app *App) refreshGalleryStatsCache(ctx context.Context, discoveryLastStartedAt int64) (GalleryStats, error) {
-	stats, err := app.getGalleryStatistics(ctx)
-	if err != nil {
-		return GalleryStats{}, err
+	app.RuntimeManager.stopProfiler = nil
+	stop()
+	// Log after stopping to ensure profile is flushed
+	if dir := profiler.Dir(); dir != "" {
+		slog.Info("Profile artifacts written", "dir", dir)
 	}
-	app.SetGalleryStatsCache(&stats, discoveryLastStartedAt)
-	return stats, nil
-}
-
-// getGalleryStatsCached returns cached stats if valid for current discoveryLastStartedAt.
-// If invalid or stale, returns nil and caller should call refreshGalleryStatsCache.
-func (app *App) getGalleryStatsCached(discoveryLastStartedAt int64) *GalleryStats {
-	return app.GetGalleryStatsCached(discoveryLastStartedAt)
 }
 
 // Forwarding methods keep the public App API stable while ownership lives in
@@ -134,8 +122,8 @@ func (app *App) Start(ctx context.Context, cfg *config.Config, minPoolWorkers, m
 }
 
 // StartPool launches the worker pool goroutine.
-func (app *App) StartPool(ctx context.Context, poolDone chan struct{}, normalizedImagesDir string, removeImagesDirPrefixFn func(string, string) (string, error), processor files.FileProcessor) {
-	app.SubsystemManager.StartPool(ctx, poolDone, normalizedImagesDir, removeImagesDirPrefixFn, processor)
+func (app *App) StartPool(ctx context.Context, poolDone chan struct{}, normalizedImagesDir string, removeImagesDirPrefixFn func(string, string) (string, error), processor files.FileProcessor, onFileInserted func(int64)) {
+	app.SubsystemManager.StartPool(ctx, poolDone, normalizedImagesDir, removeImagesDirPrefixFn, processor, onFileInserted)
 }
 
 // WireMetrics connects subsystem metrics to the collector.
@@ -159,16 +147,6 @@ func (app *App) TriggerRestart() {
 // ExecRestart replaces the current process image.
 func (app *App) ExecRestart() {
 	app.RuntimeManager.ExecRestart()
-}
-
-// GetGalleryStatsCached returns cached gallery stats for the current discovery run.
-func (app *App) GetGalleryStatsCached(discoveryLastStartedAt int64) *GalleryStats {
-	return app.RuntimeManager.GetGalleryStatsCached(discoveryLastStartedAt)
-}
-
-// SetGalleryStatsCache stores gallery stats keyed by discovery start time.
-func (app *App) SetGalleryStatsCache(stats *GalleryStats, at int64) {
-	app.RuntimeManager.SetGalleryStatsCache(stats, at)
 }
 
 // MemoryReclaimerConfig holds the configuration for the memory reclaimer.

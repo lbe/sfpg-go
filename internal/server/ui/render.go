@@ -1,11 +1,75 @@
 package ui
 
 import (
+	"bytes"
 	"fmt"
 	"html/template"
 	"io"
 	"log/slog"
+
+	"github.com/lbe/sfpg-go/internal/gensyncpool"
 )
+
+const (
+	// defaultBufCap is the initial capacity for gallery page render buffers (64 KiB).
+	defaultBufCap = 64 << 10 // 64KB
+
+	// maxRetainedBufCap is the maximum buffer capacity retained when returning
+	// a buffer to the pool. Larger buffers are replaced with fresh 64 KiB ones.
+	maxRetainedBufCap = 256 << 10 // 256KB
+)
+
+// galleryBufPool pools *bytes.Buffer for gallery page rendering to reduce
+// allocation churn during template execution and single Write output.
+var galleryBufPool = gensyncpool.New(
+	func() *bytes.Buffer {
+		return bytes.NewBuffer(make([]byte, 0, defaultBufCap))
+	},
+	func(b *bytes.Buffer) {
+		if b.Cap() > maxRetainedBufCap {
+			*b = *bytes.NewBuffer(make([]byte, 0, defaultBufCap))
+			return
+		}
+		b.Reset()
+	},
+)
+
+// bodyCaptureWriter is a duck-typed interface that allows gallery render to
+// hand off template output into a cache capturer body sink — avoiding an
+// unnecessary intermediate buffer copy. If w does not implement this
+// interface, renderGalleryInto falls back to the galleryBufPool + single Write.
+type bodyCaptureWriter interface {
+	CaptureBodyWriter() io.Writer
+	CommitCapturedBody() error
+	ResetCapturedBody()
+}
+
+// renderGalleryInto executes the provided exec function using the optimal
+// output strategy for w:
+//   - If w implements bodyCaptureWriter, exec writes into a sink that buffers
+//     without committing the HTTP status; on success CommitCapturedBody flushes
+//     body + status, on error ResetCapturedBody allows the handler to write a
+//     500 response.
+//   - Otherwise, exec writes into a pooled *bytes.Buffer and a single Write
+//     call copies the result to w (fallback path).
+func renderGalleryInto(w io.Writer, exec func(io.Writer) error) error {
+	if c, ok := w.(bodyCaptureWriter); ok {
+		sink := c.CaptureBodyWriter()
+		if err := exec(sink); err != nil {
+			c.ResetCapturedBody()
+			return err
+		}
+		return c.CommitCapturedBody()
+	}
+	// fallback: existing galleryBufPool + single Write
+	buf := galleryBufPool.Get()
+	defer galleryBufPool.Put(buf)
+	if err := exec(buf); err != nil {
+		return err
+	}
+	_, err := w.Write(buf.Bytes())
+	return err
+}
 
 // RenderPage renders a full HTML page by executing a named template within the
 // base "layout" template. If partial is true, it renders only the "body"
@@ -18,11 +82,13 @@ func RenderPage(w io.Writer, name string, data any, partial bool) error {
 	if partial {
 		switch name {
 		case "gallery":
-			if err := galleryPartialTemplate.Execute(w, data); err != nil {
-				slog.Error("Error executing partial template", "error", err)
-				return err
-			}
-			return galleryOOBTemplate.Execute(w, data)
+			return renderGalleryInto(w, func(sink io.Writer) error {
+				if err := galleryPartialTemplate.Execute(sink, data); err != nil {
+					slog.Error("Error executing partial template", "error", err)
+					return err
+				}
+				return galleryOOBTemplate.Execute(sink, data)
+			})
 		case "dashboard":
 			if err := dashboardPartialTemplate.Execute(w, data); err != nil {
 				return err
@@ -35,16 +101,33 @@ func RenderPage(w io.Writer, name string, data any, partial bool) error {
 		}
 	}
 
-	var t *template.Template
 	switch name {
 	case "gallery":
-		t = galleryTemplate
+		if galleryTemplate == nil {
+			slog.Error("gallery template not initialized", "name", name)
+			return fmt.Errorf("template not initialized: %s", name)
+		}
+		return renderGalleryInto(w, func(sink io.Writer) error {
+			return galleryTemplate.ExecuteTemplate(sink, "layout", data)
+		})
 	case "image":
-		t = imageTemplate
+		if imageTemplate == nil {
+			slog.Error("image template not initialized", "name", name)
+			return fmt.Errorf("template not initialized: %s", name)
+		}
+		return imageTemplate.ExecuteTemplate(w, "layout", data)
 	case "dashboard":
-		t = dashboardTemplate
+		if dashboardTemplate == nil {
+			slog.Error("dashboard template not initialized", "name", name)
+			return fmt.Errorf("template not initialized: %s", name)
+		}
+		return dashboardTemplate.ExecuteTemplate(w, "layout", data)
 	case "shutdown":
-		t = serverShutdownTemplate
+		if serverShutdownTemplate == nil {
+			slog.Error("shutdown template not initialized", "name", name)
+			return fmt.Errorf("template not initialized: %s", name)
+		}
+		return serverShutdownTemplate.ExecuteTemplate(w, "layout", data)
 	case "discovery-started":
 		// discovery-started is a standalone notification template
 		return discoveryStartedTemplate.Execute(w, data)
@@ -54,11 +137,6 @@ func RenderPage(w io.Writer, name string, data any, partial bool) error {
 		slog.Error("unknown page", "name", name)
 		return nil
 	}
-	if t == nil {
-		slog.Error("template not initialized", "name", name)
-		return fmt.Errorf("template not initialized: %s", name)
-	}
-	return t.ExecuteTemplate(w, "layout", data)
 }
 
 // RenderTemplate renders a single, standalone template by name. It is used for
@@ -99,6 +177,8 @@ func RenderTemplate(w io.Writer, name string, data any) error {
 		t = hamburgerMenuItemsTemplate
 	case "theme-modal.html.tmpl":
 		t = themeModalTemplate
+	case "about-modal.html.tmpl":
+		t = aboutModalTemplate
 	default:
 		slog.Error("unknown template for renderTemplate", "name", name)
 		return fmt.Errorf("unknown template: %s", name)

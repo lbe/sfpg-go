@@ -51,6 +51,12 @@ type Importer struct {
 	Conn *sql.Conn
 	Q    importerQueries
 
+	// OnFolderCreated is called after UpsertPathChain successfully creates
+	// a new folder (i.e., the folder did not exist and UpsertFolderReturningFolder
+	// completed without error). Rare double-count possible when two workers
+	// both observe ErrNoRows before either inserts; self-corrects on restart.
+	OnFolderCreated func()
+
 	// folderCache memoizes folder path -> folder ID across the segment loop of
 	// UpsertPathChain, so repeated files in the same directory do not re-query
 	// GetFolderByPath per segment. Populated on both the find and create paths.
@@ -224,6 +230,9 @@ func (imp *Importer) UpsertPathChain(ctx context.Context, path string, mtime, si
 					})
 				if err != nil {
 					return gallerydb.File{}, fmt.Errorf("error upserting folder: %w", err)
+				}
+				if imp.OnFolderCreated != nil {
+					imp.OnFolderCreated()
 				}
 			}
 			// Cache on BOTH the find path (GetFolderByPath success) and the create

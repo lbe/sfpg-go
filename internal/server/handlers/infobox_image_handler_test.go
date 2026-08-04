@@ -103,6 +103,13 @@ func TestInfoBoxImage_Success(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", w.Code)
 	}
+
+	// Verify Content-Type
+	contentType := w.Header().Get("Content-Type")
+	if contentType != "text/html; charset=utf-8" {
+		t.Errorf("expected Content-Type: text/html; charset=utf-8, got %q", contentType)
+	}
+
 	// HX-Push-URL must NOT be set for info box: loading info into #box_info
 	// (e.g. from lightbox) must not change the URL so back/j works after close.
 	if w.Header().Get("HX-Push-URL") != "" {
@@ -147,8 +154,8 @@ func TestInfoBoxImage_InvalidID(t *testing.T) {
 	}
 }
 
-func TestInfoBoxImage_FileListError(t *testing.T) {
-	qh := &fakeHandlerQueries{getImagesErr: errors.New("db error")}
+func TestInfoBoxImage_IndexQueryError(t *testing.T) {
+	qh := &fakeHandlerQueries{getFileIndexErr: errors.New("db error")}
 	gh := setupTestGalleryHandlers(t, qh)
 
 	req := httptest.NewRequest(http.MethodGet, "/info/image/1", nil)
@@ -159,6 +166,45 @@ func TestInfoBoxImage_FileListError(t *testing.T) {
 
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("expected status 500, got %d", w.Code)
+	}
+}
+
+func TestInfoBoxImage_NoFolderContext(t *testing.T) {
+	qh := &fakeHandlerQueries{getFileIndexErr: sql.ErrNoRows}
+	gh := setupTestGalleryHandlers(t, qh)
+
+	req := httptest.NewRequest(http.MethodGet, "/info/image/1", nil)
+	req.SetPathValue("id", "1")
+	w := httptest.NewRecorder()
+
+	gh.InfoBoxImage(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200 (orphan file renders with -1/0), got %d", w.Code)
+	}
+
+	doc, err := testutil.ParseHTML(w.Body)
+	if err != nil {
+		t.Fatalf("parse HTML: %v", err)
+	}
+
+	// Orphan file: ImageIndex = -1, ImageCount = 0
+	elem := testutil.FindElementByID(doc, "image-index")
+	if elem == nil {
+		t.Fatal("element #image-index not found")
+	}
+	got := strings.TrimSpace(testutil.GetTextContent(elem))
+	if got != "-1" {
+		t.Errorf(`element #image-index = %q, want "-1"`, got)
+	}
+
+	elem = testutil.FindElementByID(doc, "image-count")
+	if elem == nil {
+		t.Fatal("element #image-count not found")
+	}
+	got = strings.TrimSpace(testutil.GetTextContent(elem))
+	if got != "0" {
+		t.Errorf(`element #image-count = %q, want "0"`, got)
 	}
 }
 
