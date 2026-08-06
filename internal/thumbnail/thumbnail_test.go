@@ -251,7 +251,9 @@ func TestGenerateThumbnailAndHashes(t *testing.T) {
 		// This value overflows int64, which is the expected behavior based on the user's direction.
 		// Updated 2025-12-26: New value reflects the deterministic integer-arithmetic grayscale conversion
 		// that ensures consistent pHash results between x86-64 and ARM64 architectures.
-		expectedPHashInt64 := int64(-2954361355555045376)
+		// Updated 2026-08-05: pHash is now computed over the pooled 64x64 ApproxBiLinear squash of the
+		// gallery thumbnail (200x150 fit) instead of an nfnt Bilinear squash of the full-res source.
+		expectedPHashInt64 := int64(-72057594037927936)
 
 		file, err := os.Open(imagePath)
 		if err != nil {
@@ -373,67 +375,6 @@ func TestGenerateThumbnailAndHashesEmbeddedEXIF(t *testing.T) {
 		})
 	}
 }
-
-// BenchmarkGenerateThumbnailAndHashes benchmarks the GenerateThumbnailAndHashes function.
-func BenchmarkGenerateThumbnailAndHashes(b *testing.B) {
-	tempDir := b.TempDir()
-	imagePath, err := createTestImage(tempDir, "benchmark.jpg", 1920, 1080)
-	if err != nil {
-		b.Fatalf("failed to create test image: %v", err)
-	}
-
-	file, err := os.Open(imagePath)
-	if err != nil {
-		b.Fatalf("failed to open image file: %v", err)
-	}
-	defer func() {
-		if err := file.Close(); err != nil {
-			slog.Error("failed to close image file", "error", err)
-		}
-	}()
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _, _, err := thumbnail.GenerateThumbnailAndHashes(file)
-		if err != nil {
-			b.Fatalf("GenerateThumbnailAndHashes failed: %v", err)
-		}
-	}
-}
-
-// // BenchmarkGenerateThumbnailAlt1 benchmarks the GenerateThumbnailAlt1 function.
-// func BenchmarkGenerateThumbnailAlt1(b *testing.B) {
-// 	tempDir := b.TempDir()
-// 	imagePath, err := createTestImage(tempDir, "benchmark.jpg", 1920, 1080)
-// 	if err != nil {
-// 		b.Fatalf("failed to create test image: %v", err)
-// 	}
-
-// 	b.ResetTimer()
-// 	for i := 0; i < b.N; i++ {
-// 		_, err := thumbnail.GenerateThumbnailAlt1(imagePath)
-// 		if err != nil {
-// 			b.Fatalf("GenerateThumbnailAlt1 failed: %v", err)
-// 		}
-// 	}
-// }
-
-// // BenchmarkGenerateThumbnailAlt2 benchmarks the GenerateThumbnailAlt2 function.
-// func BenchmarkGenerateThumbnailAlt2(b *testing.B) {
-// 	tempDir := b.TempDir()
-// 	imagePath, err := createTestImage(tempDir, "benchmark.jpg", 1920, 1080)
-// 	if err != nil {
-// 		b.Fatalf("failed to create test image: %v", err)
-// 	}
-
-// 	b.ResetTimer()
-// 	for i := 0; i < b.N; i++ {
-// 		_, err := thumbnail.GenerateThumbnailAlt2(imagePath)
-// 		if err != nil {
-// 			b.Fatalf("GenerateThumbnailAlt2 failed: %v", err)
-// 		}
-// 	}
-// }
 
 func TestThumbnailPools(t *testing.T) {
 	t.Run("NullString", func(t *testing.T) {

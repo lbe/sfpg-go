@@ -16,6 +16,14 @@ My process is:
 
 This is my fundamental operating principle. There are no exceptions.
 
+I **WILL** be concise in all communications.
+
+I **WILL NOT** use bloviate AI speak.
+
+I **WILL** be specific in my analysis and not fall back to generalization because of laziness.
+
+I **WILL** seek concrete answers and solutions.
+
 ---
 
 ### Hard Rules
@@ -24,6 +32,9 @@ This is my fundamental operating principle. There are no exceptions.
 - **Do not stop, restart, or interfere with `air`.**
 - `version.go` is managed automatically by `scripts/gen_version.sh` (run via `go generate` / `air` rebuilds).
 - Before committing, **Read** the current value from `version.go`, include `version.go` in the commit if it has changed, and put that exact value in the commit message as a **footer line** `Version: X.Y.Z` — never as `(vX.Y.Z)` in the subject. See `plans/pi-runbook-sfpg-go.md` § Commit message format.
+- **Do not use `git commit --no-verify` (or equivalent hook-skipping flags)** unless the user explicitly instructs you to do so, or a plan the user has approved explicitly requires it. Otherwise **STOP** and notify the user.
+- **Do not use `git add -f` / `git add --force` (or otherwise override `.gitignore`)** unless the user explicitly instructs or approves it. A plan alone is **not** sufficient authorization. If a plan or workflow appears to require force-adding an ignored path, **STOP** and notify the user — do not force-add.
+- **No JavaScript** in application UI code. Use Hyperscript and HTMX only. **Approved exception:** password complexity validation in `web/templates/config-modal.html.tmpl` (`#config-password-validator`). Do not add further JavaScript without explicit user approval.
 
 ## Project Learnings
 
@@ -61,62 +72,11 @@ This is my fundamental operating principle. There are no exceptions.
 
 ## Project Overview
 
-`sfpg-go` is a self-hosted photo gallery web application written in Go. It serves images from a local directory, generates thumbnails on the fly, and provides a responsive web interface for browsing with a password-protected administrative configuration. The application is designed to be performant, using concurrency for background tasks, aggressive caching strategies, and a hypermedia-driven frontend architecture to minimize client-side JavaScript.
+`sfpg-go` is a self-hosted photo gallery web application written in Go. It serves images from a local directory, generates thumbnails on the fly, and provides a responsive admin-configurable web UI.
 
-**Core Technologies:**
+**Stack:** Go (1.26+), SQLite (ncruces/go-sqlite3), Go `html/template`, HTMX, Hyperscript, daisyUI, TailwindCSS. Concurrency via goroutines, channels, `errgroup`, and worker pools.
 
-- **Backend:** Go (1.26+)
-- **Database:** SQLite (ncruces/go-sqlite3), used for storing thumbnail data, directory tile information, application configuration, and HTTP cache entries.
-- **Frontend:**
-  - Go HTML Templates (`html/template`) for server-side rendering.
-  - `htmx` for handling UI interactivity with AJAX requests that swap HTML content.
-  - `hyperscript` for lightweight client-side scripting.
-  - `daisyUI` and `tailwindcss` for styling and UI components.
-- **Concurrency:** Extensive use of goroutines, channels, `errgroup`, and dynamic worker pools.
-
-## Key Architectural Components
-
-The application follows a structured design with a clear separation of concerns, leveraging internal packages for modularity.
-
-- **Application Entrypoint (`main.go`, `internal/getopt`):**
-  - **Configuration:** Uses `internal/getopt` to parse configuration with precedence: Defaults → Database → YAML files → CLI/Env (CLI flags override environment variables for the same setting).
-  - **Initialization:** Sets up structured logging (`slog`) with `internal/multihandler` (console + file), database pools, and starts the server.
-  - **Profiling:** `internal/profiler` allows enabling CPU/Mem/Block profiling via config.
-
-- **Web Server (`internal/server`):**
-  - **Routing:** Standard `net/http` `ServeMux`. Routes are ID-based (e.g., `/gallery/{id}`, `/image/{id}`) for stability and performance.
-  - **Middleware Chain (outermost → innermost):**
-    1.  **Logging:** Structured request/response logging.
-    2.  **HTTP Cache (`internal/cachelite`):** A custom SQLite-backed HTTP cache that stores full responses for high performance. It handles `ETag` generation and validation.
-    3.  **Cross-Origin Protection:** Strict same-origin check for unsafe methods via `http.CrossOriginProtection`.
-    4.  **Mux / Handler:** Authentication is applied selectively to protected routes inside the mux.
-  - **Handlers:**
-    - `GalleryByID`, `ImageByID`: Serve main content.
-    - `LightboxByID`: Interactive lightbox with loop-around navigation logic.
-    - `InfoBoxFolder`, `InfoBoxImage`: HTMX-loaded details.
-    - `ThumbnailByID`, `FolderThumbnailByID`: Serve binary image data.
-    - `Config*`, `Dashboard*`, `Server*`, `Theme*`, `Menu*`: Admin and utility handlers.
-
-- **Database Layer (`internal/gallerydb`, `internal/dbconnpool`, `internal/server/database`):**
-  - **Schema:** Comprehensive SQLite schema with foreign keys. Migrations are embedded (`migrations/*.sql`). Thumbnail blobs live in a separate `DB/thumbs/thumbs.db`.
-  - **Access:** `sqlc` generates type-safe Go code in `internal/gallerydb`.
-  - **Connection Pooling:** `internal/dbconnpool` manages generic `*sql.DB` pools; `internal/server/database` wires them with WAL mode and SQLite-specific pragmas.
-
-- **Data Processing & Infrastructure (`internal/`):**
-  - **`gallerylib/importer`:** Logic to ingest file paths and populate the database (folders, files, paths).
-  - **`parallelwalkdir`:** High-performance concurrent directory scanner.
-  - **`workerpool`:** Dynamic worker pool that scales based on queue depth to process background tasks (importing, thumbnail generation).
-  - **`cachelite`:** Database-backed HTTP response cache. Features asynchronous writes via the unified WriteBatcher and post-flush LRU eviction to avoid blocking request processing.
-  - **`writebatcher`:** Generic high-throughput batched database writer used by the unified server batcher, with a persistent on-disk overflow queue (`dque`) for burst absorption and crash recovery.
-  - **`dque`/`flock`/`errors`:** Segment-backed persistent FIFO overflow queue, cross-platform file locking, and error sentinels used by `writebatcher`'s overflow path.
-  - **`gensyncpool`:** Generic, type-safe wrappers around `sync.Pool` that enforce object resetting to prevent state leakage.
-  - **`coords`:** Utility for parsing geographic coordinates (likely for EXIF data).
-  - **`gen-test-files`:** Development utility for generating synthetic test files and directory structures.
-  - **`testutil`:** Shared testing helpers and mocks.
-
-- **Frontend Architecture:**
-  - **Hypermedia-Driven:** Uses `htmx` to swap parts of the page (e.g., opening a folder info box) without full reloads.
-  - **Templates:** `internal/server/ui/templates.go` and `render.go` manage parsing and rendering. `layout.html.tmpl` defines the base shell.
+Package map, schema, middleware, data flows, and design patterns: see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Critical Development Patterns
 
@@ -138,7 +98,7 @@ Optional test doubles live in `internal/server/testseams.go` and are wired throu
 - **Runtime:** `m.testSeams.*` or `app.RuntimeManager.testSeams.*` (e.g. `BeforeListen`, `ExecCommand`, `Exit`)
 - **Handlers:** `hm.testSeams.BuildHandlers` or `app.HandlerManager.testSeams.BuildHandlers`
 
-Do **not** add `testHook*` fields to production structs or use promoted `app.testHook*` in tests. Root test files live under `internal/server/*_test.go` (23 files).
+Do **not** add `testHook*` fields to production structs or use promoted `app.testHook*` in tests. Root test files live under `internal/server/*_test.go`.
 
 ### Database Access Pattern
 
@@ -249,6 +209,7 @@ The project is configured to use `air` for live reloading during development.
 - ✅ DO: Test against the running dev server (localhost:8083)
 - ✅ DO: Let `air` auto-rebuild when you save files
 - ❌ DON'T: Use Python scripts (use bash or Perl)
+- ❌ DON'T: Add JavaScript (Hyperscript/HTMX only; approved exception: password complexity in `config-modal.html.tmpl`)
 - ❌ DON'T: Make assumptions without verification
 - ❌ DON'T: Use `strings.Contains` on HTTP responses (parse HTML first)
 
@@ -256,7 +217,7 @@ The project is configured to use `air` for live reloading during development.
 
 - **HTML content checks:** When checking HTML content (tests or reviews), use structural HTML assertions (no string/bytes contains checks) per [references/methodology-html-content-test-writing.md](references/methodology-html-content-test-writing.md).
 
-- **Run `gofmt` and `goimports` and `go build -o /dev/null .`** on go files and `prettier` on html.tmpl files immediately after edits.
+- **Format only files you changed** after an approved edit batch: `gofmt` and `goimports` on changed Go files, `go build -o /dev/null .`, and `prettier` only on the changed `.html.tmpl`, `.md`, or `.sh` files — not a whole-tree format.
 
 - **Commit Message Workflow:** Write `tmp/commit_message.txt` then `git commit -F tmp/commit_message.txt`. Required shape:
 
@@ -265,8 +226,12 @@ The project is configured to use `air` for live reloading during development.
 
   <body>
 
+  <test status>
+
   Version: <exact value from version.go>
   ```
+
+  `<test status>` example: `All unit, integration, e2eweb, and race tests passed`
 
   **Forbidden:** version in the subject (`(v0.10.124)`, `v0.10.124`). Plans that show `(v<version>)` in the subject are wrong — follow this format.
 
@@ -278,7 +243,6 @@ This AGENTS.md file is a concise guide for AI agents. For detailed information, 
 
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** - Comprehensive architecture documentation with diagrams, data flows, and design patterns
 - **[docs/SERVER_DEEP_DIVE.md](docs/SERVER_DEEP_DIVE.md)** - Archived server package entry point (links to ARCHITECTURE.md)
-- **[CLAUDE.md](CLAUDE.md)** - Project instructions for Claude Code (includes common commands, high-level architecture, forbidden practices)
 - **[README.md](README.md)** - Project overview, features, and setup instructions
 - **[DEPLOYMENT.md](DEPLOYMENT.md)** - Deployment and production configuration guide
 - **[ENV_CONFIGURATION.md](ENV_CONFIGURATION.md)** - Environment variable reference
@@ -297,7 +261,7 @@ This AGENTS.md file is a concise guide for AI agents. For detailed information, 
 
 ### Quick Reference
 
-- **Package overview:** See `Key Architectural Components` section above
+- **Package overview / architecture:** See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - **Database schema:** See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#database-schema)
 - **Middleware stack:** See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#request-middleware-stack)
 - **Security model:** See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#security-model)

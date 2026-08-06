@@ -41,6 +41,10 @@ run_check() {
   return "$status"
 }
 
+timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+echo "$timestamp pre-commit-check started"
+echo "$timestamp pre-commit-check started" >> "$LOG_FILE"
+
 format_check_failed=0
 run_check "format-check" make format-check || format_check_failed=1
 

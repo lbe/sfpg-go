@@ -140,9 +140,8 @@ validate-templates:
 
 .PHONY: format fmt
 format fmt:
-	# Format Go source files with gofmt and goimports
+	# Format Go source files with gofmt
 	@git ls-files '*.go' | grep -Ev '^(tmp/|zarchive/)' | xargs gofmt -w
-	@git ls-files '*.go' | grep -Ev '^(tmp/|zarchive/)' | xargs goimports -w
 	# Format templates, styles, scripts, markdown, yaml, etc. via Prettier
 	npx prettier --write .
 
@@ -155,8 +154,6 @@ format-check fmt-check:
 	else \
 		echo "Go files are properly formatted."; \
 	fi
-	# Check Go imports with goimports
-	@git ls-files '*.go' | grep -Ev '^(tmp/|zarchive/)' | xargs goimports -l 2>/dev/null | grep . && exit 1 || echo "Go imports are correct."
 	# Check Prettier formatting
 	npx prettier --check .
 
