@@ -146,6 +146,28 @@
               overflowed
             </div>
           </div>
+          <div class="stat gap-0 !px-2 !py-1">
+            <div class="stat-title !text-[11px] opacity-60">Disk Usage</div>
+            <div
+              id="wb-dque-disk-usage"
+              class="stat-value text-sm font-semibold"
+            >
+              {{ formatBytesInt64 .Metrics.WriteBatcher.DiskUsageBytes }}
+            </div>
+          </div>
+          <div class="stat gap-0 !px-2 !py-1">
+            <div class="stat-title !text-[11px] opacity-60">Disk Quota</div>
+            <div
+              id="wb-dque-disk-quota"
+              class="stat-value text-sm font-semibold"
+            >
+              {{ if gt .Metrics.WriteBatcher.DiskQuotaBytes 0 }}
+                {{ formatBytesInt64 .Metrics.WriteBatcher.DiskQuotaBytes }}
+              {{ else }}
+                Unlimited
+              {{ end }}
+            </div>
+          </div>
         </div>
       </div>
     </div>

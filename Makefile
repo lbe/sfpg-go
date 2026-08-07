@@ -7,6 +7,10 @@ STAMP := $(shell date +%Y%m%d-%H%M%S)
 BENCH_DIR := bench
 BENCH_OUT := $(BENCH_DIR)/server-bench-$(STAMP).txt
 
+PRETTIER := ./node_modules/.bin/prettier
+PRETTIER_CACHE := node_modules/.cache/prettier
+PRETTIER_FLAGS := --cache --cache-location $(PRETTIER_CACHE)
+
 .PHONY: help
 help:
 	@echo "Available targets:"
@@ -143,7 +147,7 @@ format fmt:
 	# Format Go source files with gofmt
 	@git ls-files '*.go' | grep -Ev '^(tmp/|zarchive/)' | xargs gofmt -w
 	# Format templates, styles, scripts, markdown, yaml, etc. via Prettier
-	npx prettier --write .
+	@./scripts/list-prettier-files.sh | xargs -0 -r $(PRETTIER) $(PRETTIER_FLAGS) --write
 
 .PHONY: format-check fmt-check
 format-check fmt-check:
@@ -154,8 +158,8 @@ format-check fmt-check:
 	else \
 		echo "Go files are properly formatted."; \
 	fi
-	# Check Prettier formatting
-	npx prettier --check .
+	# Check Prettier formatting (find includes untracked files; mirrors .prettierignore)
+	@./scripts/list-prettier-files.sh | xargs -0 -r $(PRETTIER) $(PRETTIER_FLAGS) --check
 
 # Performance testing targets
 .PHONY: perf-test

@@ -187,7 +187,7 @@ func TestSetDB(t *testing.T) {
 	})
 
 	t.Run("writeBatcher configured with dque overflow", func(t *testing.T) {
-		app.StartWriteBatcher(app.RuntimeManager.ctx, true)
+		app.StartWriteBatcher(app.RuntimeManager.ctx, true, config.DefaultDQueMaxDiskBytes)
 
 		if app.writeBatcher == nil {
 			t.Fatal("writeBatcher should be initialized after StartWriteBatcher")
@@ -196,6 +196,9 @@ func TestSetDB(t *testing.T) {
 		stats := app.writeBatcher.GetStats()
 		if !stats.DQueEnabled {
 			t.Error("writeBatcher.DQueEnabled is false — DQueDirPath not set")
+		}
+		if stats.MaxDiskBytes != config.DefaultDQueMaxDiskBytes {
+			t.Errorf("writeBatcher.MaxDiskBytes = %d, want %d (config default)", stats.MaxDiskBytes, config.DefaultDQueMaxDiskBytes)
 		}
 
 		// Verify the dque overflow directory exists on disk
@@ -251,7 +254,7 @@ func TestReconfigurePools_DQueWired(t *testing.T) {
 		t.Fatalf("reconfigurePoolsFromConfig failed: %v", err)
 	}
 
-	app.StartWriteBatcher(app.RuntimeManager.ctx, true)
+	app.StartWriteBatcher(app.RuntimeManager.ctx, true, config.DefaultDQueMaxDiskBytes)
 
 	if app.writeBatcher == nil {
 		t.Fatal("writeBatcher is nil after reconfigure")
@@ -809,6 +812,29 @@ func TestApplyConfig_PanicsWhenImageDirectoryUndefined(t *testing.T) {
 	app.ApplyConfig()
 }
 
+// TestApplyConfig_SyncDQueMaxDiskBytes verifies ApplyConfig hot-reloads the
+// write batcher dque disk quota: mutating the in-memory config and applying it
+// must update the batcher's stats without a restart.
+func TestApplyConfig_SyncDQueMaxDiskBytes(t *testing.T) {
+	app := CreateApp(t)
+	defer app.Shutdown()
+
+	if app.writeBatcher == nil {
+		t.Fatal("writeBatcher not initialized by CreateApp")
+	}
+
+	const quota int64 = 123456789
+	app.ConfigManager.ConfigMu.Lock()
+	app.ConfigManager.Config.DQueMaxDiskBytes = quota
+	app.ConfigManager.ConfigMu.Unlock()
+
+	app.ApplyConfig()
+
+	if got := app.writeBatcher.GetStats().MaxDiskBytes; got != quota {
+		t.Errorf("writeBatcher.MaxDiskBytes = %d, want %d after ApplyConfig", got, quota)
+	}
+}
+
 func TestApp_Shutdown_DelegatesToSubsystemManager(t *testing.T) {
 	app := createStartedApp(t)
 	defer app.Shutdown()
@@ -1168,7 +1194,7 @@ func TestApp_reconfigurePoolsFromConfig_UpdatesCacheMiddleware(t *testing.T) {
 	app.ConfigManager.ConfigMu.Lock()
 	app.ConfigManager.Config.EnableHTTPCache = true
 	app.ConfigManager.ConfigMu.Unlock()
-	app.StartWriteBatcher(app.RuntimeManager.ctx, true)
+	app.StartWriteBatcher(app.RuntimeManager.ctx, true, config.DefaultDQueMaxDiskBytes)
 	app.initializeHTTPCache()
 
 	if app.cacheMW == nil {

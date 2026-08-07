@@ -32,6 +32,7 @@ var ruleMessages = map[string]string{
 	"C3-get-text-content": "strings.Contains on testutil.GetTextContent result; assert structure/exact text instead",
 	"C3-html-tree":        "strings.Contains on parsed HTML node/attr content; assert structure instead",
 	"C3-helper-contains":  "helper walks html.Node and uses strings.Contains on n.Data; use structural helpers",
+	"C4-tui-view":         "strings.Contains on rendered TUI view; use tuiview.AssertPlainIncludes or exact/model assertions",
 }
 
 func ruleMessage(rule string) string {
@@ -309,6 +310,10 @@ func recordAssignFromValueSpec(spec *ast.ValueSpec, prov map[string]string, file
 // Expression classification
 // ---------------------------------------------------------------------------
 
+func isDashboardTestFile(filename string) bool {
+	return strings.Contains(filename, "cmd/sfpg-go-dashboard/")
+}
+
 func classifyExpr(expr ast.Expr, prov map[string]string, filename string) string {
 	switch e := expr.(type) {
 	case *ast.CallExpr:
@@ -393,6 +398,14 @@ func classifyCallExpr(call *ast.CallExpr, prov map[string]string, filename strin
 			return "body-string"
 		}
 
+		// Rule 10: Bubble Tea rendered views in sfpg-go-dashboard tests.
+		if isDashboardTestFile(filename) && len(call.Args) == 0 {
+			switch fun.Sel.Name {
+			case "View", "viewLogin", "viewDashboard":
+				return "tui-view"
+			}
+		}
+
 	case *ast.Ident:
 		// Rule 3: readBody(...) → body-string.
 		if fun.Name == "readBody" {
@@ -415,8 +428,12 @@ func classifyIdent(ident *ast.Ident, prov map[string]string, filename string) st
 	switch name {
 	case "menuHTML", "menuHTML2", "menuHTML3":
 		return "menu-html"
+	case "view":
+		if isDashboardTestFile(filename) {
+			return "tui-view"
+		}
 	case "html":
-		if strings.Contains(filename, "web-testsuite/") || strings.Contains(filename, "cmd/sfpg-go-dashboard/") {
+		if strings.Contains(filename, "web-testsuite/") || isDashboardTestFile(filename) {
 			return "menu-html"
 		}
 	case "logs", "logBuf":
@@ -508,6 +525,8 @@ var urlAllowlist = map[string]bool{
 
 func ruleFor(kind string) string {
 	switch kind {
+	case "tui-view":
+		return "C4-tui-view"
 	case "body-string", "template-string", "menu-html":
 		return "C2-raw-body"
 	case "get-text-content":

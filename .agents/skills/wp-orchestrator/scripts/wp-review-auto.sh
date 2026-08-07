@@ -71,26 +71,10 @@ run_auto_review() {
     if [[ -n "$fmt_out" ]]; then
       echo "gofmt issues found in:"
       echo "$fmt_out"
-      echo "Run: gofmt -w on the listed files"
+      echo "Run: scripts/format-go-changed.sh on the listed files"
       ISSUES=1
     else
       echo "gofmt OK"
-    fi
-
-    echo "=== goimports check ==="
-    if command -v goimports > /dev/null 2>&1; then
-      local imp_out
-      imp_out=$(echo "$go_files" | xargs -r goimports -l)
-      if [[ -n "$imp_out" ]]; then
-        echo "goimports issues found in:"
-        echo "$imp_out"
-        echo "Run: goimports -w on the listed files"
-        ISSUES=1
-      else
-        echo "goimports OK"
-      fi
-    else
-      echo "goimports not available; skipping"
     fi
 
     echo "=== golangci-lint check ==="

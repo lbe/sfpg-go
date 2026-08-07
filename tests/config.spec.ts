@@ -137,6 +137,47 @@ test.describe.serial("Configuration", () => {
     });
   });
 
+  test("3c: Config save (dque max disk bytes)", async ({ page }) => {
+    await openMenu(page);
+    await page.locator('a[aria-label="Configuration"]').click();
+    await page.waitForSelector("#config-form", { timeout: 5000 });
+    await page.locator("#tab-performance-btn").click();
+    await page.waitForTimeout(200);
+
+    const dqueInput = page.locator('input[name="dque_max_disk_bytes"]');
+    const originalValue = await dqueInput.inputValue();
+
+    // Pick a test value different from the original (default is 53687091200 = 50 GiB)
+    const testValue =
+      originalValue === "107374182400" ? "53687091200" : "107374182400";
+    await dqueInput.fill(testValue);
+
+    await page.locator("#config-form button[type='submit']").first().click();
+    await expect(page.locator("#config-success-message")).toBeVisible({
+      timeout: 10000,
+    });
+
+    await page.locator("#config-cancel-btn").click();
+    await page.waitForTimeout(200);
+
+    await openMenu(page);
+    await page.locator('a[aria-label="Configuration"]').click();
+    await page.waitForSelector("#config-form", { timeout: 5000 });
+    await page.locator("#tab-performance-btn").click();
+    await page.waitForTimeout(200);
+
+    await expect(page.locator('input[name="dque_max_disk_bytes"]')).toHaveValue(
+      testValue,
+    );
+
+    // Restore original value
+    await dqueInput.fill(originalValue);
+    await page.locator("#config-form button[type='submit']").first().click();
+    await expect(page.locator("#config-success-message")).toBeVisible({
+      timeout: 10000,
+    });
+  });
+
   test("4: Config validation error", async ({ page }) => {
     await openMenu(page);
     await page.locator('a[aria-label="Configuration"]').click();

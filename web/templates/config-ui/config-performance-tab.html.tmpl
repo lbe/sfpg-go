@@ -307,6 +307,35 @@
   <fieldset
     class="fieldset mb-6 rounded-lg border border-base-300 bg-base-200/30 p-4"
   >
+    <legend class="fieldset-legend text-base font-semibold">
+      Write Batcher
+    </legend>
+    <div class="form-control mb-4">
+      <label class="label">
+        <span class="label-text font-semibold">DQue Max Disk Bytes</span>
+      </label>
+      <input
+        type="number"
+        name="dque_max_disk_bytes"
+        placeholder="53687091200"
+        class="input input-bordered w-48"
+        min="0"
+        value="{{ if .Config }}{{ .Config.DQueMaxDiskBytes }}{{ end }}"
+      />
+      <label class="label">
+        <span class="label-text-alt"
+          >Maximum dque overflow disk usage in bytes (53687091200 = 50 GiB; 0 =
+          unlimited). Hot-reload — no restart required. Lowering the quota below
+          the current dque directory size blocks new overflow enqueues only;
+          existing dque data is not truncated.</span
+        >
+      </label>
+    </div>
+  </fieldset>
+
+  <fieldset
+    class="fieldset mb-6 rounded-lg border border-base-300 bg-base-200/30 p-4"
+  >
     <legend class="fieldset-legend text-base font-semibold">Queue</legend>
     <div class="form-control mb-4">
       <label class="label">

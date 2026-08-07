@@ -1511,6 +1511,34 @@ func TestGetStats_DiskBytesFields(t *testing.T) {
 	}
 }
 
+// TestSetMaxDiskBytes_UpdatesStats verifies that SetMaxDiskBytes hot-reloads
+// the dque disk quota: the new value is reflected in GetStats and enforced by
+// Submit without recreating the batcher.
+func TestSetMaxDiskBytes_UpdatesStats(t *testing.T) {
+	db := testDB(t)
+	cfg := Config[int]{
+		BeginTx:      testBeginTx(db),
+		Flush:        func(ctx context.Context, tx *sql.Tx, batch []int) error { return nil },
+		MaxBatchSize: 100,
+		MaxDiskBytes: 10240,
+	}
+
+	wb, err := New(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer wb.Close()
+
+	if stats := wb.GetStats(); stats.MaxDiskBytes != 10240 {
+		t.Errorf("MaxDiskBytes after New = %d, want 10240 from config", stats.MaxDiskBytes)
+	}
+
+	wb.SetMaxDiskBytes(2048)
+	if stats := wb.GetStats(); stats.MaxDiskBytes != 2048 {
+		t.Errorf("MaxDiskBytes after SetMaxDiskBytes = %d, want 2048", stats.MaxDiskBytes)
+	}
+}
+
 // TestGetStats_DQueSize_AfterFlush verifies that DQueSize reports 0 after
 // overflowing items and flushing all of them.
 func TestGetStats_DQueSize_AfterFlush(t *testing.T) {

@@ -117,6 +117,16 @@ func TestDefaultConfig_HTTPCacheBodyCodec(t *testing.T) {
 	}
 }
 
+func TestDefaultConfig_DQueMaxDiskBytes(t *testing.T) {
+	cfg := DefaultConfig()
+	if cfg.DQueMaxDiskBytes != DefaultDQueMaxDiskBytes {
+		t.Errorf("expected DQueMaxDiskBytes default %d, got %d", DefaultDQueMaxDiskBytes, cfg.DQueMaxDiskBytes)
+	}
+	if cfg.DQueMaxDiskBytes != 50<<30 {
+		t.Errorf("expected DQueMaxDiskBytes default 50<<30 (53687091200), got %d", cfg.DQueMaxDiskBytes)
+	}
+}
+
 func TestDefaultConfig_IncludesETagVersion(t *testing.T) {
 	cfg := DefaultConfig()
 

@@ -179,8 +179,8 @@ func TestService_Authenticate_SqlErrNoRows(t *testing.T) {
 	if user != nil {
 		t.Error("Authenticate() returned non-nil user, expected nil")
 	}
-	if !recordCalled {
-		t.Error("RecordFailedLoginAttempt was not called for sql.ErrNoRows")
+	if recordCalled {
+		t.Error("RecordFailedLoginAttempt was called for sql.ErrNoRows")
 	}
 }
 
@@ -207,8 +207,8 @@ func TestService_Authenticate_WrappedSqlErrNoRows(t *testing.T) {
 	if !errors.Is(err, ErrInvalidCredentials) {
 		t.Errorf("Authenticate() error = %v, wantErr %v", err, ErrInvalidCredentials)
 	}
-	if !recordCalled {
-		t.Error("RecordFailedLoginAttempt was not called for wrapped sql.ErrNoRows")
+	if recordCalled {
+		t.Error("RecordFailedLoginAttempt was called for wrapped sql.ErrNoRows")
 	}
 }
 
@@ -369,7 +369,7 @@ func TestService_Authenticate_ErrorPaths(t *testing.T) {
 			wantUser:        false,
 		},
 		{
-			name: "user not found with failing RecordFailedLoginAttempt",
+			name: "user not found does not record failed attempt",
 			store: &mockUserStore{
 				checkAccountLockoutFunc: func(ctx context.Context, username string) (bool, error) {
 					return false, nil
@@ -381,11 +381,12 @@ func TestService_Authenticate_ErrorPaths(t *testing.T) {
 					return errors.New("record failed")
 				},
 			},
-			username:        "nonexistent",
-			password:        "anypassword",
-			wantErr:         ErrInvalidCredentials,
-			wantErrContains: "record failed",
-			wantUser:        false,
+			username:               "nonexistent",
+			password:               "anypassword",
+			wantErr:                ErrInvalidCredentials,
+			recordFailedCalled:     new(bool),
+			wantRecordFailedCalled: false,
+			wantUser:               false,
 		},
 		{
 			name: "password mismatch with successful RecordFailedLoginAttempt",

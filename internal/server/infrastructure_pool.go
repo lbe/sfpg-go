@@ -70,7 +70,7 @@ func (s *InfrastructureService) SetupDB(ctx context.Context, config *config.Conf
 }
 
 // StartWriteBatcher creates the unified write batcher after pools are ready.
-func (s *InfrastructureService) StartWriteBatcher(ctx context.Context, deferDQueDrain bool) {
+func (s *InfrastructureService) StartWriteBatcher(ctx context.Context, deferDQueDrain bool, dqueMaxDiskBytes int64) {
 	if s.writeBatcher != nil {
 		return
 	}
@@ -78,7 +78,7 @@ func (s *InfrastructureService) StartWriteBatcher(ctx context.Context, deferDQue
 	if s.testSeams.BuildWriteBatcher != nil {
 		s.writeBatcher, err = s.testSeams.BuildWriteBatcher(ctx, 10000, 50*time.Millisecond)
 	} else {
-		s.writeBatcher, err = s.buildWriteBatcher(ctx, 10000, 50*time.Millisecond, deferDQueDrain)
+		s.writeBatcher, err = s.buildWriteBatcher(ctx, 10000, 50*time.Millisecond, deferDQueDrain, dqueMaxDiskBytes)
 	}
 	if err != nil {
 		slog.Error("failed to create unified WriteBatcher", "err", err)
@@ -141,7 +141,7 @@ func (s *InfrastructureService) ReconfigurePools(ctx context.Context, config *co
 		if s.testSeams.BuildWriteBatcher != nil {
 			s.writeBatcher, bwErr = s.testSeams.BuildWriteBatcher(ctx, 1000, 200*time.Millisecond)
 		} else {
-			s.writeBatcher, bwErr = s.buildWriteBatcher(ctx, 1000, 200*time.Millisecond, false)
+			s.writeBatcher, bwErr = s.buildWriteBatcher(ctx, 1000, 200*time.Millisecond, false, config.DQueMaxDiskBytes)
 		}
 		if bwErr != nil {
 			slog.Error("failed to recreate write batcher", "err", bwErr)

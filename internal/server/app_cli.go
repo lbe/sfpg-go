@@ -88,7 +88,14 @@ func (app *App) InitForBatchLoad(opt getopt.Opt) error {
 	if err := app.reconfigurePoolsFromConfig(); err != nil {
 		return fmt.Errorf("reconfigure pools: %w", err)
 	}
-	app.StartWriteBatcher(app.RuntimeManager.ctx, false)
+	// Read the configured dque disk quota; use the default when config is nil.
+	app.ConfigManager.ConfigMu.RLock()
+	dqueMaxDiskBytes := config.DefaultDQueMaxDiskBytes
+	if app.ConfigManager.Config != nil {
+		dqueMaxDiskBytes = app.ConfigManager.Config.DQueMaxDiskBytes
+	}
+	app.ConfigManager.ConfigMu.RUnlock()
+	app.StartWriteBatcher(app.RuntimeManager.ctx, false, dqueMaxDiskBytes)
 	app.CalibrateCacheSizeNow(app.RuntimeManager.ctx)
 	app.ApplyConfig()
 	app.initializeHTTPCache()

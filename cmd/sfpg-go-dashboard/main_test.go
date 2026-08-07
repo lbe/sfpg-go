@@ -12,6 +12,7 @@ import (
 	"github.com/lbe/sfpg-go/cmd/sfpg-go-dashboard/client"
 	"github.com/lbe/sfpg-go/cmd/sfpg-go-dashboard/config"
 	"github.com/lbe/sfpg-go/cmd/sfpg-go-dashboard/parser"
+	"github.com/lbe/sfpg-go/cmd/sfpg-go-dashboard/tuiview"
 )
 
 // TestInitialModel creates model with correct defaults
@@ -161,8 +162,8 @@ func TestViewQuitting(t *testing.T) {
 	m := Model{quitting: true}
 	view := m.View()
 
-	if !strings.Contains(view, "Goodbye") {
-		t.Errorf("View for quitting model should contain 'Goodbye', got: %s", view)
+	if view != "Goodbye!\n" {
+		t.Errorf("View for quitting model = %q, want %q", view, "Goodbye!\n")
 	}
 }
 
@@ -174,8 +175,9 @@ func TestViewLoading(t *testing.T) {
 	}
 	view := m.View()
 
-	if !strings.Contains(view, "Connecting") {
-		t.Errorf("View for loading model should contain 'Connecting', got: %s", view)
+	want := "Connecting to http://localhost:8083...\n"
+	if view != want {
+		t.Errorf("View for loading model = %q, want %q", view, want)
 	}
 }
 
@@ -198,11 +200,7 @@ func TestViewDashboard(t *testing.T) {
 	}
 	view := m.View()
 
-	// Check header has timestamp on right
-	if !strings.Contains(view, "22:30:00") {
-		t.Error("View should contain last updated time")
-	}
-
+	tuiview.AssertPlainIncludes(t, view, "22:30:00")
 }
 
 // TestViewLogin renders login form
@@ -216,15 +214,9 @@ func TestViewLogin(t *testing.T) {
 
 	view := m.View()
 
-	if !strings.Contains(view, "Username") {
-		t.Error("Login view should contain Username")
-	}
-	if !strings.Contains(view, "Password") {
-		t.Error("Login view should contain Password")
-	}
-	if !strings.Contains(view, "Tab") {
-		t.Error("Login view should contain Tab instructions")
-	}
+	tuiview.AssertPlainIncludes(t, view, "Username")
+	tuiview.AssertPlainIncludes(t, view, "Password")
+	tuiview.AssertPlainIncludes(t, view, "Tab")
 }
 
 // TestHandleCredentialInputTab switches focus

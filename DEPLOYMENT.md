@@ -90,7 +90,7 @@ Per-account lockout and per-IP login rate limiting are configured in the config 
 | Lockout threshold          | `lockout_threshold`       | `3`          | Yes        |
 | Lockout duration (seconds) | `lockout_duration`        | `3600`       | Yes        |
 
-- **`login_rate_limit_per_ip`:** Maximum `POST /login` requests per client IP per 60-second window. **`0` disables** IP rate limiting. Uses the direct connection address (`RemoteAddr`), not `X-Forwarded-For`. Behind a reverse proxy, all browser clients may appear as the proxy IP unless you terminate TLS at the app or otherwise preserve distinct client addresses.
+- **`login_rate_limit_per_ip`:** Maximum `POST /login` requests per client IP per 60-second window. **`0` disables** IP rate limiting. Uses the direct connection address (`RemoteAddr`), not `X-Forwarded-For`. Behind a reverse proxy, all browser clients appear as the proxy IP, so the in-app limiter is ineffective or blocks all users — **rate-limit `POST /login` at the proxy instead** (see [Login rate limiting at the reverse proxy](#login-rate-limiting-at-the-reverse-proxy)) and set `login_rate_limit_per_ip` to **`0`** when the edge handles it.
 - **Lockout:** Applies per username after failed password attempts; independent of the IP limiter.
 - **Startup env override (IP limit only):** `SEPG_LOGIN_RATE_LIMIT_PER_IP` overrides the database value on startup (no CLI flag). See [ENV_CONFIGURATION.md](ENV_CONFIGURATION.md).
 
@@ -131,16 +131,134 @@ The application serves image files by their database IDs using the capability-UR
 - Consider mounting the images directory with `nosymfollow` (Linux) or equivalent filesystem option if symlink traversal is a concern in your deployment.
 - A future configuration flag may add `filepath.EvalSymlinks` resolution before the prefix check.
 
-## Public Image URLs (Capability-URL Model)
+## Public gallery browsing (no authentication on media routes)
 
-The `/raw-image/{id}` endpoint serves full-resolution image files **without authentication**. Access control relies on the **capability-URL model**: image IDs are unpredictable numeric database keys, so the URL itself acts as the access credential.
+**Gallery browsing is public by design** (similar to classic [Single File PHP Gallery](http://sye.dk/sfpg/)). Login protects **administration only** — configuration, discovery, dashboard, shutdown/restart, and related routes. It does **not** gate viewing photos.
+
+**Unauthenticated routes** (anyone who can reach the host can use these without logging in):
+
+| Route pattern                                   | Purpose                     |
+| ----------------------------------------------- | --------------------------- |
+| `GET /gallery/{id}`                             | Folder grid                 |
+| `GET /image/{id}`                               | Image view page             |
+| `GET /lightbox/{id}`                            | Lightbox                    |
+| `GET /raw-image/{id}`                           | Full-resolution file stream |
+| `GET /thumbnail/file/{id}`                      | File thumbnail              |
+| `GET /thumbnail/folder/{id}`                    | Folder thumbnail            |
+| `GET /info/folder/{id}`, `GET /info/image/{id}` | Info panels                 |
+
+**Image IDs are sequential autoincrement integers** assigned at discovery time. They are **not** secret, unpredictable, or a security boundary. A crawler can start at `/gallery/1` and collect every image link from HTML; guessing `/raw-image/{n}` in sequence is trivial.
 
 **Implications:**
 
-- Anyone who knows or guesses an image ID can access that image directly.
-- Image IDs are sequential and could be enumerated by an attacker guessing IDs in range.
-- Do not rely on `/raw-image/{id}` as a substitute for access control. If your images are sensitive, serve the application behind a reverse proxy that requires authentication for all routes, or restrict access at the network/firewall level.
-- The lightbox and image view pages (`/lightbox/{id}`, `/image/{id}`) also render without authentication, but they include the raw image URL in the page source, making it discoverable.
+- A host reachable from the internet exposes the full gallery to anyone who can connect — enumeration of IDs is unnecessary because pages already list them.
+- `/raw-image/{id}` streams bytes without a session check; treat network placement and edge policy as your access control.
+- If your photos are sensitive, **do not rely on URL shape or ID obscurity**. Use VPN/firewall restrictions, bind to loopback and tunnel, or [authenticate at the reverse proxy](#protecting-a-private-gallery-at-the-reverse-proxy) for all routes.
+
+### Protecting a private gallery at the reverse proxy
+
+When the gallery must not be world-readable, choose one of:
+
+| Approach                  | When to use                                                                     |
+| ------------------------- | ------------------------------------------------------------------------------- |
+| **Network restriction**   | VPN, tailnet, home LAN, firewall allowlist — simplest for personal libraries    |
+| **Loopback + SSH tunnel** | Bind the app to `127.0.0.1`; access via `ssh -L`                                |
+| **Edge authentication**   | Internet-facing host where viewers need a shared password before any page loads |
+
+**Edge authentication vs app login:** Proxy `basicauth` (or equivalent) gates **every** HTTP request, including gallery pages and static assets. The in-app admin session is still required for `/config`, `/dashboard`, and `/server/*` after the proxy allows the connection. Use separate credentials: proxy accounts for viewers, admin account for configuration.
+
+**Verify edge authentication** (replace URL and credentials):
+
+```bash
+# Without proxy credentials → 401 Unauthorized
+curl -s -o /dev/null -w "%{http_code}" https://gallery.example.com/gallery/1
+# Expected: 401
+
+# With proxy credentials → 200 (gallery HTML)
+curl -s -o /dev/null -w "%{http_code}" -u viewer:secret https://gallery.example.com/gallery/1
+# Expected: 200
+
+# Admin routes still require app login after proxy auth
+curl -s -o /dev/null -w "%{http_code}" -u viewer:secret https://gallery.example.com/config
+# Expected: 401 (no session cookie)
+```
+
+Tracked templates [`deploy/Caddyfile`](deploy/Caddyfile) and [`deploy/Caddyfile.local`](deploy/Caddyfile.local) do **not** include viewer authentication. Add `basicauth` (Caddy) or `auth_basic` (Nginx) when deploying a private library.
+
+#### Example: Nginx (viewer basic auth on all routes)
+
+Generate a password file once (`viewer` is an example username):
+
+```bash
+sudo apt-get install -y apache2-utils # provides htpasswd
+sudo htpasswd -c /etc/nginx/sfpg-viewers.htpasswd viewer
+```
+
+Add `auth_basic` to the `location /` block from the [login rate-limit example](#example-nginx) (login rate limiting and viewer auth can coexist):
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name gallery.example.com;
+
+    ssl_certificate     /etc/ssl/certs/fullchain.pem;
+    ssl_certificate_key /etc/ssl/private/privkey.pem;
+
+    # Viewer gate — required before any gallery or admin page loads
+    auth_basic           "Private gallery";
+    auth_basic_user_file /etc/nginx/sfpg-viewers.htpasswd;
+
+    location = /login {
+        limit_req zone=sfpg_login burst=5 nodelay;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_http_version 1.1;
+        proxy_pass http://sfpg_backend;
+    }
+
+    location / {
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_http_version 1.1;
+        proxy_pass http://sfpg_backend;
+    }
+}
+```
+
+Reload after changes: `nginx -t && systemctl reload nginx`.
+
+#### Example: Caddy (viewer basic auth on all routes)
+
+Generate a bcrypt hash (Caddy v2):
+
+```bash
+caddy hash-password --plaintext 'your-viewer-password'
+```
+
+Add `basicauth` inside the site block (stock Caddy; no custom build required):
+
+```caddyfile
+gallery.example.com {
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+	encode zstd gzip
+
+	# Viewer gate — separate from in-app admin credentials
+	basicauth {
+		viewer $2a$14$Zkx19XLiYW6vqSQ8jo3YfuO1QJC/r7FzEd7odz6JDOMy6xInkv0a
+	}
+
+	reverse_proxy 127.0.0.1:8081 {
+		header_up Host {host}
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Forwarded-For {remote}
+	}
+}
+```
+
+Replace the hash with output from `caddy hash-password`. Combine with [login rate limiting](#example-caddy) on a custom `caddy-ratelimit` build if both viewer auth and per-IP login limits are required.
 
 ## Reverse Proxy Expectations
 
@@ -185,12 +303,55 @@ curl -s -o /dev/null -w "%{http_code}" -X POST https://gallery.example.com/login
 # Expected: 403
 ```
 
+### Login rate limiting at the reverse proxy
+
+In production, terminate TLS at Nginx or Caddy and **rate-limit `POST /login` at the edge** using each client's real IP. The application intentionally keys `login_rate_limit_per_ip` on `RemoteAddr` only (it does not trust `X-Forwarded-For`), so the in-app IP limiter cannot distinguish clients behind a proxy.
+
+**Recommended pairing:**
+
+| Layer             | Setting                                                                                                      |
+| ----------------- | ------------------------------------------------------------------------------------------------------------ |
+| **Reverse proxy** | Per-client-IP limit on `POST /login` (examples below; default **10 per 60s** matches the app)                |
+| **Application**   | `login_rate_limit_per_ip` = **`0`** (disable in-app IP limiting when the proxy handles it)                   |
+| **Application**   | Keep **lockout** enabled (`lockout_threshold`, `lockout_duration`) — per-username, still enforced in the app |
+
+Set `login_rate_limit_per_ip` to `0` in the config modal (**Session** → **Login security**) or via startup env `SEPG_LOGIN_RATE_LIMIT_PER_IP=0`. Per-account lockout remains independent.
+
+**Direct exposure (no proxy):** Leave the in-app default (`10` per 60s) or tune in the config modal. No edge configuration required.
+
+**Over-limit behavior:** The proxy returns **HTTP 429** (configure explicitly on Nginx; default for `caddy-ratelimit`). This is expected — it is not the application's HTML login form error.
+
+**Verify edge rate limiting** (replace URL; use valid credentials only on the first request):
+
+```bash
+# Repeat until 429 (proxy), not 403 (COP) or 200
+for i in $(seq 1 15); do
+  curl -s -o /dev/null -w "%{http_code}\n" -X POST https://gallery.example.com/login \
+    -H "Content-Type: application/x-www-form-urlencoded" \
+    -H "Origin: https://gallery.example.com" \
+    -H "Sec-Fetch-Site: same-origin" \
+    -d "username=admin" -d "password=wrong"
+done
+# Expected: mostly 200 (invalid credentials), then 429 from the proxy
+```
+
+Tracked templates [`deploy/Caddyfile`](deploy/Caddyfile) and [`deploy/Caddyfile.local`](deploy/Caddyfile.local) use **stock Caddy** (no rate limiting). The Caddy example below requires a custom build — do not paste `rate_limit` into those files unless you switch to a `caddy-ratelimit` binary.
+
 ### Example: Nginx
+
+Nginx includes `limit_req` in standard builds. The example below limits **`/login`** per client IP (**10 requests per minute**, with a small burst), returns **429** when exceeded, and proxies everything else unchanged.
+
+Place `limit_req_zone` in the `http` context (e.g. `/etc/nginx/nginx.conf` inside `http { }`, or an included snippet):
 
 ```nginx
 upstream sfpg_backend {
     server 127.0.0.1:8081;
 }
+
+# Per-client-IP login rate limit (matches app default: 10/min).
+# ~10m shared zone holds on the order of 160k client IP states.
+limit_req_zone $binary_remote_addr zone=sfpg_login:10m rate=10r/m;
+limit_req_status 429;
 
 server {
     listen 443 ssl http2;
@@ -200,6 +361,17 @@ server {
     ssl_certificate_key /etc/ssl/private/privkey.pem;
 
     # (Recommended) redirect HTTP->HTTPS in a separate server block on 80
+
+    location = /login {
+        limit_req zone=sfpg_login burst=5 nodelay;
+
+        proxy_set_header Host $host;                # REQUIRED: preserve host for Origin checks
+        # Sec-Fetch-Site and Origin pass through by default; do not proxy_hide_header them
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_http_version 1.1;
+        proxy_pass http://sfpg_backend;
+    }
 
     location / {
         proxy_set_header Host $host;                # REQUIRED: preserve host for Origin checks
@@ -212,7 +384,73 @@ server {
 }
 ```
 
+**Tuning:**
+
+- `rate=10r/m` — ten requests per minute per IP (align with `login_rate_limit_per_ip` default).
+- `burst=5 nodelay` — allow short bursts; reduce `burst` for stricter limiting.
+- `limit_req_status 429` — return Too Many Requests (default without this is 503).
+- Brute-force attacks use `POST /login`; `GET /login` returns 400 from the app. Limiting the `/login` location covers both; gallery and static traffic are unaffected.
+
+Reload after changes: `nginx -t && systemctl reload nginx`.
+
 ### Example: Caddy
+
+**Stock Caddy** (`caddy` package, `caddy:latest` Docker image) does **not** include HTTP rate limiting. Use the community [**`caddy-ratelimit`**](https://github.com/mholt/caddy-ratelimit) module and build a custom binary with [xcaddy](https://github.com/caddyserver/xcaddy):
+
+```bash
+xcaddy build --with github.com/mholt/caddy-ratelimit
+# Install the resulting `caddy` binary, or use it in your container image.
+```
+
+Production template without rate limiting: [`deploy/Caddyfile`](deploy/Caddyfile) (replace `gallery.example.com`). Local smoke: [`deploy/Caddyfile.local`](deploy/Caddyfile.local) (`tls internal` on `:8443`).
+
+**Caddyfile with login rate limiting** (custom build only; **10 `POST /login` per minute per client IP**, matching the app default):
+
+```caddy
+{
+	# global options, e.g., email for ACME
+	# rate_limit is ordered before basicauth by default in caddy-ratelimit
+}
+
+gallery.example.com {
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+	encode zstd gzip
+
+	rate_limit {
+		zone login_post {
+			match {
+				method POST
+				path /login
+			}
+			key {remote_host}
+			events 10
+			window 1m
+		}
+	}
+
+	reverse_proxy 127.0.0.1:8081 {
+		header_up Host {host}
+		# Sec-Fetch-Site and Origin pass through by default; do not strip client headers
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Forwarded-For {remote}
+	}
+}
+```
+
+**Tuning:**
+
+- `events 10` / `window 1m` — same semantics as the app's `login_rate_limit_per_ip` default.
+- `key {remote_host}` — real client IP at the edge (not the backend's `127.0.0.1`).
+- `match { method POST path /login }` — only login POSTs count; gallery, static assets, and other routes are not throttled.
+- Optional: `ipv6_prefix 64` inside the zone to bucket IPv6 clients by `/64` (mitigates address cycling within a prefix).
+
+**Docker:** Replace `image: caddy:latest` with an image built from `xcaddy build --with github.com/mholt/caddy-ratelimit`, or mount a custom binary. Do not add `rate_limit` to [`deploy/Caddyfile`](deploy/Caddyfile) until the runtime image includes the module.
+
+Standard Caddy builds include `zstd` and `gzip` only (`encode` defaults to both). Brotli requires a custom Caddy build — do not add it unless your binary has `http.encoders.brotli`.
+
+### Example: Caddy (without rate limiting)
+
+Minimal stock-Caddy edge (no custom build). Use in-app `login_rate_limit_per_ip` only if the app is reached **directly**; behind this proxy, set in-app IP limiting to **`0`** and add edge rate limiting via the [Caddy example above](#example-caddy) or Nginx.
 
 ```caddy
 {
@@ -238,17 +476,35 @@ gallery.example.com {
 
 ### Phase 3 smoke checklist (Caddy)
 
-After deploying behind Caddy with the configuration above, run these manual
-checks to verify edge offload is working correctly:
+After deploying behind Caddy with the configuration above, verify edge offload
+(TLS/HSTS, `encode`, Host/COP header pass-through). Prefer the automated local
+smoke when developing:
+
+```bash
+# Terminal A — keep air on :8083, or run a prod-like binary on :8081
+SFPG_BACKEND_PORT=8083 caddy run --config deploy/Caddyfile.local
+
+# Terminal B
+./scripts/caddy-smoke.sh
+```
+
+`deploy/Caddyfile.local` listens on `https://localhost:8443` with `tls internal`
+(curl uses `-k`). Default upstream is `127.0.0.1:8081`; set `SFPG_BACKEND_PORT`
+to point at `air` (`8083`) without starting a second app.
+
+For a production hostname, the same checks apply (replace the URL; drop `-k` when
+the cert is trusted):
 
 ```bash
 # 1. Gallery page loads with 200
 curl -s -o /dev/null -w "%{http_code}" https://gallery.example.com/gallery/1
 # Expected: 200
 
-# 2. Login POST succeeds
+# 2. Login POST succeeds (same-origin COP headers)
 curl -s -X POST https://gallery.example.com/login \
   -H "Content-Type: application/x-www-form-urlencoded" \
+  -H "Origin: https://gallery.example.com" \
+  -H "Sec-Fetch-Site: same-origin" \
   -d "username=admin" -d "password=admin" \
   -c /tmp/caddy-test-cookies.txt -o /dev/null -w "%{http_code}"
 # Expected: 200
@@ -256,6 +512,8 @@ curl -s -X POST https://gallery.example.com/login \
 # 3. HSTS header is present
 curl -s -I https://gallery.example.com/gallery/1 | grep -i strict-transport
 # Expected: Strict-Transport-Security: max-age=31536000; includeSubDomains
+
+# 4. Also run the COP verification curls in Reverse Proxy Expectations above
 ```
 
 ## Systemd Service (Optional)
@@ -305,21 +563,23 @@ WantedBy=multi-user.target
 - Filesystem & Data
   - [ ] Run as a dedicated, least-privileged user
   - [ ] Ensure `DB/` and `Images/` directories exist and are writable by the service user
+  - [ ] `image_directory` may be any readable path on the host (e.g. `/mnt/photos`); the admin chooses it — it is not jailed under the app root
   - [ ] Back up `DB/sfpg.db` (and WAL files), `DB/thumbs/thumbs.db` (and WAL files), and `Images/` regularly
   - [ ] Back up `DB/sfpg.db-dque/` (auto-created persistent write overflow queue) alongside the DB to preserve in-flight pending writes across restarts
 - Operations
   - [ ] Configure systemd (or equivalent) with restart policy
+  - [ ] Set `log_level` to **`info`** or **`warn`** in production (default is `debug` for troubleshooting; verbose on busy galleries)
   - [ ] Monitor logs in `logs/` and rotate as needed (log files are timestamped per startup)
   - [ ] Health checks: probe a static asset under `/static/` for liveness
 - Application
   - [ ] Set the initial admin credentials via `/config` after first login
-  - [ ] Review **Login security** in the config modal (Session tab): IP rate limit, lockout threshold, and lockout duration
-  - [ ] If behind a reverse proxy, understand that IP rate limiting uses `RemoteAddr` (often the proxy IP for all users)
-  - [ ] Optionally set `SEPG_LOGIN_RATE_LIMIT_PER_IP` at startup if the database value should differ from the default
+  - [ ] Review **Login security** in the config modal (Session tab): lockout threshold and lockout duration
+  - [ ] If behind a reverse proxy: rate-limit `POST /login` at the edge ([Nginx](#example-nginx) / [Caddy](#example-caddy)); set `login_rate_limit_per_ip` to **`0`** in the app
+  - [ ] If exposing the app directly (no proxy): keep or tune in-app `login_rate_limit_per_ip` (default `10` per 60s)
   - [ ] Optional: tune `-discover` (leave `true` for automatic discovery)
 - Security Hardening
   - [ ] Review the [Symlink Trust Model](#symlink-trust-model) and apply filesystem hardening if needed
-  - [ ] Review the [Public Image URLs](#public-image-urls-capability-url-model) capability-URL model and assess risk for your content
+  - [ ] Review [public gallery browsing](#public-gallery-browsing-no-authentication-on-media-routes): sequential IDs are not secret; if content is private, restrict the network or add [edge viewer authentication](#protecting-a-private-gallery-at-the-reverse-proxy)
   - [ ] Pprof is always available on loopback only (127.0.0.1 / ::1); access via SSH tunnel or local curl. Requires admin auth even on loopback. Public hostname returns 404
   - [ ] Consider restricting pprof access further via reverse-proxy rules (e.g., allow only localhost or internal IP ranges; the application's loopback check already blocks remote access)
 
@@ -399,9 +659,11 @@ curl -f -H "Host: gallery.example.com" \
 - **Readiness**: Check `/health` after startup and on deploy
 - **Logs**: Monitor `logs/sfpg-*.log` for ERROR level entries
 - **Disk**: Alert when `DB/` or `Images/` partitions exceed 80% usage
-- **dque Disk Quota**: The write-batcher overflow queue (`DB/sfpg.db-dque/`) has a configurable disk quota to prevent runaway disk usage.
-  When the quota is exceeded, batcher `Submit` returns `ErrQuotaExceeded`. Monitor the `disk_usage_bytes` and `disk_quota_bytes`
-  metrics in the dashboard to track proximity to the limit.
+- **dque Disk Quota**: The write-batcher overflow queue (`DB/sfpg.db-dque/`) has a configurable disk quota (`dque_max_disk_bytes`) to
+  prevent runaway disk usage. The default is 50 GiB; set it to `0` for unlimited. Changes hot-reload without a restart. When the
+  quota is exceeded, batcher `Submit` returns `ErrQuotaExceeded`. Monitor current usage and the configured quota in the dashboard
+  Write Batcher card (`#wb-dque-disk-usage` / `#wb-dque-disk-quota`, backed by the `disk_usage_bytes` and `disk_quota_bytes`
+  metrics) to track proximity to the limit.
 - **Metrics**: Track response times for `/gallery/1` (requires auth setup)
 
 ### Profiling Endpoints (pprof)

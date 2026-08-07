@@ -72,9 +72,7 @@ func (s *authService) Authenticate(ctx context.Context, username, password strin
 	user, err := s.store.GetUser(ctx, username)
 	if err != nil {
 		if errors.Is(err, ErrUserNotFound) || errors.Is(err, sql.ErrNoRows) {
-			if recErr := s.store.RecordFailedLoginAttempt(ctx, username); recErr != nil {
-				return nil, errors.Join(ErrInvalidCredentials, recErr)
-			}
+			// Unknown usernames are not persisted — lockout applies only to existing accounts.
 			return nil, ErrInvalidCredentials
 		}
 		return nil, err

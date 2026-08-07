@@ -8,7 +8,7 @@
 [![CI](https://github.com/lbe/sfpg-go/actions/workflows/ci.yml/badge.svg)](https://github.com/lbe/sfpg-go/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/lbe/sfpg-go/branch/main/graph/badge.svg)](https://codecov.io/gh/lbe/sfpg-go)
 
-A self-hosted photo gallery web application written in Go. It serves images from a local directory, generates thumbnails on the fly, and provides a responsive, password-protected web interface for browsing.
+A self-hosted photo gallery web application written in Go. It serves images from a local directory, generates thumbnails on the fly, and provides a responsive web UI with password-protected administration (configuration, discovery, dashboard). Gallery browsing is **public by default**; see [`DEPLOYMENT.md`](DEPLOYMENT.md#public-gallery-browsing-no-authentication-on-media-routes) for private-deployment options.
 
 The application is designed to be performant and simple to deploy, using concurrency for background tasks and a hypermedia-driven frontend architecture to minimize client-side JavaScript.
 
@@ -232,8 +232,9 @@ make lint                          # Run golangci-lint (required before commits)
 make validate-templates            # Validate Go template rendering + Hyperscript
 make validate-hyperscript          # Validate Hyperscript syntax in templates
 make validate-html-test-assertions # Forbid strings.Contains HTML assertions in tests
-make format                        # Format Go code and run Prettier
-make format-check                  # Check formatting without writing changes
+make format                        # gofmt on tracked .go files + Prettier
+make format-check                  # Check gofmt + Prettier without writing
+scripts/format-go-changed.sh FILE  # gofmt + selective goimports on listed .go files
 
 # Coverage and benchmarks
 make cover  # Generate coverage report (coverage.html)
@@ -256,6 +257,8 @@ make perf-test-help          # Show performance test options
 
 **Before committing:** The pre-commit hooks run `make format-check`, `make lint`, `make validate-templates`, `make validate-html-test-assertions`, and `make test-all`. If any check fails, the commit will be aborted. You can run the same sequence manually with `./scripts/pre-commit-check.sh` (also runs `make test-browser`). For a full Hyperscript pass outside the hook, use `make validate-hyperscript`.
 
+**Go formatting:** `make format` / `make format-check` run `gofmt` on tracked `.go` files, then Prettier on paths from `scripts/list-prettier-files.sh` (includes untracked files; mirrors `.prettierignore`; uses Prettier `--cache`). Use `scripts/format-go-changed.sh` on Go files you edited during development (`gofmt` always; `goimports` only when imports changed). Import ordering is enforced by `make lint` / pre-commit via golangci-lint's goimports formatter — do not run `goimports -w .` on the whole tree.
+
 ### Code Linting
 
 The project uses [golangci-lint](https://golangci-lint.run/) for static code analysis. The configuration is defined in `.golangci.yml` and includes:
@@ -272,7 +275,7 @@ The project uses [golangci-lint](https://golangci-lint.run/) for static code ana
 
 **Enabled Formatters:**
 
-- **goimports** - Fixes imports, formats code
+- **goimports** - Fixes imports and formats code (via `make lint` / pre-commit only; not part of `make format-check`)
 
 Run linters manually:
 
@@ -394,7 +397,8 @@ All state-changing requests (POST, PUT, DELETE, PATCH) pass through Go's
   are permitted by the standard library.
 
 Behind a reverse proxy, preserve the original `Host` header so same-origin checks work.
-See `DEPLOYMENT.md` for Caddy/nginx examples.
+See `DEPLOYMENT.md` for Caddy/nginx examples (`deploy/Caddyfile`). Local edge smoke:
+`deploy/Caddyfile.local` + `./scripts/caddy-smoke.sh`.
 
 #### Session Cookie Security Settings
 
@@ -513,6 +517,9 @@ The cache is automatically cleaned of expired entries every 5 minutes. For immed
 
 For a secure production deployment behind a reverse proxy with correct session cookie settings, see `DEPLOYMENT.md`.
 
+- **Production Caddy template:** `deploy/Caddyfile` (ACME hostname; `encode zstd gzip`)
+- **Local Caddy smoke:** `SFPG_BACKEND_PORT=8083 caddy run --config deploy/Caddyfile.local` then `./scripts/caddy-smoke.sh`
+
 ## Configuration
 
 Configuration is managed via the web interface.
@@ -532,7 +539,7 @@ The application is organized with a clear separation of concerns, with most of t
   - `server.go`: HTTP server lifecycle.
   - `router.go`: Route registration and middleware chain.
   - `infrastructure_service.go`, `runtime_manager.go`, `handler_manager.go`, `subsystem_manager.go`: Orchestration managers embedded on `App`.
-  - `testseams.go`: Optional test doubles (`AppTestSeams`, `InfrastructureTestSeams`, `RuntimeManagerTestSeams`, `HandlerManagerTestSeams`); zero value means production behavior.
+  - `testseams.go`: Optional test doubles (`AppTestSeams`, `InfrastructureTestSeams`, `RuntimeManagerTestSeams`, `HandlerManagerTestSeams`); nil func seams use production when unset; infra cache funcs default to `cachelite` in `NewInfrastructureService()`.
   - `auth/`: Authentication service (bcrypt credential verification, account lockout).
   - `batched_write.go`, `batched_write_flush.go`: Unified `BatchedWrite` union and flush logic for file metadata and HTTP cache entries.
   - `batcher_wiring.go`: Thin `fileBatcher` wiring implementing `files.UnifiedBatcher` so the `files` package submits writes without importing `writebatcher`.

@@ -198,6 +198,30 @@ func findTextContains(n *html.Node, text string) bool {
 			src:      "package p\nfunc TestX() {\nfor _, body := range menuHTML {\n\tstrings.Contains(body, \"x\")\n}\n}",
 			want:     []vioCheck{{File: "handlers/x_test.go", Line: 4, Rule: "C2-raw-body"}},
 		},
+		{
+			name:     "T27 dashboard View assigned",
+			filename: "cmd/sfpg-go-dashboard/main_test.go",
+			src:      "package p\nfunc TestX() {\nview := m.View()\nstrings.Contains(view, \"Goodbye\")\n}",
+			want:     []vioCheck{{File: "cmd/sfpg-go-dashboard/main_test.go", Line: 4, Rule: "C4-tui-view"}},
+		},
+		{
+			name:     "T28 dashboard viewLogin inline",
+			filename: "cmd/sfpg-go-dashboard/view_test.go",
+			src:      "package p\nfunc TestX() {\nstrings.Contains(m.viewLogin(), \"Login\")\n}",
+			want:     []vioCheck{{File: "cmd/sfpg-go-dashboard/view_test.go", Line: 3, Rule: "C4-tui-view"}},
+		},
+		{
+			name:     "T29 dashboard html ident",
+			filename: "cmd/sfpg-go-dashboard/parser/dashboard_test.go",
+			src:      "package p\nfunc TestX() {\nstrings.Contains(html, \"dashboard-container\")\n}",
+			want:     []vioCheck{{File: "cmd/sfpg-go-dashboard/parser/dashboard_test.go", Line: 3, Rule: "C2-raw-body"}},
+		},
+		{
+			name:     "T30 dashboard stderr clean",
+			filename: "cmd/sfpg-go-dashboard/main_test.go",
+			src:      "package p\nfunc TestX() {\nstrings.Contains(errOut.String(), \"tty unavailable\")\n}",
+			want:     nil,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := analyzeFile(tc.filename, []byte(tc.src))

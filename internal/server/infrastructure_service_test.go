@@ -198,7 +198,7 @@ func TestInfrastructureService_StartWriteBatcher_PanicOnError(t *testing.T) {
 	}()
 
 	withLogCapture(t, slog.LevelError, func() {
-		infra.StartWriteBatcher(context.Background(), true)
+		infra.StartWriteBatcher(context.Background(), true, config.DefaultDQueMaxDiskBytes)
 	})
 }
 
@@ -772,7 +772,7 @@ func TestInfrastructureService_SubmitCacheWrite_AdapterError(t *testing.T) {
 		return 0, nil
 	}
 	infra.SetupDB(context.Background(), config.DefaultConfig())
-	infra.StartWriteBatcher(context.Background(), true)
+	infra.StartWriteBatcher(context.Background(), true, config.DefaultDQueMaxDiskBytes)
 	if err := infra.writeBatcher.Close(); err != nil {
 		t.Fatalf("close batcher: %v", err)
 	}
@@ -1083,7 +1083,7 @@ func TestInfrastructureService_RealDBLifecycle(t *testing.T) {
 	cfg := config.DefaultConfig()
 
 	infra.SetupDB(context.Background(), cfg)
-	infra.StartWriteBatcher(context.Background(), true)
+	infra.StartWriteBatcher(context.Background(), true, config.DefaultDQueMaxDiskBytes)
 	t.Cleanup(func() { infra.Shutdown() })
 
 	cpc, err := infra.dbRwPool.Get()

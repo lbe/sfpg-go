@@ -193,6 +193,13 @@ type WriteBatcher[T any] struct {
 	dq               dqueQueue[T]
 	dqNotify         chan struct{}
 	dqueDrainEnabled atomic.Bool
+
+	// maxDiskBytes is the current dque disk quota in bytes (0 = unlimited).
+	// It is initialized from Config.MaxDiskBytes in New and can be updated
+	// at runtime via SetMaxDiskBytes (hot reload). Submit and GetStats read
+	// this atomic rather than cfg.MaxDiskBytes so updates take effect without
+	// copying the batcher.
+	maxDiskBytes atomic.Int64
 }
 
 // Stats holds statistics about the WriteBatcher.
@@ -208,6 +215,13 @@ type Stats struct {
 	DQueSize      int           `json:"dque_size"`
 	DiskBytes     int64         `json:"disk_bytes"`
 	MaxDiskBytes  int64         `json:"max_disk_bytes"`
+}
+
+// SetMaxDiskBytes updates the dque disk quota in bytes at runtime (0 = unlimited).
+// The new value takes effect on subsequent Submit calls and is reflected in
+// GetStats. It is safe to call concurrently with Submit.
+func (wb *WriteBatcher[T]) SetMaxDiskBytes(n int64) {
+	wb.maxDiskBytes.Store(n)
 }
 
 // GetStats returns the current statistics of the WriteBatcher.
@@ -232,7 +246,7 @@ func (wb *WriteBatcher[T]) GetStats() Stats {
 		DQueEnabled:   wb.dq != nil,
 		DQueSize:      dqueSize,
 		DiskBytes:     diskBytes,
-		MaxDiskBytes:  wb.cfg.MaxDiskBytes,
+		MaxDiskBytes:  wb.maxDiskBytes.Load(),
 	}
 }
 
@@ -296,6 +310,7 @@ func New[T any](ctx context.Context, cfg Config[T]) (*WriteBatcher[T], error) {
 		ctx:    ctx,
 		cancel: cancel,
 	}
+	wb.maxDiskBytes.Store(cfg.MaxDiskBytes)
 
 	if dq != nil {
 		wb.dq = dq
@@ -775,8 +790,8 @@ func (wb *WriteBatcher[T]) Submit(item T) error {
 	// Overflow path: channel is full. If dque is configured, enqueue there.
 	if wb.dq != nil {
 		// Check disk quota before enqueueing.
-		if wb.cfg.MaxDiskBytes > 0 {
-			if currentBytes := wb.dq.DiskBytes(); currentBytes >= wb.cfg.MaxDiskBytes {
+		if quota := wb.maxDiskBytes.Load(); quota > 0 {
+			if currentBytes := wb.dq.DiskBytes(); currentBytes >= quota {
 				return ErrQuotaExceeded
 			}
 		}

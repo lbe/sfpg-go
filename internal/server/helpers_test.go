@@ -11,6 +11,7 @@ import (
 
 	"github.com/lbe/sfpg-go/internal/getopt"
 	"github.com/lbe/sfpg-go/internal/queue"
+	"github.com/lbe/sfpg-go/internal/server/config"
 	"github.com/lbe/sfpg-go/internal/server/files"
 	"github.com/lbe/sfpg-go/internal/workerpool"
 	"github.com/lbe/sfpg-go/web"
@@ -188,7 +189,7 @@ func CreateApp(t testing.TB, opts ...AppOption) *App {
 	if err := app.reconfigurePoolsFromConfig(); err != nil {
 		t.Fatalf("reconfigure pools: %v", err)
 	}
-	app.StartWriteBatcher(app.RuntimeManager.ctx, true)
+	app.StartWriteBatcher(app.RuntimeManager.ctx, true, config.DefaultDQueMaxDiskBytes)
 
 	// When using an existing root directory, apply config to ensure ETag and other settings
 	if cfg.rootDir != "" {

@@ -309,8 +309,11 @@ services:
     ports:
       - "443:443"
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile
+      # Production template — edit hostname in deploy/Caddyfile first
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile
 ```
+
+Local HTTPS smoke (self-signed, `:8443`) without Docker: see `DEPLOYMENT.md` § Phase 3 smoke checklist (`deploy/Caddyfile.local` + `scripts/caddy-smoke.sh`).
 
 ### Kubernetes
 
@@ -370,6 +373,8 @@ The application creates the following runtime directories alongside the SQLite d
 - **`sfpg.db-dque/`** — a persistent on-disk overflow queue (`dque`) auto-created next to the main database. When the in-memory write channel fills during heavy preload/discovery, pending writes spill here instead of being dropped, and they are recovered automatically on the next startup (crash recovery). Back this directory up together with `DB/` to preserve in-flight pending writes.
 
 No environment variable is needed to enable the overflow queue; its location is derived from the database path.
+
+**Overflow queue disk quota:** Configurable via the config-file key `dque-max-disk-bytes` (config modal: **Write Batcher** fieldset on the Performance tab). Default: 50 GiB (`53687091200` bytes); `0` = unlimited. Changes hot-reload without a restart. There is no `SEPG_*` environment variable for this setting.
 
 ## Logging
 

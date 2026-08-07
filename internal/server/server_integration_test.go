@@ -170,7 +170,7 @@ func TestIntegration_GalleryCache_AnonymousDoesNotReceiveAuthBody(t *testing.T) 
 	}
 	app.ConfigManager.Config.EnableHTTPCache = true
 	app.ConfigManager.ConfigMu.Unlock()
-	app.StartWriteBatcher(app.RuntimeManager.ctx, true)
+	app.StartWriteBatcher(app.RuntimeManager.ctx, true, config.DefaultDQueMaxDiskBytes)
 	app.initializeHTTPCache()
 	if app.cacheMW == nil {
 		t.Fatal("expected cacheMW to be initialized")
@@ -243,7 +243,7 @@ func TestIntegration_HTMLPartialRoutes_CacheHitPreservesContentType(t *testing.T
 	}
 	app.ConfigManager.Config.EnableHTTPCache = true
 	app.ConfigManager.ConfigMu.Unlock()
-	app.StartWriteBatcher(app.RuntimeManager.ctx, true)
+	app.StartWriteBatcher(app.RuntimeManager.ctx, true, config.DefaultDQueMaxDiskBytes)
 	app.initializeHTTPCache()
 	if app.cacheMW == nil {
 		t.Fatal("expected cacheMW to be initialized")

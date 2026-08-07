@@ -237,6 +237,28 @@ func TestLoad_WithService(t *testing.T) {
 	}
 }
 
+// TestLoad_PreservesDQueMaxDiskBytesZero verifies an explicit 0 in the database
+// config survives config.Load: because dque_max_disk_bytes uses zeroNever,
+// MergeDefaults must not reset it to the 50 GiB default (0 = unlimited).
+func TestLoad_PreservesDQueMaxDiskBytesZero(t *testing.T) {
+	service := &fakeService{cfg: func() *Config {
+		cfg := DefaultConfig()
+		cfg.DQueMaxDiskBytes = 0
+		return cfg
+	}()}
+
+	cfg, err := Load(context.Background(), "", service, getopt.Opt{})
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if !service.called {
+		t.Fatal("expected service.Load to be called")
+	}
+	if cfg.DQueMaxDiskBytes != 0 {
+		t.Errorf("DQueMaxDiskBytes = %d, want 0 preserved (0 = unlimited)", cfg.DQueMaxDiskBytes)
+	}
+}
+
 func TestLoadFromYAML_InvalidConfigFile(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

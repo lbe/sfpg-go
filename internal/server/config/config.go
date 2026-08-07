@@ -100,6 +100,13 @@ type Config struct {
 	// Valid: "zstd-1", "gzip-6", "identity". Hot-reloadable.
 	HTTPCacheBodyCodec string
 
+	// DQueMaxDiskBytes is the maximum disk usage in bytes for the write
+	// batcher's dque overflow queue. When the dque directory reaches this
+	// threshold, Submit returns ErrQuotaExceeded instead of overflowing to
+	// disk. 0 means unlimited at runtime. The default is non-zero
+	// (DefaultDQueMaxDiskBytes, 50 GiB). Hot-reloadable without restart.
+	DQueMaxDiskBytes int64
+
 	// Discovery settings (runtime)
 	RunFileDiscovery bool
 
@@ -130,6 +137,10 @@ type Config struct {
 	ExampleValues map[string]string
 }
 
+// DefaultDQueMaxDiskBytes is the default maximum disk usage in bytes for the
+// write batcher's dque overflow queue: 50 GiB.
+const DefaultDQueMaxDiskBytes int64 = 50 << 30
+
 // DefaultConfig returns a Config with all default values.
 func DefaultConfig() *Config {
 	today := time.Now().Format("20060102")
@@ -159,6 +170,7 @@ func DefaultConfig() *Config {
 
 		// Performance
 		EnableHTTPCache:                       true,
+		DQueMaxDiskBytes:                      DefaultDQueMaxDiskBytes,
 		CacheMaxSize:                          500 * 1024 * 1024,   // 500MB
 		CacheMaxTime:                          30 * 24 * time.Hour, // 30 days
 		CacheMaxEntrySize:                     10 * 1024 * 1024,    // 10MB

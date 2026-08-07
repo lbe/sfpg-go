@@ -152,6 +152,15 @@ func int64Field(dbKey, yamlKey string, ptr func(*Config) *int64, parse func(stri
 	}
 }
 
+// int64FieldZeroNever is like int64Field but sets zeroNever so isZero always
+// returns false. This prevents MergeDefaults from clobbering an explicit 0,
+// which is meaningful for fields where 0 is a valid sentinel (e.g. 0 = unlimited).
+func int64FieldZeroNever(dbKey, yamlKey string, ptr func(*Config) *int64, parse func(string) (int64, error), restart bool) field[int64] {
+	f := int64Field(dbKey, yamlKey, ptr, parse, restart)
+	f.zeroNever = true
+	return f
+}
+
 // --- duration fields ---
 
 func durationField(dbKey, yamlKey, friendlyName string, ptr func(*Config) *time.Duration, restart bool) field[time.Duration] {
@@ -399,9 +408,10 @@ func fields() []configField {
 			boolField("enable_cache_preload", "enable-cache-preload", "enable cache preload", func(c *Config) *bool { return &c.EnableCachePreload }, false, true).toConfigField(),
 			boolField("run_file_discovery", "discover", "run file discovery", func(c *Config) *bool { return &c.RunFileDiscovery }, false, true).toConfigField(),
 
-			// --- Int64 fields (2) ---
+			// --- Int64 fields (3) ---
 			int64Field("cache_max_size", "cache-max-size", func(c *Config) *int64 { return &c.CacheMaxSize }, parseInt64NonNeg("cache max size"), true).toConfigField(),
 			int64Field("cache_max_entry_size", "cache-max-entry-size", func(c *Config) *int64 { return &c.CacheMaxEntrySize }, parseInt64NonNeg("cache max entry size"), true).toConfigField(),
+			int64FieldZeroNever("dque_max_disk_bytes", "dque-max-disk-bytes", func(c *Config) *int64 { return &c.DQueMaxDiskBytes }, parseInt64NonNeg("dque max disk bytes"), false).toConfigField(),
 
 			// --- Duration fields (5) ---
 			durationField("cache_max_time", "cache-max-time", "cache max time", func(c *Config) *time.Duration { return &c.CacheMaxTime }, true).toConfigField(),

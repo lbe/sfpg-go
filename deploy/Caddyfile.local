@@ -1,0 +1,30 @@
+# Local Caddy edge for smoke testing (tls internal).
+# Not for production ACME. Production template: deploy/Caddyfile (see DEPLOYMENT.md).
+#
+# Usage:
+#   # Prod-like backend on :8081 (default):
+#   caddy run --config deploy/Caddyfile.local
+#
+#   # Proxy to air on :8083 without starting a second app:
+#   SFPG_BACKEND_PORT=8083 caddy run --config deploy/Caddyfile.local
+#
+# Then: ./scripts/caddy-smoke.sh
+#
+# System package Caddy (Debian) may ship as a systemd unit on :80 — keep that
+# unit disabled for local smoke; this file binds :8443 only.
+{
+	admin off
+	auto_https disable_redirects
+}
+
+https://localhost:8443 {
+	tls internal
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:{$SFPG_BACKEND_PORT:8081} {
+		header_up Host {host}
+		# Sec-Fetch-Site and Origin pass through by default; do not strip
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Forwarded-For {remote}
+	}
+}

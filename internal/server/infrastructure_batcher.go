@@ -20,7 +20,7 @@ import (
 // Write batcher
 // =====================================================================
 
-func (s *InfrastructureService) buildWriteBatcher(ctx context.Context, maxBatchSize int, flushInterval time.Duration, deferDQueDrain bool) (*writebatcher.WriteBatcher[BatchedWrite], error) {
+func (s *InfrastructureService) buildWriteBatcher(ctx context.Context, maxBatchSize int, flushInterval time.Duration, deferDQueDrain bool, dqueMaxDiskBytes int64) (*writebatcher.WriteBatcher[BatchedWrite], error) {
 	var cpcRw *dbconnpool.CpConn
 
 	return writebatcher.New(ctx, writebatcher.Config[BatchedWrite]{
@@ -30,6 +30,7 @@ func (s *InfrastructureService) buildWriteBatcher(ctx context.Context, maxBatchS
 		ChannelSize:         4096,
 		DQueDirPath:         s.dqueDirPath,
 		DQueItemsPerSegment: 250,
+		MaxDiskBytes:        dqueMaxDiskBytes,
 		DeferDQueDrain:      deferDQueDrain,
 		SizeFunc:            func(bw BatchedWrite) int64 { return bw.Size() },
 		BeginTx: func(ctx context.Context) (*sql.Tx, error) {

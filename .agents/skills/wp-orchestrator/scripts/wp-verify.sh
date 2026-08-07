@@ -67,7 +67,7 @@ run_verify() {
     exit 1
   fi
 
-  echo "=== format-check (gofmt + goimports + prettier) ==="
+  echo "=== format-check (gofmt + prettier) ==="
   cd "$wt"
   if [[ -f "$REPO_ROOT/Makefile" ]]; then
     make format-check

@@ -12,6 +12,7 @@ import (
 	"github.com/lbe/sfpg-go/internal/cachelite"
 	"github.com/lbe/sfpg-go/internal/dque"
 	"github.com/lbe/sfpg-go/internal/getopt"
+	"github.com/lbe/sfpg-go/internal/server/config"
 )
 
 const largeDQueSeedCount = 500
@@ -93,7 +94,7 @@ func TestReconfigurePools_LargeDQue_DoesNotBlock(t *testing.T) {
 		t.Fatalf("reconfigurePoolsFromConfig took %v with large dque backlog; want under 5s", elapsed)
 	}
 
-	app.StartWriteBatcher(app.RuntimeManager.ctx, true)
+	app.StartWriteBatcher(app.RuntimeManager.ctx, true, config.DefaultDQueMaxDiskBytes)
 
 	if app.writeBatcher == nil {
 		t.Fatal("writeBatcher nil after reconfigure")
@@ -117,7 +118,7 @@ func TestShutdown_LargeDQue_DoesNotBlock(t *testing.T) {
 	seedDQueBatchedWrites(t, dqueDirForApp(app), largeDQueSeedCount)
 
 	ctx := app.RuntimeManager.ctx
-	wb, err := app.buildWriteBatcher(ctx, 1000, 200*time.Millisecond, true)
+	wb, err := app.buildWriteBatcher(ctx, 1000, 200*time.Millisecond, true, config.DefaultDQueMaxDiskBytes)
 	if err != nil {
 		t.Fatalf("buildWriteBatcher: %v", err)
 	}

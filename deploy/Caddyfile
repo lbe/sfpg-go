@@ -1,0 +1,23 @@
+# Production Caddy edge for sfpg-go.
+# Replace gallery.example.com with your real hostname (ACME TLS).
+# Backend listens on 127.0.0.1:8081 by default.
+#
+# Local smoke (tls internal on :8443): deploy/Caddyfile.local + scripts/caddy-smoke.sh
+# Full notes: DEPLOYMENT.md
+#
+# encode: zstd + gzip only (standard Caddy builds; brotli needs a custom build).
+# Do not strip Sec-Fetch-Site or Origin — required for http.CrossOriginProtection.
+{
+	# email your@example.com
+}
+
+gallery.example.com {
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:8081 {
+		header_up Host {host}
+		# Sec-Fetch-Site and Origin pass through by default; do not strip
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Forwarded-For {remote}
+	}
+}

@@ -50,6 +50,8 @@ test("Test 1: Dashboard layout is consistent across initial load and polled refr
   await expect(page.locator("#wb-errors")).toBeVisible();
   await expect(page.locator("#wb-batch-size")).toBeVisible();
   await expect(page.locator("#wb-dque")).toBeVisible();
+  await expect(page.locator("#wb-dque-disk-usage")).toBeVisible();
+  await expect(page.locator("#wb-dque-disk-quota")).toBeVisible();
 
   // Worker Pool
   await expect(page.getByText("Worker Pool")).toBeVisible();

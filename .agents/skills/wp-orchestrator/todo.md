@@ -42,7 +42,7 @@
        `wp-plan-update.sh` now supports `pending`, `in-progress`, `implemented`, `verified`, `reviewed`, `done`, and `on hold`. PROCESS.md documents both plan statuses and internal checkpoint statuses.
 
 - [x] **O-10 · Extend `wp-verify.sh` to match plan Tier A**  
-       Now WP-type aware: Go WPs run gofmt/goimports/golangci-lint/build/targeted tests/integration + grep; template WPs run prettier and `make validate-templates`/`make validate-hyperscript`; doc-only WPs skip integration.
+       Now WP-type aware: Go WPs run gofmt/scripts/format-go-changed.sh, golangci-lint (goimports formatter), build/targeted tests/integration + grep; template WPs run prettier and `make validate-templates`/`make validate-hyperscript`; doc-only WPs skip integration.
 
 - [x] **O-11 · Machine-parseable review gate**  
        Added `scripts/wp-review-parse.sh` which exits 0 only on exact `REVIEW: PASS`. Orchestrator must not call `wp-plan-update.sh done` unless parse passes.

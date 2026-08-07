@@ -99,7 +99,8 @@
                              'login_rate_limit_per_ip', 'lockout_threshold', 'lockout_duration',
                              'enable_http_cache', 'enable_cache_preload', 'http_cache_body_codec', 'cache_max_size', 'cache_max_entry_size', 'cache_max_time', 'cache_cleanup_interval',
                              'db_max_pool_size', 'db_min_idle_connections', 'db_optimize_interval', 'db_pool_monitor_interval',
-                             'worker_pool_max', 'worker_pool_min_idle', 'worker_pool_max_idle_time', 'queue_size',
+                             'worker_pool_max', 'worker_pool_min_idle', 'worker_pool_max_idle_time',
+                             'dque_max_disk_bytes', 'queue_size',
                              'run_file_discovery']
         set form to #config-form
         if form and window.configOriginalValues
@@ -169,7 +170,7 @@
       if badge exists
         if badge.textContent == 'Restart Required' and badge does not match .hidden and badge does not match .restart-modal-shown
           wait 100ms
-          set configFields to ['listener_address', 'listener_port', 'log_directory', 'log_level', 'log_rollover', 'log_retention_count', 'site_name', 'image_directory', 'current_theme', 'session_max_age', 'session_http_only', 'session_secure', 'session_same_site', 'login_rate_limit_per_ip', 'lockout_threshold', 'lockout_duration', 'enable_http_cache', 'enable_cache_preload', 'http_cache_body_codec', 'cache_max_size', 'cache_max_entry_size', 'cache_max_time', 'cache_cleanup_interval', 'db_max_pool_size', 'db_min_idle_connections', 'db_optimize_interval', 'db_pool_monitor_interval', 'worker_pool_max', 'worker_pool_min_idle', 'worker_pool_max_idle_time', 'queue_size', 'run_file_discovery']
+          set configFields to ['listener_address', 'listener_port', 'log_directory', 'log_level', 'log_rollover', 'log_retention_count', 'site_name', 'image_directory', 'current_theme', 'session_max_age', 'session_http_only', 'session_secure', 'session_same_site', 'login_rate_limit_per_ip', 'lockout_threshold', 'lockout_duration', 'enable_http_cache', 'enable_cache_preload', 'http_cache_body_codec', 'cache_max_size', 'cache_max_entry_size', 'cache_max_time', 'cache_cleanup_interval', 'db_max_pool_size', 'db_min_idle_connections', 'db_optimize_interval', 'db_pool_monitor_interval', 'worker_pool_max', 'worker_pool_min_idle', 'worker_pool_max_idle_time', 'dque_max_disk_bytes', 'queue_size', 'run_file_discovery']
           call buildConfigDiff(configFields, #restart-diff-content, true)
           wait 200ms
           set #restart-diff-modal.checked to true

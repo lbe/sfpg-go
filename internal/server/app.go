@@ -291,4 +291,14 @@ func (app *App) ApplyConfig() {
 	optimizeInterval := app.ConfigManager.Config.DBOptimizeInterval
 	app.ConfigManager.ConfigMu.RUnlock()
 	app.setDBOptimizeInterval(optimizeInterval)
+
+	// Hot-reload the dque disk quota (no restart required). Lowering the quota
+	// below the current dque directory size blocks new overflow enqueues only;
+	// it does not truncate existing dque data.
+	app.ConfigManager.ConfigMu.RLock()
+	dqueMaxDiskBytes := app.ConfigManager.Config.DQueMaxDiskBytes
+	app.ConfigManager.ConfigMu.RUnlock()
+	if app.writeBatcher != nil {
+		app.writeBatcher.SetMaxDiskBytes(dqueMaxDiskBytes)
+	}
 }

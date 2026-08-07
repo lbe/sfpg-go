@@ -182,7 +182,16 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 		}
 	}
 
-	app.StartWriteBatcher(app.RuntimeManager.ctx, true)
+	// Read the configured dque disk quota before StartWriteBatcher; ApplyConfig
+	// below handles hot-reloads after save, not first boot.
+	app.ConfigManager.ConfigMu.RLock()
+	dqueMaxDiskBytes := config.DefaultDQueMaxDiskBytes
+	if app.ConfigManager.Config != nil {
+		dqueMaxDiskBytes = app.ConfigManager.Config.DQueMaxDiskBytes
+	}
+	app.ConfigManager.ConfigMu.RUnlock()
+
+	app.StartWriteBatcher(app.RuntimeManager.ctx, true, dqueMaxDiskBytes)
 	app.startStartupPragmaOptimize()
 
 	// Apply config to app fields

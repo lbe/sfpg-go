@@ -57,6 +57,10 @@ type WriteBatcherStats struct {
 	DQueSize string
 	// OverflowCount is the total number of items that overflowed to dque.
 	OverflowCount string
+	// DiskUsageBytes is the current dque disk usage (e.g., "1.0 MiB").
+	DiskUsageBytes string
+	// DiskQuotaBytes is the maximum dque disk usage, or "Unlimited" when the quota is 0.
+	DiskQuotaBytes string
 }
 
 // WorkerPoolStats contains worker pool statistics.
@@ -252,6 +256,8 @@ func extractWriteBatcherStats(container *html.Node, m *DashboardMetrics) {
 	m.WriteBatcher.BatchSize = extractTextByID(container, "wb-batch-size")
 	m.WriteBatcher.DQueSize = extractTextByID(container, "wb-dque-size")
 	m.WriteBatcher.OverflowCount = extractTextByID(container, "wb-dque-overflow")
+	m.WriteBatcher.DiskUsageBytes = extractTextByID(container, "wb-dque-disk-usage")
+	m.WriteBatcher.DiskQuotaBytes = extractTextByID(container, "wb-dque-disk-quota")
 
 	// Extract dque status from wb-dque "of X"
 	descEl := testutil.FindElementByID(container, "wb-channel-size-desc")

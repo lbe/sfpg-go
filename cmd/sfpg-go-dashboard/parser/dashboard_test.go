@@ -79,6 +79,14 @@ func TestParseDashboard(t *testing.T) {
 			<span id="wb-dque-overflow">5</span> overflowed
 		</div>
 	</div>
+	<div>
+		<div class="stat-title">DQue Disk Usage</div>
+		<div id="wb-dque-disk-usage" class="stat-value">1.0 MiB</div>
+	</div>
+	<div>
+		<div class="stat-title">DQue Disk Quota</div>
+		<div id="wb-dque-disk-quota" class="stat-value">50.0 GiB</div>
+	</div>
 	<!-- Worker Pool Stats -->
 	<div>
 		<div class="stat-title">Running Workers</div>
@@ -244,6 +252,12 @@ func TestParseDashboard(t *testing.T) {
 	if metrics.WriteBatcher.OverflowCount != "5" {
 		t.Errorf("WriteBatcher.OverflowCount = %q, want %q", metrics.WriteBatcher.OverflowCount, "5")
 	}
+	if metrics.WriteBatcher.DiskUsageBytes != "1.0 MiB" {
+		t.Errorf("WriteBatcher.DiskUsageBytes = %q, want %q", metrics.WriteBatcher.DiskUsageBytes, "1.0 MiB")
+	}
+	if metrics.WriteBatcher.DiskQuotaBytes != "50.0 GiB" {
+		t.Errorf("WriteBatcher.DiskQuotaBytes = %q, want %q", metrics.WriteBatcher.DiskQuotaBytes, "50.0 GiB")
+	}
 
 	// Verify worker pool
 	if metrics.WorkerPool.RunningWorkers != "1" {
@@ -381,14 +395,8 @@ func TestParseProgressWithWhitespace(t *testing.T) {
 		t.Fatalf("ParseDashboard failed: %v", err)
 	}
 
-	// Progress should be normalized to "0/0" without extra whitespace
+	// Progress should be normalized to "0/0" without extra whitespace.
 	progress := metrics.CacheBatchLoad.Progress
-	if strings.Contains(progress, "\n") {
-		t.Errorf("Progress contains newline: %q", progress)
-	}
-	if strings.Contains(progress, "  ") {
-		t.Errorf("Progress contains double spaces: %q", progress)
-	}
 	if progress != "0/0" {
 		t.Errorf("Progress = %q, want %q", progress, "0/0")
 	}

@@ -501,6 +501,33 @@ func TestValidateSetting_Comprehensive(t *testing.T) {
 			wantErr: true,
 			errMsg:  "cache max entry size must be non-negative",
 		},
+		// dque_max_disk_bytes validation
+		{
+			name:    "valid dque max disk bytes",
+			key:     "dque_max_disk_bytes",
+			value:   "53687091200",
+			wantErr: false,
+		},
+		{
+			name:    "dque max disk bytes zero",
+			key:     "dque_max_disk_bytes",
+			value:   "0",
+			wantErr: false,
+		},
+		{
+			name:    "dque max disk bytes negative",
+			key:     "dque_max_disk_bytes",
+			value:   "-1",
+			wantErr: true,
+			errMsg:  "dque max disk bytes must be non-negative",
+		},
+		{
+			name:    "dque max disk bytes invalid format",
+			key:     "dque_max_disk_bytes",
+			value:   "not-a-number",
+			wantErr: true,
+			errMsg:  "invalid dque max disk bytes",
+		},
 		// db_max_pool_size validation
 		{
 			name:    "valid db max pool size",
@@ -763,6 +790,10 @@ func TestSetValueFromString_Comprehensive(t *testing.T) {
 		{"cache_max_size_invalid", "cache_max_size", "not-a-number", true, "invalid cache max size", nil},
 		{"cache_max_entry_size", "cache_max_entry_size", "10485760", false, "", func(c *Config) bool { return c.CacheMaxEntrySize == 10485760 }},
 		{"cache_max_entry_size_invalid", "cache_max_entry_size", "not-a-number", true, "invalid cache max entry size", nil},
+		{"dque_max_disk_bytes", "dque_max_disk_bytes", "1073741824", false, "", func(c *Config) bool { return c.DQueMaxDiskBytes == 1073741824 }},
+		{"dque_max_disk_bytes_zero", "dque_max_disk_bytes", "0", false, "", func(c *Config) bool { return c.DQueMaxDiskBytes == 0 }},
+		{"dque_max_disk_bytes_invalid", "dque_max_disk_bytes", "not-a-number", true, "invalid dque max disk bytes", nil},
+		{"dque_max_disk_bytes_negative", "dque_max_disk_bytes", "-1", true, "dque max disk bytes must be non-negative", nil},
 		// Duration fields
 		{"cache_max_time", "cache_max_time", "720h", false, "", func(c *Config) bool { return c.CacheMaxTime == 720*time.Hour }},
 		{"cache_max_time_invalid", "cache_max_time", "not-a-duration", true, "invalid cache max time", nil},

@@ -329,3 +329,68 @@ func TestConfigModal_SaveLoginSecurityFields(t *testing.T) {
 		}
 	})
 }
+
+// TestConfigModal_SaveDQueMaxDiskBytes verifies the full config modal save
+// flow for the write-batcher dque quota field: change, save, re-fetch,
+// restore.
+func TestConfigModal_SaveDQueMaxDiskBytes(t *testing.T) {
+	client := newClient()
+	login(t, client)
+
+	originalValues, err := parseConfigForm(t, client)
+	if err != nil {
+		t.Fatalf("failed to parse config form: %v", err)
+	}
+
+	origDQueMaxDiskBytes := originalValues.Get("dque_max_disk_bytes")
+
+	// Build the submission from the full original form so checkboxes are not
+	// accidentally toggled; override only the dque quota field.
+	submission := cloneValues(originalValues)
+	submission.Set("dque_max_disk_bytes", "1073741824")
+	for _, key := range []string{"admin_current_password", "admin_new_password", "admin_confirm_password", "yaml"} {
+		submission.Del(key)
+	}
+	resp := doRequest(t, client, http.MethodPost, "/config", submission, false)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("POST /config: expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+	if resp.Header.Get("HX-Trigger") != "config-saved" {
+		t.Fatalf("expected HX-Trigger: config-saved, got %q", resp.Header.Get("HX-Trigger"))
+	}
+
+	// Re-fetch the config form and verify the new value persisted.
+	t.Run("dque-max-disk-persisted", func(t *testing.T) {
+		values, err := parseConfigForm(t, client)
+		if err != nil {
+			t.Fatalf("failed to re-parse config form: %v", err)
+		}
+		if got := values.Get("dque_max_disk_bytes"); got != "1073741824" {
+			t.Errorf("after save: dque_max_disk_bytes = %q, want %q", got, "1073741824")
+		}
+	})
+
+	// Restore the original value (mirrors the restore subtest of the login
+	// security fields test).
+	t.Run("dque-max-disk-restore", func(t *testing.T) {
+		restoreValues, err := parseConfigForm(t, client)
+		if err != nil {
+			t.Fatalf("failed to parse config form for restore: %v", err)
+		}
+		restoreValues = cloneValues(restoreValues)
+		restoreValues.Set("dque_max_disk_bytes", origDQueMaxDiskBytes)
+		for _, key := range []string{"admin_current_password", "admin_new_password", "admin_confirm_password", "yaml"} {
+			restoreValues.Del(key)
+		}
+
+		resp := doRequest(t, client, http.MethodPost, "/config", restoreValues, false)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			t.Fatalf("restore POST /config: expected 200, got %d: %s", resp.StatusCode, string(body))
+		}
+	})
+}

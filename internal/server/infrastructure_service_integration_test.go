@@ -31,7 +31,7 @@ func newIntegratedService(t *testing.T, ctx context.Context, cfg *config.Config)
 	infra.rootDir = rootDir
 	infra.SetupDB(ctx, cfg)
 	infra.CalibrateCacheSizeNow(ctx)
-	infra.StartWriteBatcher(ctx, true)
+	infra.StartWriteBatcher(ctx, true, config.DefaultDQueMaxDiskBytes)
 	return infra
 }
 

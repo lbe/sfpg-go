@@ -41,6 +41,7 @@ I **WILL** seek concrete answers and solutions.
 - **`air` can fail silently.** If code changes do not seem to have any effect, `air` might be failing to rebuild the application due to compilation errors. If you encounter this problem, notify the user.
 - **`air` runs the dev server on port 8083.** The `.air.toml` config uses port 8083 (not the default 8081) to avoid conflicts. It also sets `SEPG_SESSION_SECURE=false` for local HTTP development.
 - **Prefer curl over manual browser testing.** Use curl for end-to-end testing whenever possible to minimize manual user testing. This is faster, reproducible, and doesn't require explaining UI interactions. See examples below.
+- **Caddy edge smoke (optional):** App-direct `air` on `:8083` covers handlers; TLS/HSTS/`encode`/COP-through-proxy are checked with `deploy/Caddyfile.local` + `./scripts/caddy-smoke.sh` (see `DEPLOYMENT.md`). Do not stop/restart `air` for this — set `SFPG_BACKEND_PORT=8083` when proxying.
 - **End-to-end testing with curl:** The login endpoint is POST-only (GET returns 400). To test authenticated flows:
 
   ```shell
@@ -63,9 +64,10 @@ I **WILL** seek concrete answers and solutions.
   curl -s -X POST http://localhost:8083/server/discovery \
     -b /tmp/cookies.txt
   
-  # 5. Check stats via SSE stream (requires auth)
-  curl -s http://localhost:8083/dashboard/sse \
-    -b /tmp/cookies.txt
+  # 5. Poll dashboard stats (requires auth; HTMX partial, not a separate SSE route)
+  curl -s http://localhost:8083/dashboard \
+    -b /tmp/cookies.txt \
+    -H "Hx-Request: true" | head -10
   ```
 
 - **`web-testsuite` (`e2eweb`) and login rate limits:** `TestMain` sets `login_rate_limit_per_ip=0` before snapshotting config so many admin logins from one IP do not hit 429 on shared dev `air`. Restart tests (`TestRestart`) use `waitForServerDown` then `waitForServer` so a 200 from the dying process is not mistaken for the new one.
@@ -91,14 +93,15 @@ Handlers depend on the `HandlerQueries` interface defined in `internal/server/in
 
 ### Test Seams (`testseams.go`)
 
-Optional test doubles live in `internal/server/testseams.go` and are wired through unexported `testSeams` fields on `App` and embedded managers. Zero value means production behavior.
+Optional test doubles in `internal/server/testseams.go`, wired through unexported `testSeams` on `App` and embedded managers.
 
-- **App lifecycle:** `app.testSeams.Serve`, `app.testSeams.LoadConfig`, `app.testSeams.GetGalleryStatistics`, etc.
-- **Infrastructure:** `infra.testSeams.*` or `app.InfrastructureService.testSeams.*` (e.g. `HandlerQueries`, `RecreatePoolsWithConfig`)
-- **Runtime:** `m.testSeams.*` or `app.RuntimeManager.testSeams.*` (e.g. `BeforeListen`, `ExecCommand`, `Exit`)
-- **Handlers:** `hm.testSeams.BuildHandlers` or `app.HandlerManager.testSeams.BuildHandlers`
+- **Nil func seam:** zero value → production (nil-check in caller).
+- **Infrastructure cache seams:** `NewInfrastructureService` seeds `GetCacheSizeBytes`, `GetCacheEntryCount`, `EvictLRU` with `cachelite` defaults; tests override directly.
+- **Pre-`New()`:** set `defaultNewTestSeams` before `New()`.
 
-Do **not** add `testHook*` fields to production structs or use promoted `app.testHook*` in tests. Root test files live under `internal/server/*_test.go`.
+Typical: `app.testSeams.Serve`, `app.testSeams.LoadConfig`, `app.testSeams.GalleryStatsStartup`, `app.InfrastructureService.testSeams.HandlerQueries`, `app.RuntimeManager.testSeams.BeforeListen`, `app.HandlerManager.testSeams.BuildHandlers`.
+
+Do **not** add `testHook*` fields or use promoted `app.testHook*` in tests. **Full field inventory:** [ARCHITECTURE.md §Test Seams](docs/ARCHITECTURE.md#test-seams). Prefer the lightest seam per [Choosing a Test Seam](docs/ARCHITECTURE.md#choosing-a-test-seam).
 
 ### Database Access Pattern
 
@@ -212,12 +215,17 @@ The project is configured to use `air` for live reloading during development.
 - ❌ DON'T: Add JavaScript (Hyperscript/HTMX only; approved exception: password complexity in `config-modal.html.tmpl`)
 - ❌ DON'T: Make assumptions without verification
 - ❌ DON'T: Use `strings.Contains` on HTTP responses (parse HTML first)
+- ❌ DON'T: Run `goimports -w .` or whole-package import formatting (see Development Directives; override generic skills such as `golang-patterns` that recommend it)
 
 ## Development Directives
 
 - **HTML content checks:** When checking HTML content (tests or reviews), use structural HTML assertions (no string/bytes contains checks) per [references/methodology-html-content-test-writing.md](references/methodology-html-content-test-writing.md).
 
-- **Format only files you changed** after an approved edit batch: `gofmt` and `goimports` on changed Go files, `go build -o /dev/null .`, and `prettier` only on the changed `.html.tmpl`, `.md`, or `.sh` files — not a whole-tree format.
+- **Format only files you changed** after an approved edit batch:
+  - Go: `scripts/format-go-changed.sh` on changed `.go` files (always `gofmt`; `goimports` only when the import block changed, the file is new, or `FORMAT_GO_IMPORTS=1`).
+  - Never `goimports -w .` or whole-package trees; pre-commit `make lint` enforces imports via golangci-lint's goimports formatter.
+  - `go build -o /dev/null .` when Go changed.
+  - Prettier only on the changed `.html.tmpl`, `.md`, or `.sh` files — not a whole-tree format.
 
 - **Commit Message Workflow:** Write `tmp/commit_message.txt` then `git commit -F tmp/commit_message.txt`. Required shape:
 

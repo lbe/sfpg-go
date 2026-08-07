@@ -35,6 +35,7 @@ func TestGoldenBaseline(t *testing.T) {
 		CacheMaxSize:                          9999999999,
 		CacheMaxTime:                          42 * time.Minute,
 		CacheMaxEntrySize:                     8888888888,
+		DQueMaxDiskBytes:                      7777777777,
 		CacheCleanupInterval:                  7 * time.Minute,
 		DBMaxPoolSize:                         77,
 		DBMinIdleConnections:                  11,
@@ -78,6 +79,7 @@ func TestGoldenBaseline(t *testing.T) {
 		CacheMaxSize:                          1111111111,
 		CacheMaxTime:                          10 * time.Minute,
 		CacheMaxEntrySize:                     2222222222,
+		DQueMaxDiskBytes:                      6666666666,
 		CacheCleanupInterval:                  3 * time.Minute,
 		DBMaxPoolSize:                         33,
 		DBMinIdleConnections:                  7,
@@ -119,6 +121,7 @@ func TestGoldenBaseline(t *testing.T) {
 			"cache_max_size":            "9999999999",
 			"cache_max_time":            "42m0s",
 			"cache_max_entry_size":      "8888888888",
+			"dque_max_disk_bytes":       "7777777777",
 			"cache_cleanup_interval":    "7m0s",
 			"db_max_pool_size":          "77",
 			"db_min_idle_connections":   "11",
@@ -184,6 +187,7 @@ func TestGoldenBaseline(t *testing.T) {
 			"cache-max-size":            9999999999,
 			"cache-max-time":            "42m0s",
 			"cache-max-entry-size":      8888888888,
+			"dque-max-disk-bytes":       7777777777,
 			"cache-cleanup-interval":    "7m0s",
 			"db-max-pool-size":          77,
 			"db-min-idle-connections":   11,
@@ -229,7 +233,7 @@ func TestGoldenBaseline(t *testing.T) {
 			"cache-max-time", "current-theme",
 			"db-max-pool-size", "db-min-idle-connections", "db-optimize-interval",
 			"db-pool-monitor-interval", "discover", "enable-cache-preload",
-			"discovery-queue-max",
+			"discovery-queue-max", "dque-max-disk-bytes",
 			"etag-version",
 			"http-cache", "image-directory", "listener-address", "listener-port",
 			"log-directory", "log-level", "log-retention-count", "log-rollover",
@@ -381,6 +385,13 @@ func TestGoldenBaseline(t *testing.T) {
 		if zeroConfig.DiscoveryQueueMax != 0 {
 			t.Errorf("DiscoveryQueueMax = %d, want 0", zeroConfig.DiscoveryQueueMax)
 		}
+		// DQueMaxDiskBytes uses zeroNever: explicit 0 (= unlimited) must survive
+		// MergeDefaults. New installs still get 50 GiB via DefaultConfig() at load
+		// time (config.Load starts from DefaultConfig before overlay), not by
+		// MergeDefaults overwriting an explicit 0.
+		if zeroConfig.DQueMaxDiskBytes != 0 {
+			t.Errorf("DQueMaxDiskBytes = %d, want 0 preserved by MergeDefaults (zeroNever, 0 = unlimited)", zeroConfig.DQueMaxDiskBytes)
+		}
 	})
 
 	t.Run("RecoverFromCorruption", func(t *testing.T) {
@@ -496,6 +507,9 @@ func TestGoldenBaseline(t *testing.T) {
 		}
 		if zeroConfig.DiscoveryQueueMax != def.DiscoveryQueueMax {
 			t.Errorf("DiscoveryQueueMax = %d, want %d", zeroConfig.DiscoveryQueueMax, def.DiscoveryQueueMax)
+		}
+		if zeroConfig.DQueMaxDiskBytes != def.DQueMaxDiskBytes {
+			t.Errorf("DQueMaxDiskBytes = %d, want %d (recovered from defaults)", zeroConfig.DQueMaxDiskBytes, def.DQueMaxDiskBytes)
 		}
 	})
 }
