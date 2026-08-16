@@ -7,6 +7,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -56,6 +57,21 @@ func TestConfigHandlers_ImportCommit_Success(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", w.Code)
+	}
+	body := w.Body.String()
+	doc, err := testutil.ParseHTML(strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("parse HTML: %v", err)
+	}
+	success := testutil.FindElementByID(doc, "config-success-message")
+	if success == nil {
+		t.Fatal("missing #config-success-message in import success response")
+	}
+	if got := testutil.GetAttr(success, "hx-swap-oob"); got != "" {
+		t.Errorf("expected #config-success-message to be the main swap (no hx-swap-oob), got %q", got)
+	}
+	if err := ui.ValidateHTMXResponseStructure(body, "outerHTML", "config-success-message"); err != nil {
+		t.Errorf("ValidateHTMXResponseStructure: %v", err)
 	}
 	// UpdateConfigWithPrecedence handled by deps
 	// ApplyConfig handled by deps
@@ -410,7 +426,8 @@ func TestConfigHandlers_ImportCommit_RestartRequired(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d: %s", w.Code, w.Body.String())
 	}
-	doc, err := testutil.ParseHTML(w.Body)
+	body := w.Body.String()
+	doc, err := testutil.ParseHTML(strings.NewReader(body))
 	if err != nil {
 		t.Fatalf("parse HTML: %v", err)
 	}
@@ -421,8 +438,8 @@ func TestConfigHandlers_ImportCommit_RestartRequired(t *testing.T) {
 	if success == nil {
 		t.Fatal("missing #config-success-message in restart-required import response")
 	}
-	if got := testutil.GetAttr(success, "hx-swap-oob"); got != "outerHTML" {
-		t.Errorf("expected #config-success-message hx-swap-oob=outerHTML, got %q", got)
+	if got := testutil.GetAttr(success, "hx-swap-oob"); got != "" {
+		t.Errorf("expected #config-success-message to be the main swap (no hx-swap-oob), got %q", got)
 	}
 	successText := testutil.FindElementByTag(success, "span")
 	if successText == nil {
@@ -430,6 +447,19 @@ func TestConfigHandlers_ImportCommit_RestartRequired(t *testing.T) {
 	}
 	if got := testutil.GetTextContent(successText); got != "Settings saved. Server restart required for changes to take effect." {
 		t.Errorf("unexpected restart-required message: %q", got)
+	}
+	restartBadge := testutil.FindElementByID(doc, "config-restart-badge")
+	if restartBadge == nil {
+		t.Fatal("missing #config-restart-badge")
+	}
+	if got := testutil.GetAttr(restartBadge, "hx-swap-oob"); got != "outerHTML" {
+		t.Errorf("expected restart badge to use OOB outerHTML swap, got %q", got)
+	}
+	if classes := strings.Fields(testutil.GetAttr(restartBadge, "class")); slices.Contains(classes, "hidden") {
+		t.Errorf("restart badge must not contain class hidden, got %q", testutil.GetAttr(restartBadge, "class"))
+	}
+	if err := ui.ValidateHTMXResponseStructure(body, "outerHTML", "config-success-message"); err != nil {
+		t.Errorf("ValidateHTMXResponseStructure: %v", err)
 	}
 }
 

@@ -16,14 +16,14 @@ On top of the production `draw.ApproxBiLinear` gallery thumb (branch
 
 1. **Pools the thumb destination** — the gallery thumb is scaled into a pooled
    `*image.RGBA` canvas (`thumbRGBAPool`,
-   `internal/thumbnail/thumbnail.go:93`); only the `fitInsideBox(200, 150)`
+   `internal/thumbnail/thumbnail.go:97`); only the `fitInsideBox(200, 150)`
    sub-rectangle of the canvas is used, and the canvas is returned to the pool
    after the thumbnail pipeline completes.
 2. **Pools the pHash destination** — the 64×64 pHash canvas (`phashRGBAPool`,
-   `thumbnail.go:108`) is pooled and returned to the pool after hashing.
+   `thumbnail.go:112`) is pooled and returned to the pool after hashing.
 3. **pHash now comes from the gallery thumb** — `GenerateThumbnailAndHashes`
    squashes the in-memory gallery thumb (before JPEG encode) to 64×64 with
-   `draw.ApproxBiLinear` (`acquirePHashRGBA`, `thumbnail.go:143`) instead of
+   `draw.ApproxBiLinear` (`acquirePHashRGBA`, `thumbnail.go:146`) instead of
    nfnt `resize.Resize(64, 64, srcImg, resize.Bilinear)` over the decoded
    source.
 4. **nfnt removed from production** — `internal/thumbnail/thumbnail.go` has zero
@@ -33,29 +33,36 @@ On top of the production `draw.ApproxBiLinear` gallery thumb (branch
 ## Behavior
 
 Current production `GenerateThumbnailAndHashes`
-(`internal/thumbnail/thumbnail.go:211`):
+(`internal/thumbnail/thumbnail.go:247`):
 
-1. **EXIF fast path unchanged:** the embedded thumbnail is extracted and decoded
-   when present (`extractEXIFThumbnailHook`, `thumbnail.go:216-223`); otherwise
-   full decode of the file (`thumbnail.go:225-231`).
-2. **Thumb:** `acquireGalleryThumb(srcImg)` (`thumbnail.go:130`) gets a pooled
-   200×150 RGBA canvas, computes `fitInsideBox(200, 150)` (`thumbnail.go:135`),
+1. **Source decode:** seek to the start, then `fullImageDecodeHook(r, srcW, srcH)`
+   (`thumbnail.go:253`) — the single decode path (there is no embedded-EXIF-
+   thumbnail shortcut): JPEG via go-scaled-jpeg at an adaptive DCT scale
+   (`decodeFullImage`, `scaled_jpeg_decode.go:48`; `srcW`/`srcH` are the
+   caller-supplied source dims from `image.DecodeConfig`), non-JPEG via
+   `image.Decode`; JPEG errors hard-fail (no stdlib `jpeg.Decode` fallback).
+2. **Thumb:** `acquireGalleryThumb(srcImg)` (`thumbnail.go:225`) gets a pooled
+   200×150 RGBA canvas, computes `fitInsideBox(200, 150)` (`thumbnail.go:138`),
    scales the resulting sub-rectangle with `draw.ApproxBiLinear.Scale`
-   (`thumbnail.go:137`), and returns a release func that puts the full canvas
-   back into `thumbRGBAPool` (`thumbnail.go:138`); the release is deferred at
-   the call site (`thumbnail.go:238`).
-3. **JPEG encode** of the thumb (`thumbnail.go:242-247`).
-4. **MD5** over the full file bytes, unchanged (`thumbnail.go:249-263`).
-5. **pHash:** `acquirePHashRGBA(thumbImg)` (`thumbnail.go:143`) scales the
+   (`thumbnail.go:140`), and returns a release func that puts the full canvas
+   back into `thumbRGBAPool` (`thumbnail.go:141`); the release is deferred at
+   the call site (`thumbnail.go:226`).
+3. **JPEG encode** of the thumb (`thumbnail.go:231`).
+4. **MD5** over the full file bytes, unchanged (`thumbnail.go:237-248`).
+5. **pHash:** `acquirePHashRGBA(thumbImg)` (`thumbnail.go:256`) scales the
    **gallery thumb** to 64×64 with `draw.ApproxBiLinear` into a pooled canvas
-   (`thumbnail.go:268`), then `imagehash.NewPHash64` hashes that canvas
-   (`thumbnail.go:271`); the canvas is returned to `phashRGBAPool` via deferred
+   (`thumbnail.go:148`), then `imagehash.NewPHash64` hashes that canvas
+   (`thumbnail.go:259`); the canvas is returned to `phashRGBAPool` via deferred
    release.
 
 ## Non-goals (explicitly unchanged / out of scope)
 
-- **EXIF thumbnail extraction stays ON** — unchanged.
-- **200×150 fit geometry unchanged** — same `fitInsideBox(200, 150)` math.
+- **200×150 fit geometry math unchanged** — same `fitInsideBox(200, 150)` math.
+  **Output geometry can still change for new JPEG thumbs:** the
+  full-image JPEG decode now runs at an adaptive DCT scale via go-scaled-jpeg
+  (e.g. 400×300 → dct 4 → decodes to 200×150 → fits as **200×150**, instead of
+  the old fixed 1/8 50×37 → **200×148**); existing `thumbs.db` / pHash rows are
+  unchanged until rediscovery.
 - **pHash size unchanged** — still an exact 64×64 aspect-distorting squash; only
   the input (gallery thumb) and filter (`draw.ApproxBiLinear`) changed.
 - **MD5 input unchanged** — still over the full file bytes.
@@ -73,6 +80,6 @@ pHash now derives from the (already downscaled) gallery thumb rather than the
 full decoded source — both change the produced thumbnails and hashes. **Visual
 QC on the Dev Server is recommended before this follow-up is treated as
 accepted**: eyeball gallery thumbnails (small/medium/large source images,
-portrait and landscape, upscaled embedded EXIF thumbs) for acceptable sharpness
+portrait and landscape) for acceptable sharpness
 and artifacts, and compare against a Lanczos3 reference if desired. Until that
 QC sign-off, treat this as a performance change under review.

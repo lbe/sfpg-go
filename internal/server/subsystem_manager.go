@@ -5,6 +5,8 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"os"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -35,7 +37,7 @@ type preloadManager interface {
 // SubsystemManager owns background processing subsystems.
 type SubsystemManager struct {
 	pool               *workerpool.Pool
-	q                  *queue.Queue[string]
+	q                  queue.Queuer[string]
 	qSendersActive     atomic.Int64
 	fileProcessor      files.FileProcessor
 	processingStats    *files.ProcessingStats
@@ -72,18 +74,31 @@ func (m *SubsystemManager) Start(
 	// Module state service
 	m.moduleStateService = modulestate.NewService(m.infra.DBRwPool())
 
-	// Queue
-	queueSize := 10000
-	discoveryQueueMax := 0
-	if cfg != nil {
-		queueSize = cfg.QueueSize
-		discoveryQueueMax = cfg.DiscoveryQueueMax
+	// Discovery backlog queue: a dedicated disk-backed dque, wiped on every
+	// start (a full re-walk is the recovery). cfg.DiscoveryQueueMax is a no-op
+	// here — the backlog is never bounded in-memory.
+	//
+	// Start is once-per-process for the discovery dque: if a queue is already
+	// open, close it before wiping its directory so the flock is released.
+	if m.q != nil {
+		m.q.Close()
+		m.q = nil
 	}
-	if discoveryQueueMax > 0 {
-		m.q = queue.NewBoundedQueue[string](queueSize, discoveryQueueMax)
-	} else {
-		m.q = queue.NewQueue[string](queueSize)
+	discoveryDQueDir := strings.TrimSpace(m.infra.discoveryDQueDirPath)
+	if discoveryDQueDir == "" {
+		slog.Error("discovery dque: discoveryDQueDirPath is empty or whitespace-only; cannot open discovery backlog")
+		panic("main")
 	}
+	if err := os.RemoveAll(discoveryDQueDir); err != nil {
+		slog.Error("discovery dque: failed to wipe queue directory", "path", discoveryDQueDir, "err", err)
+		panic("main")
+	}
+	discoveryQ, err := newDiscoveryDQueAdapter(discoveryDQueDir)
+	if err != nil {
+		slog.Error("discovery dque: failed to open discovery backlog", "path", discoveryDQueDir, "err", err)
+		panic("main")
+	}
+	m.q = discoveryQ
 
 	// File processor (tests may inject a fake via m.fileProcessor)
 	if m.fileProcessor == nil {
@@ -124,7 +139,8 @@ func (m *SubsystemManager) Start(
 	})
 
 	// Worker pool: App.Run parameters are the base defaults; config overrides
-	// only when explicitly positive (> 0). 0/0 means auto-calculate based on CPU.
+	// only when explicitly positive (> 0). Min idle 0 means no idle workers;
+	// max 0 still auto-sizes from CPU cores.
 	maxWorkers := maxPoolWorkers
 	minIdle := minPoolWorkers
 	if cfg != nil {
@@ -155,13 +171,23 @@ func (m *SubsystemManager) StartPool(ctx context.Context, poolDone chan struct{}
 	}()
 }
 
-// Shutdown stops preload and file-processing subsystems.
+// Shutdown stops preload and file-processing subsystems and releases the
+// discovery dque flock.
+//
+// App.Shutdown orders cancel → poolDone → Shutdown, so production workers have
+// already exited before the queue is closed; Close is for flock release, not a
+// worker signal. SubsystemManager.Shutdown itself does not wait on poolDone, so
+// direct tests that call Shutdown while workers are still live may observe
+// ErrClosedQueue from workers — that is expected. Close is idempotent.
 func (m *SubsystemManager) Shutdown() {
 	if m.preloadManager != nil {
 		m.preloadManager.Shutdown()
 	}
 	if m.fileProcessor != nil {
 		m.fileProcessor.Close()
+	}
+	if m.q != nil {
+		m.q.Close()
 	}
 }
 

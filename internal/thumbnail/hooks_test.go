@@ -2,45 +2,18 @@ package thumbnail
 
 import (
 	"bytes"
+	"database/sql"
+	"errors"
 	"image"
 	"image/color"
+	"image/jpeg"
 	"io"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/evanoberholster/imagemeta/imagehash"
 )
-
-// TestExtractEXIFThumbnailHook_SkipForcesFullDecode verifies that replacing
-// extractEXIFThumbnailHook with an errNoThumb stub forces GenerateThumbnailAndHashes
-// down the full-decode path while still succeeding. This is the mechanism
-// characterization benches use to measure full-decode cost on EXIF-bearing files.
-func TestExtractEXIFThumbnailHook_SkipForcesFullDecode(t *testing.T) {
-	path := filepath.Join("..", "..", "testdata", "thumbnail", "exif-thumb.jpg")
-	f, err := os.Open(path)
-	if err != nil {
-		t.Fatalf("open %s: %v", path, err)
-	}
-	defer f.Close()
-
-	// Sanity: with the production default hook the embedded EXIF thumbnail is
-	// used and generation succeeds.
-	if _, _, _, err := GenerateThumbnailAndHashes(f); err != nil {
-		t.Fatalf("default hook: GenerateThumbnailAndHashes: %v", err)
-	}
-
-	// Stub the hook to skip embedded-thumbnail extraction; restore on cleanup.
-	extractEXIFThumbnailHook = func(io.ReadSeeker, *bytes.Buffer) error { return errNoThumb }
-	t.Cleanup(func() { extractEXIFThumbnailHook = extractEXIFThumbnail })
-
-	// The hook now reports no embedded thumbnail, so the full-decode path must
-	// run and still produce a valid result.
-	if _, err := f.Seek(0, io.SeekStart); err != nil {
-		t.Fatalf("seek: %v", err)
-	}
-	if _, _, _, err := GenerateThumbnailAndHashes(f); err != nil {
-		t.Fatalf("hook skipping EXIF: GenerateThumbnailAndHashes: %v", err)
-	}
-}
 
 // TestThumbResizeHook_OverrideIsInvoked verifies that replacing thumbResizeHook
 // with a stub forces GenerateThumbnailAndHashes to use the stub for the gallery
@@ -55,7 +28,7 @@ func TestThumbResizeHook_OverrideIsInvoked(t *testing.T) {
 	defer f.Close()
 
 	// Sanity: with the production default hook generation succeeds.
-	if _, _, _, err := GenerateThumbnailAndHashes(f); err != nil {
+	if _, _, _, err := GenerateThumbnailAndHashes(f, 800, 600); err != nil {
 		t.Fatalf("default hook: GenerateThumbnailAndHashes: %v", err)
 	}
 
@@ -64,7 +37,7 @@ func TestThumbResizeHook_OverrideIsInvoked(t *testing.T) {
 	called := false
 	stubFn := func(img image.Image) image.Image {
 		called = true
-		return image.NewRGBA(image.Rect(0, 0, 200, 150))
+		return image.NewRGBA(image.Rect(0, 0, galleryThumbMaxW, galleryThumbMaxH))
 	}
 	thumbResizeHook = &stubFn
 	t.Cleanup(func() { thumbResizeHook = &defaultThumbResizeFn })
@@ -73,7 +46,7 @@ func TestThumbResizeHook_OverrideIsInvoked(t *testing.T) {
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
 		t.Fatalf("seek: %v", err)
 	}
-	if _, _, _, err := GenerateThumbnailAndHashes(f); err != nil {
+	if _, _, _, err := GenerateThumbnailAndHashes(f, 800, 600); err != nil {
 		t.Fatalf("stubbed hook: GenerateThumbnailAndHashes: %v", err)
 	}
 	if !called {
@@ -94,21 +67,21 @@ func TestFitInsideBoxKnownSizes(t *testing.T) {
 	}{
 		{
 			name: "small landscape fills box",
-			maxW: 200, maxH: 150,
+			maxW: galleryThumbMaxW, maxH: galleryThumbMaxH,
 			img:   image.NewRGBA(image.Rect(0, 0, 40, 30)),
-			wantW: 200, wantH: 150,
+			wantW: galleryThumbMaxW, wantH: galleryThumbMaxH,
 		},
 		{
 			name: "tall portrait is height-limited",
-			maxW: 200, maxH: 150,
+			maxW: galleryThumbMaxW, maxH: galleryThumbMaxH,
 			img:   image.NewRGBA(image.Rect(0, 0, 10, 200)),
-			wantW: 7, wantH: 150,
+			wantW: 7, wantH: galleryThumbMaxH,
 		},
 		{
 			name: "already fitting is unchanged",
-			maxW: 200, maxH: 150,
+			maxW: galleryThumbMaxW, maxH: galleryThumbMaxH,
 			img:   image.NewRGBA(image.Rect(0, 0, 200, 100)),
-			wantW: 200, wantH: 100,
+			wantW: galleryThumbMaxW, wantH: 100,
 		},
 	}
 	for _, tt := range tests {
@@ -116,6 +89,68 @@ func TestFitInsideBoxKnownSizes(t *testing.T) {
 			gotW, gotH := fitInsideBox(tt.maxW, tt.maxH, tt.img)
 			if gotW != tt.wantW || gotH != tt.wantH {
 				t.Fatalf("fitInsideBox(%d, %d) = (%d, %d), want (%d, %d)", tt.maxW, tt.maxH, gotW, gotH, tt.wantW, tt.wantH)
+			}
+		})
+	}
+}
+
+// TestFitInsideBoxDims verifies fitInsideBoxDims against the same geometry as
+// fitInsideBox, using explicit source dimensions instead of an image.Image.
+func TestFitInsideBoxDims(t *testing.T) {
+	tests := []struct {
+		name         string
+		maxW, maxH   int
+		srcW, srcH   int
+		wantW, wantH int
+	}{
+		{
+			name: "small landscape fills box",
+			maxW: galleryThumbMaxW, maxH: galleryThumbMaxH, srcW: 40, srcH: 30,
+			wantW: galleryThumbMaxW, wantH: galleryThumbMaxH,
+		},
+		{
+			name: "tall portrait is height-limited",
+			maxW: galleryThumbMaxW, maxH: galleryThumbMaxH, srcW: 10, srcH: 200,
+			wantW: 7, wantH: galleryThumbMaxH,
+		},
+		{
+			name: "already fitting is unchanged",
+			maxW: galleryThumbMaxW, maxH: galleryThumbMaxH, srcW: 200, srcH: 100,
+			wantW: galleryThumbMaxW, wantH: 100,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotW, gotH := fitInsideBoxDims(tt.maxW, tt.maxH, tt.srcW, tt.srcH)
+			if gotW != tt.wantW || gotH != tt.wantH {
+				t.Fatalf("fitInsideBoxDims(%d, %d, %d, %d) = (%d, %d), want (%d, %d)", tt.maxW, tt.maxH, tt.srcW, tt.srcH, gotW, gotH, tt.wantW, tt.wantH)
+			}
+		})
+	}
+}
+
+// TestChooseJPEGDCTSize verifies the adaptive DCT-scale picker: the chosen
+// dct decodes the srcW×srcH JPEG to at least the 200×150 gallery-thumb fit
+// size (ceil(need*8/src) clamped to [1,8]).
+func TestChooseJPEGDCTSize(t *testing.T) {
+	tests := []struct {
+		name    string
+		srcW    int
+		srcH    int
+		wantDCT int
+	}{
+		{name: "12MP stays at 1/8", srcW: 4000, srcH: 3000, wantDCT: 1},
+		{name: "800x600 decodes at 1/4", srcW: 800, srcH: 600, wantDCT: 2},
+		{name: "400x300 decodes at 1/2", srcW: 400, srcH: 300, wantDCT: 4},
+		{name: "320x240 decodes near 1:1", srcW: 320, srcH: 240, wantDCT: 5},
+		{name: "zero width guards to 1:1", srcW: 0, srcH: 600, wantDCT: 8},
+		{name: "zero height guards to 1:1", srcW: 800, srcH: 0, wantDCT: 8},
+		{name: "negative dims guard to 1:1", srcW: -10, srcH: -20, wantDCT: 8},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := chooseJPEGDCTSize(tt.srcW, tt.srcH); got != tt.wantDCT {
+				t.Fatalf("chooseJPEGDCTSize(%d, %d) = %d, want %d", tt.srcW, tt.srcH, got, tt.wantDCT)
 			}
 		})
 	}
@@ -135,7 +170,7 @@ func TestResizeThumbApproxBiLinearBoundsAndType(t *testing.T) {
 		t.Fatalf("resizeThumbApproxBiLinear returned %T, want *image.RGBA", got)
 	}
 
-	wantW, wantH := fitInsideBox(200, 150, img)
+	wantW, wantH := fitInsideBox(galleryThumbMaxW, galleryThumbMaxH, img)
 	if b := got.Bounds(); b.Dx() != wantW || b.Dy() != wantH {
 		t.Fatalf("resizeThumbApproxBiLinear bounds %v != fitInsideBox(200,150) = (%d, %d)", b, wantW, wantH)
 	}
@@ -184,7 +219,7 @@ func TestAcquireGalleryThumb_DefaultUsesPoolRelease(t *testing.T) {
 		}
 	}
 
-	wantW, wantH := fitInsideBox(200, 150, src)
+	wantW, wantH := fitInsideBox(galleryThumbMaxW, galleryThumbMaxH, src)
 
 	img1, release1 := acquireGalleryThumb(src)
 	defer release1()
@@ -216,7 +251,7 @@ func TestAcquireGalleryThumb_DefaultUsesPoolRelease(t *testing.T) {
 // returned release is a safe no-op: stub results never enter the pools.
 func TestAcquireGalleryThumb_HookBypassNoPoolContract(t *testing.T) {
 	stubFn := func(image.Image) image.Image {
-		return image.NewRGBA(image.Rect(0, 0, 200, 150))
+		return image.NewRGBA(image.Rect(0, 0, galleryThumbMaxW, galleryThumbMaxH))
 	}
 	thumbResizeHook = &stubFn
 	t.Cleanup(func() { thumbResizeHook = &defaultThumbResizeFn })
@@ -226,7 +261,7 @@ func TestAcquireGalleryThumb_HookBypassNoPoolContract(t *testing.T) {
 	if img == nil {
 		t.Fatal("acquireGalleryThumb returned nil")
 	}
-	if b := img.Bounds(); b.Dx() != 200 || b.Dy() != 150 {
+	if b := img.Bounds(); b.Dx() != galleryThumbMaxW || b.Dy() != galleryThumbMaxH {
 		t.Fatalf("bounds %v, want 200x150 stub canvas", b)
 	}
 
@@ -263,5 +298,147 @@ func TestAcquirePHashRGBA_SizeAndRelease(t *testing.T) {
 	defer release2()
 	if b := dst2.Bounds(); b.Dx() != 64 || b.Dy() != 64 {
 		t.Fatalf("second acquire bounds %v, want 64x64", b)
+	}
+}
+
+// imageFromColor creates an w×h solid-color RGBA image for seek/hook error
+// tests.
+func imageFromColor(w, h int, c color.Color) image.Image {
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := range h {
+		for x := range w {
+			img.Set(x, y, c)
+		}
+	}
+	return img
+}
+
+// encodeJPEGBytes encodes img as JPEG bytes for seek/hook error tests.
+func encodeJPEGBytes(img image.Image) []byte {
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, nil); err != nil {
+		panic(err)
+	}
+	return buf.Bytes()
+}
+
+// failingSeeker wraps an io.ReadSeeker and returns errSeekFail after the
+// specified number of successful Seek calls.
+type failingSeeker struct {
+	inner       io.ReadSeeker
+	allowed     int
+	calls       int
+	errSeekFail error
+}
+
+func (f *failingSeeker) Read(p []byte) (int, error) {
+	return f.inner.Read(p)
+}
+
+func (f *failingSeeker) Seek(offset int64, whence int) (int64, error) {
+	f.calls++
+	if f.calls > f.allowed {
+		return 0, f.errSeekFail
+	}
+	return f.inner.Seek(offset, whence)
+}
+
+// TestGenerateThumbnailAndHashesSeekErrors verifies the single decode path:
+// the success path performs exactly two seeks — the rewind before the
+// full-image decode, then the rewind before the MD5 read. With allowed=0 the
+// first (decode) seek fails; with allowed=1 the decode seek succeeds and the
+// second (MD5) seek fails. There is no extract step and no fallback decode.
+func TestGenerateThumbnailAndHashesSeekErrors(t *testing.T) {
+	img := imageFromColor(800, 600, color.RGBA{R: 0, G: 0, B: 255, A: 255})
+	data := encodeJPEGBytes(img)
+
+	// The first seek is the rewind before the full-image decode; with
+	// allowed=0 that seek itself fails.
+	fs := &failingSeeker{inner: bytes.NewReader(data), allowed: 0, errSeekFail: errors.New("seek failed")}
+	if _, _, _, err := GenerateThumbnailAndHashes(fs, 800, 600); err == nil {
+		t.Fatal("expected error when the decode seek fails")
+	}
+
+	// Allow the first seek (decode rewind) but fail the second seek before
+	// the MD5 read.
+	fs = &failingSeeker{inner: bytes.NewReader(data), allowed: 1, errSeekFail: errors.New("seek failed")}
+	if _, _, _, err := GenerateThumbnailAndHashes(fs, 800, 600); err == nil {
+		t.Fatal("expected error when MD5 seek fails")
+	}
+}
+
+// TestGenerateThumbnailAndHashes_HookedErrors verifies error propagation from
+// the jpegEncodeHook, ioCopyHook (MD5 read), and newPHash64Hook along the
+// single decode path.
+func TestGenerateThumbnailAndHashes_HookedErrors(t *testing.T) {
+	img := imageFromColor(400, 300, color.RGBA{R: 128, G: 64, B: 32, A: 255})
+	data := encodeJPEGBytes(img)
+
+	cases := []struct {
+		name      string
+		setup     func()
+		cleanup   func()
+		wantErr   bool
+		checkFunc func(t *testing.T, thumb *bytes.Buffer, md5 *sql.NullString, phash *sql.NullInt64)
+	}{
+		{
+			name: "jpeg_encode_fails",
+			setup: func() {
+				jpegEncodeHook = func(io.Writer, image.Image, *jpeg.Options) error {
+					return errors.New("jpeg encode failed")
+				}
+			},
+			cleanup: func() { jpegEncodeHook = jpeg.Encode },
+			wantErr: true,
+		},
+		{
+			name: "md5_copy_fails",
+			setup: func() {
+				ioCopyHook = func(io.Writer, io.Reader) (int64, error) {
+					return 0, errors.New("md5 copy failed")
+				}
+			},
+			cleanup: func() { ioCopyHook = io.Copy },
+			wantErr: true,
+		},
+		{
+			name: "phash_fails",
+			setup: func() {
+				newPHash64Hook = func(image.Image) (imagehash.PHash64, error) { return 0, errors.New("phash failed") }
+			},
+			cleanup: func() { newPHash64Hook = imagehash.NewPHash64 },
+			wantErr: false,
+			checkFunc: func(t *testing.T, thumb *bytes.Buffer, md5 *sql.NullString, phash *sql.NullInt64) {
+				if thumb == nil || thumb.Len() == 0 {
+					t.Fatal("expected non-empty thumbnail")
+				}
+				if !md5.Valid || md5.String == "" {
+					t.Error("expected valid md5")
+				}
+				if !phash.Valid || phash.Int64 != 0 {
+					t.Errorf("expected phash Int64 == 0, got %d", phash.Int64)
+				}
+				PutBytesBuffer(thumb)
+				PutNullString(md5)
+				PutNullInt64(phash)
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.setup()
+			defer tc.cleanup()
+
+			thumb, md5, phash, err := GenerateThumbnailAndHashes(bytes.NewReader(data), 400, 300)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("expected error=%v, got err=%v", tc.wantErr, err)
+			}
+			if tc.checkFunc != nil {
+				tc.checkFunc(t, thumb, md5, phash)
+			} else if thumb != nil {
+				PutBytesBuffer(thumb)
+			}
+		})
 	}
 }

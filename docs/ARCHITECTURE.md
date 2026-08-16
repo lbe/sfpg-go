@@ -33,16 +33,16 @@ SFPG (Simple Fast Photo Gallery) is a high-performance, self-hosted photo galler
 
 ### Technology Stack
 
-| Component            | Technology                                      |
-| -------------------- | ----------------------------------------------- |
-| **Language**         | Go 1.26+                                        |
-| **Database**         | SQLite (with separate read/write pools)         |
-| **Web Framework**    | net/http (standard library)                     |
-| **UI**               | HTMX + Go html/template                         |
-| **Image Processing** | standard library (image, image/jpeg, image/png) |
-| **Metadata**         | imagemeta (EXIF, IPTC, XMP)                     |
-| **HTTP Cache**       | Custom SQLite-backed cache with async eviction  |
-| **Write Overflow**   | Persistent on-disk FIFO queue (`dque`)          |
+| Component            | Technology                                                                            |
+| -------------------- | ------------------------------------------------------------------------------------- |
+| **Language**         | Go 1.26+                                                                              |
+| **Database**         | SQLite (with separate read/write pools)                                               |
+| **Web Framework**    | net/http (standard library)                                                           |
+| **UI**               | HTMX + Go html/template                                                               |
+| **Image Processing** | go-scaled-jpeg (JPEG decode), stdlib `image` (non-JPEG decode), `image/jpeg` (encode) |
+| **Metadata**         | imagemeta (EXIF, IPTC, XMP)                                                           |
+| **HTTP Cache**       | Custom SQLite-backed cache with async eviction                                        |
+| **Write Overflow**   | Persistent on-disk FIFO queue (`dque`)                                                |
 
 ### Architecture Principles
 
@@ -188,13 +188,13 @@ The application is organized into domain-driven packages under `internal/`:
 | **scheduler**           | Cron-like task scheduling                                              | `Scheduler`, `Task` interface                                                   |
 | **queue**               | Thread-safe deque                                                      | `Queue`                                                                         |
 | **writebatcher**        | Batch database operations                                              | `WriteBatcher`, `Config`                                                        |
-| **dque**                | Persistent on-disk FIFO overflow queue                                 | `New`, `Queue`                                                                  |
+| **dque**                | Persistent on-disk FIFO (writebatcher overflow + discovery backlog)    | `New`, `Queue`                                                                  |
 | **flock**               | Cross-platform file locking                                            | `Flock`                                                                         |
 | **errors**              | Error sentinels for dque                                               | `ErrXxx` sentinels                                                              |
 | **dbconnpool**          | SQLite connection pools                                                | `DbSQLConnPool`                                                                 |
 | **gallerydb**           | Database queries (sqlc)                                                | `Queries`, `CustomQueries`                                                      |
 | **gallerylib**          | File import / path-chain upserts                                       | `Importer`                                                                      |
-| **thumbnail**           | Thumbnail generation                                                   | `GenerateThumbnailAndHashes`                                                    |
+| **thumbnail**           | Thumbnail generation (go-scaled-jpeg JPEG decode)                      | `GenerateThumbnailAndHashes`                                                    |
 | **imagemeta**           | EXIF extraction (local `replace`)                                      | Metadata parsers                                                                |
 | **multihandler**        | Multi-handler structured logging                                       | `MultiHandler`                                                                  |
 | **profiler**            | Optional CPU/mem/block profiling                                       | `Start`                                                                         |
@@ -280,7 +280,10 @@ When the WriteBatcher's in-memory channel is full and `DQueDirPath` is configure
 
 Crash recovery: `New()` seeds `pendingCount` from the existing `dque` size, and the worker's `drainDQueAll` loop flushes any recovered `dque` items into batches on its first iteration (no startup memory buffering). `overflowMu` guards the overflow path and `overflowWG` plus `Close` acquiring `mu`-then-`overflowMu` guarantee in-flight overflow `Submit`s finish before `Close` drains, so concurrent `Submit`-during-`Close` loses nothing. `dque` acquires a `flock` on its directory, so reconfiguration closes the old batcher before creating a new one to release the lock.
 
-**`internal/queue` vs `internal/dque`:** These are unrelated. `internal/queue` is a generic in-memory deque used for discovery work scheduling (goroutine-safe, resizable ring buffer). `internal/dque` is a durable on-disk FIFO used only as WriteBatcher overflow when the in-memory submit channel is full. Discovery does not spill to `dque`; only batched DB writes do.
+**`internal/queue` vs `internal/dque`:** These are unrelated. `internal/queue` is a generic in-memory deque (goroutine-safe, resizable ring buffer); it no longer backs the production discovery work queue (tests and bounded-queue helpers may still use it). `internal/dque` is a segment-backed on-disk FIFO with two distinct uses:
+
+- The WriteBatcher keeps a **durable** queue (`<db>-dque/`) for overflow when its in-memory submit channel is full — pending batched DB writes survive restarts.
+- Production discovery uses a **dedicated** queue (`discovery-dque/` in the database directory, e.g. `DB/discovery-dque/` beside `sfpg.db`) as the work backlog the walker fills and the file workers drain. It is a **disposable wipe-on-start backlog**: `SubsystemManager.Start` deletes the directory and recreates the queue on every start, and a full re-walk is the recovery — it is **not** durable like the writebatcher `…-dque`. `discovery_queue_max` is currently a no-op (ignored by `Start`; retained for later removal) — the discovery backlog is never bounded in-memory.
 
 To make `BatchedWrite` items persistable, `BatchedWrite` and `files.File` implement `GobEncode`/`GobDecode` via gob-safe wire structs (separately encoding the `File` and `CacheEntry` blobs, and replacing the un-exported `*bytes.Buffer` thumbnail with raw `[]byte`). An `init()` registers `int64` and `sql.Null*` types stored inside sqlc-generated `interface{}` fields.
 
@@ -367,6 +370,8 @@ graph TB
 **Pool Configuration:**
 
 Both pools share the same configurable size, controlled by the database configuration keys `db_max_pool_size` (default `100`) and `db_min_idle_connections` (default `10`), with a pool monitor interval `db_pool_monitor_interval` (default `1m`). Pool sizing is reconciled against effective values at startup/restart via `reconfigurePoolsFromConfig()`.
+
+The live pools always get a positive monitor interval: creating pools with a nil `Config` (e.g. the early `setDB()` bootstrap before config load) or with `db_pool_monitor_interval <= 0` falls back to the `1m` default — a `0` interval never disables the idle grow/shrink monitor.
 
 ```go
 Read-Only Pool:  MaxConnections = db_max_pool_size  (mode=ro, WAL mode persisted by RW pool)
@@ -588,7 +593,7 @@ mux.Handle("GET /config", app.authMiddleware(cfgAuth(app.configHandlers.ConfigGe
 
 ```mermaid
 flowchart TD
-    Start([App Start]) --> InitQueue[Initialize Queue<br/>10,000 capacity]
+    Start([App Start]) --> InitQueue[Open discovery dque<br/>wiped on start]
     InitQueue --> CreateWorkers[Create Workers<br/>maxWorkers default: NumCPU-2]
     CreateWorkers --> Walk[Walk Images Dir]
     Walk --> Enqueue[Enqueue each file]
@@ -612,14 +617,26 @@ flowchart TD
 
 ```go
 Max Workers:  NumCPU - 2 (when NumCPU > 4); 2 (3-4 cores); 1 otherwise
-              // overridable via config: WorkerPoolMax
-Min Workers:  4 (when NumCPU > 6); 2 (3-4 cores); 1 otherwise
-              // overridable via config: WorkerPoolMinIdle
-Queue Size:   10,000 paths
-              // overridable via config: QueueSize
+              // overridable via config: WorkerPoolMax; 0 (default) keeps CPU auto
+Min Workers:  0 by default — no idle file workers
+              // overridable via config: WorkerPoolMinIdle; 0 = no idle workers
+              // (not auto-sizing). Workers are spawned only while the discovery
+              // queue is non-empty and scale back to zero when it drains
+Queue Size:   dedicated disk-backed dque — no in-memory bound
+              // QueueSize no longer sizes the work queue; it still feeds the
+              // dashboard queue-capacity display via SetQueueInfo
 Idle Timeout: 10 seconds
               // overridable via config: WorkerPoolMaxIdleTime
 ```
+
+**Worker pool lifecycle:** File workers exist only to drain the discovery
+backlog — with min idle 0 the pool runs zero workers when the queue is empty
+and scales up on backlog. A config restart (`POST /config/restart`) or server
+restart (`POST /server/restart`) does **not** start a gallery walk: both go
+through the shared `ExecRestart`, which injects `SEPG_SKIP_STARTUP_DISCOVERY=1`
+so `App.Run` skips the automatic startup `TriggerDiscovery`. Cold starts (no
+skip env) still walk when `run_file_discovery` is true; `POST /server/discovery`
+still triggers a manual walk.
 
 ### File Processing Pipeline
 
@@ -653,6 +670,15 @@ flowchart TD
 4. **Image Decode** - Read width/height via `image.DecodeConfig`
 5. **Thumbnail Generation** - Single size `"m"` (200x150 box), JPEG, stored in `thumbs.db`
 6. **Database Write** - Batch insert/update via unified WriteBatcher
+
+**Thumbnail decode (`GenerateThumbnailAndHashes`):**
+
+- **All images** decode via `fullImageDecodeHook` (production default `decodeFullImage`): JPEG input is sniffed with a buffered peek, then that same buffered reader is handed to the go-scaled-jpeg decoder at an **adaptive DCT scale** (`chooseJPEGDCTSize`); any other format falls back to stdlib `image.Decode` on the buffered reader. The scale is chosen from the source dimensions (read via `image.DecodeConfig` in step 4) so the decoded JPEG is at least the 200×150 gallery-thumb fit size: large JPEGs decode at 1/8 (`DCTSizeScaled: 1`), small JPEGs decode closer to 1:1 so the thumbnail resize never upscales. A JPEG full-image decode error **hard-fails** generation - there is no stdlib `image/jpeg.Decode` fallback and no embedded-EXIF-thumbnail shortcut.
+- **TIFF** - all TIFF inputs hard-fail thumbnail generation (there is no TIFF decoder on the generate path).
+- **WebP** - WebP with a full image payload still decodes (`golang.org/x/image/webp` is registered); WebP that is thumb-only / not a full image may hard-fail.
+- **Encode** stays stdlib `image/jpeg.Encode` (go-scaled-jpeg is decode-only).
+
+> **Note:** Existing `thumbs.db` thumbnail blobs and stored pHash rows are **unchanged** until rediscovery/regeneration. New thumbnails for EXIF-bearing JPEGs come from the full-image decode (adaptive DCT scale) instead of the embedded EXIF thumbnail, so quality improves but thumb bytes and pHash differ. **New** thumbnails/pHash can change geometry - under the old fixed 1/8 decode a 400×300 JPEG decoded to 50×37 and rendered as an upscaled 200×148; the adaptive scale decodes it at dct 4 (1/2) to exactly 200×150, so small JPEGs are no longer upscaled.
 
 ### Task Scheduler
 
@@ -1106,7 +1132,7 @@ Bug fixed:
 
 - Symptom: `DBMaxPoolSize=500` was saved in the database, but active pools stayed at `100`.
 - Root cause: `setDB()` executed before `loadConfig()`, so pools were created while `app.config` was `nil` and fell back to default pool sizing.
-- Fix: `loadConfig()` now updates `app.config` and then calls `reconfigurePoolsFromConfig()` to recreate pools when loaded values differ from effective values.
+- Fix: `loadConfig()` now updates `app.config` and then calls `reconfigurePoolsFromConfig()` to recreate pools when loaded values differ from the effective (clamped) values.
 - Prevention: dedicated precedence/startup/restart/UI regression tests plus startup diagnostics that explicitly log configured versus effective pool values.
 
 Required sequencing constraint:
@@ -1120,13 +1146,13 @@ Operational reconfiguration behavior:
 - Triggered automatically at the end of `loadConfig()`.
 - Triggered after `-restore-last-known-good` restores configuration.
 - Triggered in fallback startup flows that synthesize defaults after config load failure.
-- If configured pool values already match effective pool values, pool recreation is skipped.
+- Pool recreation is skipped only when live max connections, min idle connections, and monitor interval all match the effective values — the interval comparison applies the `<= 0` → `1m` clamp, so a configured `db_pool_monitor_interval=0` matching a live `1m` monitor is a no-op.
 
 Diagnostic logging for mismatch visibility:
 
-- `pool config applied`: emits configured and effective RW/RO pool values.
-- `configured/effective DB pool mismatch`: emits warning-level diagnostics when values diverge (except intentional auto min-idle behavior with `db_min_idle_connections=0`).
-- `startup config summary`: emits one low-noise startup snapshot of configured versus effective values for DB pools and other critical subsystems.
+- `pool config applied`: emits configured and effective RW/RO pool values, including the monitor interval keys `rw_configured_monitor_interval`, `rw_effective_monitor_interval`, `ro_configured_monitor_interval`, and `ro_effective_monitor_interval` (configured side is the raw config value, which may be `0`; effective side is the clamped live value).
+- `configured/effective DB pool mismatch`: emits warning-level diagnostics when values diverge. A configured `db_min_idle_connections=0` is applied as effective 0 (no idle connections), not auto-sized; the default is 10. Mismatch warnings still apply when the configured min idle exceeds the max pool size.
+- `startup config summary`: emits one low-noise startup snapshot of configured versus effective values for DB pools and other critical subsystems, including `db_configured_monitor_interval`, `db_rw_effective_monitor_interval`, and `db_ro_effective_monitor_interval` (configured is the raw config value; effective is the live pool interval, `0` when the pool has not been created yet).
 
 Regression protections (consolidated root integration tests):
 
@@ -1139,9 +1165,26 @@ Regression protections (consolidated root integration tests):
 - Broader precedence (`config_precedence_integration_test.go`):
   - `TestConfigPrecedence_*`, `TestCLI_*`, `TestConfigImport_*`
   - Prevents precedence drift across defaults/database/env/CLI layers.
-- Config UI validation (`internal/server/config/config_ui_test.go` and related):
-  - Form submission, restart warning, HTMX partial update coverage
+- Config save/restart UI coverage:
+  - Handler structure: `internal/server/handlers/config_post_test.go` and related handler tests (`ValidateHTMXResponseStructure` on restart-required responses; success message is main swap, badge OOB without `hidden`)
+  - User-visible restart dialog: Playwright `expectRestartDialogOpen` in `tests/config-helpers.ts`; full save → restart flow in `tests/config.spec.ts` ("Config restart") and `tests/server-actions.spec.ts` ("Server restart")
+  - Field-specific and UX paths: `tests/config.spec.ts` "13a: db_max_pool_size save opens restart dialog" (number field, not checkbox-only); "13b: Cancel after restart-required save closes cleanly" (originals snapshot refreshed after save)
+  - HTMX swap contract (no full admin round-trip): `tests/htmx-restart-alert.spec.ts` — reads `config-save-restart-alert.html.tmpl` from disk and asserts badge loses `hidden` after outerHTML/OOB processing (`air` on `:8083` prerequisite)
+  - Persistence-only: `web-testsuite/config_modal_test.go` (HTTP-level; does **not** cover the restart modal UX)
   - Prevents config UI regressions from silently breaking persistence or restart signaling.
+- Pool monitor bootstrap and reconfigure skip:
+  - `TestCreateDatabasePools` (extended asserts)
+  - `TestCreateDatabasePools_MinIdleZero`
+  - `TestCreateDatabasePools_ZeroIntervalClampedToDefault`
+  - `TestCreateDatabasePools_PositiveIntervalApplied`
+  - `TestInfrastructureService_ReconfigurePools_NoOpWhenUnchanged` (updated)
+  - `TestInfrastructureService_ReconfigurePools_RecreatesWhenOnlyIntervalDiffers`
+  - `TestInfrastructureService_ReconfigurePools_NoOpWhenConfiguredIntervalZeroMatchesClampedLive`
+  - `TestDBPoolMonitorBootstrap_NilSetDBLoadDefaultsLiveInterval`
+  - `TestInfrastructureService_LogDBPoolConfiguredVsEffective_NormalPath` (keys)
+  - `TestLogStartupConfigSummary_EmitsConfiguredVsEffective` (keys)
+  - `TestMonitor_ContinuesAfterEmptyShrinkDefault`
+  - Prevents nil-config / `<= 0` interval regressions, the skip-interval reconfigure bug, monitor-interval log key drift, and monitor shutdown on empty-channel shrink.
 
 ### Configuration Schema
 
@@ -1283,7 +1326,8 @@ q.Size()
 
 - Segment-based storage (tunable items per segment)
 - File locking via `internal/flock` (single accessor per directory)
-- Used by `writebatcher` for overflow and crash recovery
+- Used by `writebatcher` for durable overflow and crash recovery
+- Backs the production discovery work queue as a disposable wipe-on-start backlog (`discovery-dque/` in the database directory, e.g. `DB/discovery-dque/` beside the main database file; distinct from the writebatcher `<db>-dque/` overflow dir)
 
 #### flock
 
@@ -1360,8 +1404,10 @@ and wired into the module graph via a `replace` directive in `go.mod`:
 replace github.com/evanoberholster/imagemeta => ./internal/imagemeta
 ```
 
-The fork has diverged significantly with project-specific enhancements that would be
-difficult to upstream cleanly:
+Upstream was merged at submodule commit `653f189`, bringing the package restructure:
+`exif2` → `meta/exif`, top-level `jpeg` → `meta/jpeg`, and XMP under `meta/xmp`
+(plus `meta/logging` shared helpers). The fork has diverged further with
+project-specific enhancements that would be difficult to upstream cleanly:
 
 | Area                                     | Changes                                                           |
 | ---------------------------------------- | ----------------------------------------------------------------- |
@@ -1381,10 +1427,24 @@ difficult to upstream cleanly:
 - **Upstream merging:** The fork periodically merges upstream changes to stay
   current with any bug fixes or CL improvements. Merge commits are visible in the
   submodule history.
-- **Future direction:** Maintain as a fork. Selective cherry-picks from upstream
-  can be pulled in as needed, but the codebases have diverged enough that a
-  clean re-merge is impractical. If the upstream project becomes active again,
+- **Future direction:** Maintain as a fork with selective upstream pulls. The
+  merge at `653f189` demonstrates that re-integrating upstream is feasible;
+  future upstream changes will be pulled in selectively as needed rather than
+  cherry-picked wholesale. If the upstream project becomes active again,
   individual improvements could be contributed back on a case-by-case basis.
+
+**sfpg-go consumption:**
+
+- `internal/server/files/metadata_xmp.go` — imports `meta/exif`, `meta/jpeg`, and
+  `meta/logging`; decodes JPEG metadata via `jpeg.ScanJPEGWithSourceContext` with
+  a timeout context so embedded XMP extension segments are captured.
+- `internal/server/files/metadata.go` — `ExtractExifData` remaps fields from the
+  nested `exif.Exif` struct (`IFD0`, `ExifIFD`, `GPS`, `SelectedDate()`) into the
+  `File.Exif` database columns.
+- `go.mod` — `replace github.com/evanoberholster/imagemeta => ./internal/imagemeta`.
+
+EXIF decode runs `ScanJPEGWithSourceContext` under a timeout context; the non-JPEG
+`imageMetaDecode` path has no context timeout (accepted limitation).
 
 ### Testing Utilities
 
@@ -1773,7 +1833,7 @@ sfpg-go/
 │   ├── scheduler/               # Task scheduling
 │   ├── queue/                   # Generic deque
 │   ├── writebatcher/            # Batch database operations (with overflow)
-│   ├── dque/                    # Persistent on-disk FIFO overflow queue
+│   ├── dque/                    # Persistent on-disk FIFO (writebatcher overflow + discovery backlog)
 │   ├── flock/                   # Cross-platform file locking
 │   ├── errors/                  # Error sentinels for dque
 │   ├── dbconnpool/              # Connection pooling
@@ -1838,6 +1898,7 @@ sfpg-go/
 | **github.com/evanoberholster/imagemeta** | EXIF metadata (replaced locally) | MIT |
 | **github.com/golang-migrate/migrate/v4** | Database migrations | MIT |
 | **github.com/gorilla/sessions** | Session management | BSD-3-Clause |
+| **github.com/m8rge/go-scaled-jpeg** | Scaled JPEG decode (thumbnail generation) | MIT |
 | **github.com/ncruces/go-sqlite3** | SQLite driver | MIT |
 | **github.com/nfnt/resize** | Image resizing | ISC |
 | **github.com/phsym/console-slog** | Console slog handler | MIT |

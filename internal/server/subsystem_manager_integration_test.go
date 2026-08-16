@@ -5,6 +5,7 @@ package server
 import (
 	"context"
 	"net/http"
+	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -52,20 +53,9 @@ func withCacheMW(cfg *config.Config) func(*App) {
 	}
 }
 
-// expectedQueueCap mirrors queue.NewQueue's power-of-two sizing.
-func expectedQueueCap(n int) int {
-	if n < 16 {
-		return 16
-	}
-	cap := 16
-	for cap < n {
-		cap <<= 1
-	}
-	return cap
-}
-
-// expectedAutoPoolWorkers returns the auto-calculated min/max worker counts based on
-// the current CPU count, matching workerpool.Pool.getMinMaxPoolWorkers.
+// expectedAutoPoolWorkers returns the auto-calculated max worker count based on
+// the current CPU count, matching workerpool.Pool.getMinMaxPoolWorkers. Min
+// idle is never auto: min 0 means no idle workers, so it stays 0.
 func expectedAutoPoolWorkers() (minWorkers, maxWorkers int) {
 	numCPU := runtime.NumCPU()
 
@@ -78,16 +68,7 @@ func expectedAutoPoolWorkers() (minWorkers, maxWorkers int) {
 		maxWorkers = 1
 	}
 
-	switch {
-	case (numCPU - 2) > 4:
-		minWorkers = 4
-	case numCPU > 2 && numCPU <= 4:
-		minWorkers = 2
-	default:
-		minWorkers = 1
-	}
-
-	return minWorkers, maxWorkers
+	return 0, maxWorkers
 }
 
 // preloadManagerRoutes reads the unexported cacheableRoutes slice from a PreloadManager.
@@ -132,7 +113,6 @@ func TestSubsystemManager_Start(t *testing.T) {
 	tests := []struct {
 		name               string
 		cfg                *config.Config
-		wantQueueSize      int
 		wantPoolMax        int
 		wantPoolMin        int
 		wantIdleTime       time.Duration
@@ -141,32 +121,42 @@ func TestSubsystemManager_Start(t *testing.T) {
 		{
 			name:               "nil config uses defaults",
 			cfg:                nil,
-			wantQueueSize:      10000,
 			wantPoolMax:        0, // auto
-			wantPoolMin:        0, // auto
+			wantPoolMin:        0, // no idle workers
 			wantIdleTime:       10 * time.Second,
 			wantPreloadEnabled: true,
 		},
 		{
 			name: "explicit config values are honored",
 			cfg: &config.Config{
-				QueueSize:             123,
 				WorkerPoolMax:         7,
 				WorkerPoolMinIdle:     3,
 				WorkerPoolMaxIdleTime: 5 * time.Second,
 				EnableCachePreload:    false,
 			},
-			wantQueueSize:      123,
 			wantPoolMax:        7,
 			wantPoolMin:        3,
 			wantIdleTime:       5 * time.Second,
 			wantPreloadEnabled: false,
 		},
+		{
+			name: "explicit max with min idle 0",
+			cfg: &config.Config{
+				WorkerPoolMax:         7,
+				WorkerPoolMinIdle:     0,
+				WorkerPoolMaxIdleTime: 10 * time.Second,
+				EnableCachePreload:    true,
+			},
+			wantPoolMax:        7,
+			wantPoolMin:        0,
+			wantIdleTime:       10 * time.Second,
+			wantPreloadEnabled: true,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mgr, _ := startTestManager(t, 0, 0, tt.cfg)
+			mgr, app := startTestManager(t, 0, 0, tt.cfg)
 
 			if mgr.moduleStateService == nil {
 				t.Fatal("moduleStateService should be initialized")
@@ -175,8 +165,15 @@ func TestSubsystemManager_Start(t *testing.T) {
 			if mgr.q == nil {
 				t.Fatal("queue should be initialized")
 			}
-			if got := mgr.q.Cap(); got != expectedQueueCap(tt.wantQueueSize) {
-				t.Errorf("queue capacity = %d, want %d", got, expectedQueueCap(tt.wantQueueSize))
+			// The discovery backlog is dque-backed (wiped on start): it opens
+			// empty rather than sized by QueueSize, and its dedicated directory
+			// exists on disk. Capacity assertions do not apply (no Cap on the
+			// adapter) and QueueSize does not size the discovery work queue.
+			if got := mgr.q.Len(); got != 0 {
+				t.Errorf("queue Len = %d, want 0 on fresh start", got)
+			}
+			if _, err := os.Stat(app.discoveryDQueDirPath); err != nil {
+				t.Errorf("discovery dque directory not created at %q: %v", app.discoveryDQueDirPath, err)
 			}
 
 			if mgr.fileProcessor == nil {
@@ -198,8 +195,8 @@ func TestSubsystemManager_Start(t *testing.T) {
 				t.Fatal("worker pool should be initialized")
 			}
 			wantMax, wantMin := tt.wantPoolMax, tt.wantPoolMin
-			if wantMax == 0 || wantMin == 0 {
-				wantMin, wantMax = expectedAutoPoolWorkers()
+			if wantMax == 0 {
+				_, wantMax = expectedAutoPoolWorkers()
 			}
 			if mgr.pool.MaxWorkers != wantMax {
 				t.Errorf("pool.MaxWorkers = %d, want %d", mgr.pool.MaxWorkers, wantMax)
@@ -221,12 +218,12 @@ func TestSubsystemManager_Start(t *testing.T) {
 func TestSubsystemManager_Start_WorkerPoolDefaults(t *testing.T) {
 	mgr, _ := startTestManager(t, 0, 0, nil)
 
-	wantMin, wantMax := expectedAutoPoolWorkers()
+	_, wantMax := expectedAutoPoolWorkers()
 	if mgr.pool.MaxWorkers != wantMax {
 		t.Errorf("auto MaxWorkers = %d, want %d", mgr.pool.MaxWorkers, wantMax)
 	}
-	if mgr.pool.MinWorkers != wantMin {
-		t.Errorf("auto MinWorkers = %d, want %d", mgr.pool.MinWorkers, wantMin)
+	if mgr.pool.MinWorkers != 0 {
+		t.Errorf("MinWorkers = %d, want 0 (no idle workers)", mgr.pool.MinWorkers)
 	}
 
 	ref := workerpool.NewPool(context.Background(), 0, 0, 10*time.Second)
@@ -260,15 +257,15 @@ func TestSubsystemManager_Start_ConfigOverridesRunParameters(t *testing.T) {
 	}
 }
 
-func TestSubsystemManager_Start_ZeroValuesAutoCalculate(t *testing.T) {
+func TestSubsystemManager_Start_ZeroValuesAutoMax(t *testing.T) {
 	mgr, _ := startTestManager(t, 0, 0, nil)
 
-	wantMin, wantMax := expectedAutoPoolWorkers()
-	if mgr.pool.MinWorkers != wantMin {
-		t.Errorf("pool.MinWorkers = %d, want %d", mgr.pool.MinWorkers, wantMin)
+	_, wantMax := expectedAutoPoolWorkers()
+	if mgr.pool.MinWorkers != 0 {
+		t.Errorf("pool.MinWorkers = %d, want 0 (min 0 is no idle workers, not auto)", mgr.pool.MinWorkers)
 	}
 	if mgr.pool.MaxWorkers != wantMax {
-		t.Errorf("pool.MaxWorkers = %d, want %d", mgr.pool.MaxWorkers, wantMax)
+		t.Errorf("pool.MaxWorkers = %d, want %d (auto)", mgr.pool.MaxWorkers, wantMax)
 	}
 }
 

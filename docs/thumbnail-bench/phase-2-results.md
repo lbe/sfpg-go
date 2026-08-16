@@ -16,6 +16,14 @@ This document reports resize-alternative numbers only. It does **not** change pr
 > Phase 2 tables below remain the pre-change measurement record and are not
 > rewritten.
 
+> **Current production decode (adaptive DCT scale):** JPEG decode in
+> `GenerateThumbnailAndHashes` now uses `github.com/m8rge/go-scaled-jpeg` at an
+> adaptive DCT scale chosen from the source dimensions: large JPEGs stay at 1/8,
+> small ones decode closer to 1:1 so they are not upscaled; hard-fail with no
+> stdlib `image/jpeg.Decode` fallback. See
+> [`docs/ARCHITECTURE.md`](../ARCHITECTURE.md). The full-decode/EXIF-ignored
+> numbers below pre-date that change.
+
 ## 2. Environment
 
 - `go version go1.26.5 linux/amd64`
@@ -25,7 +33,7 @@ This document reports resize-alternative numbers only. It does **not** change pr
 
 ## 3. Method
 
-- `thumbResizeHook` override selects the thumb-resize implementation per bench; `withEXIFExtractDisabled` forces the embedded-EXIF-thumbnail miss (full decode).
+- `thumbResizeHook` override selects the thumb-resize implementation per bench; `withEXIFExtractDisabled` forces full-image decode (no usable EXIF thumbnail shortcut).
 - Production defaults unchanged: `extractEXIFThumbnailHook` production path intact, thumb resize still `thumbnail(200, 150, img, resize.Lanczos3)` (`nfnt_lanczos3`), pHash still 64×64 `resize.Bilinear`, JPEG encode / MD5 production path.
 - No destination-buffer pooling for `x/image/draw` variants (naive allocate-per-call).
 - Target geometry: fit inside the 200×150 box via the same width/height math as production `thumbnail()`.

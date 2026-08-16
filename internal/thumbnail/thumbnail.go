@@ -24,6 +24,14 @@ import (
 	"github.com/lbe/sfpg-go/internal/gensyncpool"
 )
 
+// galleryThumbMaxW and galleryThumbMaxH are the untyped dimensions of the
+// gallery thumbnail box. They are untyped so they implicitly convert to both
+// int and uint at every use site (no casts).
+const (
+	galleryThumbMaxW = 200
+	galleryThumbMaxH = 150
+)
+
 var (
 	// jpegEncodeHook is a testable hook for image/jpeg.Encode.
 	jpegEncodeHook = jpeg.Encode
@@ -34,10 +42,11 @@ var (
 	// newPHash64Hook is a testable hook for imagehash.NewPHash64.
 	newPHash64Hook = imagehash.NewPHash64
 
-	// extractEXIFThumbnailHook is a testable hook for extractEXIFThumbnail.
-	// Production default is extractEXIFThumbnail. Tests/benches may replace it;
-	// they must restore the default (e.g. via t.Cleanup / b.Cleanup).
-	extractEXIFThumbnailHook = extractEXIFThumbnail
+	// fullImageDecodeHook is a testable hook for the full-image source decode.
+	// Production default: decodeFullImage (go-scaled-jpeg at an adaptive DCT
+	// scale for JPEGs, stdlib image.Decode otherwise; see scaled_jpeg_decode.go).
+	// Tests may replace it; they must restore the default (e.g. via t.Cleanup).
+	fullImageDecodeHook func(r io.Reader, srcW, srcH int) (image.Image, string, error) = decodeFullImage
 )
 
 // defaultThumbResizeFn holds the production default as an addressable func value.
@@ -94,7 +103,7 @@ func PutNullInt64(ni *sql.NullInt64) { nullInt64Pool.Put(ni) }
 // thumbRGBAPool is a gensyncpool-backed pool of 200×150 *image.RGBA canvases
 // used as the destination for gallery thumbnail scaling.
 var thumbRGBAPool = gensyncpool.New(
-	func() *image.RGBA { return image.NewRGBA(image.Rect(0, 0, 200, 150)) },
+	func() *image.RGBA { return image.NewRGBA(image.Rect(0, 0, galleryThumbMaxW, galleryThumbMaxH)) },
 	resetThumbRGBA,
 )
 
@@ -102,8 +111,8 @@ var thumbRGBAPool = gensyncpool.New(
 // geometry to the full 200×150 canvas (Stride 200*4) before it is reused.
 func resetThumbRGBA(img *image.RGBA) {
 	clear(img.Pix)
-	img.Rect = image.Rect(0, 0, 200, 150)
-	img.Stride = 200 * 4
+	img.Rect = image.Rect(0, 0, galleryThumbMaxW, galleryThumbMaxH)
+	img.Stride = galleryThumbMaxW * 4
 }
 
 // phashRGBAPool is a gensyncpool-backed pool of 64×64 *image.RGBA canvases
@@ -134,7 +143,7 @@ func acquireGalleryThumb(src image.Image) (img image.Image, release func()) {
 		return (*thumbResizeHook)(src), func() {}
 	}
 	full := thumbRGBAPool.Get()
-	w, h := fitInsideBox(200, 150, src)
+	w, h := fitInsideBox(galleryThumbMaxW, galleryThumbMaxH, src)
 	view := full.SubImage(image.Rect(0, 0, w, h)).(*image.RGBA)
 	draw.ApproxBiLinear.Scale(view, view.Bounds(), src, src.Bounds(), draw.Src, nil)
 	return view, func() { thumbRGBAPool.Put(full) }
@@ -161,78 +170,98 @@ func GetMD5() hash.Hash { return md5Pool.Get() }
 // PutMD5 returns an MD5 hash.Hash to the pool, resetting it first.
 func PutMD5(h hash.Hash) { md5Pool.Put(h) }
 
+// fitInsideBoxDims returns width and height that fit a srcW×srcH source inside
+// a maxW×maxH box while preserving aspect ratio, with a minimum of 1 in each
+// dimension. It upscales sources smaller than the box, matching the geometry
+// historically used by thumbnail(). Integer math only; the caller provides the
+// source dimensions so no image.Image is needed.
+func fitInsideBoxDims(maxW, maxH, srcW, srcH int) (int, int) {
+	var newW, newH int
+	if maxW*srcH <= maxH*srcW {
+		newW = maxW
+		newH = srcH * maxW / srcW
+	} else {
+		newH = maxH
+		newW = srcW * maxH / srcH
+	}
+	if newW < 1 {
+		newW = 1
+	}
+	if newH < 1 {
+		newH = 1
+	}
+	return newW, newH
+}
+
 // fitInsideBox returns width and height that fit img inside a maxW×maxH box
 // while preserving aspect ratio, with a minimum of 1 in each dimension. It
 // upscales images smaller than the box, matching the geometry historically
 // used by thumbnail().
 func fitInsideBox(maxW, maxH uint, img image.Image) (int, int) {
-	origBounds := img.Bounds()
-	origWidth := uint(origBounds.Dx())
-	origHeight := uint(origBounds.Dy())
+	b := img.Bounds()
+	return fitInsideBoxDims(int(maxW), int(maxH), b.Dx(), b.Dy())
+}
 
-	var newWidth, newHeight uint
-	if maxW*origHeight <= maxH*origWidth {
-		newWidth = maxW
-		newHeight = origHeight * maxW / origWidth
-	} else {
-		newHeight = maxH
-		newWidth = origWidth * maxH / origHeight
+// chooseJPEGDCTSize picks the go-scaled-jpeg DCTSizeScaled (dct/8 of source
+// resolution; 8 is 1:1, 1 is 1/8) that decodes a srcW×srcH JPEG to at least
+// the gallery-thumb fit size: the decoded JPEG must cover the 200×150 fit
+// box so the subsequent ApproxBiLinear downscale never upscales. Large JPEGs
+// resolve to dct 1 (1/8) and small ones to larger dct values, clamped to [1,8].
+func chooseJPEGDCTSize(srcW, srcH int) int {
+	// Guard against non-positive dimensions so a bad caller cannot trigger
+	// a divide-by-zero below. Clamping to 1 resolves to dct 8 (1:1 full
+	// decode), so untrusted source sizes never cause an upscale.
+	if srcW < 1 {
+		srcW = 1
 	}
-
-	if newWidth < 1 {
-		newWidth = 1
+	if srcH < 1 {
+		srcH = 1
 	}
-	if newHeight < 1 {
-		newHeight = 1
+	needW, needH := fitInsideBoxDims(galleryThumbMaxW, galleryThumbMaxH, srcW, srcH)
+	dctW := (needW*8 + srcW - 1) / srcW // ceil(needW*8/srcW)
+	dctH := (needH*8 + srcH - 1) / srcH // ceil(needH*8/srcH)
+	dct := max(dctW, dctH)
+	if dct < 1 {
+		dct = 1
 	}
-
-	return int(newWidth), int(newHeight)
+	if dct > 8 {
+		dct = 8
+	}
+	return dct
 }
 
 // resizeThumbApproxBiLinear fits img inside a 200×150 box and scales it with
 // draw.ApproxBiLinear into a new *image.RGBA (no destination pooling).
 func resizeThumbApproxBiLinear(img image.Image) image.Image {
-	w, h := fitInsideBox(200, 150, img)
+	w, h := fitInsideBox(galleryThumbMaxW, galleryThumbMaxH, img)
 	dst := image.NewRGBA(image.Rect(0, 0, w, h))
 	draw.ApproxBiLinear.Scale(dst, dst.Bounds(), img, img.Bounds(), draw.Src, nil)
 	return dst
 }
 
 // GenerateThumbnailAndHashes creates a thumbnail for the image read from r.
-// If the image (JPEG, TIFF, or WebP) contains an embedded EXIF thumbnail, that
-// thumbnail is decoded instead of the full image, dramatically reducing memory
-// use and CPU time. The source (embedded thumbnail or full image) is fitted
-// inside a 200x150 pixel box with draw.ApproxBiLinear into a pooled RGBA
-// canvas and encoded as JPEG. It also calculates MD5 (over the full file bytes)
-// and pHash: the gallery thumbnail is squashed to 64x64 with
-// draw.ApproxBiLinear into a second pooled RGBA canvas, and
-// imagehash.NewPHash64 is computed over that 64x64 canvas. Both pooled
-// destinations are returned to their pools before the function returns. It
-// returns the JPEG data as a bytes.Buffer, sql.NullString for MD5, and
-// sql.NullInt64 for pHash, or an error if generation fails.
-func GenerateThumbnailAndHashes(r io.ReadSeeker) (*bytes.Buffer, *sql.NullString, *sql.NullInt64, error) {
-	var srcImg image.Image
-
-	// Try the embedded EXIF thumbnail first; fall back to full decode.
-	embBuf := GetBytesBuffer()
-	if err := extractEXIFThumbnailHook(r, embBuf); err == nil {
-		if img, decErr := jpeg.Decode(bytes.NewReader(embBuf.Bytes())); decErr == nil {
-			srcImg = img
-		} else {
-			slog.Debug("embedded thumbnail decode failed; falling back", "err", decErr)
-		}
+// The full source image is always decoded via fullImageDecodeHook; srcW and
+// srcH are the source image dimensions in pixels and drive an adaptive JPEG
+// DCT scale: chooseJPEGDCTSize picks a DCTSizeScaled from srcW/srcH so the
+// decoded JPEG is at least the 200×150 gallery-thumb fit size (large JPEGs
+// stay at 1/8; non-JPEG formats ignore the dims and use stdlib image.Decode).
+// The decoded source is fitted inside a 200x150 pixel box with
+// draw.ApproxBiLinear into a pooled RGBA canvas and encoded as JPEG. It also
+// calculates MD5 (over the full file bytes) and pHash: the gallery thumbnail
+// is squashed to 64x64 with draw.ApproxBiLinear into a second pooled RGBA
+// canvas, and imagehash.NewPHash64 is computed over that 64x64 canvas. Both
+// pooled destinations are returned to their pools before the function
+// returns. It returns the JPEG data as a bytes.Buffer, sql.NullString for
+// MD5, and sql.NullInt64 for pHash, or an error if generation fails.
+func GenerateThumbnailAndHashes(r io.ReadSeeker, srcW, srcH int) (*bytes.Buffer, *sql.NullString, *sql.NullInt64, error) {
+	// Decode the full source image: rewind to the start, then hard-fail on
+	// any decode error. There is no embedded-EXIF-thumbnail shortcut.
+	if _, err := r.Seek(0, io.SeekStart); err != nil {
+		return nil, &sql.NullString{}, &sql.NullInt64{}, err
 	}
-	PutBytesBuffer(embBuf)
-
-	if srcImg == nil {
-		if _, err := r.Seek(0, io.SeekStart); err != nil {
-			return nil, &sql.NullString{}, &sql.NullInt64{}, err
-		}
-		img, _, err := image.Decode(r)
-		if err != nil {
-			return nil, &sql.NullString{}, &sql.NullInt64{}, err
-		}
-		srcImg = img
+	srcImg, _, decodeErr := fullImageDecodeHook(r, srcW, srcH)
+	if decodeErr != nil {
+		return nil, &sql.NullString{}, &sql.NullInt64{}, decodeErr
 	}
 
 	// Generate thumbnail image into a pooled 200x150 RGBA canvas.

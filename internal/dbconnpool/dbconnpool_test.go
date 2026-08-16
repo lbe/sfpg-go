@@ -99,6 +99,23 @@ func TestNewDbSQLConnPool(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "zero min idle stays zero",
+			config: Config{
+				MaxConnections:     8,
+				MinIdleConnections: 0,
+			},
+			wantErr: false,
+		},
+		{
+			name: "negative min idle rejected",
+			config: Config{
+				MaxConnections:     8,
+				MinIdleConnections: -1,
+			},
+			wantErr:   true,
+			errString: "minIdleConnections (-1) must be non-negative",
+		},
+		{
 			name: "valid config with explicit values",
 			config: Config{
 				MaxConnections:     10,
@@ -138,12 +155,13 @@ func TestNewDbSQLConnPool(t *testing.T) {
 				t.Errorf("maxConnections = %d, want %d", pool.maxConnections, tt.config.MaxConnections)
 			}
 
-			// Check default minIdleConnections
-			if tt.config.MinIdleConnections == 0 {
-				expected := max(tt.config.MaxConnections/4, 1)
-				if pool.minIdleConnections != expected {
-					t.Errorf("minIdleConnections = %d, want %d", pool.minIdleConnections, expected)
-				}
+			// MinIdleConnections is honored verbatim: configured 0 stays 0 and
+			// is not rewritten to max(max/4, 1).
+			if got := pool.minIdleConnections.Load(); got != tt.config.MinIdleConnections {
+				t.Errorf("minIdleConnections = %d, want %d", got, tt.config.MinIdleConnections)
+			}
+			if pool.Config.MinIdleConnections != tt.config.MinIdleConnections {
+				t.Errorf("Config.MinIdleConnections = %d, want %d", pool.Config.MinIdleConnections, tt.config.MinIdleConnections)
 			}
 		})
 	}
@@ -531,6 +549,116 @@ func TestMonitor_Scaling(t *testing.T) {
 			t.Errorf("pool did not shrink to minIdleConnections. got %d, want %d", n, config.MinIdleConnections)
 		}
 	})
+
+	t.Run("shrinks pool to zero when minIdle is 0", func(t *testing.T) {
+		ctx := t.Context()
+
+		config := Config{
+			DriverName:         "sqlite3",
+			MaxConnections:     10,
+			MinIdleConnections: 0,
+			MonitorInterval:    200 * time.Millisecond,
+			QueriesFunc:        gallerydb.NewCustomQueries,
+			ThumbsDBPath:       thumbsDBPath,
+		}
+
+		pool, err := NewDbSQLConnPool(ctx, dbPath, config)
+		if err != nil {
+			t.Fatalf("failed to create pool: %v", err)
+		}
+		defer pool.Close()
+
+		// Manually create idle connections above minIdle (0). Get them all
+		// first so the monitor sees 0 idle while we work.
+		conns := make([]*CpConn, 5)
+		for i := range 5 {
+			c, err := pool.Get()
+			if err != nil {
+				t.Fatalf("failed to get connection: %v", err)
+			}
+			conns[i] = c
+		}
+		for _, c := range conns {
+			pool.Put(c)
+		}
+
+		// Monitor auto-starts because MonitorInterval > 0. Poll until it
+		// drains every surplus idle connection down to minIdle (0).
+		if n := waitForIdleAtMost(t, pool, 0, 3*time.Second); n > 0 {
+			t.Errorf("pool did not shrink idle connections to 0. got %d, want 0", n)
+		}
+		// Drained connections must be closed, not merely evicted from the
+		// idle channel: the total connection count must reach 0 as well.
+		if total := pool.NumConnections(); total != 0 {
+			t.Errorf("pool total connections after shrink = %d, want 0", total)
+		}
+	})
+}
+
+// TestMonitor_ContinuesAfterEmptyShrinkDefault pins that the monitor goroutine
+// survives a shrink tick whose idle channel is empty. The shrink loop must
+// labeled-`break` on an empty channel, not `return` from monitor() (an unlabeled
+// break would exit only the select and busy-spin the for loop). With the old
+// `default: return`, the monitor died during the empty-channel tick and a later
+// surplus of idle connections was never drained to minIdle.
+//
+// Sequence: drain the idle channel and hold the conns, then set
+// p.minIdleConnections to -3 so the next tick computes a positive excess while
+// the channel is empty (grow is skipped because the deficit is negative). That
+// forces the shrink `default` path.
+func TestMonitor_ContinuesAfterEmptyShrinkDefault(t *testing.T) {
+	ctx := t.Context()
+	dbPath, thumbsDBPath, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	config := Config{
+		DriverName:         "sqlite3",
+		MaxConnections:     8,
+		MinIdleConnections: 1,
+		MonitorInterval:    50 * time.Millisecond,
+		QueriesFunc:        gallerydb.NewCustomQueries,
+		ThumbsDBPath:       thumbsDBPath,
+	}
+
+	pool, err := NewDbSQLConnPool(ctx, dbPath, config)
+	if err != nil {
+		t.Fatalf("failed to create pool: %v", err)
+	}
+	defer pool.Close() // monitor is running, so Close is required
+
+	// Drain idle via Get and hold the CpConns so the channel is empty.
+	held := make([]*CpConn, 0, 5)
+	for range 5 {
+		c, err := pool.Get()
+		if err != nil {
+			t.Fatalf("failed to get connection: %v", err)
+		}
+		held = append(held, c)
+	}
+
+	// Same-package: negative minIdle makes the next tick compute
+	// excess = currentIdle - (-3) > 0 while the channel is empty; grow is
+	// skipped (deficit negative). That forces the shrink `default` path.
+	pool.minIdleConnections.Store(-3)
+
+	// Let several ticks run with the empty channel + negative minIdle so the
+	// shrink default path fires at least once before we restore minIdle.
+	interval := config.MonitorInterval
+	time.Sleep(3 * interval)
+	time.Sleep(interval)
+
+	// Restore minIdle. Put held conns back and add surplus idle so idle > 1.
+	pool.minIdleConnections.Store(1)
+	for _, c := range held {
+		pool.Put(c)
+	}
+
+	// The auto-started monitor must drain the surplus down to minIdle. On the
+	// old `default: return` the monitor is already dead, so the surplus
+	// remains and the assertion fails.
+	if n := waitForIdleAtMost(t, pool, 1, 3*time.Second); n > 1 {
+		t.Errorf("pool did not shrink to minIdleConnections. got %d, want %d", n, 1)
+	}
 }
 
 func TestMonitor_StartsAutomatically(t *testing.T) {

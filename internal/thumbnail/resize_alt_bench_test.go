@@ -1,10 +1,10 @@
 package thumbnail
 
 // Phase 2 resize-only alternative benches. Measurement only: does not change
-// production defaults (draw.ApproxBiLinear / 200x150 / EXIF-on / pHash
-// ApproxBiLinear 64x64 from the gallery thumb) and does not pick a resize
-// winner. The nfnt Lanczos3 variant is retained as a characterization baseline
-// for historical comparison; gallery thumbs now use draw.ApproxBiLinear via
+// production defaults (draw.ApproxBiLinear / 200x150 / pHash ApproxBiLinear
+// 64x64 from the gallery thumb) and does not pick a resize winner. The nfnt
+// Lanczos3 variant is retained as a characterization baseline for historical
+// comparison; gallery thumbs now use draw.ApproxBiLinear via
 // defaultThumbResize.
 
 import (
@@ -22,20 +22,20 @@ import (
 // delegating to the shared production fit math (fitInsideBox) so bench
 // geometry cannot drift from production.
 func thumbFitSize(src image.Image) (w, h int) {
-	return fitInsideBox(200, 150, src)
+	return fitInsideBox(galleryThumbMaxW, galleryThumbMaxH, src)
 }
 
 // resizeAltNFNTLanczos3 is the nfnt Lanczos3 variant: characterization
 // baseline for historical comparison. It no longer matches the production
 // thumbnail resize (fit 200x150), which now uses draw.ApproxBiLinear.
 func resizeAltNFNTLanczos3(img image.Image) image.Image {
-	return thumbnail(200, 150, img, resize.Lanczos3)
+	return thumbnail(galleryThumbMaxW, galleryThumbMaxH, img, resize.Lanczos3)
 }
 
 // resizeAltNFNTBilinear is the nfnt Bilinear variant: thumbnail resize (fit
 // 200x150) with Bilinear interpolation.
 func resizeAltNFNTBilinear(img image.Image) image.Image {
-	return thumbnail(200, 150, img, resize.Bilinear)
+	return thumbnail(galleryThumbMaxW, galleryThumbMaxH, img, resize.Bilinear)
 }
 
 // resizeAltXDrawApproxBiLinear is the x/image/draw ApproxBiLinear variant. It
@@ -108,15 +108,14 @@ func withThumbResize(b *testing.B, fn func(image.Image) image.Image, body func(b
 	body(b)
 }
 
-// BenchmarkResizeAlt_Parallel_EXIFIgnored_12mp runs the full
+// BenchmarkResizeAlt_Parallel_FullDecode_12mp runs the full
 // GenerateThumbnailAndHashes path in parallel (b.RunParallel) over the 12 MP
-// fixture with the embedded-EXIF shortcut forced off (withEXIFExtractDisabled)
-// and the thumb resize swapped per variant (withThumbResize). The source bytes
-// are read once outside the timed sub-benchmark; each parallel iteration
-// builds its own bytes.Reader over the shared read-only data, so no *os.File
-// is shared across goroutines. Success-path pool returns go back via
+// fixture with the thumb resize swapped per variant (withThumbResize). The
+// source bytes are read once outside the timed sub-benchmark; each parallel
+// iteration builds its own bytes.Reader over the shared read-only data, so no
+// *os.File is shared across goroutines. Success-path pool returns go back via
 // benchPutResults. Matches Phase 1 parallelFullGenerate (no sinkBuf sink).
-func BenchmarkResizeAlt_Parallel_EXIFIgnored_12mp(b *testing.B) {
+func BenchmarkResizeAlt_Parallel_FullDecode_12mp(b *testing.B) {
 	_, path12, _ := ensureLargeFixtures(b) // 2nd return value: 12mp path
 	data, err := os.ReadFile(path12)       // outside timer; Fatal on error
 	if err != nil {
@@ -125,20 +124,18 @@ func BenchmarkResizeAlt_Parallel_EXIFIgnored_12mp(b *testing.B) {
 	for _, id := range resizeAltIDs {
 		fn := resizeAltByID[id]
 		b.Run(id, func(b *testing.B) {
-			withEXIFExtractDisabled(b, func(b *testing.B) {
-				withThumbResize(b, fn, func(b *testing.B) {
-					b.ReportAllocs()
-					b.ResetTimer()
-					b.RunParallel(func(pb *testing.PB) {
-						for pb.Next() {
-							buf, md5, phash, err := GenerateThumbnailAndHashes(bytes.NewReader(data))
-							if err != nil {
-								b.Fatal(err)
-							}
-							benchPutResults(buf, md5, phash)
-							// Do not assign sinkBuf here (matches Phase 1 parallelFullGenerate).
+			withThumbResize(b, fn, func(b *testing.B) {
+				b.ReportAllocs()
+				b.ResetTimer()
+				b.RunParallel(func(pb *testing.PB) {
+					for pb.Next() {
+						buf, md5, phash, err := GenerateThumbnailAndHashes(bytes.NewReader(data), 4000, 3000)
+						if err != nil {
+							b.Fatal(err)
 						}
-					})
+						benchPutResults(buf, md5, phash)
+						// Do not assign sinkBuf here (matches Phase 1 parallelFullGenerate).
+					}
 				})
 			})
 		})
@@ -185,21 +182,22 @@ func TestResizeAlt_SampleMetrics(t *testing.T) {
 	}
 }
 
-// BenchmarkResizeAlt_Full_EXIFIgnored runs the full GenerateThumbnailAndHashes
-// path with the embedded-EXIF shortcut forced off (withEXIFExtractDisabled) and
-// the thumb resize swapped per variant (withThumbResize) across the 2/12/25 MP
-// fixture matrix. Source bytes are read once per size outside the timed
-// sub-benchmark loops; each iteration builds a fresh bytes.Reader over the
-// shared read-only data. Success-path pool returns go back via benchPutResults.
-func BenchmarkResizeAlt_Full_EXIFIgnored(b *testing.B) {
+// BenchmarkResizeAlt_Full_FullDecode runs the full GenerateThumbnailAndHashes
+// path with the thumb resize swapped per variant (withThumbResize) across the
+// 2/12/25 MP fixture matrix (synthetic full-path benches). Source bytes are
+// read once per size outside the timed sub-benchmark loops; each iteration
+// builds a fresh bytes.Reader over the shared read-only data. Success-path
+// pool returns go back via benchPutResults.
+func BenchmarkResizeAlt_Full_FullDecode(b *testing.B) {
 	path2mp, path12mp, path25mp := ensureLargeFixtures(b)
 	for _, tc := range []struct {
 		name string
 		path string
+		w, h int
 	}{
-		{"2mp", path2mp},
-		{"12mp", path12mp},
-		{"25mp", path25mp},
+		{"2mp", path2mp, 1920, 1080},
+		{"12mp", path12mp, 4000, 3000},
+		{"25mp", path25mp, 5000, 5000},
 	} {
 		data, err := os.ReadFile(tc.path) // outside timer; Fatal on error
 		if err != nil {
@@ -208,19 +206,17 @@ func BenchmarkResizeAlt_Full_EXIFIgnored(b *testing.B) {
 		for _, id := range resizeAltIDs {
 			fn := resizeAltByID[id]
 			b.Run(tc.name+"/"+id, func(b *testing.B) {
-				withEXIFExtractDisabled(b, func(b *testing.B) {
-					withThumbResize(b, fn, func(b *testing.B) {
-						b.ReportAllocs()
-						b.ResetTimer()
-						for i := 0; i < b.N; i++ {
-							buf, md5, phash, err := GenerateThumbnailAndHashes(bytes.NewReader(data))
-							if err != nil {
-								b.Fatal(err)
-							}
-							benchPutResults(buf, md5, phash)
-							sinkBuf = buf
+				withThumbResize(b, fn, func(b *testing.B) {
+					b.ReportAllocs()
+					b.ResetTimer()
+					for i := 0; i < b.N; i++ {
+						buf, md5, phash, err := GenerateThumbnailAndHashes(bytes.NewReader(data), tc.w, tc.h)
+						if err != nil {
+							b.Fatal(err)
 						}
-					})
+						benchPutResults(buf, md5, phash)
+						sinkBuf = buf
+					}
 				})
 			})
 		}

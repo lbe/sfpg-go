@@ -241,7 +241,7 @@ func processFileContents(file *File) error {
 		return fmt.Errorf("failed to seek to beginning of file: %w", seekErr)
 	}
 
-	thumbBytesBuffer, md5, phash, err := thumbnail.GenerateThumbnailAndHashes(imageFile)
+	thumbBytesBuffer, md5, phash, err := thumbnail.GenerateThumbnailAndHashes(imageFile, int(config.Width), int(config.Height))
 	if err != nil {
 		slog.Error("failed to generate thumbnail", "file", file.Path, "err", err)
 		return fmt.Errorf("failed to generate thumbnail: %w", err)

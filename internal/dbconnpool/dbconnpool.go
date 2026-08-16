@@ -172,7 +172,7 @@ type DbSQLConnPool struct {
 	maxConnections int64
 
 	// minIdleConnections is the minimum number of idle connections to maintain.
-	minIdleConnections int64
+	minIdleConnections atomic.Int64
 
 	// monitorInterval specifies how often the monitor should run.
 	monitorInterval time.Duration
@@ -318,8 +318,11 @@ func NewDbSQLConnPool(
 		return nil, fmt.Errorf("maxConnections must be greater than 0")
 	}
 
-	if config.MinIdleConnections <= 0 {
-		config.MinIdleConnections = max(config.MaxConnections/4, 1)
+	if config.MinIdleConnections < 0 {
+		return nil, fmt.Errorf(
+			"minIdleConnections (%d) must be non-negative",
+			config.MinIdleConnections,
+		)
 	}
 
 	if config.MinIdleConnections > config.MaxConnections {
@@ -355,11 +358,11 @@ func NewDbSQLConnPool(
 		pool:                 db,
 		connections:          make(chan *CpConn, config.MaxConnections),
 		maxConnections:       config.MaxConnections,
-		minIdleConnections:   config.MinIdleConnections,
 		monitorInterval:      config.MonitorInterval,
 		healthCheckThreshold: healthCheck,
 		done:                 make(chan struct{}),
 	}
+	p.minIdleConnections.Store(config.MinIdleConnections)
 
 	// Auto-start monitor if interval is configured.
 	if p.monitorInterval > 0 {
@@ -632,7 +635,8 @@ func (p *DbSQLConnPool) monitor() {
 			currentOpen := p.numConnections.Load()
 
 			// Grow: fill up to the full deficit in one tick.
-			deficit := p.minIdleConnections - currentIdle
+			minIdle := p.minIdleConnections.Load()
+			deficit := minIdle - currentIdle
 			available := p.maxConnections - currentOpen
 			if deficit > available {
 				deficit = available
@@ -672,14 +676,15 @@ func (p *DbSQLConnPool) monitor() {
 
 			// Shrink: drain all excess idle connections down to minIdle in one tick.
 			currentIdle = int64(len(p.connections))
-			excess := currentIdle - p.minIdleConnections
+			excess := currentIdle - minIdle
+		shrinkLoop:
 			for i := int64(0); i < excess; i++ {
 				select {
 				case cpc := <-p.connections:
 					cpc.Close()
 					p.numConnections.Add(-1)
 				default:
-					return // channel empty, nothing more to drain
+					break shrinkLoop // channel empty, nothing more to drain
 				}
 			}
 		}

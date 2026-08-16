@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lbe/sfpg-go/internal/dbconnpool"
 	"github.com/lbe/sfpg-go/internal/gallerydb"
 	"github.com/lbe/sfpg-go/internal/getopt"
 	"github.com/lbe/sfpg-go/internal/server/config"
@@ -221,6 +222,60 @@ func TestDBPoolPrecedence_ConfigLoadedAfterPoolCreation(t *testing.T) {
 	}
 
 	app.Shutdown()
+}
+
+// TestDBPoolMonitorBootstrap_NilSetDBLoadDefaultsLiveInterval verifies that a
+// nil-config setDB bootstrap starts the RW/RO pool monitors at the default 1m
+// interval (not 0), and that a subsequent reconfigure with default limits
+// (100/10/1m) leaves the live interval at 1m.
+func TestDBPoolMonitorBootstrap_NilSetDBLoadDefaultsLiveInterval(t *testing.T) {
+	tempDir := t.TempDir()
+
+	opt := getopt.Opt{
+		SessionSecret: getopt.OptString{
+			String: "test-secret-monitor-bootstrap",
+			IsSet:  true,
+		},
+	}
+
+	app := New(opt, "x.y.z")
+	defer app.Shutdown()
+	app.setRootDir(&tempDir)
+	app.setupBootstrapLogging()
+
+	// setDB with Config == nil must bootstrap pools with default limits
+	// (100/10/1m), not a zero monitor interval.
+	app.setDB()
+
+	defaultInterval := config.DefaultConfig().DBPoolMonitorInterval
+	for name, pool := range map[string]*dbconnpool.DbSQLConnPool{"RW": app.dbRwPool, "RO": app.dbRoPool} {
+		if got := pool.Config.MaxConnections; got != 100 {
+			t.Errorf("%s pool MaxConnections = %d, want 100", name, got)
+		}
+		if got := pool.Config.MinIdleConnections; got != 10 {
+			t.Errorf("%s pool MinIdleConnections = %d, want 10", name, got)
+		}
+		if got := pool.Config.MonitorInterval; got != defaultInterval {
+			t.Errorf("%s pool MonitorInterval = %s, want %s (nil-config bootstrap)", name, got, defaultInterval)
+		}
+	}
+
+	app.setConfigDefaults() // Ensures DB has required keys
+
+	if err := app.loadConfig(); err != nil {
+		t.Fatalf("loadConfig failed: %v", err)
+	}
+	if err := app.reconfigurePoolsFromConfig(); err != nil {
+		t.Fatalf("reconfigurePoolsFromConfig failed: %v", err)
+	}
+
+	// Defaults 100/10/1m match the live pools; reconfigure must no-op and the
+	// monitor interval must remain 1m.
+	for name, pool := range map[string]*dbconnpool.DbSQLConnPool{"RW": app.dbRwPool, "RO": app.dbRoPool} {
+		if got := pool.Config.MonitorInterval; got != defaultInterval {
+			t.Errorf("%s pool MonitorInterval = %s, want %s after reconfigure", name, got, defaultInterval)
+		}
+	}
 }
 
 // --- merged from config_restart_persistence_integration_test.go ---

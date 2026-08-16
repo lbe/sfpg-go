@@ -2,6 +2,7 @@
   id="config-success-message"
   class="alert alert-success mb-2"
   _="on load
+      call snapshotConfigOriginals()
       wait 2s
       set #config_modal.checked to false
       wait 300ms

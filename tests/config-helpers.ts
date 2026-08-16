@@ -8,9 +8,37 @@
  * Use in test beforeAll/afterAll to isolate config-mutating tests.
  */
 
-import { type APIRequestContext } from "@playwright/test";
+import { expect, type APIRequestContext, type Page } from "@playwright/test";
 
 const BASE_URL = "http://localhost:8083";
+
+/**
+ * Assert the full restart-dialog-open contract after a restart-required save:
+ * success alert with restart text, badge visible/not hidden, restart modal
+ * toggle checked, and a non-empty restart diff.
+ *
+ * Shared by every config save path that must open #restart-diff-modal so a
+ * broken OOB badge swap (dialog never opens) cannot stay green.
+ */
+export async function expectRestartDialogOpen(page: Page): Promise<void> {
+  await expect(page.locator("#config-success-message")).toBeVisible({
+    timeout: 10000,
+  });
+  await expect(page.locator("#config-success-message")).toContainText(
+    "Server restart required",
+  );
+  await expect(page.locator("#config-restart-badge")).toBeVisible({
+    timeout: 5000,
+  });
+  await expect(page.locator("#config-restart-badge")).not.toHaveClass(/hidden/);
+  await expect(page.locator("#restart-diff-modal")).toBeChecked({
+    timeout: 5000,
+  });
+  await expect(page.locator("#restart-diff-content")).not.toBeEmpty();
+  await expect(
+    page.locator("#restart-diff-content table tbody tr"),
+  ).not.toHaveCount(0);
+}
 
 /**
  * Poll /health until the server is accepting requests, or timeout.

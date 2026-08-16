@@ -19,6 +19,10 @@ import (
 // These tests exercise the configuration modal's save flow end-to-end:
 // log in, fetch the config form, change a harmless field (site_name),
 // POST it back, and verify the change persists.
+//
+// NOTE: These are HTTP-level tests and do NOT cover the restart dialog UX
+// (badge visibility, restart-diff modal opening). Restart-dialog behavior is
+// covered by Playwright: tests/config.spec.ts "Config restart" and related.
 // =========================================================================
 
 // TestConfigModal_SaveSiteName verifies the full config modal save flow.

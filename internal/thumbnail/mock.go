@@ -15,7 +15,7 @@ type MockGenerator struct {
 }
 
 // GenerateThumbnailAndHashes returns the mock values.
-func (m *MockGenerator) GenerateThumbnailAndHashes(r io.ReadSeeker) (*bytes.Buffer, *sql.NullString, *sql.NullInt64, error) {
+func (m *MockGenerator) GenerateThumbnailAndHashes(r io.ReadSeeker, srcW, srcH int) (*bytes.Buffer, *sql.NullString, *sql.NullInt64, error) {
 	if m.Err != nil {
 		return nil, nil, nil, m.Err
 	}

@@ -80,7 +80,36 @@ func TestNewPool(t *testing.T) {
 		if pool.MaxWorkers != expectedMax {
 			t.Errorf("Expected MaxWorkers to default to %d, got %d", expectedMax, pool.MaxWorkers)
 		}
+		if pool.MinWorkers != 0 {
+			t.Errorf("Expected MinWorkers to stay 0 (no idle workers), got %d", pool.MinWorkers)
+		}
 	})
+}
+
+// TestShouldScaleUp exercises the monitor scale-up predicate.
+func TestShouldScaleUp(t *testing.T) {
+	tests := []struct {
+		name           string
+		queueLength    int
+		runningWorkers int
+		maxWorkers     int
+		want           bool
+	}{
+		{"empty queue and zero workers", 0, 0, 22, false},
+		{"queue backlog from zero workers", 1, 0, 22, true},
+		{"queue at running count", 1, 1, 22, false},
+		{"queue backlog under max", 5, 4, 22, true},
+		{"running at max", 5, 22, 22, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldScaleUp(tt.queueLength, tt.runningWorkers, tt.maxWorkers); got != tt.want {
+				t.Errorf("shouldScaleUp(%d, %d, %d) = %v, want %v",
+					tt.queueLength, tt.runningWorkers, tt.maxWorkers, got, tt.want)
+			}
+		})
+	}
 }
 
 // TestPoolStats tests the statistics tracking of the pool.
@@ -136,6 +165,15 @@ func TestShouldIStop(t *testing.T) {
 		time.Sleep(60 * time.Millisecond) // Bubble time — exceed idle threshold
 		if !pool.ShouldIStop(0) {
 			t.Error("ShouldIStop returned false when all stop conditions are met")
+		}
+
+		// Case 5: Min workers 0, one running worker, empty queue, idle past the
+		// max idle time: the last worker may exit.
+		poolMinZero := NewPool(ctx, 10, 0, 50*time.Millisecond)
+		poolMinZero.Stats.RunningWorkers.Store(1)
+		time.Sleep(60 * time.Millisecond) // Bubble time — exceed idle threshold
+		if !poolMinZero.ShouldIStop(0) {
+			t.Error("ShouldIStop returned false for min 0, one running worker, idle past max idle time")
 		}
 	})
 }
@@ -294,6 +332,88 @@ func TestStartWorkerPool_Scaling(t *testing.T) {
 
 		if pool.Stats.RunningWorkers.Load() != 1 {
 			t.Errorf("Expected workers to scale down to min (1), but at %d", pool.Stats.RunningWorkers.Load())
+		}
+	})
+}
+
+// TestStartWorkerPool_MinWorkersZero_EmptyStaysZeroThenScales verifies that a
+// pool with MinWorkers 0 stays at zero running workers on an empty queue, then
+// scales up from zero once the queue has a backlog.
+func TestStartWorkerPool_MinWorkersZero_EmptyStaysZeroThenScales(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx := t.Context()
+
+		pool := NewPool(ctx, 5, 0, 100*time.Millisecond)
+		q := queue.NewQueue[string](100)
+		var wg sync.WaitGroup
+
+		mockPoolFunc := func(ctx context.Context, wc WorkerContext, dbRo, dbRw dbconnpool.ConnectionPool, qLen func() int, id int) error {
+			wg.Done() // Signal that a worker has started
+			for {
+				select {
+				case <-ctx.Done():
+					return nil // Bubble ended — let the pool wind down
+				default:
+				}
+				if wc.ShouldIStop(qLen()) {
+					return nil
+				}
+				_, err := q.Dequeue()
+				if err != nil {
+					if errors.Is(err, queue.ErrEmptyQueue) {
+						select {
+						case <-ctx.Done():
+							// Bubble ended — the loop-top ctx check returns nil.
+						case <-time.After(10 * time.Millisecond): // Bubble time
+						}
+						continue
+					}
+					return err
+				}
+				wc.AddCompleted()
+				select {
+				case <-ctx.Done():
+					return nil
+				case <-time.After(150 * time.Millisecond): // Simulate work (bubble time)
+				}
+			}
+		}
+
+		go pool.StartWorkerPool(mockPoolFunc, nil, nil, q.Len)
+		synctest.Wait() // Let the monitor start
+
+		// Empty queue: no worker may be spawned across several monitor ticks.
+		time.Sleep(500 * time.Millisecond) // ~5 monitor ticks (bubble time)
+		synctest.Wait()
+		if got := pool.Stats.RunningWorkers.Load(); got != 0 {
+			t.Fatalf("Expected 0 running workers on empty queue, got %d", got)
+		}
+
+		// Add tasks to trigger scale-up from zero.
+		wg.Add(5) // Expect all 5 workers to start
+		for range 20 {
+			if enqErr := q.Enqueue("task"); enqErr != nil {
+				t.Fatalf("Enqueue: %v", enqErr)
+			}
+		}
+
+		// Wait for scale-up, with a bubble timeout.
+		waitChan := make(chan struct{})
+		go func() {
+			wg.Wait()
+			close(waitChan)
+		}()
+
+		select {
+		case <-waitChan:
+			// All workers started
+		case <-time.After(2 * time.Second):
+			t.Fatalf("Timed out waiting for workers to scale up from zero. Running: %d", pool.Stats.RunningWorkers.Load())
+		}
+		synctest.Wait() // Flush RunningWorkers.Add(1) for each spawned worker
+
+		if pool.Stats.RunningWorkers.Load() != 5 {
+			t.Errorf("Expected workers to scale up to 5, got %d", pool.Stats.RunningWorkers.Load())
 		}
 	})
 }
@@ -471,12 +591,13 @@ func TestGetMinMaxPoolWorkers(t *testing.T) {
 		wantMin        int
 		wantMax        int
 	}{
-		{"single core defaults", 1, 0, 0, 1, 1},
-		{"dual core defaults", 2, 0, 0, 1, 1},
-		{"quad core defaults", 4, 0, 0, 2, 2},
-		{"eight core defaults", 8, 0, 0, 4, 6},
-		{"sixteen core defaults", 16, 0, 0, 4, 14},
+		{"single core defaults", 1, 0, 0, 0, 1},
+		{"dual core defaults", 2, 0, 0, 0, 1},
+		{"quad core defaults", 4, 0, 0, 0, 2},
+		{"eight core defaults", 8, 0, 0, 0, 6},
+		{"sixteen core defaults", 16, 0, 0, 0, 14},
 		{"explicit overrides", 8, 3, 5, 3, 5},
+		{"explicit min with auto max", 8, 3, 0, 3, 6},
 	}
 
 	for _, tt := range tests {

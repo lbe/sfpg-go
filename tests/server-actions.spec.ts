@@ -1,6 +1,10 @@
 import { test, expect } from "@playwright/test";
 import { loginViaUI, openMenu, menu } from "./helpers";
-import { enableHTTPCache, waitForServerRestart } from "./config-helpers";
+import {
+  enableHTTPCache,
+  expectRestartDialogOpen,
+  waitForServerRestart,
+} from "./config-helpers";
 
 test.describe.configure({ timeout: 120000 });
 
@@ -127,15 +131,29 @@ test.describe.serial("Server Actions", () => {
 
       const cacheCheckbox = page.locator('input[name="enable_http_cache"]');
       await expect(cacheCheckbox).toBeVisible({ timeout: 3000 });
-      await cacheCheckbox.uncheck();
+      // Flip http-cache from its current state so the save is always a real
+      // restart-required change (default http-cache is false, so a plain
+      // uncheck would be a no-op).
+      if (await cacheCheckbox.isChecked()) {
+        await cacheCheckbox.uncheck();
+      } else {
+        await cacheCheckbox.check();
+      }
 
       // Save the config — this triggers the restart-required flow
       await page.locator("#config-form button[type='submit']").first().click();
 
-      // The restart modal should appear (restart-diff-modal)
-      const restartModalBtn = page.locator('button[hx-post="/config/restart"]');
+      // The restart modal should appear (restart-diff-modal). Assert the full
+      // dialog-open contract: success alert with restart text, badge
+      // visible/not hidden, modal toggle checked, and a non-empty diff table.
+      await expectRestartDialogOpen(page);
+
+      // Click Restart Server scoped to the open restart dialog (no force).
+      const restartModalBtn = page.locator(
+        'div.modal:has(#restart-diff-content) button[hx-post="/config/restart"]',
+      );
       await expect(restartModalBtn).toBeVisible({ timeout: 5000 });
-      await restartModalBtn.click({ force: true });
+      await restartModalBtn.click();
 
       await waitForServerRestart(page.request);
 

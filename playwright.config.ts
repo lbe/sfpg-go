@@ -39,13 +39,16 @@ export default defineConfig({
     {
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
-      // Config and server-actions run in the serial project below.
-      testIgnore: /config\.spec\.ts|server-actions\.spec\.ts/,
+      // Config, server-actions, and the htmx restart-alert fixture run in
+      // the serial project below (fixture depends on :8083 static assets).
+      testIgnore:
+        /config\.spec\.ts|server-actions\.spec\.ts|htmx-restart-alert\.spec\.ts/,
     },
     {
       name: "chromium-serial",
       use: { ...devices["Desktop Chrome"] },
-      testMatch: /config\.spec\.ts|server-actions\.spec\.ts/,
+      testMatch:
+        /config\.spec\.ts|server-actions\.spec\.ts|htmx-restart-alert\.spec\.ts/,
       fullyParallel: false,
       workers: 1,
     },

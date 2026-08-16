@@ -9,7 +9,7 @@ import (
 )
 
 func TestExtractXMPGPSStrings_CanonSidecar(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "..", "imagemeta", "xmp", "test", "1.xmp"))
+	data, err := os.ReadFile(filepath.Join("..", "..", "imagemeta", "meta", "xmp", "test", "lightroom_sidecar.xmp"))
 	if err != nil {
 		t.Fatalf("read fixture: %v", err)
 	}
@@ -45,7 +45,7 @@ func TestExtractXMPGPSStrings_EmbeddedElementForm(t *testing.T) {
 }
 
 func TestApplyExifGPSFromXMP_SetsValidCoords(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "..", "imagemeta", "xmp", "test", "1.xmp"))
+	data, err := os.ReadFile(filepath.Join("..", "..", "imagemeta", "meta", "xmp", "test", "lightroom_sidecar.xmp"))
 	if err != nil {
 		t.Fatalf("read fixture: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestApplyExifGPSFromXMP_SetsValidCoords(t *testing.T) {
 }
 
 func TestApplyExifGPSFromXMP_SkipsWhenExifAlreadyValid(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "..", "imagemeta", "xmp", "test", "1.xmp"))
+	data, err := os.ReadFile(filepath.Join("..", "..", "imagemeta", "meta", "xmp", "test", "lightroom_sidecar.xmp"))
 	if err != nil {
 		t.Fatalf("read fixture: %v", err)
 	}

@@ -137,8 +137,15 @@ func TestConfigHandlers_RestoreLastKnownGood_CommitRestartRequired(t *testing.T)
 	if err != nil {
 		t.Fatalf("parse HTML: %v", err)
 	}
-	if testutil.FindElementByID(doc, "config-success-message") == nil {
+	// The restore commit button uses hx-swap="none" (no main swap target), so the
+	// success alert must remain an OOB fragment to be displayed at all. This is the
+	// inverse of the save/import pattern where the request targets #config-success-message.
+	success := testutil.FindElementByID(doc, "config-success-message")
+	if success == nil {
 		t.Fatal("missing #config-success-message")
+	}
+	if got := testutil.GetAttr(success, "hx-swap-oob"); got != "outerHTML" {
+		t.Errorf("expected #config-success-message hx-swap-oob=outerHTML for hx-swap=none request, got %q", got)
 	}
 }
 
@@ -250,8 +257,15 @@ func TestConfigHandlers_RestoreLastKnownGood_CommitNoRestartRequired(t *testing.
 	if err != nil {
 		t.Fatalf("parse HTML: %v", err)
 	}
-	if testutil.FindElementByID(doc, "config-success-message") == nil {
+	// The restore commit button uses hx-swap="none" (no main swap target), so the
+	// success alert must remain an OOB fragment to be displayed at all. This is the
+	// inverse of the save/import pattern where the request targets #config-success-message.
+	success := testutil.FindElementByID(doc, "config-success-message")
+	if success == nil {
 		t.Fatal("missing #config-success-message")
+	}
+	if got := testutil.GetAttr(success, "hx-swap-oob"); got != "outerHTML" {
+		t.Errorf("expected #config-success-message hx-swap-oob=outerHTML for hx-swap=none request, got %q", got)
 	}
 }
 

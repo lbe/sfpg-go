@@ -183,11 +183,11 @@ func TestValidate_InvalidWorkerPoolSizes(t *testing.T) {
 		t.Error("Expected error when min idle exceeds max, got nil")
 	}
 
-	// Test valid: 0 means auto-calculate
+	// Test valid: max 0 auto-calculates; min 0 means no idle workers
 	cfg.WorkerPoolMax = 0
 	cfg.WorkerPoolMinIdle = 0
 	if err := cfg.Validate(); err != nil {
-		t.Errorf("Expected no error for auto-calculate (0), got: %v", err)
+		t.Errorf("Expected no error for worker pool 0/0 (auto max, no idle min), got: %v", err)
 	}
 }
 

@@ -86,8 +86,9 @@ func (p *Pool) AddSuccessful() {
 	p.Stats.SuccessfulTasks.Add(1)
 }
 
-// getMinMaxPoolWorkers determines the default minimum and maximum number of workers
-// based on the number of available CPU cores.
+// getMinMaxPoolWorkers determines the default minimum and maximum number of
+// workers based on the number of available CPU cores. Only a max of 0 is
+// auto-calculated; a min of 0 is honored as "no idle workers".
 func (p *Pool) getMinMaxPoolWorkers(minPoolWorkers, maxPoolWorkers int) (int, int) {
 	numCPU := runtimeNumCPU()
 
@@ -102,18 +103,14 @@ func (p *Pool) getMinMaxPoolWorkers(minPoolWorkers, maxPoolWorkers int) (int, in
 		}
 	}
 
-	if minPoolWorkers == 0 {
-		switch {
-		case (numCPU - 2) > 4:
-			minPoolWorkers = 4
-		case numCPU > 2 && numCPU <= 4:
-			minPoolWorkers = 2
-		default:
-			minPoolWorkers = 1
-		}
-	}
-
 	return minPoolWorkers, maxPoolWorkers
+}
+
+// shouldScaleUp reports whether the pool should spawn another worker: the
+// queue has more items than the running workers can drain, and the pool is
+// below its maximum. A zero-queue, zero-worker pool stays at zero.
+func shouldScaleUp(queueLength, runningWorkers, maxWorkers int) bool {
+	return queueLength > runningWorkers && runningWorkers < maxWorkers
 }
 
 // MonitorPool dynamically adjusts the number of workers based on the queue length
@@ -132,16 +129,14 @@ func (p *Pool) MonitorPool(ctx context.Context, eg *errgroup.Group,
 		case <-ticker.C:
 			queueLength := queueLenFunc()
 			runningWorkers := int(p.Stats.RunningWorkers.Load())
-			if queueLength < runningWorkers {
+			if !shouldScaleUp(queueLength, runningWorkers, p.MaxWorkers) {
 				continue
 			}
-			if runningWorkers < p.MaxWorkers {
-				eg.Go(func() error {
-					defer p.Stats.RunningWorkers.Add(-1)
-					return poolFunc(ctx, p, dbRoPool, dbRwPool, queueLenFunc, runningWorkers+1)
-				})
-				p.Stats.RunningWorkers.Add(1)
-			}
+			eg.Go(func() error {
+				defer p.Stats.RunningWorkers.Add(-1)
+				return poolFunc(ctx, p, dbRoPool, dbRwPool, queueLenFunc, runningWorkers+1)
+			})
+			p.Stats.RunningWorkers.Add(1)
 		}
 	}
 }

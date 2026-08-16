@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { loginViaUI, openMenu } from "./helpers";
-import { makeSnapshotRestore } from "./config-helpers";
+import { makeSnapshotRestore, expectRestartDialogOpen } from "./config-helpers";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -399,6 +399,103 @@ test.describe.serial("Configuration", () => {
     await freshContext.close();
   });
 
+  test("13a: db_max_pool_size save opens restart dialog", async ({ page }) => {
+    // Cover the exact user path that exposed the OOB-on-target bug: a number
+    // field, not a checkbox. Only db_max_pool_size is changed, so checkbox-
+    // only coverage cannot hide a broken badge swap. No server restart is
+    // triggered here — the dialog is closed via its Close button and the
+    // file-scope snapshot restore in afterAll leaves the pool size clean.
+    await openMenu(page);
+    await page.locator('a[aria-label="Configuration"]').click();
+    await page.waitForSelector("#config-form", { timeout: 5000 });
+    await page.locator("#tab-performance-btn").click();
+    await page.waitForTimeout(200);
+
+    const poolInput = page.locator('input[name="db_max_pool_size"]');
+    await expect(poolInput).toBeVisible({ timeout: 3000 });
+    const current = Number(await poolInput.inputValue());
+    await poolInput.fill(String(current + 1));
+
+    await page.locator("#config-form button[type='submit']").first().click();
+
+    // The restart dialog must open for a number-field change too.
+    await expectRestartDialogOpen(page);
+
+    // The restart diff must list the changed field in the diff table.
+    await expect(
+      page.locator("#restart-diff-content table tbody tr", {
+        hasText: "db_max_pool_size",
+      }),
+    ).toHaveCount(1);
+
+    // Close the restart dialog without triggering a server restart.
+    await page
+      .locator(
+        '.modal:has(#restart-diff-content) .modal-action label[for="restart-diff-modal"]',
+      )
+      .click();
+    await expect(page.locator("#restart-diff-modal")).not.toBeChecked({
+      timeout: 3000,
+    });
+  });
+
+  test("13b: Cancel after restart-required save closes cleanly", async ({
+    page,
+  }) => {
+    // Regression: after a restart-required save the open-modal originals
+    // snapshot was never updated, so Cancel reported the just-saved edit as
+    // unsaved and opened #cancel-diff-modal. The originals are now refreshed
+    // after the restart diff is built (inside the htmx:afterSettle builder),
+    // so Cancel with no further edits must close the config modal directly
+    // without the Unsaved Changes dialog.
+    await openMenu(page);
+    await page.locator('a[aria-label="Configuration"]').click();
+    await page.waitForSelector("#config-form", { timeout: 5000 });
+    await page.locator("#tab-performance-btn").click();
+    await page.waitForTimeout(200);
+
+    const poolInput = page.locator('input[name="db_max_pool_size"]');
+    await expect(poolInput).toBeVisible({ timeout: 3000 });
+    const current = Number(await poolInput.inputValue());
+    const changed = current + 1;
+    await poolInput.fill(String(changed));
+
+    // Save → the restart dialog must open (shared helper contract).
+    await page.locator("#config-form button[type='submit']").first().click();
+    await expectRestartDialogOpen(page);
+
+    // Close the restart dialog via Close — no server restart.
+    await page
+      .locator(
+        '.modal:has(#restart-diff-content) .modal-action label[for="restart-diff-modal"]',
+      )
+      .click();
+    await expect(page.locator("#restart-diff-modal")).not.toBeChecked({
+      timeout: 3000,
+    });
+
+    // Cancel with no further edits: must NOT open #cancel-diff-modal and must
+    // close the config modal cleanly.
+    await page.locator("#config-cancel-btn").click();
+    await expect(page.locator("#cancel-diff-modal")).not.toBeChecked({
+      timeout: 3000,
+    });
+    await expect(page.locator("#config_modal")).not.toBeChecked({
+      timeout: 3000,
+    });
+
+    // Reopen config: the persisted value is still present (Cancel only ends
+    // the modal session; it does not roll back the save).
+    await openMenu(page);
+    await page.locator('a[aria-label="Configuration"]').click();
+    await page.waitForSelector("#config-form", { timeout: 5000 });
+    await page.locator("#tab-performance-btn").click();
+    await page.waitForTimeout(200);
+    await expect(page.locator('input[name="db_max_pool_size"]')).toHaveValue(
+      String(changed),
+    );
+  });
+
   test("13: Config restart", async ({ page, request }) => {
     // Config restart is non-destructive — the server restarts in <10s.
     // This test is intentionally LAST in the serial run because it restarts
@@ -419,17 +516,33 @@ test.describe.serial("Configuration", () => {
 
       const cacheCheckbox = page.locator('input[name="enable_http_cache"]');
       await expect(cacheCheckbox).toBeVisible({ timeout: 3000 });
-      await cacheCheckbox.uncheck();
+      // Flip http-cache from its current state so the save is always a real
+      // restart-required change regardless of the server's starting config
+      // (default http-cache is false, so a plain uncheck would be a no-op).
+      if (await cacheCheckbox.isChecked()) {
+        await cacheCheckbox.uncheck();
+      } else {
+        await cacheCheckbox.check();
+      }
 
       // Save — this triggers the restart-required flow:
       // 1. Server returns OOB swap making badge visible
       // 2. htmx:afterSettle handler opens #restart-diff-modal automatically
       await page.locator("#config-form button[type='submit']").first().click();
 
-      // Wait for the restart modal to open (auto-triggered by settle handler)
-      const restartBtn = page.locator('button[hx-post="/config/restart"]');
+      // Assert the restart-required flow actually opened the dialog. These
+      // assertions are the false-green gate: with the OOB-on-target bug the
+      // badge keeps `hidden` and the dialog never opens even though the
+      // success alert renders.
+      await expectRestartDialogOpen(page);
+
+      // Click Restart Server scoped to the open restart dialog. The modal is
+      // proven open above, so no force click is needed.
+      const restartBtn = page.locator(
+        'div.modal:has(#restart-diff-content) button[hx-post="/config/restart"]',
+      );
       await expect(restartBtn).toBeVisible({ timeout: 5000 });
-      await restartBtn.click({ force: true });
+      await restartBtn.click();
 
       // Wait for restart to begin
       await page.waitForTimeout(1000);

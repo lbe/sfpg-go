@@ -3,29 +3,7 @@
   id="config-modal-container"
   _="init
   set #config_modal.checked to true
-  set window.configOriginalValues to {}
-  set form to #config-form
-  if form
-    set allFields to form.querySelectorAll('[name]')
-    for field in allFields
-      set fieldName to field@name
-      if field.type == 'checkbox'
-        set window.configOriginalValues[fieldName] to field.checked
-      else
-        set window.configOriginalValues[fieldName] to field.value
-      end
-    end
-
-    set themesSelect to form.querySelector('select[name=themes]')
-    if themesSelect
-      set selectedOptions to themesSelect.selectedOptions
-      set themesArray to []
-      for option in selectedOptions
-        set themesArray to themesArray.concat([option.value])
-      end
-      set window.configOriginalValues['themes'] to themesArray
-    end
-  end
+  call snapshotConfigOriginals()
 "
 >
   {{ template "config-spinner.html.tmpl" . }}

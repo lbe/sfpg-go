@@ -3,6 +3,7 @@ package files
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/xml"
 	"errors"
@@ -10,9 +11,10 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/evanoberholster/imagemeta/exif2"
 	"github.com/evanoberholster/imagemeta/imagetype"
-	"github.com/evanoberholster/imagemeta/jpeg"
+	"github.com/evanoberholster/imagemeta/meta/exif"
+	"github.com/evanoberholster/imagemeta/meta/jpeg"
+	metalog "github.com/evanoberholster/imagemeta/meta/logging"
 	"github.com/lbe/sfpg-go/internal/gallerydb"
 )
 
@@ -149,35 +151,36 @@ func xmpGPSStringsFromProps(props []gallerydb.UpsertXMPPropertyParams) (lat, lon
 var metadataDecodeWithXMP = defaultMetadataDecodeWithXMP
 
 // defaultMetadataDecodeWithXMP mirrors imagemeta.Decode for non-JPEG/unknown
-// files, and uses jpeg.ScanJPEG with an XMP reader for JPEG files so embedded
-// XMP extension segments are captured.
-func defaultMetadataDecodeWithXMP(r io.ReadSeeker) (exif2.Exif, []byte, error) {
+// files, and uses jpeg.ScanJPEGWithSourceContext with an XMP reader for JPEG
+// files so embedded XMP extension segments are captured. The context cancels
+// the JPEG scan when extraction exceeds its deadline (see ExtractExifData).
+func defaultMetadataDecodeWithXMP(ctx context.Context, r io.ReadSeeker) (exif.Exif, []byte, error) {
 	if _, err := r.Seek(0, io.SeekStart); err != nil {
-		return exif2.Exif{}, nil, err
+		return exif.Exif{}, nil, err
 	}
 
 	rr := bufio.NewReaderSize(r, 4*1024)
-	ir := exif2.NewIfdReader(exif2.Logger)
-	defer ir.Close()
+	ir := exif.AcquirePooledReader(metalog.GetLogger())
+	defer exif.ReleasePooledReader(ir)
 
 	it, err := imagetype.ScanBuf(rr)
 	if err != nil || it == imagetype.ImageUnknown {
 		// Short/unknown files: delegate to imageMetaDecode so existing test
 		// stubs keep working.
 		if _, seekErr := r.Seek(0, io.SeekStart); seekErr != nil {
-			return exif2.Exif{}, nil, seekErr
+			return exif.Exif{}, nil, seekErr
 		}
-		exif, decErr := imageMetaDecode(r)
-		return exif, nil, decErr
+		m, decErr := imageMetaDecode(r)
+		return m, nil, decErr
 	}
 	ir.Exif.ImageType = it
 
 	if it != imagetype.ImageJPEG {
 		if _, seekErr := r.Seek(0, io.SeekStart); seekErr != nil {
-			return exif2.Exif{}, nil, seekErr
+			return exif.Exif{}, nil, seekErr
 		}
-		exif, decErr := imageMetaDecode(r)
-		return exif, nil, decErr
+		m, decErr := imageMetaDecode(r)
+		return m, nil, decErr
 	}
 
 	var xmpBuf bytes.Buffer
@@ -190,7 +193,7 @@ func defaultMetadataDecodeWithXMP(r io.ReadSeeker) (exif2.Exif, []byte, error) {
 		return err
 	}
 
-	if err := jpeg.ScanJPEG(rr, ir.DecodeJPEGIfd, xmpReader); err != nil {
+	if err := jpeg.ScanJPEGWithSourceContext(ctx, rr, r, ir.DecodeJPEGIfd, xmpReader); err != nil {
 		return ir.Exif, xmpBuf.Bytes(), err
 	}
 	return ir.Exif, xmpBuf.Bytes(), nil

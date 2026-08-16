@@ -105,8 +105,8 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.WorkerPoolMax != 0 { // 0 means auto-calculate
 		t.Errorf("expected WorkerPoolMax to be 0 (auto), got %d", cfg.WorkerPoolMax)
 	}
-	if cfg.WorkerPoolMinIdle != 0 { // 0 means auto-calculate
-		t.Errorf("expected WorkerPoolMinIdle to be 0 (auto), got %d", cfg.WorkerPoolMinIdle)
+	if cfg.WorkerPoolMinIdle != 0 { // 0 means no idle workers
+		t.Errorf("expected WorkerPoolMinIdle to be 0, got %d", cfg.WorkerPoolMinIdle)
 	}
 }
 

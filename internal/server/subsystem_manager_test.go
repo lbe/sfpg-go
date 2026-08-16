@@ -3,6 +3,9 @@ package server
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"strconv"
 	"sync"
 	"testing"
 
@@ -121,6 +124,9 @@ func WithPreloadManager(pm preloadManager) func(*SubsystemManager) {
 func newUnitSubsystemManager(t *testing.T) *SubsystemManager {
 	t.Helper()
 	infra := NewInfrastructureService()
+	// No SetupDB in unit tests: point the discovery dque at a dedicated
+	// subdirectory (never the bare temp dir, which is the RemoveAll wipe root).
+	infra.discoveryDQueDirPath = filepath.Join(t.TempDir(), "discovery-dque")
 	return NewSubsystemManager(infra)
 }
 
@@ -191,7 +197,112 @@ func TestSubsystemManager_Shutdown_Idempotent(t *testing.T) {
 
 	startUnitSubsystemManager(t, mgr, nil)
 	mgr.Shutdown()
-	mgr.Shutdown() // should not panic
+	mgr.Shutdown() // should not panic (adapter Close is idempotent)
+}
+
+// TestSubsystemManager_Start_WipesPreviousDiscoveryBacklog verifies that Start
+// discards a previous run's discovery backlog: a seeded dque with items plus a
+// stray file in the queue directory are gone after wipe+reopen, and the new
+// queue is usable for fresh discovery.
+func TestSubsystemManager_Start_WipesPreviousDiscoveryBacklog(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "discovery-dque")
+
+	// Seed a previous run's backlog: a real dque containing an item plus a
+	// stray file in the queue directory.
+	seed, seedErr := newDiscoveryDQueAdapter(dir)
+	if seedErr != nil {
+		t.Fatalf("seed adapter: %v", seedErr)
+	}
+	if err := seed.Enqueue("stale-path.jpg"); err != nil {
+		t.Fatalf("seed enqueue: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "leftover.txt"), []byte("junk"), 0o644); err != nil {
+		t.Fatalf("seed stray file: %v", err)
+	}
+	seed.Close() // release the flock so Start can wipe and reopen
+
+	mgr := newUnitSubsystemManager(t)
+	// Reuse the seeded directory as the discovery queue directory.
+	mgr.infra.discoveryDQueDirPath = dir
+	WithFileProcessor(&recordingFileProcessor{})(mgr)
+	WithPreloadManager(&recordingPreloadManager{})(mgr)
+
+	startUnitSubsystemManager(t, mgr, nil)
+
+	// Old queue contents are gone: the queue opens empty and the stray file
+	// was removed by the wipe.
+	if got := mgr.q.Len(); got != 0 {
+		t.Errorf("queue Len after wipe = %d, want 0 (previous backlog discarded)", got)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "leftover.txt")); !os.IsNotExist(err) {
+		t.Errorf("leftover file should be wiped; stat err = %v", err)
+	}
+
+	// The fresh queue is usable for new discovery.
+	if err := mgr.q.Enqueue("fresh.jpg"); err != nil {
+		t.Fatalf("enqueue after wipe: %v", err)
+	}
+	got, err := mgr.q.Dequeue()
+	if err != nil {
+		t.Fatalf("dequeue after wipe: %v", err)
+	}
+	if got != "fresh.jpg" {
+		t.Errorf("dequeued %q, want %q", got, "fresh.jpg")
+	}
+}
+
+// TestSubsystemManager_Start_DoubleStart verifies Start re-entry: when a
+// discovery queue is already open, a second Start closes it first, then wipes
+// and reopens (once-per-process lifetime for the discovery dque).
+func TestSubsystemManager_Start_DoubleStart(t *testing.T) {
+	mgr := newUnitSubsystemManager(t)
+	WithFileProcessor(&recordingFileProcessor{})(mgr)
+	WithPreloadManager(&recordingPreloadManager{})(mgr)
+
+	startUnitSubsystemManager(t, mgr, nil)
+	if mgr.q == nil {
+		t.Fatal("queue should be initialized after first Start")
+	}
+	if err := mgr.q.Enqueue("first.jpg"); err != nil {
+		t.Fatalf("enqueue after first Start: %v", err)
+	}
+
+	startUnitSubsystemManager(t, mgr, nil) // must close the open queue before wipe
+
+	if mgr.q == nil {
+		t.Fatal("queue should be re-initialized after second Start")
+	}
+	// Wipe-on-start: items from the first run are discarded.
+	if got := mgr.q.Len(); got != 0 {
+		t.Errorf("queue Len after second Start = %d, want 0", got)
+	}
+	if err := mgr.q.Enqueue("second.jpg"); err != nil {
+		t.Fatalf("enqueue after second Start: %v", err)
+	}
+}
+
+// TestSubsystemManager_Start_PanicsOnEmptyDiscoveryDQueDirPath verifies Start
+// fail-fasts before wiping when the discovery queue directory path is empty or
+// whitespace-only (no soft-skip leaving m.q nil).
+func TestSubsystemManager_Start_PanicsOnEmptyDiscoveryDQueDirPath(t *testing.T) {
+	for _, path := range []string{"", "   "} {
+		t.Run("path="+strconv.Quote(path), func(t *testing.T) {
+			infra := NewInfrastructureService()
+			infra.discoveryDQueDirPath = path
+			mgr := NewSubsystemManager(infra)
+
+			defer func() {
+				r := recover()
+				if r == nil {
+					t.Fatal("expected panic on empty discovery dque path")
+				}
+				if r != "main" {
+					t.Errorf("panic value = %v, want %q", r, "main")
+				}
+			}()
+			mgr.Start(context.Background(), nil, 1, 2, "", "", nil, nil, nil, nil)
+		})
+	}
 }
 
 // TestSubsystemManager_ResetStats verifies ResetStats resets all counters.

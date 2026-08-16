@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"runtime/debug"
 	"time"
 
@@ -37,13 +38,17 @@ func (app *App) logStartupConfigSummary(queueSize int, runDiscovery bool) {
 	rwEffectiveMinIdle := int64(0)
 	roEffectiveMax := int64(0)
 	roEffectiveMinIdle := int64(0)
+	rwEffectiveInterval := time.Duration(0)
+	roEffectiveInterval := time.Duration(0)
 	if app.dbRwPool != nil {
 		rwEffectiveMax = app.dbRwPool.Config.MaxConnections
 		rwEffectiveMinIdle = app.dbRwPool.Config.MinIdleConnections
+		rwEffectiveInterval = app.dbRwPool.Config.MonitorInterval
 	}
 	if app.dbRoPool != nil {
 		roEffectiveMax = app.dbRoPool.Config.MaxConnections
 		roEffectiveMinIdle = app.dbRoPool.Config.MinIdleConnections
+		roEffectiveInterval = app.dbRoPool.Config.MonitorInterval
 	}
 
 	effectiveWorkerMax := 0
@@ -60,6 +65,9 @@ func (app *App) logStartupConfigSummary(queueSize int, runDiscovery bool) {
 		"db_configured_min_idle", cfg.DBMinIdleConnections,
 		"db_rw_effective_min_idle", rwEffectiveMinIdle,
 		"db_ro_effective_min_idle", roEffectiveMinIdle,
+		"db_configured_monitor_interval", cfg.DBPoolMonitorInterval,
+		"db_rw_effective_monitor_interval", rwEffectiveInterval,
+		"db_ro_effective_monitor_interval", roEffectiveInterval,
 		"worker_configured_max", cfg.WorkerPoolMax,
 		"worker_effective_max", effectiveWorkerMax,
 		"worker_configured_min_idle", cfg.WorkerPoolMinIdle,
@@ -222,6 +230,16 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 	runDiscovery := true // default
 	if app.ConfigManager.Config != nil {
 		runDiscovery = app.ConfigManager.Config.RunFileDiscovery
+	}
+
+	// A config restart (ExecRestart) re-execs with SEPG_SKIP_STARTUP_DISCOVERY=1
+	// so the new process skips the automatic walk while run_file_discovery stays
+	// saved unchanged. Unset it after reading so the running process environ is
+	// clean and a later manual discovery is unaffected.
+	if envTruthySkipStartupDiscovery(os.Environ()) {
+		slog.Info("skipping startup file discovery", "reason", "config restart")
+		runDiscovery = false
+		os.Unsetenv(skipStartupDiscoveryEnv)
 	}
 
 	app.startGalleryStatsBaselines()

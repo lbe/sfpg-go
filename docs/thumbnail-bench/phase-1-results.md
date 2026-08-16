@@ -13,6 +13,14 @@ Numbers from `tmp/thumbnail_characterization_bench.txt` (`-benchtime=2s -count=3
 > [`production-xdraw-phash-pool.md`](production-xdraw-phash-pool.md). The tables
 > below remain the pre-change measurement record.
 
+> **Current production decode (adaptive DCT scale):** JPEG decode in
+> `GenerateThumbnailAndHashes` now uses `github.com/m8rge/go-scaled-jpeg` at an
+> adaptive DCT scale chosen from the source dimensions: large JPEGs stay at 1/8,
+> small ones decode closer to 1:1 so they are not upscaled; hard-fail with no
+> stdlib `image/jpeg.Decode` fallback. See
+> [`docs/ARCHITECTURE.md`](../ARCHITECTURE.md). The `Phase_Decode` numbers below
+> pre-date that change.
+
 ## 1. Environment
 
 - go1.26.5 linux/amd64; Xeon E5-2680 v3 @ 2.50GHz; 24 logical CPUs (companion runs show `-24`); GOMAXPROCS unset.
@@ -30,16 +38,18 @@ Numbers from `tmp/thumbnail_characterization_bench.txt` (`-benchtime=2s -count=3
 | `Phase_MD5`              | 53 152 (55 001)         | 32 843    | 4      |
 | `Phase_FullGenerate`     | 43 245 980 (42 090 643) | 4 411 993 | 77     |
 
+Historical sub-bench labels `…/hit` and `…/miss` above mean **has EXIF thumbnail** and **no EXIF thumbnail** respectively; current code names those arms `has-exif-thumb` / `no-exif-thumb`.
+
 Phase sum (excl. FullGenerate) ≈ 33.8 ms vs `Full_EXIFMiss` 33.5 ms (99% match). `FullGenerate` median 42.1 ms ≈ +25% — run variance (its own runs span 39.4–43.2 ms).
 
-## 3. EXIF hit vs miss (cpu=1)
+## 3. Has EXIF thumbnail vs no EXIF thumbnail (cpu=1)
 
 | Bench           | ns/op      | B/op      | allocs |
 | --------------- | ---------- | --------- | ------ |
 | `Full_EXIFHit`  | 4 893 167  | 530 030   | 64     |
 | `Full_EXIFMiss` | 33 524 588 | 4 395 449 | 71     |
 
-**miss/hit = 6.85×**; miss allocates 8.3× more bytes.
+**no-EXIF / has-EXIF = 6.85×**; no-EXIF allocates 8.3× more bytes.
 
 ## 4. Size matrix (cpu=1, latest; median in parens)
 
@@ -79,15 +89,15 @@ Serial benches at `-cpu=4` (no RunParallel): mostly **slower** — Decode 5.11�
 
 ## 7. Decision inputs
 
-- **Resize vs decode/EXIF on EXIF-hit?** Not material. Hit path ≈ 4.9 ms (vs 33.5 ms miss): embedded thumbnail used; big-image Decode/ResizeThumb never run. JPEGEncode ≈ 0.92 ms (~19% of hit path) is the largest isolated cost.
-- **EXIF-miss 12–25 MP, which phase dominates?** Resize (Lanczos thumb): 50.7–60.1% of full pipeline; thumb + pHash ≈ 82% of phase time (60.6% + 21.3% on the 800×600 fixture). Decode secondary (15.1%). EXIF/MD5/encode negligible.
+- **Resize vs decode/EXIF when the file has an EXIF thumbnail?** Not material. Has-EXIF path ≈ 4.9 ms (vs 33.5 ms with no EXIF thumbnail): embedded thumbnail used; big-image Decode/ResizeThumb never run. JPEGEncode ≈ 0.92 ms (~19% of the has-EXIF path) is the largest isolated cost.
+- **No EXIF thumbnail, 12–25 MP — which phase dominates?** Resize (Lanczos thumb): 50.7–60.1% of full pipeline; thumb + pHash ≈ 82% of phase time (60.6% + 21.3% on the 800×600 fixture). Decode secondary (15.1%). EXIF/MD5/encode negligible.
 - **Parallel at -cpu=4 increase ns/op?** No — RunParallel per-op drops 2.9–3.9×. Serial phases get slower (decode 2.19×); large resizes faster via nfnt fan-out.
 - **Peak memory under parallel 12 MP?** Decoded source dominates: ~92.8 MB/op working set (36 MB decoded YCbCr + nfnt pass buffers); ~4–5 in flight ≈ 456.9 MiB RSS. Thumbnail buffers are pooled/reused.
-- **Apples-to-apples full-decode numbers?** Hit-vs-miss (§3) is not the only decision basis — see **Phase 1b** below for forced full-decode numbers on the EXIF-bearing fixture and an EXIF-ignored 2/12/25 MP size matrix.
+- **Apples-to-apples full-decode numbers?** Has-EXIF vs no-EXIF (§3) is not the only decision basis — see **Phase 1b** below for forced full-decode numbers on the EXIF-bearing fixture and an EXIF-ignored 2/12/25 MP size matrix.
 
 ## 8. Not measured
 
-Filter A/B; `x/image/draw` vs nfnt; disabling nfnt fan-out; JPEG quality; embedded-thumb decode+resize isolation; EXIF-hit at 12/25 MP; cold-cache I/O; real worker-pool concurrency profile (RunParallel is an approximation).
+Filter A/B; `x/image/draw` vs nfnt; disabling nfnt fan-out; JPEG quality; embedded-thumb decode+resize isolation; has-EXIF-thumbnail fixtures at 12/25 MP; cold-cache I/O; real worker-pool concurrency profile (RunParallel is an approximation).
 
 ## Phase 1b — EXIF-ignored (forced full decode)
 
@@ -102,7 +112,7 @@ Method: `extractEXIFThumbnailHook` forced to `errNoThumb` via `withEXIFExtractDi
 | `Full_EXIFHit`     | 4 310 298      | 530 029   | 64     |
 | `Full_EXIFIgnored` | 31 729 969     | 4 395 384 | 69     |
 
-**ignored/hit = 7.36×** (medians); B/op 8.29×. `Full_EXIFHit` from `tmp/thumbnail_characterization_bench.txt` (4 310 298 / 3 940 331 / 4 586 709 ns/op).
+**ignored / has-EXIF = 7.36×** (medians); B/op 8.29×. `Full_EXIFHit` from `tmp/thumbnail_characterization_bench.txt` (4 310 298 / 3 940 331 / 4 586 709 ns/op).
 
 ### Size matrix EXIF-ignored (cpu=1, latest; median in parens)
 

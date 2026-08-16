@@ -122,6 +122,10 @@ func TestInfrastructureService_SetupDB_NilConfig(t *testing.T) {
 	if infra.dqueDirPath != want {
 		t.Fatalf("dqueDirPath = %q, want %q", infra.dqueDirPath, want)
 	}
+	wantDiscovery := "/tmp/fake/discovery-dque"
+	if infra.discoveryDQueDirPath != wantDiscovery {
+		t.Fatalf("discoveryDQueDirPath = %q, want %q", infra.discoveryDQueDirPath, wantDiscovery)
+	}
 	if infra.writeBatcher != nil {
 		t.Fatal("writeBatcher should not be created in SetupDB")
 	}
@@ -223,6 +227,8 @@ func TestInfrastructureService_ReconfigurePools_NoOpWhenUnchanged(t *testing.T) 
 	infra.dbInitializer = initializer
 	infra.dbRwPool = newFakePool(10, 2)
 	infra.dbRoPool = newFakePool(10, 2)
+	infra.dbRwPool.Config.MonitorInterval = config.DefaultConfig().DBPoolMonitorInterval
+	infra.dbRoPool.Config.MonitorInterval = config.DefaultConfig().DBPoolMonitorInterval
 
 	cfg := config.DefaultConfig()
 	cfg.DBMaxPoolSize = 10
@@ -233,6 +239,53 @@ func TestInfrastructureService_ReconfigurePools_NoOpWhenUnchanged(t *testing.T) 
 	}
 	if initializer.recreateCalled {
 		t.Error("RecreatePoolsWithConfig should not be called when unchanged")
+	}
+}
+
+func TestInfrastructureService_ReconfigurePools_RecreatesWhenOnlyIntervalDiffers(t *testing.T) {
+	infra := NewInfrastructureService()
+	initializer := &fakeDatabaseInitializer{
+		recreateRw: newFakePool(10, 2),
+		recreateRo: newFakePool(10, 2),
+	}
+	infra.dbInitializer = initializer
+	infra.dbRwPool = newFakePool(10, 2)
+	infra.dbRoPool = newFakePool(10, 2)
+	infra.dbRwPool.Config.MonitorInterval = config.DefaultConfig().DBPoolMonitorInterval
+	infra.dbRoPool.Config.MonitorInterval = config.DefaultConfig().DBPoolMonitorInterval
+
+	cfg := config.DefaultConfig()
+	cfg.DBMaxPoolSize = 10
+	cfg.DBMinIdleConnections = 2
+	cfg.DBPoolMonitorInterval = 30 * time.Second
+
+	if err := infra.ReconfigurePools(context.Background(), cfg); err != nil {
+		t.Fatalf("ReconfigurePools error = %v", err)
+	}
+	if !initializer.recreateCalled {
+		t.Error("RecreatePoolsWithConfig should be called when only monitor interval differs")
+	}
+}
+
+func TestInfrastructureService_ReconfigurePools_NoOpWhenConfiguredIntervalZeroMatchesClampedLive(t *testing.T) {
+	infra := NewInfrastructureService()
+	initializer := &fakeDatabaseInitializer{}
+	infra.dbInitializer = initializer
+	infra.dbRwPool = newFakePool(10, 2)
+	infra.dbRoPool = newFakePool(10, 2)
+	infra.dbRwPool.Config.MonitorInterval = config.DefaultConfig().DBPoolMonitorInterval
+	infra.dbRoPool.Config.MonitorInterval = config.DefaultConfig().DBPoolMonitorInterval
+
+	cfg := config.DefaultConfig()
+	cfg.DBMaxPoolSize = 10
+	cfg.DBMinIdleConnections = 2
+	cfg.DBPoolMonitorInterval = 0
+
+	if err := infra.ReconfigurePools(context.Background(), cfg); err != nil {
+		t.Fatalf("ReconfigurePools error = %v", err)
+	}
+	if initializer.recreateCalled {
+		t.Error("RecreatePoolsWithConfig should not be called when configured interval 0 matches clamped live 1m")
 	}
 }
 
@@ -872,7 +925,7 @@ func TestInfrastructureService_LogDBPoolConfiguredVsEffective_NilPool(t *testing
 	infra.dbRoPool = newFakePool(10, 2)
 
 	logs := withLogCapture(t, slog.LevelInfo, func() {
-		infra.logDBPoolConfiguredVsEffective("test", 10, 2)
+		infra.logDBPoolConfiguredVsEffective("test", 10, 2, time.Minute)
 	})
 	if logs != "" {
 		t.Errorf("expected no logs, got: %s", logs)
@@ -885,7 +938,7 @@ func TestInfrastructureService_LogDBPoolConfiguredVsEffective_InvalidMinGreaterT
 	infra.dbRoPool = newFakePool(5, 2)
 
 	logs := withLogCapture(t, slog.LevelWarn, func() {
-		infra.logDBPoolConfiguredVsEffective("test", 5, 20)
+		infra.logDBPoolConfiguredVsEffective("test", 5, 20, time.Minute)
 	})
 	if !strings.Contains(logs, "invalid DB pool combination") {
 		t.Errorf("expected invalid combination warning, got: %s", logs)
@@ -898,7 +951,7 @@ func TestInfrastructureService_LogDBPoolConfiguredVsEffective_NormalPath(t *test
 	infra.dbRoPool = newFakePool(7, 3)
 
 	logs := withLogCapture(t, slog.LevelInfo, func() {
-		infra.logDBPoolConfiguredVsEffective("test", 10, 2)
+		infra.logDBPoolConfiguredVsEffective("test", 10, 2, time.Minute)
 	})
 	for _, want := range []string{
 		"rw_configured_max=10",
@@ -909,6 +962,10 @@ func TestInfrastructureService_LogDBPoolConfiguredVsEffective_NormalPath(t *test
 		"ro_effective_max=7",
 		"ro_configured_min_idle=2",
 		"ro_effective_min_idle=3",
+		"rw_configured_monitor_interval=",
+		"rw_effective_monitor_interval=",
+		"ro_configured_monitor_interval=",
+		"ro_effective_monitor_interval=",
 	} {
 		if !strings.Contains(logs, want) {
 			t.Errorf("expected %q in logs, got: %s", want, logs)

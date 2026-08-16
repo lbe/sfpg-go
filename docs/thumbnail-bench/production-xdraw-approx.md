@@ -23,18 +23,27 @@ The gallery display thumbnail is now produced with `golang.org/x/image/draw`'s
   `acquireGalleryThumb` (pooled canvas) — see the follow-up note above and
   [`production-xdraw-phash-pool.md`](production-xdraw-phash-pool.md).
 - `defaultThumbResize` is the production default of `thumbResizeHook`
-  (`thumbnail.go:46`, `thumbnail.go:51-52`).
+  (`thumbnail.go:50`, `thumbnail.go:55`).
 - `resizeThumbApproxBiLinear` fits the source inside the 200×150 box
   (`fitInsideBox`) and scales with `draw.ApproxBiLinear.Scale` into a new
-  `*image.RGBA` (`thumbnail.go:136-140`).
+  `*image.RGBA` (`thumbnail.go:195-200`).
 
 ## What did NOT change
 
-- **EXIF thumbnail extraction stays ON** — the embedded-EXIF fast path
-  (`extractEXIFThumbnail`) is untouched; ApproxBiLinear only runs when a full
-  decode is needed.
-- **200×150 fit geometry unchanged** — same `fitInsideBox(200, 150)` math the
-  previous `thumbnail(200, 150, ...)` helper used.
+- **Source decode** — the full source image is always decoded via
+  `fullImageDecodeHook` (production default `decodeFullImage`): JPEG through
+  go-scaled-jpeg at an adaptive DCT scale (large JPEGs at 1/8, small ones
+  closer to 1:1), other formats through stdlib `image.Decode`
+  (JPEG decode errors hard-fail). ApproxBiLinear always runs on the
+  full-image decode. See `docs/ARCHITECTURE.md` for current behavior.
+- **200×150 fit geometry math unchanged** — same `fitInsideBox(200, 150)`
+  width/height math the previous `thumbnail(200, 150, ...)` helper used.
+  **Output geometry can still change for new JPEG thumbs:** the
+  full-image JPEG decode now runs at an adaptive DCT scale via go-scaled-jpeg
+  (chosen so the decoded source covers the 200×150 fit box), so a 400×300
+  JPEG decodes at dct 4 (1/2) to 200×150 and fits as **200×150** (not the
+  upscaled 200×148 from the old fixed 1/8 decode). Existing
+  `thumbs.db` rows / stored pHash are unchanged until rediscovery.
 - **pHash squash size unchanged** — still an exact 64×64 squash; the follow-up
   switched its filter to `draw.ApproxBiLinear` and its input to the gallery
   thumb (see [`production-xdraw-phash-pool.md`](production-xdraw-phash-pool.md)).
@@ -57,6 +66,6 @@ pre-switch record; this document only records the production filter switch.
 ApproxBiLinear is a faster but lower-quality interpolation than Lanczos3.
 **Visual QC on the Dev Server is required before this switch is treated as
 accepted**: eyeball gallery thumbnails (small/medium/large source images,
-portrait and landscape, upscaled embedded EXIF thumbs) for acceptable
-sharpness and artifacts, and compare against a Lanczos3 reference if desired.
+portrait and landscape) for acceptable sharpness
+and artifacts, and compare against a Lanczos3 reference if desired.
 Until that QC sign-off, treat the switch as a performance change under review.

@@ -184,6 +184,10 @@ func TestSetDB(t *testing.T) {
 		if app.dqueDirPath != dqueDir {
 			t.Fatalf("dqueDirPath = %q, want %q", app.dqueDirPath, dqueDir)
 		}
+		discoveryDQueDir := filepath.Join(filepath.Dir(app.dbPaths.Main), "discovery-dque")
+		if app.discoveryDQueDirPath != discoveryDQueDir {
+			t.Fatalf("discoveryDQueDirPath = %q, want %q", app.discoveryDQueDirPath, discoveryDQueDir)
+		}
 	})
 
 	t.Run("writeBatcher configured with dque overflow", func(t *testing.T) {
@@ -1907,6 +1911,9 @@ func TestLogStartupConfigSummary_EmitsConfiguredVsEffective(t *testing.T) {
 	keys := []string{
 		"db_configured_max",
 		"db_rw_effective_max",
+		"db_configured_monitor_interval",
+		"db_rw_effective_monitor_interval",
+		"db_ro_effective_monitor_interval",
 		"worker_configured_max",
 		"worker_effective_max",
 		"queue_configured_size",
@@ -2099,6 +2106,78 @@ func TestApp_Run_DefaultStartup(t *testing.T) {
 		if !strings.Contains(logs, key) {
 			t.Errorf("expected log key %q missing, got: %s", key, logs)
 		}
+	}
+}
+
+// TestApp_Run_SkipsStartupDiscoveryWhenSkipEnvSet verifies that a process image
+// spawned by ExecRestart (SEPG_SKIP_STARTUP_DISCOVERY=1) skips the automatic
+// startup discovery walk even when run_file_discovery is true, and that Run
+// clears the env var after consuming it. Not parallel: t.Setenv mutates the
+// process-wide environ.
+func TestApp_Run_SkipsStartupDiscoveryWhenSkipEnvSet(t *testing.T) {
+	t.Setenv(skipStartupDiscoveryEnv, "1")
+
+	tempDir := t.TempDir()
+	opt := getopt.Opt{
+		SessionSecret:    getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true},
+		RunFileDiscovery: getopt.OptBool{Bool: true, IsSet: true},
+	}
+	app := New(opt, "x.y.z")
+	defer app.Shutdown()
+
+	app.setRootDir(&tempDir)
+
+	// Run launches discovery in a goroutine when skip fails, so wait on the
+	// seam instead of sampling a bool immediately after Run returns.
+	discoveryCalled := make(chan struct{})
+	app.testSeams.TriggerDiscovery = func() { close(discoveryCalled) }
+
+	serveHook := &recordingServeHook{}
+	app.testSeams.Serve = serveHook.Serve
+
+	if err := app.Run(1, 1); err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	select {
+	case <-discoveryCalled:
+		t.Error("TriggerDiscovery should not be called when skip env is set")
+	case <-time.After(200 * time.Millisecond):
+	}
+	if _, set := os.LookupEnv(skipStartupDiscoveryEnv); set {
+		t.Errorf("skip env %s should be unset after Run", skipStartupDiscoveryEnv)
+	}
+}
+
+// TestApp_Run_TriggersStartupDiscoveryWhenSkipEnvUnset verifies the normal cold
+// start: with no skip env and run_file_discovery=true, startup discovery runs.
+// Run launches discovery in a goroutine, so the test waits on a channel closed
+// from inside the seam instead of sampling a counter right after Run returns.
+func TestApp_Run_TriggersStartupDiscoveryWhenSkipEnvUnset(t *testing.T) {
+	tempDir := t.TempDir()
+	opt := getopt.Opt{
+		SessionSecret:    getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true},
+		RunFileDiscovery: getopt.OptBool{Bool: true, IsSet: true},
+	}
+	app := New(opt, "x.y.z")
+	defer app.Shutdown()
+
+	app.setRootDir(&tempDir)
+
+	discoveryCalled := make(chan struct{})
+	app.testSeams.TriggerDiscovery = func() { close(discoveryCalled) }
+
+	serveHook := &recordingServeHook{}
+	app.testSeams.Serve = serveHook.Serve
+
+	if err := app.Run(1, 1); err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	select {
+	case <-discoveryCalled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("TriggerDiscovery was not called during startup")
 	}
 }
 

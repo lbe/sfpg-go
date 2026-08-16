@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -144,6 +145,42 @@ func (m *RuntimeManager) TriggerRestart() {
 	}
 }
 
+// skipStartupDiscoveryEnv marks a process image spawned by ExecRestart so the
+// new instance skips the automatic startup file discovery walk.
+const skipStartupDiscoveryEnv = "SEPG_SKIP_STARTUP_DISCOVERY"
+
+// environWithSkipStartupDiscovery returns env with skipStartupDiscoveryEnv set
+// to "1", replacing an existing value (including "0") instead of appending.
+func environWithSkipStartupDiscovery(env []string) []string {
+	out := make([]string, 0, len(env)+1)
+	prefix := skipStartupDiscoveryEnv + "="
+	found := false
+	for _, kv := range env {
+		if strings.HasPrefix(kv, prefix) {
+			out = append(out, prefix+"1")
+			found = true
+			continue
+		}
+		out = append(out, kv)
+	}
+	if !found {
+		out = append(out, prefix+"1")
+	}
+	return out
+}
+
+// envTruthySkipStartupDiscovery reports whether env carries skipStartupDiscoveryEnv
+// with the exact value "1". Missing keys and other values (e.g. "0") are false.
+func envTruthySkipStartupDiscovery(env []string) bool {
+	prefix := skipStartupDiscoveryEnv + "="
+	for _, kv := range env {
+		if kv == prefix+"1" {
+			return true
+		}
+	}
+	return false
+}
+
 // ExecRestart replaces the current process image with a fresh instance.
 func (m *RuntimeManager) ExecRestart() {
 	exe, err := os.Executable()
@@ -163,7 +200,7 @@ func (m *RuntimeManager) ExecRestart() {
 	if execCmd == nil {
 		execCmd = syscall.Exec
 	}
-	if err := execCmd(exe, os.Args, os.Environ()); err != nil {
+	if err := execCmd(exe, os.Args, environWithSkipStartupDiscovery(os.Environ())); err != nil {
 		slog.Error("failed to exec new process image", "err", err)
 		m.exit(1)
 		return

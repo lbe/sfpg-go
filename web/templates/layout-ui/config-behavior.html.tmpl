@@ -6,6 +6,38 @@
        and included by config-modal.html.tmpl and error partials. -->
 
   <script type="text/hyperscript">
+    -- Capture the current form field values as the "no changes" baseline.
+    -- Mirrors the config modal init snapshot so the same logic can be reused
+    -- after a successful save: the success alert refreshes it on load, and
+    -- the restart diff builder refreshes it after populating its table.
+    def snapshotConfigOriginals()
+      set window.configOriginalValues to {}
+      set form to #config-form
+      if form
+        set allFields to form.querySelectorAll('[name]')
+        for field in allFields
+          set fieldName to field@name
+          if field.type == 'checkbox'
+            set window.configOriginalValues[fieldName] to field.checked
+          else
+            set window.configOriginalValues[fieldName] to field.value
+          end
+        end
+
+        set themesSelect to form.querySelector('select[name=themes]')
+        if themesSelect
+          set selectedOptions to themesSelect.selectedOptions
+          set themesArray to []
+          for option in selectedOptions
+            set themesArray to themesArray.concat([option.value])
+          end
+          set window.configOriginalValues['themes'] to themesArray
+        end
+      end
+    end
+  </script>
+
+  <script type="text/hyperscript">
     behavior ButtonExplanation
       on mouseenter
         set #button-explanation-text.textContent to @data-tip
@@ -175,6 +207,10 @@
           wait 200ms
           set #restart-diff-modal.checked to true
           add .restart-modal-shown to badge
+          -- Rebase the originals snapshot only after the diff table above
+          -- is populated, so a Cancel right after this save does not report
+          -- the just-persisted values as unsaved changes.
+          call snapshotConfigOriginals()
         end
       end
     end

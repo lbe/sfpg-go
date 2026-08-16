@@ -60,6 +60,16 @@ Existing entries decode automatically via magic-prefix detection.
 **Default**: `false`
 **Description**: If `true`, restores the last known good configuration from the database on startup. Useful for recovering from bad configuration changes.
 
+### `SEPG_SKIP_STARTUP_DISCOVERY`
+
+**Type**: Exact string `"1"` (any other value, including `"0"` or `"true"`, does not skip)
+**Default**: unset
+**Description**: Set to `1` to skip the automatic startup file discovery walk.
+
+- Set **only** by the in-app restart path (`ExecRestart`), which backs both `POST /config/restart` and `POST /server/restart`. A config restart therefore does not start a gallery walk.
+- Operators should **not** set this for a cold start if they want the startup walk to run — `run_file_discovery` (default `true`) still gates it on a normal start.
+- The running process clears the variable after consuming it; it is not persisted to configuration.
+
 ### CLI-Only Flags
 
 The following flags have no environment-variable equivalent:

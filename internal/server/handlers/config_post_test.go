@@ -379,12 +379,30 @@ func TestConfigHandlers_ConfigPost_SaveRestartAlert(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", w.Code)
 	}
-	doc, err := testutil.ParseHTML(w.Body)
+	body := w.Body.String()
+	doc, err := testutil.ParseHTML(strings.NewReader(body))
 	if err != nil {
 		t.Fatalf("parse HTML: %v", err)
 	}
-	if testutil.FindElementByID(doc, "config-restart-badge") == nil {
+	success := testutil.FindElementByID(doc, "config-success-message")
+	if success == nil {
+		t.Fatal("missing #config-success-message")
+	}
+	if got := testutil.GetAttr(success, "hx-swap-oob"); got != "" {
+		t.Errorf("expected #config-success-message to be the main swap (no hx-swap-oob), got %q", got)
+	}
+	restartBadge := testutil.FindElementByID(doc, "config-restart-badge")
+	if restartBadge == nil {
 		t.Fatal("missing #config-restart-badge")
+	}
+	if got := testutil.GetAttr(restartBadge, "hx-swap-oob"); got != "outerHTML" {
+		t.Errorf("expected restart badge to use OOB outerHTML swap, got %q", got)
+	}
+	if classes := strings.Fields(testutil.GetAttr(restartBadge, "class")); slices.Contains(classes, "hidden") {
+		t.Errorf("restart badge must not contain class hidden, got %q", testutil.GetAttr(restartBadge, "class"))
+	}
+	if err := ui.ValidateHTMXResponseStructure(body, "outerHTML", "config-success-message"); err != nil {
+		t.Errorf("ValidateHTMXResponseStructure: %v", err)
 	}
 }
 
@@ -411,7 +429,8 @@ func TestConfigHandlers_ConfigPost_RestartFlagAndNotificationPath(t *testing.T) 
 		t.Fatalf("expected HX-Trigger config-saved, got %q", got)
 	}
 
-	doc, err := testutil.ParseHTML(w.Body)
+	body := w.Body.String()
+	doc, err := testutil.ParseHTML(strings.NewReader(body))
 	if err != nil {
 		t.Fatalf("parse HTML: %v", err)
 	}
@@ -434,6 +453,15 @@ func TestConfigHandlers_ConfigPost_RestartFlagAndNotificationPath(t *testing.T) 
 	}
 	if got := testutil.GetAttr(restartBadge, "hx-swap-oob"); got != "outerHTML" {
 		t.Fatalf("expected restart badge to use OOB outerHTML swap, got %q", got)
+	}
+	if classes := strings.Fields(testutil.GetAttr(restartBadge, "class")); slices.Contains(classes, "hidden") {
+		t.Errorf("restart badge must not contain class hidden, got %q", testutil.GetAttr(restartBadge, "class"))
+	}
+	if got := testutil.GetAttr(success, "hx-swap-oob"); got != "" {
+		t.Errorf("expected #config-success-message to be the main swap (no hx-swap-oob), got %q", got)
+	}
+	if err := ui.ValidateHTMXResponseStructure(body, "outerHTML", "config-success-message"); err != nil {
+		t.Errorf("ValidateHTMXResponseStructure: %v", err)
 	}
 }
 

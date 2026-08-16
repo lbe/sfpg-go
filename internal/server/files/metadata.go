@@ -12,12 +12,14 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/lbe/sfpg-go/internal/gensyncpool"
 
 	"github.com/evanoberholster/imagemeta"
-	"github.com/evanoberholster/imagemeta/exif2"
+	"github.com/evanoberholster/imagemeta/meta/exif"
+	"github.com/evanoberholster/imagemeta/meta/jpeg"
 )
 
 // imageMetaDecode is an injectable function used to decode image metadata (EXIF/IPTC/etc).
@@ -123,35 +125,21 @@ func ExtractExifData(f *File, imageFile *os.File) error {
 	}()
 
 	// Run EXIF extraction with a timeout to prevent tight loops on corrupted files.
-	// The imagemeta library can get stuck scanning for JPEG markers in malformed files.
+	// The JPEG scanner is cancellable via ctx; non-JPEG imageMetaDecode has no ctx
+	// (accepted limitation: the old goroutine wrapper provided the same timeout).
 	ctx, cancel := context.WithTimeout(context.Background(), exifTimeout)
 	defer cancel()
 
-	type result struct {
-		meta   exif2.Exif
-		xmpRaw []byte
-		err    error
-	}
-	resultChan := make(chan result, 1)
-
-	go func() {
-		m, xmpRaw, err := metadataDecodeWithXMP(imageFile)
-		resultChan <- result{meta: m, xmpRaw: xmpRaw, err: err}
-	}()
-
-	var m exif2.Exif
+	var m exif.Exif
 	var xmpRaw []byte
 	var err error
-
-	select {
-	case r := <-resultChan:
-		m, xmpRaw, err = r.meta, r.xmpRaw, r.err
-	case <-ctx.Done():
-		slog.Warn("ExtractExifData timed out - possible corrupted file", "path", f.Path)
-		return fmt.Errorf("EXIF extraction timed out after %v", exifTimeout)
-	}
+	m, xmpRaw, err = metadataDecodeWithXMP(ctx, imageFile)
 
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, jpeg.ErrMetadataScanLimit) {
+			slog.Warn("ExtractExifData timed out - possible corrupted file", "err", err, "path", f.Path)
+			return fmt.Errorf("EXIF extraction timed out after %v", exifTimeout)
+		}
 		if !errors.Is(err, imagemeta.ErrNoExif) {
 			slog.Warn("imagemeta.Decode failed", "err", err, "path", f.Path)
 			populateFileXMPFromRaw(f, xmpRaw) // best-effort XMP even when EXIF decode failed
@@ -160,16 +148,16 @@ func ExtractExifData(f *File, imageFile *os.File) error {
 		}
 		slog.Debug("imagemeta.Decode: no exif", "err", err, "path", f.Path)
 	} else {
-		f.Exif.CameraMake = sql.NullString{String: m.Make, Valid: m.Make != ""}
-		f.Exif.CameraModel = sql.NullString{String: m.Model, Valid: m.Model != ""}
-		f.Exif.LensModel = sql.NullString{String: m.LensModel, Valid: m.LensModel != ""}
-		f.Exif.FocalLength = sql.NullString{String: m.FocalLength.String(), Valid: m.FocalLength.String() != ""}
-		f.Exif.Aperture = sql.NullString{String: m.FNumber.String(), Valid: m.FNumber.String() != ""}
-		f.Exif.ShutterSpeed = sql.NullString{String: m.ExposureTime.String(), Valid: m.ExposureTime.String() != ""}
-		f.Exif.Iso = sql.NullInt64{Int64: int64(m.ISOSpeed), Valid: m.ISOSpeed != 0}
+		f.Exif.CameraMake = sql.NullString{String: strings.ToLower(m.IFD0.Make), Valid: m.IFD0.Make != ""}
+		f.Exif.CameraModel = sql.NullString{String: m.IFD0.Model, Valid: m.IFD0.Model != ""}
+		f.Exif.LensModel = sql.NullString{String: m.ExifIFD.LensModel, Valid: m.ExifIFD.LensModel != ""}
+		f.Exif.FocalLength = sql.NullString{String: m.ExifIFD.FocalLength.String(), Valid: m.ExifIFD.FocalLength.String() != ""}
+		f.Exif.Aperture = sql.NullString{String: m.ExifIFD.FNumber.String(), Valid: m.ExifIFD.FNumber.String() != ""}
+		f.Exif.ShutterSpeed = sql.NullString{String: m.ExifIFD.ExposureTime.String(), Valid: m.ExifIFD.ExposureTime.String() != ""}
+		f.Exif.Iso = sql.NullInt64{Int64: int64(m.ExifIFD.ISOSpeedRatings), Valid: m.ExifIFD.ISOSpeedRatings != 0}
 		setGPSFromExif(f, m.GPS.Latitude(), m.GPS.Longitude(), m.GPS.Altitude(), true)
-		if !m.CreateDate().IsZero() {
-			f.Exif.CaptureDate = sql.NullInt64{Int64: m.CreateDate().Unix(), Valid: true}
+		if !m.SelectedDate().IsZero() {
+			f.Exif.CaptureDate = sql.NullInt64{Int64: m.SelectedDate().Unix(), Valid: true}
 		}
 	}
 

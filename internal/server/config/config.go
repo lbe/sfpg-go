@@ -88,7 +88,7 @@ type Config struct {
 	DBMinIdleConnections  int
 	DBOptimizeInterval    time.Duration
 	WorkerPoolMax         int // 0 means auto-calculate
-	WorkerPoolMinIdle     int // 0 means auto-calculate
+	WorkerPoolMinIdle     int // 0 means no idle workers
 	WorkerPoolMaxIdleTime time.Duration
 	DBPoolMonitorInterval time.Duration
 	QueueSize             int
@@ -110,10 +110,10 @@ type Config struct {
 	// Discovery settings (runtime)
 	RunFileDiscovery bool
 
-	// DiscoveryQueueMax is the maximum number of items allowed in the discovery
-	// queue at any time. When the queue reaches this limit, the walker applies
-	// backpressure and waits for space before enqueueing more files.
-	// A value of 0 (the default) means unbounded — no maximum.
+	// DiscoveryQueueMax is currently a no-op: the discovery work queue is a
+	// dedicated disk-backed dque (wipe-on-start), so SubsystemManager.Start
+	// ignores this field. It is retained for later removal and no longer bounds
+	// the production discovery queue.
 	DiscoveryQueueMax int
 
 	// Security settings
@@ -179,7 +179,7 @@ func DefaultConfig() *Config {
 		DBMinIdleConnections:                  10,
 		DBOptimizeInterval:                    1 * time.Hour,
 		WorkerPoolMax:                         0, // Auto-calculate
-		WorkerPoolMinIdle:                     0, // Auto-calculate
+		WorkerPoolMinIdle:                     0, // no idle workers
 		WorkerPoolMaxIdleTime:                 10 * time.Second,
 		DBPoolMonitorInterval:                 1 * time.Minute,
 		QueueSize:                             10000,
@@ -189,7 +189,7 @@ func DefaultConfig() *Config {
 
 		// Discovery
 		RunFileDiscovery:  true,
-		DiscoveryQueueMax: 0, // 0 = unbounded (no maximum)
+		DiscoveryQueueMax: 0, // no-op; Start ignores this field (see DiscoveryQueueMax godoc)
 
 		// Security
 		LockoutDuration:     3600, // 1 hour

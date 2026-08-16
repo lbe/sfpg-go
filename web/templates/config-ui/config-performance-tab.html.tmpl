@@ -191,7 +191,8 @@
       />
       <label class="label">
         <span class="label-text-alt"
-          >Minimum idle connections to maintain. Restart required.</span
+          >0 = none idle (Put parks the conn; the pool monitor Close()s surplus
+          idle on db_pool_monitor_interval, default 1m). Restart required.</span
         >
       </label>
     </div>
@@ -277,7 +278,8 @@
       />
       <label class="label">
         <span class="label-text-alt"
-          >Minimum idle worker threads (0 = auto-calculate). Restart
+          >0 = no idle workers (pool scales to zero after WorkerPoolMaxIdleTime,
+          default 10s, when the discovery queue is empty). Restart
           required.</span
         >
       </label>

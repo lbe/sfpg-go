@@ -33,6 +33,7 @@ type InfrastructureService struct {
 	writeBatcher         *writebatcher.WriteBatcher[BatchedWrite]
 	batcherQueries       *gallerydb.CustomQueries
 	dqueDirPath          string
+	discoveryDQueDirPath string
 	rootDir              string
 	imagesDir            string
 	normalizedImagesDir  string
@@ -165,21 +166,25 @@ func (s *InfrastructureService) setDBOptimizeInterval(d time.Duration) {
 	s.dbOptimizeInterval.Store(int64(d))
 }
 
-func (s *InfrastructureService) logDBPoolConfiguredVsEffective(source string, configuredMax, configuredMinIdle int) {
+func (s *InfrastructureService) logDBPoolConfiguredVsEffective(source string, configuredMax, configuredMinIdle int, configuredInterval time.Duration) {
 	if s.dbRwPool == nil || s.dbRoPool == nil {
 		return
 	}
 	rwEffectiveMax := s.dbRwPool.Config.MaxConnections
 	rwEffectiveMinIdle := s.dbRwPool.Config.MinIdleConnections
+	rwEffectiveInterval := s.dbRwPool.Config.MonitorInterval
 	roEffectiveMax := s.dbRoPool.Config.MaxConnections
 	roEffectiveMinIdle := s.dbRoPool.Config.MinIdleConnections
+	roEffectiveInterval := s.dbRoPool.Config.MonitorInterval
 
 	slog.Info("pool config applied",
 		"source", source,
 		"rw_configured_max", configuredMax, "rw_effective_max", rwEffectiveMax,
 		"rw_configured_min_idle", configuredMinIdle, "rw_effective_min_idle", rwEffectiveMinIdle,
+		"rw_configured_monitor_interval", configuredInterval, "rw_effective_monitor_interval", rwEffectiveInterval,
 		"ro_configured_max", configuredMax, "ro_effective_max", roEffectiveMax,
-		"ro_configured_min_idle", configuredMinIdle, "ro_effective_min_idle", roEffectiveMinIdle)
+		"ro_configured_min_idle", configuredMinIdle, "ro_effective_min_idle", roEffectiveMinIdle,
+		"ro_configured_monitor_interval", configuredInterval, "ro_effective_monitor_interval", roEffectiveInterval)
 	if configuredMinIdle > configuredMax {
 		slog.Warn("invalid DB pool combination",
 			"configured_max", configuredMax, "configured_min_idle", configuredMinIdle)

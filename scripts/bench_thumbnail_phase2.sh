@@ -16,10 +16,10 @@ go test ./internal/thumbnail/ \
   -cpu=1,4 \
   > ./tmp/thumbnail_phase2_resize_only_bench.txt 2>&1
 
-# 2. Full EXIF-ignored suite: full GenerateThumbnailAndHashes path per variant.
+# 2. FullDecode suite: full GenerateThumbnailAndHashes path per variant.
 go test ./internal/thumbnail/ \
   -run='^$' \
-  -bench='BenchmarkResizeAlt_Full_EXIFIgnored' \
+  -bench='BenchmarkResizeAlt_Full_FullDecode' \
   -benchtime=2s \
   -count=3 \
   -benchmem \
@@ -29,7 +29,7 @@ go test ./internal/thumbnail/ \
 # 3. Parallel suite: full path in parallel over the 12 MP fixture.
 go test ./internal/thumbnail/ \
   -run='^$' \
-  -bench='BenchmarkResizeAlt_Parallel_EXIFIgnored_12mp' \
+  -bench='BenchmarkResizeAlt_Parallel_FullDecode_12mp' \
   -benchtime=2s \
   -count=3 \
   -benchmem \
@@ -40,7 +40,7 @@ go test ./internal/thumbnail/ \
 if command -v /usr/bin/time > /dev/null 2>&1; then
   /usr/bin/time -v go test ./internal/thumbnail/ \
     -run='^$' \
-    -bench='BenchmarkResizeAlt_Parallel_EXIFIgnored_12mp/nfnt_lanczos3$' \
+    -bench='BenchmarkResizeAlt_Parallel_FullDecode_12mp/nfnt_lanczos3$' \
     -benchtime=5s \
     -count=1 \
     -cpu=4 \
@@ -50,7 +50,7 @@ else
     > ./tmp/thumbnail_phase2_rss_parallel_12mp_nfnt_lanczos3.txt
   go test ./internal/thumbnail/ \
     -run='^$' \
-    -bench='BenchmarkResizeAlt_Parallel_EXIFIgnored_12mp/nfnt_lanczos3$' \
+    -bench='BenchmarkResizeAlt_Parallel_FullDecode_12mp/nfnt_lanczos3$' \
     -benchtime=5s \
     -count=1 \
     -cpu=4 \

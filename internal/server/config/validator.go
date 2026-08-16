@@ -82,7 +82,8 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("db pool monitor interval must be non-negative, got %v", c.DBPoolMonitorInterval)
 	}
 
-	// Validate worker pool (0 means auto, so only validate if set)
+	// Validate worker pool (max 0 means auto; min 0 means no idle workers;
+	// only reject negatives or min > max when both are set)
 	if c.WorkerPoolMax < 0 {
 		return fmt.Errorf("worker pool max must be non-negative, got %d", c.WorkerPoolMax)
 	}
@@ -137,7 +138,7 @@ func (c *Config) ValidateGuardrails() []GuardrailWarning {
 			Check:      "worker_pool_min_idle_gt_worker_pool_max",
 			Configured: fmt.Sprintf("worker_pool_min_idle=%d, worker_pool_max=%d", c.WorkerPoolMinIdle, c.WorkerPoolMax),
 			Effective:  "worker pool initialization can use unexpected limits or fail",
-			Hint:       "Set worker_pool_min_idle <= worker_pool_max, or set one value to 0 for automatic sizing.",
+			Hint:       "Set worker_pool_min_idle <= worker_pool_max. worker_pool_max=0 still auto-sizes max; worker_pool_min_idle=0 means no idle workers.",
 		})
 	}
 

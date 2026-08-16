@@ -26,7 +26,7 @@ import (
 	"github.com/lbe/sfpg-go/internal/workerpool"
 
 	"github.com/evanoberholster/imagemeta"
-	"github.com/evanoberholster/imagemeta/exif2"
+	"github.com/evanoberholster/imagemeta/meta/exif"
 )
 
 // --- Fakes ---
@@ -802,8 +802,8 @@ func TestExtractExifData_NoExif(t *testing.T) {
 
 func TestExtractExifData_DecodeError(t *testing.T) {
 	orig := imageMetaDecode
-	imageMetaDecode = func(r io.ReadSeeker) (exif2.Exif, error) {
-		return exif2.Exif{}, errors.New("boom")
+	imageMetaDecode = func(r io.ReadSeeker) (exif.Exif, error) {
+		return exif.Exif{}, errors.New("boom")
 	}
 	defer func() { imageMetaDecode = orig }()
 
@@ -828,8 +828,8 @@ func TestExtractExifData_DecodeError(t *testing.T) {
 
 func TestExtractExifData_NoExifStub(t *testing.T) {
 	orig := imageMetaDecode
-	imageMetaDecode = func(r io.ReadSeeker) (exif2.Exif, error) {
-		return exif2.Exif{}, imagemeta.ErrNoExif
+	imageMetaDecode = func(r io.ReadSeeker) (exif.Exif, error) {
+		return exif.Exif{}, imagemeta.ErrNoExif
 	}
 	defer func() { imageMetaDecode = orig }()
 
@@ -853,15 +853,15 @@ func TestExtractExifData_NoExifStub(t *testing.T) {
 }
 
 func TestExtractExifData_XMPGPSFallback(t *testing.T) {
-	xmpBytes, err := os.ReadFile(filepath.Join("..", "..", "imagemeta", "xmp", "test", "1.xmp"))
+	xmpBytes, err := os.ReadFile(filepath.Join("..", "..", "imagemeta", "meta", "xmp", "test", "lightroom_sidecar.xmp"))
 	if err != nil {
 		t.Fatalf("read xmp fixture: %v", err)
 	}
 
 	orig := metadataDecodeWithXMP
-	metadataDecodeWithXMP = func(r io.ReadSeeker) (exif2.Exif, []byte, error) {
+	metadataDecodeWithXMP = func(ctx context.Context, r io.ReadSeeker) (exif.Exif, []byte, error) {
 		// EXIF present but no GPS (Make set so we know decode ran)
-		return exif2.Exif{Make: "stub"}, xmpBytes, nil
+		return exif.Exif{IFD0: exif.IFD0Tag{Make: "stub"}}, xmpBytes, nil
 	}
 	defer func() { metadataDecodeWithXMP = orig }()
 
@@ -920,8 +920,8 @@ func TestExtractExifData_XMPGPSFallback(t *testing.T) {
 }
 
 // TestExtractExifData_Timeout verifies that ExtractExifData returns an error
-// when processing a "poison pill" file that would trigger a tight loop in the
-// JPEG scanner. The function should timeout rather than hang indefinitely.
+// when processing a "poison pill" file that would trigger the JPEG scanner's
+// metadata scan limit. The function should return promptly rather than hang.
 func TestExtractExifData_Timeout(t *testing.T) {
 	// Use a shorter timeout for this test
 	origTimeout := exifTimeout
@@ -932,12 +932,11 @@ func TestExtractExifData_Timeout(t *testing.T) {
 	fn := filepath.Join(td, "poison.jpg")
 
 	// Create poison pill: valid JPEG header (SOI marker) followed by
-	// 2GB of null bytes (no 0xFF markers). This triggers the tight loop
-	// in nextMarker() because:
-	// - isJPEG returns true (0xFF 0xD8 at start)
-	// - ScanJPEG calls nextMarker()
-	// - nextMarker() scans 64 bytes at a time looking for 0xFF
-	// - No 0xFF found, discards 64 bytes, repeats 30+ million times
+	// 2GB of null bytes (no 0xFF markers). The scanner reads this as a
+	// sparse file, so no 2GB byte read occurs: it discards null data in
+	// bounded chunks and exceeds the 2MiB metadata scan budget, returning
+	// jpeg.ErrMetadataScanLimit. ExtractExifData maps that to the same
+	// fatal timeout wording as context.DeadlineExceeded.
 	data := make([]byte, 2) // Just the SOI marker
 	data[0] = 0xFF          // SOI marker first byte
 	data[1] = 0xD8          // SOI marker second byte

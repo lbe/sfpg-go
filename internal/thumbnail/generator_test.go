@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	"errors"
+	"image/color"
 	"testing"
 )
 
@@ -21,7 +22,7 @@ func TestMockGenerator(t *testing.T) {
 	}
 
 	// Fast test - no actual image decoding
-	thumb, md5, phash, err := mock.GenerateThumbnailAndHashes(nil)
+	thumb, md5, phash, err := mock.GenerateThumbnailAndHashes(nil, 0, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -43,7 +44,7 @@ func TestMockGenerator_Error(t *testing.T) {
 		Err: sql.ErrConnDone,
 	}
 
-	_, _, _, err := mock.GenerateThumbnailAndHashes(nil)
+	_, _, _, err := mock.GenerateThumbnailAndHashes(nil, 0, 0)
 	if !errors.Is(err, sql.ErrConnDone) {
 		t.Errorf("expected sql.ErrConnDone, got %v", err)
 	}
@@ -59,9 +60,39 @@ func BenchmarkMockGenerator(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _, _, err := mock.GenerateThumbnailAndHashes(nil)
+		_, _, _, err := mock.GenerateThumbnailAndHashes(nil, 0, 0)
 		if err != nil {
 			b.Fatal(err)
 		}
 	}
+}
+
+// TestGeneratorFuncAdapter checks at compile time that generatorFunc satisfies
+// Generator and at runtime that the adapter delegates to
+// GenerateThumbnailAndHashes.
+func TestGeneratorFuncAdapter(t *testing.T) {
+	// Compile-time and runtime check that generatorFunc satisfies Generator
+	// and delegates to GenerateThumbnailAndHashes.
+	var g Generator = generatorFunc(GenerateThumbnailAndHashes)
+
+	img := imageFromColor(400, 300, color.RGBA{R: 0, G: 128, B: 0, A: 255})
+	data := encodeJPEGBytes(img)
+
+	thumb, md5, phash, err := g.GenerateThumbnailAndHashes(bytes.NewReader(data), 400, 300)
+	if err != nil {
+		t.Fatalf("generatorFunc adapter failed: %v", err)
+	}
+	if thumb == nil || thumb.Len() == 0 {
+		t.Fatal("expected non-empty thumbnail from adapter")
+	}
+	if !md5.Valid || md5.String == "" {
+		t.Error("expected valid md5 from adapter")
+	}
+	if !phash.Valid || phash.Int64 == 0 {
+		t.Error("expected valid phash from adapter")
+	}
+
+	PutBytesBuffer(thumb)
+	PutNullInt64(phash)
+	PutNullString(md5)
 }

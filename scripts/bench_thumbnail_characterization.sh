@@ -10,15 +10,21 @@
 #      (Maximum resident set size) for the fixed parallel 12MP stress
 #      via /usr/bin/time -v. If /usr/bin/time is missing, a one-line
 #      note is written and the same go test still runs (appended).
-#   3. tmp/thumbnail_exif_ignored_bench.txt — EXIF-ignored Phase 1b suite
-#      (BenchmarkFull_EXIFIgnored, BenchmarkFull_Size_EXIFIgnored,
-#      BenchmarkFull_Parallel_EXIFIgnored), -benchmem, -count=3,
-#      -cpu=1,4. Primary source for the EXIF-ignored results summary.
+#   3. tmp/thumbnail_exif_ignored_bench.txt — production full-decode
+#      suite on the EXIF-bearing fixture and large synthetics
+#      (BenchmarkFull_HasEXIFMetadata, BenchmarkFull_Size_FullDecode,
+#      BenchmarkFull_Parallel_FullDecode), -benchmem, -count=3,
+#      -cpu=1,4. The output filename is kept for historical continuity
+#      (was "EXIF-ignored").
 #   4. tmp/thumbnail_rss_parallel_exif_ignored_12mp.txt — best-effort
 #      peak RSS (Maximum resident set size) for the fixed parallel 12MP
-#      EXIF-ignored stress via /usr/bin/time -v. If /usr/bin/time is
+#      full-decode stress via /usr/bin/time -v. If /usr/bin/time is
 #      missing, a one-line note is written and the same go test still
 #      runs (appended).
+#
+# Bench naming: *HasEXIFMetadata* = the production path on the committed
+# exif-thumb.jpg fixture only; *FullDecode* = synthetic full-path benches on
+# the large synthetic fixtures.
 #
 # Usage: scripts/bench_thumbnail_characterization.sh
 set -euo pipefail
@@ -60,22 +66,23 @@ else
     >> ./tmp/thumbnail_rss_parallel_12mp.txt 2>&1
 fi
 
-# 3. EXIF-ignored suite (Phase 1b primary artifact): forced full-decode
-#    benches on EXIF-bearing and large fixtures.
+# 3. HasEXIFMetadata/FullDecode suite (Phase 1b primary artifact): the
+#    production full-decode path on the EXIF-bearing fixture and on the large
+#    synthetic fixtures.
 go test ./internal/thumbnail/ \
   -run='^$' \
-  -bench='BenchmarkFull_EXIFIgnored|BenchmarkFull_Size_EXIFIgnored|BenchmarkFull_Parallel_EXIFIgnored' \
+  -bench='BenchmarkFull_HasEXIFMetadata|BenchmarkFull_Size_FullDecode|BenchmarkFull_Parallel_FullDecode' \
   -benchtime=2s \
   -count=3 \
   -benchmem \
   -cpu=1,4 \
   > ./tmp/thumbnail_exif_ignored_bench.txt 2>&1
 
-# 4. Peak RSS for the fixed parallel 12MP EXIF-ignored stress (best-effort).
+# 4. Peak RSS for the fixed parallel 12MP full-decode stress (best-effort).
 if command -v /usr/bin/time > /dev/null 2>&1; then
   /usr/bin/time -v go test ./internal/thumbnail/ \
     -run='^$' \
-    -bench='BenchmarkFull_Parallel_EXIFIgnored_12mp' \
+    -bench='BenchmarkFull_Parallel_FullDecode_12mp' \
     -benchtime=5s \
     -count=1 \
     -cpu=4 \
@@ -85,7 +92,7 @@ else
     > ./tmp/thumbnail_rss_parallel_exif_ignored_12mp.txt
   go test ./internal/thumbnail/ \
     -run='^$' \
-    -bench='BenchmarkFull_Parallel_EXIFIgnored_12mp' \
+    -bench='BenchmarkFull_Parallel_FullDecode_12mp' \
     -benchtime=5s \
     -count=1 \
     -cpu=4 \

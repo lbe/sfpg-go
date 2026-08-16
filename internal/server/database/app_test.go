@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/sqlite"
@@ -211,6 +212,20 @@ func TestCreateDatabasePools(t *testing.T) {
 		t.Fatalf("pools not created")
 	}
 
+	// Nil config must fall back to DefaultConfig limits (100/10/1m).
+	defaultInterval := config.DefaultConfig().DBPoolMonitorInterval
+	for name, pool := range map[string]*dbconnpool.DbSQLConnPool{"RW": dbRwPool, "RO": dbRoPool} {
+		if got := pool.Config.MaxConnections; got != 100 {
+			t.Errorf("%s pool MaxConnections = %d, want 100", name, got)
+		}
+		if got := pool.Config.MinIdleConnections; got != 10 {
+			t.Errorf("%s pool MinIdleConnections = %d, want 10", name, got)
+		}
+		if got := pool.Config.MonitorInterval; got != defaultInterval {
+			t.Errorf("%s pool MonitorInterval = %s, want %s", name, got, defaultInterval)
+		}
+	}
+
 	c, err := dbRwPool.Get()
 	if err != nil {
 		t.Fatalf("failed to get rw conn: %v", err)
@@ -222,6 +237,116 @@ func TestCreateDatabasePools(t *testing.T) {
 		t.Fatalf("failed to get ro conn: %v", err)
 	}
 	dbRoPool.Put(c2)
+}
+
+// TestCreateDatabasePools_MinIdleZero verifies that a configured
+// DBMinIdleConnections of 0 is applied verbatim to both the RW and RO pools:
+// 0 means no idle connections and must not be rewritten to max(max/4, 1).
+func TestCreateDatabasePools_MinIdleZero(t *testing.T) {
+	ctx := context.Background()
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "test.db")
+	thumbsDBPath := filepath.Join(tempDir, "thumbs.db")
+
+	if _, err := migrateDB(dbPath); err != nil {
+		t.Fatalf("migrateDB failed: %v", err)
+	}
+	if _, err := migrateBlobsDB(thumbsDBPath); err != nil {
+		t.Fatalf("migrateBlobsDB failed: %v", err)
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.DBMaxPoolSize = 10
+	cfg.DBMinIdleConnections = 0
+
+	ro, rw := configureDatabaseDSN(dbPath)
+	rwPool, roPool, err := createDatabasePools(ctx, ro, rw, thumbsDBPath, cfg)
+	if err != nil {
+		t.Fatalf("createDatabasePools failed: %v", err)
+	}
+	defer func() {
+		_ = rwPool.Close()
+		_ = roPool.Close()
+	}()
+
+	for name, pool := range map[string]*dbconnpool.DbSQLConnPool{"RW": rwPool, "RO": roPool} {
+		if got := pool.Config.MinIdleConnections; got != 0 {
+			t.Errorf("%s pool Config.MinIdleConnections = %d, want 0 (min idle 0 is effective 0, not max/4)", name, got)
+		}
+	}
+}
+
+// TestCreateDatabasePools_ZeroIntervalClampedToDefault verifies that a
+// non-positive DBPoolMonitorInterval still yields the default 1m monitor so
+// the pool monitor always runs.
+func TestCreateDatabasePools_ZeroIntervalClampedToDefault(t *testing.T) {
+	ctx := context.Background()
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "test.db")
+	thumbsDBPath := filepath.Join(tempDir, "thumbs.db")
+
+	if _, err := migrateDB(dbPath); err != nil {
+		t.Fatalf("migrateDB failed: %v", err)
+	}
+	if _, err := migrateBlobsDB(thumbsDBPath); err != nil {
+		t.Fatalf("migrateBlobsDB failed: %v", err)
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.DBPoolMonitorInterval = 0
+
+	ro, rw := configureDatabaseDSN(dbPath)
+	rwPool, roPool, err := createDatabasePools(ctx, ro, rw, thumbsDBPath, cfg)
+	if err != nil {
+		t.Fatalf("createDatabasePools failed: %v", err)
+	}
+	defer func() {
+		_ = rwPool.Close()
+		_ = roPool.Close()
+	}()
+
+	defaultInterval := config.DefaultConfig().DBPoolMonitorInterval
+	for name, pool := range map[string]*dbconnpool.DbSQLConnPool{"RW": rwPool, "RO": roPool} {
+		if got := pool.Config.MonitorInterval; got != defaultInterval {
+			t.Errorf("%s pool MonitorInterval = %s, want %s (zero interval clamped to default)",
+				name, got, defaultInterval)
+		}
+	}
+}
+
+// TestCreateDatabasePools_PositiveIntervalApplied verifies that a positive
+// DBPoolMonitorInterval is applied to live pools unchanged.
+func TestCreateDatabasePools_PositiveIntervalApplied(t *testing.T) {
+	ctx := context.Background()
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "test.db")
+	thumbsDBPath := filepath.Join(tempDir, "thumbs.db")
+
+	if _, err := migrateDB(dbPath); err != nil {
+		t.Fatalf("migrateDB failed: %v", err)
+	}
+	if _, err := migrateBlobsDB(thumbsDBPath); err != nil {
+		t.Fatalf("migrateBlobsDB failed: %v", err)
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.DBPoolMonitorInterval = 30 * time.Second
+
+	ro, rw := configureDatabaseDSN(dbPath)
+	rwPool, roPool, err := createDatabasePools(ctx, ro, rw, thumbsDBPath, cfg)
+	if err != nil {
+		t.Fatalf("createDatabasePools failed: %v", err)
+	}
+	defer func() {
+		_ = rwPool.Close()
+		_ = roPool.Close()
+	}()
+
+	for name, pool := range map[string]*dbconnpool.DbSQLConnPool{"RW": rwPool, "RO": roPool} {
+		if got := pool.Config.MonitorInterval; got != 30*time.Second {
+			t.Errorf("%s pool MonitorInterval = %s, want 30s", name, got)
+		}
+	}
 }
 
 func TestEnsureRootFolderExists(t *testing.T) {

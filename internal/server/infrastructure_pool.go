@@ -44,9 +44,9 @@ type dbPoolForCheckpoint interface {
 
 // SetupDB creates database pools and cache store. Write batcher startup and cache
 // size calibration are deferred until after config load and pool resize.
-func (s *InfrastructureService) SetupDB(ctx context.Context, config *config.Config) {
+func (s *InfrastructureService) SetupDB(ctx context.Context, cfg *config.Config) {
 	var err error
-	s.dbPaths, s.dbRwPool, s.dbRoPool, err = s.dbInitializer.Setup(ctx, s.rootDir, config)
+	s.dbPaths, s.dbRwPool, s.dbRoPool, err = s.dbInitializer.Setup(ctx, s.rootDir, cfg)
 	if err != nil {
 		slog.Error("failed to setup database", "err", err)
 		panic("main")
@@ -56,15 +56,21 @@ func (s *InfrastructureService) SetupDB(ctx context.Context, config *config.Conf
 		filepath.Dir(s.dbPaths.Main),
 		filepath.Base(s.dbPaths.Main)+"-dque",
 	)
+	s.discoveryDQueDirPath = filepath.Join(
+		filepath.Dir(s.dbPaths.Main),
+		"discovery-dque",
+	)
 
 	configuredMax := 100
 	configuredMinIdle := 10
-	if config != nil {
-		configuredMax = config.DBMaxPoolSize
-		configuredMinIdle = config.DBMinIdleConnections
+	configuredInterval := config.DefaultConfig().DBPoolMonitorInterval
+	if cfg != nil {
+		configuredMax = cfg.DBMaxPoolSize
+		configuredMinIdle = cfg.DBMinIdleConnections
+		configuredInterval = cfg.DBPoolMonitorInterval
 	}
 	slog.Info("database pools initialized")
-	s.logDBPoolConfiguredVsEffective("SetupDB", configuredMax, configuredMinIdle)
+	s.logDBPoolConfiguredVsEffective("SetupDB", configuredMax, configuredMinIdle, configuredInterval)
 
 	s.cacheStore = cachelite.NewSQLiteCacheStore(s.dbRwPool)
 }
@@ -111,10 +117,10 @@ func (s *InfrastructureService) ReconfigurePools(ctx context.Context, config *co
 	}
 	oldMaxConns := s.dbRwPool.Config.MaxConnections
 	oldMinIdle := s.dbRwPool.Config.MinIdleConnections
-	newMaxConns := config.DBMaxPoolSize
-	newMinIdle := config.DBMinIdleConnections
+	oldMonitorInterval := s.dbRwPool.Config.MonitorInterval
+	newMaxConns, newMinIdle, newMonitorInterval := database.EffectivePoolLimits(config)
 
-	if oldMaxConns == int64(newMaxConns) && oldMinIdle == int64(newMinIdle) {
+	if oldMaxConns == newMaxConns && oldMinIdle == newMinIdle && oldMonitorInterval == newMonitorInterval {
 		return nil
 	}
 	slog.Info("reconfiguring database pools from loaded config",
@@ -152,7 +158,7 @@ func (s *InfrastructureService) ReconfigurePools(ctx context.Context, config *co
 	}
 
 	slog.Info("database pools reconfigured successfully")
-	s.logDBPoolConfiguredVsEffective("ReconfigurePools", newMaxConns, newMinIdle)
+	s.logDBPoolConfiguredVsEffective("ReconfigurePools", config.DBMaxPoolSize, config.DBMinIdleConnections, config.DBPoolMonitorInterval)
 	return nil
 }
 

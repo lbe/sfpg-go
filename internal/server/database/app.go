@@ -222,15 +222,26 @@ func configureDatabaseDSN(dbPath string) (roDsn, rwDsn string) {
 	return
 }
 
-func createDatabasePools(ctx context.Context, roDsn, rwDsn, thumbsDBPath string, cfg *config.Config) (*dbconnpool.DbSQLConnPool, *dbconnpool.DbSQLConnPool, error) {
-	maxPoolSize := int64(100)
-	minIdleConns := int64(10)
-	monitorInterval := time.Duration(0)
-	if cfg != nil {
-		maxPoolSize = int64(cfg.DBMaxPoolSize)
-		minIdleConns = int64(cfg.DBMinIdleConnections)
-		monitorInterval = cfg.DBPoolMonitorInterval
+// EffectivePoolLimits returns the connection pool limits (max connections,
+// min idle connections) and monitor interval that would be applied for the
+// given config. A nil config falls back to config.DefaultConfig (100/10/1m),
+// and a non-positive monitor interval is clamped to the default (1m) so the
+// pool monitor always runs. Min idle 0 is preserved as-is (effective 0).
+func EffectivePoolLimits(cfg *config.Config) (max, minIdle int64, monitorInterval time.Duration) {
+	if cfg == nil {
+		cfg = config.DefaultConfig()
 	}
+	max = int64(cfg.DBMaxPoolSize)
+	minIdle = int64(cfg.DBMinIdleConnections)
+	monitorInterval = cfg.DBPoolMonitorInterval
+	if monitorInterval <= 0 {
+		monitorInterval = config.DefaultConfig().DBPoolMonitorInterval
+	}
+	return max, minIdle, monitorInterval
+}
+
+func createDatabasePools(ctx context.Context, roDsn, rwDsn, thumbsDBPath string, cfg *config.Config) (*dbconnpool.DbSQLConnPool, *dbconnpool.DbSQLConnPool, error) {
+	maxPoolSize, minIdleConns, monitorInterval := EffectivePoolLimits(cfg)
 
 	dbRwPool, err := newDbSQLConnPool(ctx, rwDsn,
 		dbconnpool.Config{

@@ -1,6 +1,7 @@
 package thumbnail_test
 
 import (
+	"bytes"
 	"fmt"
 	"image"
 	"image/color"
@@ -14,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/lbe/sfpg-go/internal/thumbnail"
+	jpegscaled "github.com/m8rge/go-scaled-jpeg"
 )
 
 // createTestImage creates a dummy image file for testing.
@@ -95,12 +97,16 @@ func TestGenerateThumbnailAndHashes(t *testing.T) {
 	testCases := []struct {
 		name        string
 		setup       func(t *testing.T) string // returns path
+		srcW        int
+		srcH        int
 		expectedW   int
 		expectedH   int
 		expectErr   bool
 		errContains string
 	}{
 		{
+			// A 400×300 JPEG decodes adaptively at DCTSizeScaled 4 (1/2) to
+			// 200×150 and then fits the 200×150 box exactly.
 			name: "Valid JPEG",
 			setup: func(t *testing.T) string {
 				s, err := createTestImage(tempDir, "test.jpg", 400, 300)
@@ -109,6 +115,8 @@ func TestGenerateThumbnailAndHashes(t *testing.T) {
 				}
 				return s
 			},
+			srcW:      400,
+			srcH:      300,
 			expectedW: 200,
 			expectedH: 150,
 			expectErr: false,
@@ -122,6 +130,8 @@ func TestGenerateThumbnailAndHashes(t *testing.T) {
 				}
 				return s
 			},
+			srcW:      300,
+			srcH:      400,
 			expectedW: 112, // 150 * (300/400)
 			expectedH: 150,
 			expectErr: false,
@@ -135,6 +145,8 @@ func TestGenerateThumbnailAndHashes(t *testing.T) {
 				}
 				return s
 			},
+			srcW:      200,
+			srcH:      200,
 			expectedW: 150,
 			expectedH: 150,
 			expectErr: false,
@@ -157,6 +169,8 @@ func TestGenerateThumbnailAndHashes(t *testing.T) {
 				}
 				return path
 			},
+			srcW:        0, // dims unused: decode fails before the JPEG path
+			srcH:        0,
 			expectErr:   true,
 			errContains: "image: unknown format", // image.Decode error
 		},
@@ -171,6 +185,8 @@ func TestGenerateThumbnailAndHashes(t *testing.T) {
 				f.Close()
 				return path
 			},
+			srcW:        0, // dims unused: decode fails before the JPEG path
+			srcH:        0,
 			expectErr:   true,
 			errContains: "image: unknown format", // image.Decode error on empty file
 		},
@@ -188,7 +204,7 @@ func TestGenerateThumbnailAndHashes(t *testing.T) {
 					slog.Error("failed to close image file", "error", err)
 				}
 			}()
-			thumbBytesBuffer, md5, phash, err := thumbnail.GenerateThumbnailAndHashes(file)
+			thumbBytesBuffer, md5, phash, err := thumbnail.GenerateThumbnailAndHashes(file, tc.srcW, tc.srcH)
 
 			if tc.expectErr {
 				if err == nil {
@@ -225,15 +241,11 @@ func TestGenerateThumbnailAndHashes(t *testing.T) {
 				t.Error("expected a valid, non-zero phash")
 			}
 
-			// Decode the resulting thumbnail to check its dimensions
-			thumbImg, format, err := image.Decode(thumbBytesBuffer)
-			if err != nil {
-				t.Fatalf("failed to decode generated thumbnail bytes: %v", err)
-			}
-
-			if format != "jpeg" {
-				t.Errorf("expected thumbnail format to be jpeg, but got %s", format)
-			}
+			// Decode the resulting thumbnail to check its dimensions. Output
+			// gallery-JPEG bytes are decoded at 1:1 via go-scaled-jpeg (the
+			// production decoder); it is decode-only, so a successful decode
+			// also proves the output is a JPEG.
+			thumbImg := decodeOutputJPEG(t, thumbBytesBuffer.Bytes())
 
 			bounds := thumbImg.Bounds()
 			if bounds.Dx() != tc.expectedW || bounds.Dy() != tc.expectedH {
@@ -265,7 +277,7 @@ func TestGenerateThumbnailAndHashes(t *testing.T) {
 			}
 		}()
 
-		_, md5, phash, err := thumbnail.GenerateThumbnailAndHashes(file)
+		_, md5, phash, err := thumbnail.GenerateThumbnailAndHashes(file, 100, 50)
 		if err != nil {
 			t.Fatalf("GenerateThumbnailAndHashes failed: %v", err)
 		}
@@ -280,44 +292,22 @@ func TestGenerateThumbnailAndHashes(t *testing.T) {
 	})
 }
 
-// TestGenerateThumbnailAndHashesEmbeddedEXIF exercises the embedded EXIF
-// thumbnail path and verifies fallback to full decode.
-func TestGenerateThumbnailAndHashesEmbeddedEXIF(t *testing.T) {
+// TestGenerateThumbnailAndHashes_HasEXIFMetadata verifies that a JPEG
+// carrying embedded EXIF metadata (testdata/thumbnail/exif-thumb.jpg)
+// generates a valid thumbnail through the single production full-image decode
+// path.
+func TestGenerateThumbnailAndHashes_HasEXIFMetadata(t *testing.T) {
 	testdata := filepath.Join("..", "..", "testdata", "thumbnail")
 
 	cases := []struct {
 		name      string
 		filename  string
-		wantErr   bool
 		expectedW int
 		expectedH int
 	}{
 		{
-			name:      "JPEG with EXIF thumbnail",
+			name:      "JPEG with EXIF metadata",
 			filename:  "exif-thumb.jpg",
-			expectedW: 200,
-			expectedH: 150,
-		},
-		{
-			name:      "JPEG without EXIF thumbnail falls back",
-			filename:  "no-exif-thumb.jpg",
-			expectedW: 200,
-			expectedH: 150,
-		},
-		{
-			name:     "truncated APP1 falls back and fails",
-			filename: "truncated-app1.jpg",
-			wantErr:  true,
-		},
-		{
-			name:      "WebP with EXIF prefix",
-			filename:  "exif-thumb.webp",
-			expectedW: 200,
-			expectedH: 150,
-		},
-		{
-			name:      "WebP with EXIF no prefix",
-			filename:  "exif-thumb-no-prefix.webp",
 			expectedW: 200,
 			expectedH: 150,
 		},
@@ -336,13 +326,7 @@ func TestGenerateThumbnailAndHashesEmbeddedEXIF(t *testing.T) {
 				}
 			}()
 
-			thumbBytesBuffer, md5, phash, err := thumbnail.GenerateThumbnailAndHashes(file)
-			if tc.wantErr {
-				if err == nil {
-					t.Fatalf("expected an error, got nil")
-				}
-				return
-			}
+			thumbBytesBuffer, md5, phash, err := thumbnail.GenerateThumbnailAndHashes(file, 800, 600)
 			if err != nil {
 				t.Fatalf("GenerateThumbnailAndHashes failed: %v", err)
 			}
@@ -357,13 +341,7 @@ func TestGenerateThumbnailAndHashesEmbeddedEXIF(t *testing.T) {
 				t.Error("expected a valid, non-zero phash")
 			}
 
-			thumbImg, format, err := image.Decode(thumbBytesBuffer)
-			if err != nil {
-				t.Fatalf("failed to decode generated thumbnail bytes: %v", err)
-			}
-			if format != "jpeg" {
-				t.Errorf("expected thumbnail format to be jpeg, but got %s", format)
-			}
+			thumbImg := decodeOutputJPEG(t, thumbBytesBuffer.Bytes())
 			bounds := thumbImg.Bounds()
 			if bounds.Dx() != tc.expectedW || bounds.Dy() != tc.expectedH {
 				t.Errorf("expected thumbnail dimensions to be %dx%d, but got %dx%d", tc.expectedW, tc.expectedH, bounds.Dx(), bounds.Dy())
@@ -374,6 +352,19 @@ func TestGenerateThumbnailAndHashesEmbeddedEXIF(t *testing.T) {
 			thumbnail.PutNullString(md5)
 		})
 	}
+}
+
+// decodeOutputJPEG decodes gallery-thumbnail JPEG bytes at 1:1 via
+// go-scaled-jpeg, the production decoder. go-scaled-jpeg is decode-only, so a
+// successful decode also proves the output is a JPEG; generated-thumb output
+// assertions use this decoder for consistency with production.
+func decodeOutputJPEG(t *testing.T, data []byte) image.Image {
+	t.Helper()
+	img, err := jpegscaled.Decode(bytes.NewReader(data), jpegscaled.DecodeOptions{DCTSizeScaled: 8})
+	if err != nil {
+		t.Fatalf("failed to decode generated thumbnail bytes: %v", err)
+	}
+	return img
 }
 
 func TestThumbnailPools(t *testing.T) {
