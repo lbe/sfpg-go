@@ -30,7 +30,7 @@ func hasAttr(n *html.Node, key string) bool {
 
 func TestLightboxByID_NoImages(t *testing.T) {
 	qh := &lightboxNoNav{
-		fileView: gallerydb.FileView{ID: 1, Path: "test.jpg", FolderID: sql.NullInt64{Int64: 1, Valid: true}},
+		FileView: gallerydb.FileView{ID: 1, Path: "test.jpg", FolderID: sql.NullInt64{Int64: 1, Valid: true}},
 	}
 	gh := setupTestGalleryHandlers(t, qh)
 
@@ -60,7 +60,7 @@ func TestLightboxByID_InvalidID(t *testing.T) {
 }
 
 func TestLightboxByID_FileNotFound(t *testing.T) {
-	qh := &fakeHandlerQueries{getFileViewByIDErr: sql.ErrNoRows}
+	qh := &fakeHandlerQueries{GetFileViewByIDErr: sql.ErrNoRows}
 	gh := setupTestGalleryHandlers(t, qh)
 
 	req := httptest.NewRequest(http.MethodGet, "/lightbox/1", nil)
@@ -75,7 +75,7 @@ func TestLightboxByID_FileNotFound(t *testing.T) {
 }
 
 func TestLightboxByID_NavQueryError(t *testing.T) {
-	qh := &fakeHandlerQueries{getNavErr: errors.New("db error")}
+	qh := &fakeHandlerQueries{GetNavErr: errors.New("db error")}
 	gh := setupTestGalleryHandlers(t, qh)
 
 	req := httptest.NewRequest(http.MethodGet, "/lightbox/1", nil)
@@ -106,7 +106,7 @@ func TestLightboxByID_DBConnectionError(t *testing.T) {
 
 func TestLightboxByID_SingleImageNoNavigation(t *testing.T) {
 	qh := &fakeHandlerQueries{
-		fileView: gallerydb.FileView{ID: 1, Path: "test.jpg", FolderID: sql.NullInt64{Int64: 1, Valid: true}},
+		FileView: gallerydb.FileView{ID: 1, Path: "test.jpg", FolderID: sql.NullInt64{Int64: 1, Valid: true}},
 	}
 	gh := setupTestGalleryHandlers(t, qh)
 
@@ -141,8 +141,8 @@ func TestLightboxByID_SingleImageNoNavigation(t *testing.T) {
 
 func TestLightboxByID_FolderViewError(t *testing.T) {
 	qh := &fakeHandlerQueries{
-		fileView:             gallerydb.FileView{ID: 1, Path: "test.jpg", FolderID: sql.NullInt64{Int64: 1, Valid: true}},
-		getFolderViewByIDErr: errors.New("folder error"),
+		FileView:             gallerydb.FileView{ID: 1, Path: "test.jpg", FolderID: sql.NullInt64{Int64: 1, Valid: true}},
+		GetFolderViewByIDErr: errors.New("folder error"),
 	}
 	gh := setupTestGalleryHandlers(t, qh)
 
@@ -159,7 +159,7 @@ func TestLightboxByID_FolderViewError(t *testing.T) {
 
 func TestLightboxByID_BreadcrumbError(t *testing.T) {
 	qh := &breadcrumbErrorQueries{
-		fileView: gallerydb.FileView{ID: 1, Path: "test.jpg", FolderID: sql.NullInt64{Int64: 1, Valid: true}},
+		FileView: gallerydb.FileView{ID: 1, Path: "test.jpg", FolderID: sql.NullInt64{Int64: 1, Valid: true}},
 	}
 	gh := setupTestGalleryHandlers(t, qh)
 
@@ -176,7 +176,7 @@ func TestLightboxByID_BreadcrumbError(t *testing.T) {
 
 func TestLightboxByID_RenderTemplateError(t *testing.T) {
 	qh := &fakeHandlerQueries{
-		fileView: gallerydb.FileView{ID: 1, Path: "test.jpg", FolderID: sql.NullInt64{Int64: 1, Valid: true}},
+		FileView: gallerydb.FileView{ID: 1, Path: "test.jpg", FolderID: sql.NullInt64{Int64: 1, Valid: true}},
 	}
 	gh := setupTestGalleryHandlers(t, qh)
 
@@ -193,7 +193,7 @@ func TestLightboxByID_RenderTemplateError(t *testing.T) {
 
 func TestLightboxByID_Success(t *testing.T) {
 	qh := &lightboxNav{
-		fileView: gallerydb.FileView{ID: 2, Path: "test.jpg", FolderID: sql.NullInt64{Int64: 1, Valid: true}},
+		FileView: gallerydb.FileView{ID: 2, Path: "test.jpg", FolderID: sql.NullInt64{Int64: 1, Valid: true}},
 		navRow: gallerydb.GetLightboxNavByFileIDRow{
 			CurrentIndex: 1, ImageCount: 3,
 			FirstID: 1, LastID: 3,
@@ -225,7 +225,7 @@ func TestLightboxByID_Success(t *testing.T) {
 
 func TestLightboxByID_WrapsPrevFromFirst(t *testing.T) {
 	qh := &lightboxNav{
-		fileView: gallerydb.FileView{ID: 1, Path: "test.jpg", FolderID: sql.NullInt64{Int64: 1, Valid: true}},
+		FileView: gallerydb.FileView{ID: 1, Path: "test.jpg", FolderID: sql.NullInt64{Int64: 1, Valid: true}},
 		navRow: gallerydb.GetLightboxNavByFileIDRow{
 			CurrentIndex: 0, ImageCount: 3,
 			FirstID: 1, LastID: 3,
@@ -272,7 +272,7 @@ func TestLightboxByID_WrapsPrevFromFirst(t *testing.T) {
 
 func TestLightboxByID_WrapsNextFromLast(t *testing.T) {
 	qh := &lightboxNav{
-		fileView: gallerydb.FileView{ID: 3, Path: "test.jpg", FolderID: sql.NullInt64{Int64: 1, Valid: true}},
+		FileView: gallerydb.FileView{ID: 3, Path: "test.jpg", FolderID: sql.NullInt64{Int64: 1, Valid: true}},
 		navRow: gallerydb.GetLightboxNavByFileIDRow{
 			CurrentIndex: 2, ImageCount: 3,
 			FirstID: 1, LastID: 3,

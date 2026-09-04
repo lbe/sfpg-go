@@ -46,24 +46,7 @@ func TestViewAndCustomQueries(t *testing.T) {
 		}
 	})
 
-	// 3. Test GetFileViewsByFolderIDOrderByFileName
-	t.Run("GetFileViewsByFolderIDOrderByFileName", func(t *testing.T) {
-		views, err := q.GetFileViewsByFolderIDOrderByFileName(ctx, sql.NullInt64{Int64: subFolder.ID, Valid: true})
-		if err != nil {
-			t.Fatalf("GetFileViewsByFolderIDOrderByFileName failed: %v", err)
-		}
-		if len(views) != 2 {
-			t.Fatalf("Expected 2 file views, got %d", len(views))
-		}
-		if views[0].Filename != "imageA.png" {
-			t.Errorf("Expected first file to be imageA.png, got %s", views[0].Filename)
-		}
-		if views[1].Filename != "imageB.jpg" {
-			t.Errorf("Expected second file to be imageB.jpg, got %s", views[1].Filename)
-		}
-	})
-
-	// 4. Test UpdateFolderTileId
+	// 3. Test UpdateFolderTileId
 	t.Run("UpdateFolderTileId", func(t *testing.T) {
 		err := q.UpdateFolderTileId(ctx, UpdateFolderTileIdParams{
 			ID:     subFolder.ID,
@@ -263,23 +246,9 @@ func TestGetPreloadRoutesByFolderID(t *testing.T) {
 
 	// 4. Test GetPreloadRoutesByFolderID for root folder (parent_id)
 	// Should return routes for child folder and files under child
-	rows, err := q.GetPreloadRoutesByFolderID(ctx, sql.NullInt64{Int64: rootFolder.ID, Valid: true})
+	routes, err := q.GetPreloadRoutesByFolderID(ctx, sql.NullInt64{Int64: rootFolder.ID, Valid: true})
 	if err != nil {
 		t.Fatalf("GetPreloadRoutesByFolderID failed: %v", err)
-	}
-	defer rows.Close()
-
-	var routes []string
-	for rows.Next() {
-		var route string
-		if scanErr := rows.Scan(&route); scanErr != nil {
-			t.Fatalf("rows.Scan failed: %v", scanErr)
-		}
-		routes = append(routes, route)
-	}
-
-	if scanErr := rows.Err(); scanErr != nil {
-		t.Fatalf("rows.Err failed: %v", scanErr)
 	}
 
 	// 5. Verify routes contain expected prefixes
@@ -312,23 +281,9 @@ func TestGetPreloadRoutesByFolderID(t *testing.T) {
 	}
 
 	// 6. Test GetPreloadRoutesByFolderID for child folder
-	rows2, err := q.GetPreloadRoutesByFolderID(ctx, sql.NullInt64{Int64: childFolder.ID, Valid: true})
+	childRoutes, err := q.GetPreloadRoutesByFolderID(ctx, sql.NullInt64{Int64: childFolder.ID, Valid: true})
 	if err != nil {
 		t.Fatalf("GetPreloadRoutesByFolderID for child failed: %v", err)
-	}
-	defer rows2.Close()
-
-	var childRoutes []string
-	for rows2.Next() {
-		var route string
-		if err := rows2.Scan(&route); err != nil {
-			t.Fatalf("rows2.Scan failed: %v", err)
-		}
-		childRoutes = append(childRoutes, route)
-	}
-
-	if err := rows2.Err(); err != nil {
-		t.Fatalf("rows2.Err failed: %v", err)
 	}
 
 	// Child folder routes should include the file

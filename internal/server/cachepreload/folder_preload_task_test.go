@@ -17,95 +17,9 @@ import (
 	"github.com/lbe/sfpg-go/internal/gallerydb"
 	"github.com/lbe/sfpg-go/internal/scheduler"
 	"github.com/lbe/sfpg-go/internal/server/database"
+	"github.com/lbe/sfpg-go/internal/server/handlerqueriesfake"
 	"github.com/lbe/sfpg-go/internal/server/interfaces"
 )
-
-// mockFolderQueries returns predefined subfolders and images for FolderPreloadTask tests.
-type mockFolderQueries struct {
-	subfolders []gallerydb.FolderView
-	images     []gallerydb.FileView
-	db         *sql.DB // needed to create mock rows
-}
-
-func (m *mockFolderQueries) GetFolderViewByID(ctx context.Context, id int64) (gallerydb.FolderView, error) {
-	return gallerydb.FolderView{}, sql.ErrNoRows
-}
-
-func (m *mockFolderQueries) GetFoldersViewsByParentIDOrderByName(ctx context.Context, parent sql.NullInt64) ([]gallerydb.FolderView, error) {
-	return m.subfolders, nil
-}
-
-func (m *mockFolderQueries) GetFileViewsByFolderIDOrderByFileName(ctx context.Context, folderID sql.NullInt64) ([]gallerydb.FileView, error) {
-	return m.images, nil
-}
-
-func (m *mockFolderQueries) GetFileViewByID(ctx context.Context, id int64) (gallerydb.FileView, error) {
-	return gallerydb.FileView{}, sql.ErrNoRows
-}
-
-func (m *mockFolderQueries) GetFolderByID(ctx context.Context, id int64) (gallerydb.Folder, error) {
-	return gallerydb.Folder{}, sql.ErrNoRows
-}
-
-func (m *mockFolderQueries) GetThumbnailsByFileID(ctx context.Context, fileID int64) (gallerydb.Thumbnail, error) {
-	return gallerydb.Thumbnail{}, sql.ErrNoRows
-}
-
-func (m *mockFolderQueries) GetThumbnailBlobDataByID(ctx context.Context, id int64) ([]byte, error) {
-	return nil, sql.ErrNoRows
-}
-
-func (m *mockFolderQueries) GetFileFolderIndexByID(ctx context.Context, id int64) (gallerydb.GetFileFolderIndexByIDRow, error) {
-	return gallerydb.GetFileFolderIndexByIDRow{}, sql.ErrNoRows
-}
-
-func (m *mockFolderQueries) GetLightboxNavByFileID(ctx context.Context, id int64) (gallerydb.GetLightboxNavByFileIDRow, error) {
-	return gallerydb.GetLightboxNavByFileIDRow{}, sql.ErrNoRows
-}
-
-func (m *mockFolderQueries) GetFolderInfoCountsByID(ctx context.Context, id int64) (gallerydb.GetFolderInfoCountsByIDRow, error) {
-	return gallerydb.GetFolderInfoCountsByIDRow{}, sql.ErrNoRows
-}
-
-func (m *mockFolderQueries) GetGalleryFileThumbRowsByFolderID(ctx context.Context, folderID sql.NullInt64) ([]gallerydb.GetGalleryFileThumbRowsByFolderIDRow, error) {
-	return nil, sql.ErrNoRows
-}
-
-func (m *mockFolderQueries) GetGalleryFolderThumbRowsByParentID(ctx context.Context, parentID sql.NullInt64) ([]gallerydb.GetGalleryFolderThumbRowsByParentIDRow, error) {
-	return nil, sql.ErrNoRows
-}
-
-func (m *mockFolderQueries) GetPreloadRoutesByFolderID(ctx context.Context, parentID sql.NullInt64) (*sql.Rows, error) {
-	// Build routes from mock data
-	var routes []string
-	for _, sf := range m.subfolders {
-		routes = append(routes, fmt.Sprintf("/gallery/%d", sf.ID), fmt.Sprintf("/info/folder/%d", sf.ID))
-	}
-	for _, img := range m.images {
-		routes = append(routes, fmt.Sprintf("/info/image/%d", img.ID), fmt.Sprintf("/lightbox/%d", img.ID))
-	}
-
-	// Create a temporary table and insert routes (without transaction)
-	_, err := m.db.Exec("CREATE TEMP TABLE IF NOT EXISTS mock_preload_routes (route TEXT)")
-	if err != nil {
-		return nil, err
-	}
-
-	// Clear any previous data
-	_, err = m.db.Exec("DELETE FROM mock_preload_routes")
-	if err != nil {
-		return nil, err
-	}
-
-	for _, route := range routes {
-		_, err = m.db.Exec("INSERT INTO mock_preload_routes VALUES (?)", route)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return m.db.Query("SELECT route FROM mock_preload_routes")
-}
 
 // TestFolderPreloadTask_ImagesPreloadInfoAndLightbox verifies that FolderPreloadTask
 // schedules preloads for both /info/image/{id} and /lightbox/{id} for each image.
@@ -118,9 +32,6 @@ func TestFolderPreloadTask_ImagesPreloadInfoAndLightbox(t *testing.T) {
 	}
 	defer dbRwPool.Close()
 	defer dbRoPool.Close()
-
-	// Get DB handle for creating mock rows
-	mockDB := dbRoPool.DB()
 
 	// One image schedules exactly two routes: /info/image/42 and /lightbox/42.
 	const wantRequests = 2
@@ -138,10 +49,8 @@ func TestFolderPreloadTask_ImagesPreloadInfoAndLightbox(t *testing.T) {
 		w.WriteHeader(200)
 	}
 
-	mock := &mockFolderQueries{
-		subfolders: nil,
-		images:     []gallerydb.FileView{{ID: 42, Filename: "test.jpg"}},
-		db:         mockDB,
+	mock := &handlerqueriesfake.Fake{
+		PreloadRoutes: handlerqueriesfake.PreloadRoutesForChildren(nil, []gallerydb.FileView{{ID: 42, Filename: "test.jpg"}}),
 	}
 
 	sched := scheduler.NewScheduler(4)
@@ -214,8 +123,6 @@ func TestFolderPreloadTask_SkipsAlreadyCachedRoutes(t *testing.T) {
 	defer dbRwPool.Close()
 	defer dbRoPool.Close()
 
-	mockDB := dbRoPool.DB()
-
 	// /info/image/42 is skipped at schedule time (cache entry exists), so the
 	// handler is expected to see exactly one request: /lightbox/42.
 	const wantRequests = 1
@@ -233,10 +140,8 @@ func TestFolderPreloadTask_SkipsAlreadyCachedRoutes(t *testing.T) {
 		w.WriteHeader(200)
 	}
 
-	mock := &mockFolderQueries{
-		subfolders: nil,
-		images:     []gallerydb.FileView{{ID: 42, Filename: "test.jpg"}},
-		db:         mockDB,
+	mock := &handlerqueriesfake.Fake{
+		PreloadRoutes: handlerqueriesfake.PreloadRoutesForChildren(nil, []gallerydb.FileView{{ID: 42, Filename: "test.jpg"}}),
 	}
 
 	// Pre-populate cache for /info/image/42 (HTMX variant with gzip encoding)
@@ -386,40 +291,7 @@ func TestFolderPreloadTask_Run_GetRoutesError(t *testing.T) {
 	task := &FolderPreloadTask{
 		DBRoPool: &dbconnpool.DbSQLConnPool{},
 		GetQueries: func(*dbconnpool.CpConn) interfaces.HandlerQueries {
-			return &mockFolderQueries{}
-		},
-	}
-	err := task.Run(context.Background())
-	if err == nil {
-		t.Fatal("expected error from Run")
-	}
-	if !strings.Contains(err.Error(), "get preload routes") {
-		t.Errorf("expected error to contain 'get preload routes', got: %v", err)
-	}
-}
-
-func TestFolderPreloadTask_Run_RowsErrError(t *testing.T) {
-	origGet := dbPoolGetFn
-	origPut := dbPoolPutFn
-	origRoutes := getPreloadRoutesByFolderIDFn
-	defer func() {
-		dbPoolGetFn = origGet
-		dbPoolPutFn = origPut
-		getPreloadRoutesByFolderIDFn = origRoutes
-	}()
-
-	dbPoolGetFn = func(_ *dbconnpool.DbSQLConnPool) (*dbconnpool.CpConn, error) {
-		return &dbconnpool.CpConn{}, nil
-	}
-	dbPoolPutFn = func(_ *dbconnpool.DbSQLConnPool, _ *dbconnpool.CpConn) {}
-	getPreloadRoutesByFolderIDFn = func(_ interfaces.HandlerQueries, _ context.Context, _ int64) ([]string, error) {
-		return nil, errors.New("rows iteration failed")
-	}
-
-	task := &FolderPreloadTask{
-		DBRoPool: &dbconnpool.DbSQLConnPool{},
-		GetQueries: func(*dbconnpool.CpConn) interfaces.HandlerQueries {
-			return &mockFolderQueries{}
+			return &handlerqueriesfake.Fake{}
 		},
 	}
 	err := task.Run(context.Background())
@@ -473,7 +345,7 @@ func TestFolderPreloadTask_Run_EmptyPathSkipped(t *testing.T) {
 		Scheduler:       scheduler.NewScheduler(1),
 		ETagVersion:     "v1",
 		GetQueries: func(*dbconnpool.CpConn) interfaces.HandlerQueries {
-			return &mockFolderQueries{}
+			return &handlerqueriesfake.Fake{}
 		},
 	}
 
@@ -529,7 +401,7 @@ func TestFolderPreloadTask_Run_NonCacheablePathSkipped(t *testing.T) {
 		Scheduler:       scheduler.NewScheduler(1),
 		ETagVersion:     "v1",
 		GetQueries: func(*dbconnpool.CpConn) interfaces.HandlerQueries {
-			return &mockFolderQueries{}
+			return &handlerqueriesfake.Fake{}
 		},
 	}
 
@@ -579,7 +451,7 @@ func TestFolderPreloadTask_Run_ScheduleAddTaskError(t *testing.T) {
 		Scheduler:       scheduler.NewScheduler(1),
 		ETagVersion:     "v1",
 		GetQueries: func(*dbconnpool.CpConn) interfaces.HandlerQueries {
-			return &mockFolderQueries{}
+			return &handlerqueriesfake.Fake{}
 		},
 	}
 
@@ -638,7 +510,7 @@ func TestFolderPreloadTask_Run_AlreadyCachedSkip(t *testing.T) {
 		ETagVersion:     "v1",
 		Metrics:         metrics,
 		GetQueries: func(*dbconnpool.CpConn) interfaces.HandlerQueries {
-			return &mockFolderQueries{}
+			return &handlerqueriesfake.Fake{}
 		},
 	}
 

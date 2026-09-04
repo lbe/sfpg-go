@@ -12,7 +12,7 @@ import (
 // --- ThumbnailByID Tests ---
 
 func TestThumbnailByID_NotFound(t *testing.T) {
-	qh := &fakeHandlerQueries{thumbByFileErr: sql.ErrNoRows}
+	qh := &fakeHandlerQueries{ThumbByFileErr: sql.ErrNoRows}
 	gh := setupTestGalleryHandlers(t, qh)
 
 	req := httptest.NewRequest(http.MethodGet, "/thumbnail/1", nil)
@@ -30,7 +30,7 @@ func TestThumbnailByID_NotFound(t *testing.T) {
 }
 
 func TestThumbnailByID_DBError(t *testing.T) {
-	qh := &fakeHandlerQueries{thumbByFileErr: errors.New("db error")}
+	qh := &fakeHandlerQueries{ThumbByFileErr: errors.New("db error")}
 	gh := setupTestGalleryHandlers(t, qh)
 
 	req := httptest.NewRequest(http.MethodGet, "/thumbnail/1", nil)
@@ -59,7 +59,7 @@ func TestThumbnailByID_InvalidID(t *testing.T) {
 }
 
 func TestThumbnailByID_BlobNotFound(t *testing.T) {
-	qh := &fakeHandlerQueries{thumbBlobErr: sql.ErrNoRows}
+	qh := &fakeHandlerQueries{ThumbBlobErr: sql.ErrNoRows}
 	gh := setupTestGalleryHandlers(t, qh)
 
 	req := httptest.NewRequest(http.MethodGet, "/thumbnail/1", nil)
@@ -77,7 +77,7 @@ func TestThumbnailByID_BlobNotFound(t *testing.T) {
 }
 
 func TestThumbnailByID_BlobReadError(t *testing.T) {
-	qh := &fakeHandlerQueries{thumbBlobErr: errors.New("blob error")}
+	qh := &fakeHandlerQueries{ThumbBlobErr: errors.New("blob error")}
 	gh := setupTestGalleryHandlers(t, qh)
 
 	req := httptest.NewRequest(http.MethodGet, "/thumbnail/1", nil)

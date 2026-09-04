@@ -47,12 +47,6 @@ SELECT fv.id AS id, fv.filename AS filename
  WHERE fv.folder_id = ?
  ORDER BY fv.filename;
 
--- name: GetFileViewsByFolderIDOrderByFileName :many
-SELECT *
-  FROM file_view
- WHERE folder_id = ?
- ORDER BY filename;
-
 -- name: GetFolderCount :one
 SELECT COUNT(*) AS ct FROM folders;
 

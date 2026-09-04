@@ -117,51 +117,6 @@ func (q *Queries) GetFileViewByID(ctx context.Context, id int64) (FileView, erro
 	return i, err
 }
 
-const getFileViewsByFolderIDOrderByFileName = `-- name: GetFileViewsByFolderIDOrderByFileName :many
-SELECT id, folder_id, folder_path, path, filename, size_bytes, mtime, md5, phash, mime_type, width, height, created_at, updated_at
-  FROM file_view
- WHERE folder_id = ?
- ORDER BY filename
-`
-
-func (q *Queries) GetFileViewsByFolderIDOrderByFileName(ctx context.Context, folderID sql.NullInt64) ([]FileView, error) {
-	rows, err := q.query(ctx, q.getFileViewsByFolderIDOrderByFileNameStmt, getFileViewsByFolderIDOrderByFileName, folderID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []FileView
-	for rows.Next() {
-		var i FileView
-		if err := rows.Scan(
-			&i.ID,
-			&i.FolderID,
-			&i.FolderPath,
-			&i.Path,
-			&i.Filename,
-			&i.SizeBytes,
-			&i.Mtime,
-			&i.Md5,
-			&i.Phash,
-			&i.MimeType,
-			&i.Width,
-			&i.Height,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const getFolderCount = `-- name: GetFolderCount :one
 SELECT COUNT(*) AS ct FROM folders
 `

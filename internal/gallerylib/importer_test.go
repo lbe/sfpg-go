@@ -1031,16 +1031,17 @@ func TestUpsertPathChain_FolderMtime(t *testing.T) {
 	}
 
 	// Get the intermediate folder and verify mtime was stored
-	folders, err := q.GetFoldersViewsByParentIDOrderByName(ctx, sql.NullInt64{Int64: rootID, Valid: true})
+	rows, err := q.GetGalleryFolderThumbRowsByParentID(ctx, sql.NullInt64{Int64: rootID, Valid: true})
 	if err != nil {
-		t.Fatalf("failed to get folders: %v", err)
+		t.Fatalf("failed to get folder thumb rows: %v", err)
 	}
-
-	if len(folders) != 1 {
-		t.Fatalf("expected 1 intermediate folder, got %d", len(folders))
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 intermediate folder, got %d", len(rows))
 	}
-
-	subFolder := folders[0]
+	subFolder, err := q.GetFolderViewByID(ctx, rows[0].ID)
+	if err != nil {
+		t.Fatalf("failed to get folder view: %v", err)
+	}
 	if !subFolder.Mtime.Valid {
 		t.Error("expected intermediate folder Mtime to be valid, got NULL")
 	} else if subFolder.Mtime.Int64 == 0 {

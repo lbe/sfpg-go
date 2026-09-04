@@ -179,44 +179,6 @@ func (q *Queries) GetFolderViewByID(ctx context.Context, id int64) (FolderView, 
 	return i, err
 }
 
-const getFoldersViewsByParentIDOrderByName = `-- name: GetFoldersViewsByParentIDOrderByName :many
-SELECT id, parent_id, path, name, mtime, created_at, updated_at 
-  FROM folder_view
- WHERE parent_id = ?
- ORDER BY name
-`
-
-func (q *Queries) GetFoldersViewsByParentIDOrderByName(ctx context.Context, parentID sql.NullInt64) ([]FolderView, error) {
-	rows, err := q.query(ctx, q.getFoldersViewsByParentIDOrderByNameStmt, getFoldersViewsByParentIDOrderByName, parentID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []FolderView
-	for rows.Next() {
-		var i FolderView
-		if err := rows.Scan(
-			&i.ID,
-			&i.ParentID,
-			&i.Path,
-			&i.Name,
-			&i.Mtime,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const getGalleryFolderThumbRowsByParentID = `-- name: GetGalleryFolderThumbRowsByParentID :many
 SELECT fv.id AS id, fv.name AS name
   FROM folder_view fv

@@ -45,7 +45,7 @@ func (m mockMetadataQueriesWithExif) GetIPTCByFile(ctx context.Context, fileID i
 // --- InfoBoxImage Tests ---
 
 func TestInfoBoxImage_NotFound(t *testing.T) {
-	qh := &fakeHandlerQueries{getFileViewByIDErr: sql.ErrNoRows}
+	qh := &fakeHandlerQueries{GetFileViewByIDErr: sql.ErrNoRows}
 	gh := setupTestGalleryHandlers(t, qh)
 
 	req := httptest.NewRequest(http.MethodGet, "/info/image/1", nil)
@@ -60,7 +60,7 @@ func TestInfoBoxImage_NotFound(t *testing.T) {
 }
 
 func TestInfoBoxImage_DBError(t *testing.T) {
-	qh := &fakeHandlerQueries{getFileViewByIDErr: errors.New("db error")}
+	qh := &fakeHandlerQueries{GetFileViewByIDErr: errors.New("db error")}
 	gh := setupTestGalleryHandlers(t, qh)
 
 	req := httptest.NewRequest(http.MethodGet, "/info/image/1", nil)
@@ -155,7 +155,7 @@ func TestInfoBoxImage_InvalidID(t *testing.T) {
 }
 
 func TestInfoBoxImage_IndexQueryError(t *testing.T) {
-	qh := &fakeHandlerQueries{getFileIndexErr: errors.New("db error")}
+	qh := &fakeHandlerQueries{GetFileIndexErr: errors.New("db error")}
 	gh := setupTestGalleryHandlers(t, qh)
 
 	req := httptest.NewRequest(http.MethodGet, "/info/image/1", nil)
@@ -170,7 +170,7 @@ func TestInfoBoxImage_IndexQueryError(t *testing.T) {
 }
 
 func TestInfoBoxImage_NoFolderContext(t *testing.T) {
-	qh := &fakeHandlerQueries{getFileIndexErr: sql.ErrNoRows}
+	qh := &fakeHandlerQueries{GetFileIndexErr: sql.ErrNoRows}
 	gh := setupTestGalleryHandlers(t, qh)
 
 	req := httptest.NewRequest(http.MethodGet, "/info/image/1", nil)
@@ -241,7 +241,7 @@ func TestInfoBoxImage_DBConnectionError(t *testing.T) {
 
 func TestInfoBoxImage_DownloadLinkHasCorrectFilename(t *testing.T) {
 	qh := &fakeHandlerQueries{
-		fileView: gallerydb.FileView{
+		FileView: gallerydb.FileView{
 			ID:       123,
 			Filename: "my-photo.jpg",
 			Path:     "subdir/my-photo.jpg",
@@ -306,7 +306,7 @@ func TestInfoBoxImage_DownloadLinkHasCorrectFilename(t *testing.T) {
 
 func TestInfoBoxImage_DisplayFieldsAndExif(t *testing.T) {
 	qh := &fakeHandlerQueries{
-		fileView: gallerydb.FileView{
+		FileView: gallerydb.FileView{
 			ID:        1,
 			Filename:  "test-image.jpg",
 			Path:      "test-image.jpg",

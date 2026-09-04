@@ -63,12 +63,6 @@ SELECT fv.id AS id, fv.name AS name
  WHERE fv.parent_id = ?
  ORDER BY fv.name;
 
--- name: GetFoldersViewsByParentIDOrderByName :many
-SELECT * 
-  FROM folder_view
- WHERE parent_id = ?
- ORDER BY name;
-
 -- name: GetFolderTileExistsViewByPath :one 
 SELECT found 
   FROM folder_tile_exists_view

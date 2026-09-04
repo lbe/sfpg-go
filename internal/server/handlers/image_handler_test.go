@@ -11,7 +11,7 @@ import (
 // --- ImageByID Tests ---
 
 func TestImageByID_NotFound(t *testing.T) {
-	qh := &fakeHandlerQueries{getFileViewByIDErr: sql.ErrNoRows}
+	qh := &fakeHandlerQueries{GetFileViewByIDErr: sql.ErrNoRows}
 	gh := setupTestGalleryHandlers(t, qh)
 
 	req := httptest.NewRequest(http.MethodGet, "/image/1", nil)
@@ -70,7 +70,7 @@ func TestImageByID_BreadcrumbError(t *testing.T) {
 }
 
 func TestImageByID_DBError(t *testing.T) {
-	qh := &fakeHandlerQueries{getFileViewByIDErr: errors.New("db error")}
+	qh := &fakeHandlerQueries{GetFileViewByIDErr: errors.New("db error")}
 	gh := setupTestGalleryHandlers(t, qh)
 
 	req := httptest.NewRequest(http.MethodGet, "/image/1", nil)
