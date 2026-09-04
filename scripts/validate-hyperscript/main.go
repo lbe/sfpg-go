@@ -826,14 +826,8 @@ func checkGoTemplateEscaping(snippets []HyperscriptSource) []ForwardRefIssue {
 				next == '/' || next == '!' || next == '?'
 			if !isTagStart {
 				// Get a snippet of context around the problematic `<`
-				ctxStart := i - 10
-				if ctxStart < 0 {
-					ctxStart = 0
-				}
-				ctxEnd := i + 20
-				if ctxEnd > len(s.Code) {
-					ctxEnd = len(s.Code)
-				}
+				ctxStart := max(i-10, 0)
+				ctxEnd := min(i+20, len(s.Code))
 				context := strings.TrimSpace(s.Code[ctxStart:ctxEnd])
 				issues = append(issues, ForwardRefIssue{
 					Type: "warning",

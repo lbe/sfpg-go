@@ -15,4 +15,22 @@
       >
     </label>
   </div>
+  <div class="form-control mb-4">
+    <label class="label">
+      <span class="label-text font-semibold">Restart After Discovery</span>
+    </label>
+    <label class="label cursor-pointer justify-start gap-4">
+      <input
+        type="checkbox"
+        name="restart_after_discovery"
+        class="checkbox-primary checkbox"
+        {{ if and .Config .Config.RestartAfterDiscovery }}checked{{ end }}
+      />
+      <span class="label-text"
+        >After startup discovery finishes (including the folder index), restart
+        the process to reclaim memory. Brief downtime. Does not apply to a
+        manual discovery run.</span
+      >
+    </label>
+  </div>
 {{ end }}

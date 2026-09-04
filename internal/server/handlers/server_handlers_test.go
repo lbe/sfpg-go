@@ -4,8 +4,10 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gorilla/sessions"
 
@@ -222,6 +224,44 @@ func TestServerDiscoveryPost_NoCommonData(t *testing.T) {
 	// Discovery handled by serverControl (mockServerControl.TriggerDiscovery is a no-op)
 }
 
+// TestServerDiscoveryPost_DoesNotResetBeforeTrigger locks P6 for the handler:
+// POST /server/discovery must not call ResetStats before TriggerDiscovery — the
+// reset happens inside App.TriggerDiscovery only after a successful in-flight
+// CAS. It asserts the handler does not invoke ResetStats (mock count) and, as a
+// source guard, that the production handler file contains no ResetStats at all.
+func TestServerDiscoveryPost_DoesNotResetBeforeTrigger(t *testing.T) {
+	if err := ui.ParseTemplates(web.FS); err != nil {
+		t.Fatalf("ParseTemplates failed: %v", err)
+	}
+
+	sm := &mockSessionManagerAuthenticated{}
+	serverCtl := &mockServerControl{}
+	helper := &mockTemplateHelpers{}
+	handlers := NewServerHandlers(sm, serverCtl, helper.AddCommonTemplateData, helper.ServerError)
+
+	req := httptest.NewRequest(http.MethodPost, "/server/discovery", nil)
+	rr := httptest.NewRecorder()
+
+	handlers.ServerDiscoveryPost(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, rr.Code)
+	}
+	if serverCtl.ResetStatsCalled {
+		t.Error("ServerDiscoveryPost must not call ResetStats before TriggerDiscovery")
+	}
+
+	// Source guard: the production handler file has no ResetStats anywhere once
+	// the reset lives in App.TriggerDiscovery. Reject if the call is reintroduced.
+	src, err := os.ReadFile("server_handlers.go")
+	if err != nil {
+		t.Fatalf("failed to read server_handlers.go: %v", err)
+	}
+	if strings.Contains(string(src), "ResetStats") {
+		t.Error("server_handlers.go must not contain ResetStats (reset is inside App.TriggerDiscovery)")
+	}
+}
+
 func TestServerCacheBatchLoadPost_Unauthorized(t *testing.T) {
 	sm := &mockSessionManagerUnauthenticated{}
 	serverCtl := &mockServerControl{}
@@ -343,5 +383,96 @@ func TestServerCacheBatchLoadPost_StartError(t *testing.T) {
 	body := strings.TrimSpace(rr.Body.String())
 	if body != "Internal Server Error" {
 		t.Errorf("expected %q, got %q", "Internal Server Error", body)
+	}
+}
+
+// TestServerDiscoveryErrorAckPost_Unauthorized verifies the ack route rejects
+// unauthenticated requests with 401.
+func TestServerDiscoveryErrorAckPost_Unauthorized(t *testing.T) {
+	sm := &mockSessionManagerUnauthenticated{}
+	serverCtl := &mockServerControl{ManualErr: "boom"}
+	helper := &mockTemplateHelpers{}
+	handlers := NewServerHandlers(sm, serverCtl, helper.AddCommonTemplateData, helper.ServerError)
+
+	req := httptest.NewRequest(http.MethodPost, "/dashboard/folder-index-error/ack", nil)
+	rr := httptest.NewRecorder()
+
+	handlers.ServerDiscoveryErrorAckPost(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("expected status %d, got %d", http.StatusUnauthorized, rr.Code)
+	}
+}
+
+// TestServerDiscoveryErrorAckPost_ClearsError verifies an authenticated ack
+// clears the manual discovery rebuild error and returns 200.
+func TestServerDiscoveryErrorAckPost_ClearsError(t *testing.T) {
+	sm := &mockSessionManagerAuthenticated{}
+	serverCtl := &mockServerControl{ManualErr: "boom"}
+	helper := &mockTemplateHelpers{}
+	handlers := NewServerHandlers(sm, serverCtl, helper.AddCommonTemplateData, helper.ServerError)
+
+	req := httptest.NewRequest(http.MethodPost, "/dashboard/folder-index-error/ack", nil)
+	rr := httptest.NewRecorder()
+
+	handlers.ServerDiscoveryErrorAckPost(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d", http.StatusOK, rr.Code)
+	}
+	if got := serverCtl.ManualDiscoveryError(); got != "" {
+		t.Errorf("expected manual discovery error cleared, got %q", got)
+	}
+}
+
+// TestServerDiscoveryPost_SetsDashboardErrorOnRebuildFailure stubs
+// TriggerDiscovery to fail and verifies the error becomes visible to the
+// dashboard getter. Discovery runs in a goroutine, so the getter polls until
+// the error appears. The server keeps serving (no Shutdown).
+func TestServerDiscoveryPost_SetsDashboardErrorOnRebuildFailure(t *testing.T) {
+	if err := ui.ParseTemplates(web.FS); err != nil {
+		t.Fatalf("ParseTemplates failed: %v", err)
+	}
+
+	sm := &mockSessionManagerAuthenticated{}
+	serverCtl := &mockServerControl{TriggerErr: errors.New("file_folder_index rebuild failed: disk full")}
+	helper := &mockTemplateHelpers{}
+	handlers := NewServerHandlers(sm, serverCtl, helper.AddCommonTemplateData, helper.ServerError)
+
+	// Dashboard getter uses the same discovery-error source.
+	dashHandlers := NewDashboardHandlers(sm, &mockCollector{}, serverCtl, helper.AddCommonTemplateData, helper.ServerError)
+
+	req := httptest.NewRequest(http.MethodPost, "/server/discovery", nil)
+	rr := httptest.NewRecorder()
+	handlers.ServerDiscoveryPost(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, rr.Code)
+	}
+
+	dashboardReq := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	dashboardReq.Header.Set("HX-Request", "true")
+	dashboardReq.Header.Set("HX-Target", "dashboard-container")
+
+	// Poll until the dashboard renders the alert (background goroutine sets it).
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	timeout := time.After(2 * time.Second)
+	for {
+		dr := httptest.NewRecorder()
+		dashHandlers.DashboardGet(dr, dashboardReq)
+		doc, err := testutil.ParseHTML(dr.Body)
+		if err == nil && testutil.FindElementByID(doc, "folder-index-rebuild-error") != nil {
+			break
+		}
+		select {
+		case <-timeout:
+			t.Fatal("dashboard never showed the rebuild error")
+		case <-ticker.C:
+		}
+	}
+
+	// Error was set by the discovery goroutine.
+	if serverCtl.ManualDiscoveryError() == "" {
+		t.Error("expected manual discovery error to be set after rebuild failure")
 	}
 }

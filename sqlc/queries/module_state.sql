@@ -7,6 +7,9 @@ ON CONFLICT(name) DO UPDATE SET
   last_finished_at = COALESCE(excluded.last_finished_at, module_state.last_finished_at);
 
 -- name: GetModuleState :one
-SELECT name, is_active, last_started_at, last_finished_at
+SELECT name, is_active, last_started_at, last_finished_at, payload
 FROM module_state
 WHERE name = ?;
+
+-- name: SetModuleStatePayload :exec
+UPDATE module_state SET payload = ? WHERE name = ?;

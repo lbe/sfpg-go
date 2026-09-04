@@ -1,43 +1,18 @@
 -- name: GetFileFolderIndexByID :one
-WITH target AS (
-  SELECT fv.folder_id AS folder_id, fv.id AS id
-    FROM file_view fv
-   WHERE fv.id = ?
-),
-ordered AS (
-  SELECT fv.id AS id,
-         CAST(ROW_NUMBER() OVER (ORDER BY fv.filename, fv.id) AS INTEGER) AS image_index,
-         CAST(COUNT(*) OVER () AS INTEGER) AS image_count
-    FROM file_view fv
-         INNER JOIN target t ON fv.folder_id = t.folder_id
-)
-SELECT o.image_index, o.image_count
-  FROM ordered o
-       INNER JOIN target t ON o.id = t.id;
+SELECT image_index, image_count
+  FROM file_folder_index
+ WHERE file_id = ?;
 
 -- name: GetLightboxNavByFileID :one
-WITH target AS (
-  SELECT fv.folder_id AS folder_id, fv.id AS id
-    FROM file_view fv
-   WHERE fv.id = ?
-),
-ordered AS (
-  SELECT fv.id AS id,
-         CAST(ROW_NUMBER() OVER (ORDER BY fv.filename, fv.id) - 1 AS INTEGER) AS current_index,
-         CAST(COUNT(*) OVER () AS INTEGER) AS image_count,
-         CAST(LAG(fv.id) OVER (ORDER BY fv.filename, fv.id) AS INTEGER) AS prev_id,
-         CAST(LEAD(fv.id) OVER (ORDER BY fv.filename, fv.id) AS INTEGER) AS next_id,
-         CAST(FIRST_VALUE(fv.id) OVER (ORDER BY fv.filename, fv.id) AS INTEGER) AS first_id,
-         CAST(LAST_VALUE(fv.id) OVER (
-           ORDER BY fv.filename, fv.id
-           ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
-         ) AS INTEGER) AS last_id
-    FROM file_view fv
-         INNER JOIN target t ON fv.folder_id = t.folder_id
-)
-SELECT o.current_index, o.image_count, o.first_id, o.last_id, o.prev_id, o.next_id
-  FROM ordered o
-       INNER JOIN target t ON o.id = t.id;
+-- image_index is 1-based in the table; callers expect 0-based CurrentIndex.
+SELECT image_index - 1 AS current_index
+     , image_count
+     , first_id
+     , last_id
+     , prev_id
+     , next_id
+  FROM file_folder_index
+ WHERE file_id = ?;
 
 -- name: UpsertFileReturningFile :one
 INSERT INTO files (folder_id, path_id, filename, size_bytes, mtime, md5, phash, mime_type, width, height, created_at, updated_at)

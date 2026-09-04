@@ -536,8 +536,8 @@ func ruleFor(kind string) string {
 	case "get-attr:unknown":
 		return "C3-html-tree"
 	default:
-		if strings.HasPrefix(kind, "get-attr:") {
-			attr := strings.TrimPrefix(kind, "get-attr:")
+		if after, ok := strings.CutPrefix(kind, "get-attr:"); ok {
+			attr := after
 			if !urlAllowlist[attr] {
 				return "C3-html-tree"
 			}
@@ -776,8 +776,8 @@ func runStaged(jsonOut, quiet bool) int {
 	scanner := bufio.NewScanner(strings.NewReader(string(out)))
 	for scanner.Scan() {
 		line := scanner.Text()
-		if strings.HasPrefix(line, "+++ b/") {
-			currentFile = filepath.ToSlash(strings.TrimPrefix(line, "+++ b/"))
+		if after, ok := strings.CutPrefix(line, "+++ b/"); ok {
+			currentFile = filepath.ToSlash(after)
 			if !strings.HasSuffix(currentFile, "_test.go") {
 				currentFile = ""
 			}

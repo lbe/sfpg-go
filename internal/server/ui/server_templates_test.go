@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -11,12 +12,7 @@ import (
 
 func hasClass(t *testing.T, n *html.Node, class string) bool {
 	t.Helper()
-	for _, c := range strings.Fields(testutil.GetAttr(n, "class")) {
-		if c == class {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(strings.Fields(testutil.GetAttr(n, "class")), class)
 }
 
 func TestServerShutdownTemplate(t *testing.T) {

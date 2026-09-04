@@ -181,8 +181,8 @@ func TestResizeThumbApproxBiLinearBoundsAndType(t *testing.T) {
 // 16-bit RGBA component matches, i.e. MAE 0) on a small solid image.
 func TestDefaultThumbResizeUsesApproxBiLinear(t *testing.T) {
 	img := image.NewRGBA(image.Rect(0, 0, 40, 30))
-	for x := 0; x < 40; x++ {
-		for y := 0; y < 30; y++ {
+	for x := range 40 {
+		for y := range 30 {
 			img.Set(x, y, color.RGBA{R: 200, G: 100, B: 50, A: 255})
 		}
 	}
@@ -213,8 +213,8 @@ func TestDefaultThumbResizeUsesApproxBiLinear(t *testing.T) {
 // the pooled canvas without panicking.
 func TestAcquireGalleryThumb_DefaultUsesPoolRelease(t *testing.T) {
 	src := image.NewRGBA(image.Rect(0, 0, 40, 30))
-	for x := 0; x < 40; x++ {
-		for y := 0; y < 30; y++ {
+	for x := range 40 {
+		for y := range 30 {
 			src.Set(x, y, color.RGBA{R: 200, G: 100, B: 50, A: 255})
 		}
 	}
@@ -276,8 +276,8 @@ func TestAcquireGalleryThumb_HookBypassNoPoolContract(t *testing.T) {
 // release succeeds (pool reuse) without panicking.
 func TestAcquirePHashRGBA_SizeAndRelease(t *testing.T) {
 	src := image.NewRGBA(image.Rect(0, 0, 40, 30))
-	for x := 0; x < 40; x++ {
-		for y := 0; y < 30; y++ {
+	for x := range 40 {
+		for y := range 30 {
 			src.Set(x, y, color.RGBA{R: 200, G: 100, B: 50, A: 255})
 		}
 	}

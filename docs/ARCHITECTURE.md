@@ -1,7 +1,7 @@
 # SFPG Architecture Documentation
 
-**Version:** 1.3
-**Last Updated:** 2026-07-13
+**Version:** 1.4
+**Last Updated:** 2026-09-02
 **Application:** Simple Fast Photo Gallery (SFPG)
 
 ## Table of Contents
@@ -35,7 +35,7 @@ SFPG (Simple Fast Photo Gallery) is a high-performance, self-hosted photo galler
 
 | Component            | Technology                                                                            |
 | -------------------- | ------------------------------------------------------------------------------------- |
-| **Language**         | Go 1.26+                                                                              |
+| **Language**         | Go 1.27+                                                                              |
 | **Database**         | SQLite (with separate read/write pools)                                               |
 | **Web Framework**    | net/http (standard library)                                                           |
 | **UI**               | HTMX + Go html/template                                                               |
@@ -156,56 +156,56 @@ Authentication is applied route-specifically (e.g., `/config`, `/dashboard`, `/s
 
 The application is organized into domain-driven packages under `internal/`:
 
-| Package                 | Purpose                                                                | Key Exports                                                                     |
-| ----------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| **server**              | HTTP server, routing, orchestration                                    | `App`, `getRouter`, middleware                                                  |
-| **server** (managers)   | Orchestration structs on `App` (infra embedded; others pointer fields) | `InfrastructureService`, `RuntimeManager`, `HandlerManager`, `SubsystemManager` |
-| **server** (test seams) | Optional test doubles (production pkg)                                 | `testseams.go`: `AppTestSeams`, `*TestSeams` structs                            |
-| **server/auth**         | Authentication service                                                 | `AuthService`, `Authenticate`                                                   |
-| **server/cachebatch**   | Cache batch-load coordination                                          | batch loader helpers                                                            |
-| **server/cachepreload** | Cache preload manager & tasks                                          | `Manager`, preload tasks                                                        |
-| **server/config**       | Configuration management                                               | `Config`, `ConfigService`                                                       |
-| **server/database**     | Database setup, migrations, pools                                      | `Setup`, `RecreatePoolsWithConfig`                                              |
-| **server/files**        | File processing pipeline                                               | `FileProcessor`, `ProcessFile`                                                  |
-| **server/handlers**     | Route handlers                                                         | `GalleryHandlers`, `AuthHandlers`                                               |
-| **server/interfaces**   | Dependency interfaces for handlers                                     | `ServerDeps`, `HandlerQueries`                                                  |
-| **server/logging**      | Request logging helpers                                                | logging middleware wrappers                                                     |
-| **server/menu**         | Hamburger menu handler                                                 | `MenuHandlers`                                                                  |
-| **server/metrics**      | Runtime metrics collection                                             | `Collector`                                                                     |
-| **server/middleware**   | HTTP middleware (auth, COP, logging)                                   | `AuthMiddleware`, `CrossOriginProtection`                                       |
-| **server/modulestate**  | Module active-state tracking                                           | `ModuleStateService`                                                            |
-| **server/pathutil**     | Image-directory path utilities                                         | `SafeImagePath`, `RemoveImagesDirPrefix`                                        |
-| **server/runtime**      | Process runtime / restart management                                   | `RuntimeManager`                                                                |
-| **server/security**     | Lockout calculations                                                   | `CalculateLockout`, `IsLocked`                                                  |
-| **server/session**      | Session management only                                                | `SessionManager`, `Manager`                                                     |
-| **server/subsystem**    | Lifecycle management for subsystems                                    | `SubsystemManager`                                                              |
-| **server/template**     | Shared template data helpers                                           | `AddCommonData`                                                                 |
-| **server/theme**        | Theme cookie handling                                                  | theme helpers                                                                   |
-| **server/ui**           | Template rendering helpers                                             | `RenderTemplate`                                                                |
-| **server/validation**   | Config validation helpers                                              | validators                                                                      |
-| **cachelite**           | HTTP response caching                                                  | `HTTPCacheMiddleware`, `EvictLRU`                                               |
-| **workerpool**          | Concurrent task processing                                             | `Pool`, `Worker`                                                                |
-| **scheduler**           | Cron-like task scheduling                                              | `Scheduler`, `Task` interface                                                   |
-| **queue**               | Thread-safe deque                                                      | `Queue`                                                                         |
-| **writebatcher**        | Batch database operations                                              | `WriteBatcher`, `Config`                                                        |
-| **dque**                | Persistent on-disk FIFO (writebatcher overflow + discovery backlog)    | `New`, `Queue`                                                                  |
-| **flock**               | Cross-platform file locking                                            | `Flock`                                                                         |
-| **errors**              | Error sentinels for dque                                               | `ErrXxx` sentinels                                                              |
-| **dbconnpool**          | SQLite connection pools                                                | `DbSQLConnPool`                                                                 |
-| **gallerydb**           | Database queries (sqlc)                                                | `Queries`, `CustomQueries`                                                      |
-| **gallerylib**          | File import / path-chain upserts                                       | `Importer`                                                                      |
-| **thumbnail**           | Thumbnail generation (go-scaled-jpeg JPEG decode)                      | `GenerateThumbnailAndHashes`                                                    |
-| **imagemeta**           | EXIF extraction (local `replace`)                                      | Metadata parsers                                                                |
-| **multihandler**        | Multi-handler structured logging                                       | `MultiHandler`                                                                  |
-| **profiler**            | Optional CPU/mem/block profiling                                       | `Start`                                                                         |
-| **coords**              | Geographic coordinate parsing                                          | `Parse`                                                                         |
-| **humanize**            | Human-readable formatting                                              | formatters                                                                      |
-| **log**                 | Structured logging                                                     | `Logger`                                                                        |
-| **gensyncpool**         | Reset-enforcing `sync.Pool` wrappers                                   | `NewPool`                                                                       |
-| **getopt**              | Config from flags/env                                                  | config loader                                                                   |
-| **parallelwalkdir**     | Concurrent directory scanning                                          | `WalkFunc`                                                                      |
-| **testutil**            | Shared test helpers                                                    | `Equals`, `HTMLContains`                                                        |
-| **gen-test-files**      | Synthetic test file generation                                         | `Generate`                                                                      |
+| Package                 | Purpose                                                                | Key Exports                                                                                                                                   |
+| ----------------------- | ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| **server**              | HTTP server, routing, orchestration                                    | `App`, `getRouter`, middleware                                                                                                                |
+| **server** (managers)   | Orchestration structs on `App` (infra embedded; others pointer fields) | `InfrastructureService`, `RuntimeManager`, `HandlerManager`, `SubsystemManager`                                                               |
+| **server** (test seams) | Optional test doubles (production pkg)                                 | `testseams.go`: `AppTestSeams`, `*TestSeams` structs                                                                                          |
+| **server/auth**         | Authentication service                                                 | `AuthService`, `Authenticate`                                                                                                                 |
+| **server/cachebatch**   | Cache batch-load coordination                                          | batch loader helpers                                                                                                                          |
+| **server/cachepreload** | Cache preload manager & tasks                                          | `Manager`, preload tasks                                                                                                                      |
+| **server/config**       | Configuration management                                               | `Config`, `ConfigService`                                                                                                                     |
+| **server/database**     | Database setup, migrations, pools                                      | `Setup`, `RecreatePoolsWithConfig`                                                                                                            |
+| **server/files**        | File processing pipeline                                               | `FileProcessor`, `ProcessFile`                                                                                                                |
+| **server/handlers**     | Route handlers                                                         | `GalleryHandlers`, `AuthHandlers`, `MenuHandlers`, `ThemeHandlers`, `ConfigHandlers`, `DashboardHandlers`, `ServerHandlers`, `HealthHandlers` |
+| **server/interfaces**   | Dependency interfaces for handlers                                     | `ServerDeps`, `HandlerQueries`                                                                                                                |
+| **server/logging**      | Request logging helpers                                                | logging middleware wrappers                                                                                                                   |
+| **server/metrics**      | Runtime metrics collection                                             | `Collector`                                                                                                                                   |
+| **server/middleware**   | HTTP middleware (auth, conditional, logging, loopback)                 | `AuthMiddleware`, `ConditionalMiddleware`, `LoopbackOnly`                                                                                     |
+| **server/modulestate**  | Module active-state tracking                                           | `ModuleStateService`                                                                                                                          |
+| **server/pathutil**     | Image-directory path utilities                                         | `SafeImagePath`, `RemoveImagesDirPrefix`                                                                                                      |
+| **server/conditional**  | Pure ETag/304 helper package                                           | conditional request helpers                                                                                                                   |
+| **server/security**     | Lockout calculations                                                   | `CalculateLockout`, `IsLocked`                                                                                                                |
+| **server/session**      | Session management only                                                | `SessionManager`, `Manager`                                                                                                                   |
+| **server/template**     | Shared template data helpers                                           | `AddCommonData`                                                                                                                               |
+| **server/ui**           | Template rendering helpers                                             | `RenderTemplate`                                                                                                                              |
+| **server/validation**   | Config validation helpers                                              | validators                                                                                                                                    |
+| **cachelite**           | HTTP response caching                                                  | `HTTPCacheMiddleware`, `EvictLRU`                                                                                                             |
+| **tableswap**           | Atomic SQLite table rotation                                           | `CloneEmpty`, `CreateIndexes`, `Swap`                                                                                                         |
+| **rssmonitor**          | Optional Linux process RSS monitor                                     | `Run`                                                                                                                                         |
+| **sqlite3stat**         | SQLite connection memory-status helpers                                | `DBStatusMem`, `PutDebugAttrs`                                                                                                                |
+| **workerpool**          | Concurrent task processing                                             | `Pool`, `Worker`                                                                                                                              |
+| **scheduler**           | Cron-like task scheduling                                              | `Scheduler`, `Task` interface                                                                                                                 |
+| **queue**               | Thread-safe deque                                                      | `Queue`                                                                                                                                       |
+| **writebatcher**        | Batch database operations                                              | `WriteBatcher`, `Config`                                                                                                                      |
+| **dque**                | Persistent on-disk FIFO (writebatcher overflow + discovery backlog)    | `New`, `Queue`                                                                                                                                |
+| **flock**               | Cross-platform file locking                                            | `Flock`                                                                                                                                       |
+| **errors**              | Error sentinels for dque                                               | `ErrXxx` sentinels                                                                                                                            |
+| **dbconnpool**          | SQLite connection pools                                                | `DbSQLConnPool`                                                                                                                               |
+| **gallerydb**           | Database queries (sqlc)                                                | `Queries`, `CustomQueries`                                                                                                                    |
+| **gallerylib**          | File import / path-chain upserts                                       | `Importer`                                                                                                                                    |
+| **thumbnail**           | Thumbnail generation (go-scaled-jpeg JPEG decode)                      | `GenerateThumbnailAndHashes`                                                                                                                  |
+| **imagemeta**           | EXIF extraction (local `replace`)                                      | Metadata parsers                                                                                                                              |
+| **multihandler**        | Multi-handler structured logging                                       | `MultiHandler`                                                                                                                                |
+| **profiler**            | Optional CPU/mem/block profiling                                       | `Start`                                                                                                                                       |
+| **coords**              | Geographic coordinate parsing                                          | `Parse`                                                                                                                                       |
+| **humanize**            | Human-readable formatting                                              | formatters                                                                                                                                    |
+| **log**                 | Structured logging                                                     | `Logger`                                                                                                                                      |
+| **gensyncpool**         | Reset-enforcing `sync.Pool` wrappers                                   | `NewPool`                                                                                                                                     |
+| **getopt**              | Config from flags/env                                                  | config loader                                                                                                                                 |
+| **parallelwalkdir**     | Concurrent directory scanning                                          | `WalkFunc`                                                                                                                                    |
+| **testutil**            | Shared test helpers                                                    | `Equals`, `HTMLContains`                                                                                                                      |
+| **gen-test-files**      | Synthetic test file generation                                         | `Generate`                                                                                                                                    |
 
 ### Component Diagram
 
@@ -290,6 +290,7 @@ To make `BatchedWrite` items persistable, `BatchedWrite` and `files.File` implem
 **Write-Path Throughput Optimizations:**
 
 - **Prepared-statement threading:** `BeginTx` borrows a pooled connection, captures its prepared `*gallerydb.CustomQueries` (`app.batcherQueries`), and `flushBatchedWrites` calls `WithTx(tx)` to propagate all prepared statements onto the transaction. Every statement reuses its compiled plan instead of recompiling raw SQL per call. (`TestPreparedStatementsRoutingInvariant` pins this routing.)
+- **Folder-index rebuild INSERT is tx-prepared, not pool-prepared:** `file_folder_index_new` is created at runtime by `CloneEmpty`, so it does not exist at pool Prepare time and cannot be compiled by `PrepareCustomQueries`. `flushBatchedWrites` instead calls `CustomQueries.InsertFileFolderIndexNewRows` on `WithTx(tx)`: one `PrepareContext` of the INSERT on that transaction, then per-row `Exec` (≤ `MaxBatchSize`), never a per-row `tx.ExecContext`. The streaming rebuild scan `QueryFilesForFolderIndexRebuild` reads `files` (which exists at pool init) and is prepared once at pool Prepare; populate loads the stream into a `[][2]int64` and closes the RO cursor before `SubmitFolderIndex`. Both statements' SQL text lives in `sqlc/queries/file_folder_index_rebuild.sql`, which is embed-only and not part of `sqlc generate` (see § Query Generation). While the rebuild RO scan cursor is open (`folderIndexRebuildScanHeld`), `walCheckpointAfterCommit` skips `wal_checkpoint(TRUNCATE)` so it does not busy-wait on the open cursor; G4 applies only while that cursor is open, not during Submit/wait.
 - **Intra-batch memoization:** One `gallerylib.Importer` is constructed per batch and reused across all files. Its `folderCache` (path → folder ID) eliminates repeated per-segment `GetFolderByPath` queries in `UpsertPathChain`, and `tiledDirs` skips redundant folder-tile view queries and tile-chain updates for subsequent files in the same directory.
 - **Skip guaranteed no-op deletes:** The processor records `File.HadInvalidEntry`; `WriteFileInTx` only issues `DeleteInvalidFileByPath` when a row actually existed, removing a per-file no-op round-trip during fresh preloads.
 
@@ -397,13 +398,15 @@ Read-Write Pool: MaxConnections = db_max_pool_size  (journal_mode=WAL, _txlock=i
 | **http_cache**      | HTTP response cache      | `key`, `method`, `path`, `query_string`, `status`, `content_type`, `cache_control`, `etag`, `last_modified`, `vary`, `body`, `content_length`, `created_at`, `expires_at` |
 | **login_attempts**  | Failed login tracking    | `username` (PK), `failed_attempts`, `locked_until`, `last_attempt_at`                                                                                                     |
 | **invalid_files**   | Unprocessable files      | `path`, `mtime`, `size`, `reason`, `created_at`, `updated_at`                                                                                                             |
-| **module_state**    | Module active state      | `name` (PK), `is_active`, `last_started_at`, `last_finished_at`                                                                                                           |
+| **module_state**    | Module active state      | `name` (PK), `is_active`, `last_started_at`, `last_finished_at`, `payload` (TEXT JSON)                                                                                    |
 
 **Views:** `folder_view`, `file_view`, `thumbnail_exists_view`, `folder_tile_exists_view` (plus quality-control views `qc_file_path_subset_file_name` and `qc_folder_path_subset_file_path`).
 
+**file_folder_index rebuild:** Populate COUNTs folder-bearing files, streams `(id, folder_id)` on the RO pool (`ORDER BY folder_id, filename, id`) into a `[][2]int64` (cap from COUNT), closes the cursor and Puts the RO conn, then computes nav columns in Go per folder and `SubmitFolderIndex`s rows to the unified writebatcher which INSERTs into `file_folder_index_new`. The RW pool conn is Put after `CloneEmpty` and before Submit/wait; folder-index inflight reaches 0; then `CreateIndexes` + `Swap` on a new RW conn. `CreateIndexes` sets `PRAGMA temp_store=FILE` on the leased RW connection before `CREATE INDEX`, then restores the previous `temp_store` (DSN stays `memory` for other work). `Swap` `DROP TABLE`s `{active}_to_be_dropped` before it returns (prior leftover stale is dropped inside the cutover transaction before the renames). Explicit index names after the first copy are `idx_*_1` until a later rotate reuses the base name once stale is gone.
+
 ### Query Generation (sqlc)
 
-All SQL queries are generated using [sqlc](https://sqlc.dev/) from `sqlc/queries/*.sql`:
+All generated queries are produced by [sqlc](https://sqlc.dev/) from the explicit 14-file `queries:` list in `sqlc.yaml` (nested under `sql:` / `schema`), currently: `sqlc/queries/files.sql`, `folders.sql`, `http_cache.sql`, `config.sql`, `module_state.sql`, `thumbnails.sql`, `xmp.sql`, `login_attempts.sql`, `preload_routes.sql`, `file_paths.sql`, `folder_paths.sql`, `iptc.sql`, `exif.sql`, `invalid_files.sql`. Each compiles to a `gallerydb/*.sql.go` file; the directory listing snapshot below is illustrative, not the source of truth (the authoritative list is the yaml):
 
 ```
 sqlc/queries/
@@ -413,6 +416,8 @@ sqlc/queries/
 ├── config.sql         → gallerydb/config.sql.go
 └── ...
 ```
+
+**Embed-only, not generated:** `sqlc/queries/file_folder_index_rebuild.sql` (COUNT + folder-index rebuild SELECT + dest INSERT) is intentionally omitted from the `sqlc.yaml` generate list and loaded via `go:embed` (package `sqlcqueries`) into `gallerydb` — see § Prepared-statement threading. It is split on `-- statement-break` into `parts[0]` (SELECT), `parts[1]` (INSERT), and `parts[2]` (COUNT). Its dest table is created at runtime by `CloneEmpty`, so a generated pool-prepared INSERT would fail at pool init.
 
 **Benefits:**
 
@@ -463,42 +468,43 @@ Production code uses optional test doubles in `internal/server/testseams.go`. Ea
 
 **Field inventory** (keep in sync with `testseams.go` when adding seams):
 
-| Struct                      | Field                        | Replaces / use                                                  |
-| --------------------------- | ---------------------------- | --------------------------------------------------------------- |
-| **AppTestSeams**            | `NewParseTemplates`          | `ui.ParseTemplates` in `New()`                                  |
-|                             | `NewExit`                    | `os.Exit` on template parse failure                             |
-|                             | `Serve`                      | `App.Serve` / `RuntimeManager.Serve`                            |
-|                             | `ProfilerStart`              | `profiler.Start` in `Run()`                                     |
-|                             | `MemoryReclaimer`            | memory reclaimer goroutine in `Run()`                           |
-|                             | `ModuleStateActive`          | `moduleStateService.IsActive` in cache batch load               |
-|                             | `BatchLoadManagerRun`        | `batchLoadManager.Run`                                          |
-|                             | `GalleryStatsStartup`        | async gallery stats goroutine at startup                        |
-|                             | `TriggerDiscovery`           | `app.TriggerDiscovery` at startup                               |
-|                             | `FallbackConfig`             | config when `loadConfig` fails in `Run()`                       |
-|                             | `ConfigService`              | `config.NewService` in `setDB` / reconfigure                    |
-|                             | `LoadConfig`                 | `config.Load` in `loadConfig`                                   |
-|                             | `Executable`                 | `os.Executable` in `setRootDir`                                 |
-|                             | `SetupBootstrapLogging`      | `logging.SetupBootstrap`                                        |
-|                             | `DatabaseSetup`              | `database.Setup` in CLI unlock / ETag paths                     |
-| **InfrastructureTestSeams** | `BuildWriteBatcher`          | `buildWriteBatcher`                                             |
-|                             | `ShutdownWriteBatcher`       | `writeBatcher.Close`                                            |
-|                             | `PerformWALCheckpoint`       | WAL checkpoint after pool recreate                              |
-|                             | `PragmaOptimize`             | `PRAGMA optimize` path                                          |
-|                             | `WALCheckpointQuery`         | WAL checkpoint SQL query                                        |
-|                             | `GetCacheSizeBytes`          | cache size calibration (default: `cachelite.GetCacheSizeBytes`) |
-|                             | `GetCacheEntryCount`         | cache entry count (default: `cachelite.CountCacheEntries`)      |
-|                             | `EvictLRU`                   | cache eviction (default: `cachelite.EvictLRU`)                  |
-|                             | `FlushBatchedWrites`         | `flushBatchedWrites` in batcher                                 |
-|                             | `HandlerQueries`             | live `HandlerQueries` from pool connection                      |
-|                             | `RecreatePoolsWithConfig`    | pool recreate on config change                                  |
-|                             | `PragmaOptimizePollInterval` | test tuning (non-zero overrides poll interval)                  |
-|                             | `PragmaOptimizeMaxWait`      | test tuning (non-zero overrides max wait)                       |
-| **RuntimeManagerTestSeams** | `Executable`                 | `os.Executable` for restart                                     |
-|                             | `ExecCommand`                | `exec` for restart                                              |
-|                             | `Exit`                       | `os.Exit` for restart failure                                   |
-|                             | `BeforeListen`               | hook immediately before `ListenAndServe`                        |
-|                             | `Shutdown`                   | HTTP server shutdown                                            |
-| **HandlerManagerTestSeams** | `BuildHandlers`              | `HandlerManager.buildHandlers`                                  |
+| Struct                      | Field                        | Replaces / use                                                                                                                                                           |
+| --------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **AppTestSeams**            | `NewParseTemplates`          | `ui.ParseTemplates` in `New()`                                                                                                                                           |
+|                             | `NewExit`                    | `os.Exit` on template parse failure                                                                                                                                      |
+|                             | `Serve`                      | `App.Serve` / `RuntimeManager.Serve`                                                                                                                                     |
+|                             | `ProfilerStart`              | `profiler.Start` in `Run()`                                                                                                                                              |
+|                             | `MemoryReclaimer`            | memory reclaimer goroutine in `Run()`                                                                                                                                    |
+|                             | `ModuleStateActive`          | `moduleStateService.IsActive` in cache batch load                                                                                                                        |
+|                             | `BatchLoadManagerRun`        | `batchLoadManager.Run`                                                                                                                                                   |
+|                             | `GalleryStatsStartup`        | async gallery stats goroutine at startup                                                                                                                                 |
+|                             | `TriggerDiscovery`           | seam checked inside `app.TriggerDiscovery()` (in lieu of walk/drain/rebuild); startup and `ServerDiscoveryPost` dispatch `go app.TriggerDiscovery(context.Background())` |
+|                             | `RebuildFileFolderIndex`     | `files.RebuildFileFolderIndex` at discovery completion in `TriggerDiscovery`                                                                                             |
+|                             | `FallbackConfig`             | config when `loadConfig` fails in `Run()`                                                                                                                                |
+|                             | `ConfigService`              | `config.NewService` in `setDB` / reconfigure                                                                                                                             |
+|                             | `LoadConfig`                 | `config.Load` in `loadConfig`                                                                                                                                            |
+|                             | `Executable`                 | `os.Executable` in `setRootDir`                                                                                                                                          |
+|                             | `SetupBootstrapLogging`      | `logging.SetupBootstrap`                                                                                                                                                 |
+|                             | `DatabaseSetup`              | `database.Setup` in CLI unlock / ETag paths                                                                                                                              |
+| **InfrastructureTestSeams** | `BuildWriteBatcher`          | `buildWriteBatcher`                                                                                                                                                      |
+|                             | `ShutdownWriteBatcher`       | `writeBatcher.Close`                                                                                                                                                     |
+|                             | `PerformWALCheckpoint`       | WAL checkpoint after pool recreate                                                                                                                                       |
+|                             | `PragmaOptimize`             | `PRAGMA optimize` path                                                                                                                                                   |
+|                             | `WALCheckpointQuery`         | WAL checkpoint SQL query                                                                                                                                                 |
+|                             | `GetCacheSizeBytes`          | cache size calibration (default: `cachelite.GetCacheSizeBytes`)                                                                                                          |
+|                             | `GetCacheEntryCount`         | cache entry count (default: `cachelite.CountCacheEntries`)                                                                                                               |
+|                             | `EvictLRU`                   | cache eviction (default: `cachelite.EvictLRU`)                                                                                                                           |
+|                             | `FlushBatchedWrites`         | `flushBatchedWrites` in batcher                                                                                                                                          |
+|                             | `HandlerQueries`             | live `HandlerQueries` from pool connection                                                                                                                               |
+|                             | `RecreatePoolsWithConfig`    | pool recreate on config change                                                                                                                                           |
+|                             | `PragmaOptimizePollInterval` | test tuning (non-zero overrides poll interval)                                                                                                                           |
+|                             | `PragmaOptimizeMaxWait`      | test tuning (non-zero overrides max wait)                                                                                                                                |
+| **RuntimeManagerTestSeams** | `Executable`                 | `os.Executable` for restart                                                                                                                                              |
+|                             | `ExecCommand`                | `exec` for restart                                                                                                                                                       |
+|                             | `Exit`                       | `os.Exit` for restart failure                                                                                                                                            |
+|                             | `BeforeListen`               | hook immediately before `ListenAndServe`                                                                                                                                 |
+|                             | `Shutdown`                   | HTTP server shutdown                                                                                                                                                     |
+| **HandlerManagerTestSeams** | `BuildHandlers`              | `HandlerManager.buildHandlers`                                                                                                                                           |
 
 Typical test assignments: `app.testSeams.Serve`, `app.testSeams.LoadConfig`, `app.testSeams.GalleryStatsStartup`, `app.InfrastructureService.testSeams.HandlerQueries`, `app.RuntimeManager.testSeams.BeforeListen`, `app.HandlerManager.testSeams.BuildHandlers`.
 
@@ -568,8 +574,8 @@ Routes are registered in `internal/server/router.go` and organized into handler 
 | **DashboardHandlers** | GET /dashboard                                                                                                                                                                                                                                             | Admin dashboard                      |
 | **GalleryHandlers**   | GET /gallery/{id}, GET /image/{id}, GET /raw-image/{id}, GET /thumbnail/file/{id}, GET /thumbnail/folder/{id}, GET /lightbox/{id}, GET /info/folder/{id}, GET /info/image/{id}                                                                             | Browsing & viewing                   |
 | **HealthHandlers**    | GET /, GET /health                                                                                                                                                                                                                                         | Health & root redirect               |
-| **MenuHandlers**      | GET /hamburger-menu                                                                                                                                                                                                                                        | Session-aware menu rendering         |
-| **ServerHandlers**    | POST /server/shutdown, POST /server/discovery, POST /server/cache-batch-load, POST /server/restart                                                                                                                                                         | Server management                    |
+| **MenuHandlers**      | GET /hamburger-menu, GET /about-modal                                                                                                                                                                                                                      | Session-aware menu and about modal   |
+| **ServerHandlers**    | POST /server/shutdown, POST /server/discovery, POST /server/cache-batch-load, POST /server/restart, POST /dashboard/folder-index-error/ack                                                                                                                 | Server management                    |
 | **ThemeHandlers**     | GET /theme/modal, POST /theme                                                                                                                                                                                                                              | Theme selection                      |
 | **pprof**             | GET /debug/pprof/\*                                                                                                                                                                                                                                        | Profiling (loopback + authenticated) |
 
@@ -577,12 +583,12 @@ Routes are registered in `internal/server/router.go` and organized into handler 
 
 ```go
 // Gallery handlers (public, some cacheable)
-mux.HandleFunc("GET /gallery/{id}", app.galleryHandlers.GalleryByID)
-mux.HandleFunc("GET /image/{id}", app.galleryHandlers.ImageByID)
-mux.HandleFunc("GET /info/folder/{id}", app.galleryHandlers.InfoBoxFolder)
+mux.Handle("GET /gallery/{id}", withConditional(http.HandlerFunc(app.HandlerManager.galleryHandlers.GalleryByID)))
+mux.Handle("GET /image/{id}", withConditional(http.HandlerFunc(app.HandlerManager.galleryHandlers.ImageByID)))
+mux.Handle("GET /info/folder/{id}", withConditional(http.HandlerFunc(app.HandlerManager.galleryHandlers.InfoBoxFolder)))
 
 // Config handlers (authenticated, not cacheable)
-mux.Handle("GET /config", app.authMiddleware(cfgAuth(app.configHandlers.ConfigGet)))
+mux.Handle("GET /config", app.authMiddleware(cfgAuth(app.HandlerManager.configHandlers.ConfigGet)))
 ```
 
 ---
@@ -637,6 +643,27 @@ through the shared `ExecRestart`, which injects `SEPG_SKIP_STARTUP_DISCOVERY=1`
 so `App.Run` skips the automatic startup `TriggerDiscovery`. Cold starts (no
 skip env) still walk when `run_file_discovery` is true; `POST /server/discovery`
 still triggers a manual walk.
+
+If `restart_after_discovery` is true (default false, hot-reloadable), startup
+`TriggerDiscovery` — after walk, drain, and `file_folder_index` rebuild —
+calls `TriggerRestart()` (log reason `discovery-complete`). The completion
+monitor still logs "File processing completed" and schedules PRAGMA optimize;
+it does not restart. Do not wait for PRAGMA. If that `TriggerRestart` runs
+before the HTTP server is listening, it sets the restart flag (existing
+nil-server warn) and production `RuntimeManager.Serve` skips `ListenAndServe`
+(after `BeforeListen`, and again after `httpServer` assign) so `Run` proceeds
+to `ExecRestart`. The exec injects `SEPG_SKIP_STARTUP_DISCOVERY=1`, so the new
+process does not walk again and the completion monitor does not start. Drain
+error / cancelled discovery does not restart. Manual `POST /server/discovery`
+does not auto-restart.
+
+If startup `TriggerDiscovery` returns a **folder-index rebuild** failure
+(`errors.Is(err, files.ErrFolderIndexRebuild)`), the startup goroutine calls
+`app.Shutdown()` and does **not** `TriggerRestart` — a broken populate must not
+exec a skip-discovery child that skips the rebuild next boot. Drain-cancel
+errors are logged inside `TriggerDiscovery` and keep serving
+(no `Shutdown`). `POST /server/discovery` does not `Shutdown` (Task 5 dashboard
+banner); only the startup path does.
 
 ### File Processing Pipeline
 
@@ -775,6 +802,19 @@ graph TB
 ### HTTP Cache (cachelite)
 
 **Purpose:** Persist entire HTTP responses (headers + body) in SQLite
+
+**Table rotation:** `RotateCacheTable` uses `internal/tableswap`
+(`CloneEmpty`, `CreateIndexes` on one RW pool lease; `Swap` on a dedicated
+`*dbconnpool.CpConn` that `Swap` Puts after `DROP TABLE`).
+`CreateIndexes` sets `PRAGMA temp_store=FILE` on the leased RW connection before
+`CREATE INDEX`, then restores the previous `temp_store` (DSN stays `memory` for
+other work).
+Destination is `http_cache_new`. After cutover, `Swap` `DROP TABLE`s
+`http_cache_to_be_dropped` before it returns (a prior leftover stale table is
+dropped inside the cutover transaction before the renames).
+First `CreateIndexes` while live indexes exist allocates `idx_http_cache_*_1`
+(SQLite index names are database-global). Callers must set `PRAGMA busy_timeout`
+(gallery RW DSN already does).
 
 **Cache Key:** `METHOD:/path?query|Variant=<name>`
 
@@ -1557,6 +1597,7 @@ The test suite uses **build tags** to separate unit tests from integration tests
 
 - **Unit Tests**: Default tests (no build tag), fast, no external dependencies
 - **Integration Tests**: Files ending in `_integration_test.go` with `//go:build integration` tag
+- **E2E Web Tests**: Package `web-testsuite/` with `//go:build e2eweb` tag (HTTP-level tests against a running server)
 - **Benchmarks**: Performance tests (run with `-bench` flag)
 
 ```
@@ -1566,29 +1607,33 @@ internal/
 │   ├── http_cache_middleware_test.go          # Unit tests (default)
 │   ├── http_cache_middleware_integration_test.go  # Integration tests
 │   └── cache_benchmark_test.go                # Benchmarks
-├── server/                                    # 23 root *_test.go files
+├── server/                                    # 27 root *_test.go files
 │   ├── helpers_test.go                        # CreateApp, shared test options
 │   ├── server_test.go                         # Unit tests (default)
 │   ├── app_test.go                            # App + handler manager unit tests
 │   ├── app_lifecycle_unit_test.go             # App lifecycle unit tests
 │   ├── app_lifecycle_integration_test.go      # Run/Serve/restart integration
+│   ├── app_maintenance_test.go                # Maintenance task unit tests
 │   ├── server_integration_test.go             # Router/middleware integration
 │   ├── config_lifecycle_integration_test.go   # Config DB lifecycle integration
 │   ├── config_precedence_integration_test.go  # Precedence integration/e2e
 │   ├── logging_integration_test.go            # Logging integration/e2e
 │   ├── cache_batch_load_integration_test.go   # Cache batch load integration
 │   ├── writebatcher_dque_lifecycle_integration_test.go  # dque overflow integration
+│   ├── discovery_dque_test.go                 # Discovery dque unit tests
+│   ├── folder_index_sql_guard_test.go         # Folder index SQL guard tests
+│   ├── trigger_discovery_test.go            # TriggerDiscovery unit tests
 │   ├── infrastructure_service_test.go         # InfrastructureService unit
 │   ├── infrastructure_service_integration_test.go
 │   ├── infrastructure_pragma_test.go          # PRAGMA optimize scheduling
 │   ├── infrastructure_cache_calibration_test.go
-│   ├── app_cache_calibration_test.go
 │   ├── batcher_wiring_test.go
 │   ├── runtime_manager_test.go                # RuntimeManager unit
 │   ├── runtime_manager_integration_test.go
 │   ├── subsystem_manager_test.go
 │   ├── subsystem_manager_integration_test.go
 │   ├── metrics_adapters_test.go
+│   ├── quiet_once_test.go                     # Quiet-once logging helper tests
 │   ├── helpers_integration_test.go            # Shared auth helpers
 │   └── files/
 │       ├── service_test.go                    # Unit tests (default)
@@ -1598,7 +1643,7 @@ internal/
     └── mock.go                                # Test doubles
 ```
 
-Root `internal/server/*_test.go` files are listed in the test layout above (23 files).
+Root `internal/server/*_test.go` files are listed in the test layout above (27 files).
 
 **Running tests:**
 
@@ -1651,6 +1696,12 @@ Where each test category lives and how to choose the right seam.
 - Run with `go test -tags integration ./...`.
 - May use real SQLite databases, cross-package wiring, or the full HTTP router.
 
+#### E2E Web Tests
+
+- Live in `web-testsuite/*_test.go` guarded by `//go:build e2eweb`.
+- Run with `go test -tags e2eweb ./web-testsuite/...` or as part of `make test-all` (`-tags "integration e2eweb"`).
+- Exercise the running application over HTTP (auth, gallery, config modal, lightbox, etc.).
+
 #### E2E / Browser Tests
 
 - Live in `tests/*.spec.ts` as Playwright specifications.
@@ -1686,22 +1737,28 @@ go test ./...
 # Integration tests only
 go test -tags integration ./...
 
-# All tests (unit + integration)
-go test -tags integration ./...
+# E2E web tests only
+go test -tags e2eweb ./web-testsuite/...
+
+# All tests (unit + integration + e2eweb) — same as make test-all
+go test -tags "integration e2eweb" ./...
+
+# Browser tests (Playwright; separate from go test)
+make test-browser
 
 # Specific package
 go test ./internal/cachelite/...
 
 # With coverage
 go test -cover ./...
-go test -tags integration -cover ./...
+go test -tags "integration e2eweb" -cover ./...
 
 # Run benchmarks
 go test -bench=. ./internal/cachelite/...
 
 # Race detection
 go test -race ./...
-go test -tags integration -race ./...
+go test -tags "integration e2eweb" -race ./...
 ```
 
 ### Recent Testing Improvements (Feb 2026)
@@ -1743,7 +1800,7 @@ go test -tags integration -race ./...
 
 ## Frontend Architecture
 
-**Last Updated:** 2026-03-04
+**Last Updated:** 2026-09-02
 
 SFPG uses a **hypermedia-driven, mobile-first** frontend built entirely with Go HTML templates, HTMX, Hyperscript, daisyUI, and TailwindCSS. There is no JavaScript framework and no client-side state management.
 
@@ -1829,6 +1886,9 @@ sfpg-go/
 │   └── SERVER_DEEP_DIVE.md      # Server package entry point
 ├── internal/
 │   ├── cachelite/               # HTTP response caching
+│   ├── tableswap/               # Atomic SQLite table rotation
+│   ├── rssmonitor/              # Optional Linux process RSS monitor
+│   ├── sqlite3stat/             # SQLite connection memory-status helpers
 │   ├── workerpool/              # Concurrent task processing
 │   ├── scheduler/               # Task scheduling
 │   ├── queue/                   # Generic deque
@@ -1858,23 +1918,20 @@ sfpg-go/
 │   │   ├── auth/                # Authentication service
 │   │   ├── cachebatch/          # Cache batch-load coordination
 │   │   ├── cachepreload/        # Cache preload manager
+│   │   ├── conditional/         # ETag/304 helper package
 │   │   ├── config/              # Configuration management
 │   │   ├── database/            # Database setup and pools
 │   │   ├── files/               # File processing pipeline
-│   │   ├── handlers/            # Route handlers
+│   │   ├── handlers/            # Route handlers (auth, gallery, config, menu, theme, etc.)
 │   │   ├── interfaces/          # Handler dependency interfaces
 │   │   ├── logging/             # Logging helpers
-│   │   ├── menu/                # Hamburger menu handler
 │   │   ├── metrics/             # Runtime metrics
-│   │   ├── middleware/          # HTTP middleware
+│   │   ├── middleware/          # HTTP middleware (auth, conditional, logging, loopback)
 │   │   ├── modulestate/         # Module active-state tracking
 │   │   ├── pathutil/            # Path utilities
-│   │   ├── runtime/             # Process runtime / restart
 │   │   ├── security/            # Lockout calculations and IP rate limiting
 │   │   ├── session/             # Session management
-│   │   ├── subsystem/           # Subsystem lifecycle
 │   │   ├── template/            # Shared template data
-│   │   ├── theme/               # Theme handling
 │   │   ├── ui/                  # Template rendering
 │   │   └── validation/          # Validation helpers
 │   └── ...
@@ -1921,6 +1978,6 @@ sfpg-go/
 
 ---
 
-**Document Version:** 1.2
-**Last Updated:** 2026-06-19
+**Document Version:** 1.4
+**Last Updated:** 2026-09-02
 **Maintained By:** @whgi

@@ -66,7 +66,7 @@ func BuildImportedConfig(base *Config, yamlContent string) (*Config, error) {
 		return nil, fmt.Errorf("base config cannot be nil")
 	}
 
-	var raw map[string]interface{}
+	var raw map[string]any
 	if err := yaml.Unmarshal([]byte(yamlContent), &raw); err != nil {
 		return nil, fmt.Errorf("invalid YAML syntax: %w", err)
 	}

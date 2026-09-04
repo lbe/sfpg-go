@@ -168,7 +168,17 @@ func (s *InfrastructureService) ReconfigurePools(ctx context.Context, config *co
 
 // walCheckpointAfterCommit checks WAL file size and time-based checkpoint.
 // PRAGMA optimize has been moved to maybeRunPeriodicOptimize.
-func (s *InfrastructureService) walCheckpointAfterCommit(ctx context.Context, lastWalCheckpointTime, lastOptimizeTime time.Time, totalCommitted int64) {
+func (s *InfrastructureService) walCheckpointAfterCommit(ctx context.Context, lastWalCheckpointTime, lastOptimizeTime time.Time, totalCommitted int64, postFlush bool) {
+	// G4: the RO rebuild scan cursor pins the WAL write lock; a TRUNCATE checkpoint
+	// while it is open busy-waits up to busy_timeout and caps flush throughput.
+	// Skip only while the cursor is held, not for the whole rebuild-active window.
+	if s.folderIndexRebuildScanHeld.Load() {
+		return
+	}
+	// D4: post-flush with no DML must not TRUNCATE a leftover multi-GB WAL.
+	if postFlush && !s.lastFlushWroteDML.Load() {
+		return
+	}
 	const walSizeThreshold = 256 * 1024 * 1024
 	walPath := s.dbPaths.Main + "-wal"
 	info, err := os.Stat(walPath)
@@ -228,8 +238,8 @@ func (s *InfrastructureService) maybeRunPeriodicOptimize(ctx context.Context) {
 
 // postCommitMaintenance is called by the write batcher after each successful commit.
 // It runs WAL checkpoint logic and periodic PRAGMA optimize.
-func (s *InfrastructureService) postCommitMaintenance(ctx context.Context, lastWalCheckpointTime, lastOptimizeTime time.Time, totalCommitted int64) {
-	s.walCheckpointAfterCommit(ctx, lastWalCheckpointTime, lastOptimizeTime, totalCommitted)
+func (s *InfrastructureService) postCommitMaintenance(ctx context.Context, lastWalCheckpointTime, lastOptimizeTime time.Time, totalCommitted int64, postFlush bool) {
+	s.walCheckpointAfterCommit(ctx, lastWalCheckpointTime, lastOptimizeTime, totalCommitted, postFlush)
 	s.maybeRunPeriodicOptimize(ctx)
 }
 

@@ -17,9 +17,9 @@ func TestFileProcessor_PendingWriteCount(t *testing.T) {
 	t.Run("returns zero initially", func(t *testing.T) {
 		roPool, rwPool, imagesDir, _ := createTestPoolsAndDir(t)
 
-		wb, err := writebatcher.New[interface{}](context.Background(), writebatcher.Config[interface{}]{
+		wb, err := writebatcher.New[any](context.Background(), writebatcher.Config[any]{
 			BeginTx:      func(ctx context.Context) (*sql.Tx, error) { return nil, nil },
-			Flush:        func(ctx context.Context, tx *sql.Tx, batch []interface{}) error { return nil },
+			Flush:        func(ctx context.Context, tx *sql.Tx, batch []any) error { return nil },
 			MaxBatchSize: 10,
 			ChannelSize:  10,
 		})
@@ -64,9 +64,9 @@ func TestFileProcessor_PendingWriteCount(t *testing.T) {
 	t.Run("count changes with submissions", func(t *testing.T) {
 		roPool, rwPool, imagesDir, _ := createTestPoolsAndDir(t)
 
-		wb, err := writebatcher.New[interface{}](context.Background(), writebatcher.Config[interface{}]{
+		wb, err := writebatcher.New[any](context.Background(), writebatcher.Config[any]{
 			BeginTx:      func(ctx context.Context) (*sql.Tx, error) { return nil, nil },
-			Flush:        func(ctx context.Context, tx *sql.Tx, batch []interface{}) error { return nil },
+			Flush:        func(ctx context.Context, tx *sql.Tx, batch []any) error { return nil },
 			MaxBatchSize: 10,
 			ChannelSize:  10,
 		})
@@ -88,7 +88,7 @@ func TestFileProcessor_PendingWriteCount(t *testing.T) {
 		defer processor.Close()
 
 		// Submit some files
-		for i := 0; i < 3; i++ {
+		for range 3 {
 			file := &File{
 				Path: "/test/file.jpg",
 				File: gallerydb.File{
@@ -111,9 +111,9 @@ func TestFileProcessor_PendingWriteCount_Integration(t *testing.T) {
 	t.Run("tracks real database writes", func(t *testing.T) {
 		roPool, rwPool, imagesDir, _ := createTestPoolsAndDir(t)
 
-		wb, err := writebatcher.New[interface{}](context.Background(), writebatcher.Config[interface{}]{
+		wb, err := writebatcher.New[any](context.Background(), writebatcher.Config[any]{
 			BeginTx:      func(ctx context.Context) (*sql.Tx, error) { return nil, nil },
-			Flush:        func(ctx context.Context, tx *sql.Tx, batch []interface{}) error { return nil },
+			Flush:        func(ctx context.Context, tx *sql.Tx, batch []any) error { return nil },
 			MaxBatchSize: 10,
 			ChannelSize:  10,
 		})

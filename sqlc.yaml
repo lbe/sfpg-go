@@ -1,7 +1,22 @@
 version: "2"
 sql:
   - schema: "migrations/migrations" # Load all migration files for schema
-    queries: "sqlc/queries"
+    queries:
+      # The embed-only folder-index rebuild query is intentionally NOT listed here.
+      - sqlc/queries/files.sql
+      - sqlc/queries/folders.sql
+      - sqlc/queries/http_cache.sql
+      - sqlc/queries/config.sql
+      - sqlc/queries/module_state.sql
+      - sqlc/queries/thumbnails.sql
+      - sqlc/queries/xmp.sql
+      - sqlc/queries/login_attempts.sql
+      - sqlc/queries/preload_routes.sql
+      - sqlc/queries/file_paths.sql
+      - sqlc/queries/folder_paths.sql
+      - sqlc/queries/iptc.sql
+      - sqlc/queries/exif.sql
+      - sqlc/queries/invalid_files.sql
     engine: "sqlite"
     gen:
       go:

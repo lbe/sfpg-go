@@ -202,7 +202,7 @@ func TestStartWorkerPool_BasicProcessing(t *testing.T) {
 
 		pool := NewPool(ctx, 4, 1, 1*time.Second)
 		q := queue.NewQueue[string](100)
-		var processedTasks int64
+		var processedTasks atomic.Int64
 
 		mockPoolFunc := func(ctx context.Context, wc WorkerContext, dbRo, dbRw dbconnpool.ConnectionPool, qLen func() int, id int) error {
 			for {
@@ -223,7 +223,7 @@ func TestStartWorkerPool_BasicProcessing(t *testing.T) {
 					}
 					return err
 				}
-				atomic.AddInt64(&processedTasks, 1)
+				processedTasks.Add(1)
 				wc.AddCompleted()
 			}
 		}
@@ -241,8 +241,8 @@ func TestStartWorkerPool_BasicProcessing(t *testing.T) {
 		time.Sleep(500 * time.Millisecond)
 		synctest.Wait()
 
-		if atomic.LoadInt64(&processedTasks) != int64(numTasks) {
-			t.Errorf("Expected %d tasks to be processed, got %d", numTasks, atomic.LoadInt64(&processedTasks))
+		if processedTasks.Load() != int64(numTasks) {
+			t.Errorf("Expected %d tasks to be processed, got %d", numTasks, processedTasks.Load())
 		}
 	})
 }

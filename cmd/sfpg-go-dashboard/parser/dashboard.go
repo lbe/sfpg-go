@@ -115,6 +115,8 @@ type CachePreloadStats struct {
 type CacheBatchLoadStats struct {
 	// IsRunning indicates whether a batch load is currently running.
 	IsRunning bool
+	// Loaded is #batch-loaded (TargetsCompleted).
+	Loaded string
 	// Progress shows the current progress as "current/total".
 	// This value is normalized to remove whitespace/newlines.
 	Progress string
@@ -124,6 +126,17 @@ type CacheBatchLoadStats struct {
 	Failed string
 	// Skipped is the number of skipped batch loads.
 	Skipped string
+}
+
+// GalleryStats is the Gallery Statistics card. Present is false when
+// #gallery-folders is missing (web "Loading gallery data..." branch).
+type GalleryStats struct {
+	Present        bool
+	Folders        string
+	Images         string
+	ImagesSize     string
+	FirstDiscovery string
+	LastDiscovery  string
 }
 
 // HTTPCacheStats contains HTTP cache statistics.
@@ -146,6 +159,8 @@ type HTTPCacheStats struct {
 type DashboardMetrics struct {
 	// LastUpdated is the timestamp of the last update.
 	LastUpdated string
+	// Version is the application version from #dashboard-version.
+	Version string
 	// Memory contains memory statistics.
 	Memory MemoryStats
 	// Runtime contains runtime statistics.
@@ -162,6 +177,11 @@ type DashboardMetrics struct {
 	CachePreload CachePreloadStats
 	// CacheBatchLoad contains cache batch load statistics.
 	CacheBatchLoad CacheBatchLoadStats
+	// Gallery contains gallery statistics.
+	Gallery GalleryStats
+	// FolderIndexRebuildError is the collapsed text of
+	// #folder-index-rebuild-error-msg. Empty when the alert is absent.
+	FolderIndexRebuildError string
 	// HTTPCache contains HTTP cache statistics.
 	HTTPCache HTTPCacheStats
 }
@@ -198,7 +218,9 @@ func ParseDashboard(r io.Reader) (*DashboardMetrics, error) {
 	}
 
 	metrics := &DashboardMetrics{
-		LastUpdated: extractLastUpdated(container),
+		LastUpdated:             extractLastUpdated(container),
+		Version:                 extractTextByID(container, "dashboard-version"),
+		FolderIndexRebuildError: extractFolderIndexRebuildError(container),
 	}
 
 	extractMemoryStats(container, metrics)
@@ -209,6 +231,7 @@ func ParseDashboard(r io.Reader) (*DashboardMetrics, error) {
 	extractFileProcessingStats(container, metrics)
 	extractCachePreloadStats(container, metrics)
 	extractCacheBatchLoadStats(container, metrics)
+	extractGalleryStats(container, metrics)
 	extractHTTPCacheStats(container, metrics)
 
 	return metrics, nil
@@ -230,6 +253,27 @@ func extractTextByID(container *html.Node, id string) string {
 		return ""
 	}
 	return strings.TrimSpace(testutil.GetTextContent(el))
+}
+
+// extractAttrByID finds an element by ID and returns the value of attr,
+// or empty when the element is missing.
+func extractAttrByID(container *html.Node, id, attr string) string {
+	el := testutil.FindElementByID(container, id)
+	if el == nil {
+		return ""
+	}
+	return testutil.GetAttr(el, attr)
+}
+
+// extractFolderIndexRebuildError collapses the whitespace of
+// #folder-index-rebuild-error-msg to a single-space-joined sentence.
+// Returns "" when the alert is absent.
+func extractFolderIndexRebuildError(container *html.Node) string {
+	el := testutil.FindElementByID(container, "folder-index-rebuild-error-msg")
+	if el == nil {
+		return ""
+	}
+	return strings.Join(strings.Fields(testutil.GetTextContent(el)), " ")
 }
 
 // extractMemoryStats extracts memory statistics into the metrics struct.
@@ -254,12 +298,13 @@ func extractWriteBatcherStats(container *html.Node, m *DashboardMetrics) {
 	m.WriteBatcher.TotalFlushed = extractTextByID(container, "wb-flushed")
 	m.WriteBatcher.TotalErrors = extractTextByID(container, "wb-errors")
 	m.WriteBatcher.BatchSize = extractTextByID(container, "wb-batch-size")
+	m.WriteBatcher.DQueEnabled = extractTextByID(container, "wb-dque")
 	m.WriteBatcher.DQueSize = extractTextByID(container, "wb-dque-size")
 	m.WriteBatcher.OverflowCount = extractTextByID(container, "wb-dque-overflow")
 	m.WriteBatcher.DiskUsageBytes = extractTextByID(container, "wb-dque-disk-usage")
 	m.WriteBatcher.DiskQuotaBytes = extractTextByID(container, "wb-dque-disk-quota")
 
-	// Extract dque status from wb-dque "of X"
+	// Extract channel size from wb-channel-size-desc "of X"
 	descEl := testutil.FindElementByID(container, "wb-channel-size-desc")
 	if descEl != nil {
 		text := testutil.GetTextContent(descEl)
@@ -309,6 +354,22 @@ func extractFileProcessingStats(container *html.Node, m *DashboardMetrics) {
 	m.FileProcessing.InFlight = extractTextByID(container, "fp-inflight")
 }
 
+// extractGalleryStats extracts gallery statistics into the metrics struct.
+// Present is false when #gallery-folders is missing (web loading branch).
+func extractGalleryStats(container *html.Node, m *DashboardMetrics) {
+	el := testutil.FindElementByID(container, "gallery-folders")
+	if el == nil {
+		m.Gallery.Present = false
+		return
+	}
+	m.Gallery.Present = true
+	m.Gallery.Folders = strings.TrimSpace(testutil.GetTextContent(el))
+	m.Gallery.Images = extractTextByID(container, "gallery-images")
+	m.Gallery.ImagesSize = extractTextByID(container, "gallery-images-size")
+	m.Gallery.FirstDiscovery = extractAttrByID(container, "gallery-discovery-tip", "data-first-discovery")
+	m.Gallery.LastDiscovery = extractAttrByID(container, "gallery-discovery-tip", "data-last-discovery")
+}
+
 // extractCachePreloadStats extracts cache preload statistics into the metrics struct.
 func extractCachePreloadStats(container *html.Node, m *DashboardMetrics) {
 	m.CachePreload.Scheduled = extractTextByID(container, "preload-scheduled")
@@ -327,6 +388,7 @@ func extractCachePreloadStats(container *html.Node, m *DashboardMetrics) {
 // extractCacheBatchLoadStats extracts cache batch load statistics into the metrics struct.
 // The Progress value is normalized to remove newlines, tabs, and extra whitespace.
 func extractCacheBatchLoadStats(container *html.Node, m *DashboardMetrics) {
+	m.CacheBatchLoad.Loaded = extractTextByID(container, "batch-loaded")
 	m.CacheBatchLoad.Failed = extractTextByID(container, "batch-failed")
 	m.CacheBatchLoad.Skipped = extractTextByID(container, "batch-skipped")
 

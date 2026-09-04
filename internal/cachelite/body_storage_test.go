@@ -16,10 +16,7 @@ import (
 func testPlainHTML(size int) []byte {
 	head := "<html><body>"
 	tail := "</body></html>"
-	bodyLen := size - len(head) - len(tail)
-	if bodyLen < 0 {
-		bodyLen = 0
-	}
+	bodyLen := max(size-len(head)-len(tail), 0)
 	body := strings.Repeat("x", bodyLen)
 	return []byte(head + body + tail)
 }

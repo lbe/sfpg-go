@@ -81,7 +81,7 @@ func (m *HandlerManager) Build(
 		metricsCollector = metrics.NewCollector()
 	}
 	m.dashboardHandlers = handlers.NewDashboardHandlers(
-		sm, metricsCollector, app.AddCommonTemplateData, app.ServerError,
+		sm, metricsCollector, app, app.AddCommonTemplateData, app.ServerError,
 	)
 
 	m.serverHandlers = handlers.NewServerHandlers(sm, app, app.AddCommonTemplateData, app.ServerError)

@@ -215,16 +215,16 @@ func TestConfig_LoadFromOptExcluding_EmptyExcludeList(t *testing.T) {
 func TestYAMLValueToSetString(t *testing.T) {
 	tests := []struct {
 		name    string
-		input   interface{}
+		input   any
 		want    string
 		wantErr bool
 	}{
 		{"nil", nil, "", true},
-		{"unsupported map type", map[string]interface{}{"a": "b"}, "", true},
+		{"unsupported map type", map[string]any{"a": "b"}, "", true},
 		{"string", "dark", "dark", false},
 		{"int", 42, "42", false},
 		{"bool", true, "true", false},
-		{"sequence", []interface{}{"dark", "light"}, `["dark","light"]`, false},
+		{"sequence", []any{"dark", "light"}, `["dark","light"]`, false},
 	}
 
 	for _, tt := range tests {

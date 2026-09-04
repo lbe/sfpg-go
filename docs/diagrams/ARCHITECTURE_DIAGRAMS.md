@@ -250,7 +250,9 @@ Invalid-file cleanup now happens inside the `File` flush path via the `HadInvali
 
 ## Cache Architecture
 
-HTTP cache with preload and unified batcher integration (updated Feb 2026):
+HTTP cache with preload and unified batcher integration (updated Feb 2026).
+Table rotation (`RotateCacheTable`) is `CloneEmpty` → `CreateIndexes` → `Swap`;
+`Swap` `DROP TABLE`s `http_cache_to_be_dropped` before it returns.
 
 ```mermaid
 graph TB
@@ -333,6 +335,7 @@ graph TB
         Exif[exif_metadata<br/>-----------------<br/>file_id, json]
         Config[config<br/>-------<br/>key, value,<br/>category, ...]
         HTTPCache[http_cache<br/>-----------<br/>key, method, path,<br/>encoding, etag,<br/>body, content_length,<br/>created_at, expires_at]
+        FileFolderIndex[file_folder_index<br/>-------------------<br/>file_id, folder_id,<br/>image_index, image_count,<br/>prev_id, next_id,<br/>first_id, last_id]
         LoginAttempts[login_attempts<br/>-------------------<br/>username, failed_attempts,<br/>locked_until, last_attempt_at]
         ModuleState[module_state<br/>---------------<br/>name, active,<br/>last_started_at]
     end
@@ -353,6 +356,7 @@ graph TB
     RO -.->|SELECT| Exif
     RO -.->|SELECT| Config
     RO -.->|SELECT| HTTPCache
+    RO -.->|SELECT| FileFolderIndex
     RO -.->|SELECT| LoginAttempts
     RO -.->|SELECT| ModuleState
 
@@ -363,6 +367,7 @@ graph TB
     RW -->|INSERT/UPDATE| Exif
     RW -->|INSERT/UPDATE| Config
     RW -->|INSERT/DELETE| HTTPCache
+    RW -->|INSERT/DELETE| FileFolderIndex
     RW -->|INSERT/UPDATE| LoginAttempts
     RW -->|INSERT/UPDATE| ModuleState
     RW -->|INSERT/UPDATE| Thumbnails

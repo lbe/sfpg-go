@@ -183,7 +183,7 @@ func yamlFieldsMap() map[string]*configField {
 
 // yamlValueToSetString converts a yaml.v3-decoded interface{} value to a
 // string suitable for configField.set(). Returns an error for nil values.
-func yamlValueToSetString(v interface{}) (string, error) {
+func yamlValueToSetString(v any) (string, error) {
 	switch val := v.(type) {
 	case nil:
 		return "", fmt.Errorf("value is null, expected a valid value")
@@ -193,7 +193,7 @@ func yamlValueToSetString(v interface{}) (string, error) {
 		return strconv.Itoa(val), nil
 	case bool:
 		return strconv.FormatBool(val), nil
-	case []interface{}:
+	case []any:
 		b, err := json.Marshal(val)
 		if err != nil {
 			return "", fmt.Errorf("failed to marshal YAML sequence: %w", err)
@@ -207,7 +207,7 @@ func yamlValueToSetString(v interface{}) (string, error) {
 // applyYAMLValues applies values from a generic YAML map to c, using
 // fields() by yamlKey. Fields absent from fields() are silently skipped.
 // Invalid values for known fields return an error.
-func applyYAMLValues(c *Config, raw map[string]interface{}) error {
+func applyYAMLValues(c *Config, raw map[string]any) error {
 	fieldByYAML := yamlFieldsMap()
 	for yamlKey, rawVal := range raw {
 		f, ok := fieldByYAML[yamlKey]
@@ -234,8 +234,8 @@ func (c *Config) LoadFromYAML() error {
 		return fmt.Errorf("failed to find config files: %w", err)
 	}
 
-	for i := len(configPaths) - 1; i >= 0; i-- {
-		path := configPaths[i]
+	for _, path := range slices.Backward(configPaths) {
+
 		if !FileExists(path) {
 			continue
 		}
@@ -246,7 +246,7 @@ func (c *Config) LoadFromYAML() error {
 			continue
 		}
 
-		var raw map[string]interface{}
+		var raw map[string]any
 		if err := yaml.Unmarshal(data, &raw); err != nil {
 			slog.Warn("invalid YAML syntax in config", "path", path, "err", err)
 			continue

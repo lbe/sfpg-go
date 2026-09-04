@@ -8,7 +8,10 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync/atomic"
+
+	sqlcqueries "github.com/lbe/sfpg-go/sqlc/queries"
 )
 
 // BatchLoadTarget represents a single cache warm target from GetBatchLoadTargets.
@@ -28,6 +31,23 @@ type CustomQuerier interface {
 	GetPreloadRoutesByFolderID(ctx context.Context, parent_id sql.NullInt64) (*sql.Rows, error)
 	GetThumbnailBlobDataByID(ctx context.Context, thumbnailID int64) ([]byte, error)
 	UpsertThumbnailBlob(ctx context.Context, arg UpsertThumbnailBlobParams) error
+	// QueryFilesForFolderIndexRebuild streams every folder-bearing file ordered so
+	// Go can compute per-folder navigation columns in one pass. It reads the files
+	// table (which exists at pool init), so it is prepared at PrepareCustomQueries.
+	QueryFilesForFolderIndexRebuild(ctx context.Context) (*sql.Rows, error)
+	// CountFilesForFolderIndexRebuild returns the number of folder-bearing files
+	// (same WHERE as the stream) so the rebuild can pre-size its pairs slice. It
+	// reads the files table (which exists at pool init), so it is prepared at
+	// PrepareCustomQueries.
+	CountFilesForFolderIndexRebuild(ctx context.Context) (int64, error)
+	// InsertFileFolderIndexNewRows bulk-inserts rows into file_folder_index_new. The
+	// dest table is runtime CloneEmpty, so the INSERT is prepared on the batcher
+	// transaction, not at pool Prepare. It requires WithTx (a non-nil tx).
+	InsertFileFolderIndexNewRows(ctx context.Context, rows []InsertFileFolderIndexNewParams) error
+	// FileFolderIndexNewExists reports whether the file_folder_index_new dest table
+	// exists without executing an INSERT and without aborting the caller's tx when
+	// the table is missing. Used by the writebatcher flush to skip index rows only.
+	FileFolderIndexNewExists(ctx context.Context) (bool, error)
 }
 
 // CustomQueries embeds the sqlc-generated Queries struct and adds methods
@@ -43,6 +63,14 @@ type CustomQueries struct {
 	getPreloadRoutesByFolderIDStmt           *sql.Stmt
 	getThumbnailBlobDataByIDStmt             *sql.Stmt
 	upsertThumbnailBlobStmt                  *sql.Stmt
+	// queryFilesForFolderIndexRebuildStmt streams files for the folder-index rebuild.
+	// It reads the files table (exists at pool init), so it is prepared at
+	// PrepareCustomQueries, unlike the dest INSERT below.
+	queryFilesForFolderIndexRebuildStmt *sql.Stmt
+	// countFilesForFolderIndexRebuildStmt counts folder-bearing files for the
+	// folder-index rebuild pairs slice cap. It reads the files table (exists at
+	// pool init), so it is prepared at PrepareCustomQueries.
+	countFilesForFolderIndexRebuildStmt *sql.Stmt
 }
 
 // Ensure CustomQueries implements CustomQuerier.
@@ -101,6 +129,15 @@ func PrepareCustomQueries(ctx context.Context, db DBTX) (*CustomQueries, error) 
 	if cq.upsertThumbnailBlobStmt, err = prepareContextFn(ctx, db, upsertThumbnailBlob); err != nil {
 		return nil, fmt.Errorf("error preparing query UpsertThumbnailBlob: %w", err)
 	}
+	// Prepared at pool init because the files table exists then. The dest INSERT
+	// (file_folder_index_new) is NOT prepared here because that table is runtime
+	// CloneEmpty and would not yet exist.
+	if cq.queryFilesForFolderIndexRebuildStmt, err = prepareContextFn(ctx, db, stripSQLComments(sqlcqueries.QueryFilesForFolderIndexRebuildSQL())); err != nil {
+		return nil, fmt.Errorf("error preparing query QueryFilesForFolderIndexRebuild: %w", err)
+	}
+	if cq.countFilesForFolderIndexRebuildStmt, err = prepareContextFn(ctx, db, stripSQLComments(sqlcqueries.CountFilesForFolderIndexRebuildSQL())); err != nil {
+		return nil, fmt.Errorf("error preparing query CountFilesForFolderIndexRebuild: %w", err)
+	}
 
 	ct_prepares.Add(1)
 	slog.Debug("Prepared CustomQueries", "total_prepares", ct_prepares.Load())
@@ -144,6 +181,16 @@ func (cq *CustomQueries) Close() error {
 	if cq.upsertThumbnailBlobStmt != nil {
 		if err := stmtCloseFn(cq.upsertThumbnailBlobStmt); err != nil {
 			errs = append(errs, fmt.Errorf("error closing upsertThumbnailBlobStmt: %w", err))
+		}
+	}
+	if cq.queryFilesForFolderIndexRebuildStmt != nil {
+		if err := stmtCloseFn(cq.queryFilesForFolderIndexRebuildStmt); err != nil {
+			errs = append(errs, fmt.Errorf("error closing queryFilesForFolderIndexRebuildStmt: %w", err))
+		}
+	}
+	if cq.countFilesForFolderIndexRebuildStmt != nil {
+		if err := stmtCloseFn(cq.countFilesForFolderIndexRebuildStmt); err != nil {
+			errs = append(errs, fmt.Errorf("error closing countFilesForFolderIndexRebuildStmt: %w", err))
 		}
 	}
 
@@ -366,5 +413,112 @@ func (cq *CustomQueries) WithTx(tx *sql.Tx) *CustomQueries {
 		getPreloadRoutesByFolderIDStmt:           cq.getPreloadRoutesByFolderIDStmt,
 		getThumbnailBlobDataByIDStmt:             cq.getThumbnailBlobDataByIDStmt,
 		upsertThumbnailBlobStmt:                  cq.upsertThumbnailBlobStmt,
+		queryFilesForFolderIndexRebuildStmt:      cq.queryFilesForFolderIndexRebuildStmt,
+		countFilesForFolderIndexRebuildStmt:      cq.countFilesForFolderIndexRebuildStmt,
 	}
+}
+
+// stripSQLComments removes leading SQL line comments (lines starting with --)
+// from a statement so sqlite can prepare it. The -- name: directives and STREAMING
+// notes are comments, not SQL. Inline comments inside the SELECT/INSERT body are
+// not present in the embedded SQL, so a line-based strip is sufficient and safe.
+func stripSQLComments(s string) string {
+	lines := strings.Split(s, "\n")
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "--") {
+			continue
+		}
+		out = append(out, line)
+	}
+	return strings.TrimSpace(strings.Join(out, "\n"))
+}
+
+// InsertFileFolderIndexNewParams are the column values for one file_folder_index_new row.
+// prev_id/next_id are NullInt64 because the first/last file in a folder has no
+// previous/next neighbor, expressed as NULL in SQL.
+type InsertFileFolderIndexNewParams struct {
+	FileID     int64
+	FolderID   int64
+	ImageIndex int64
+	ImageCount int64
+	PrevID     sql.NullInt64
+	NextID     sql.NullInt64
+	FirstID    int64
+	LastID     int64
+}
+
+// QueryFilesForFolderIndexRebuild streams every folder-bearing file ordered by
+// folder, filename, then id so the rebuild can compute per-folder navigation
+// columns in Go without materializing all rows. The statement is prepared at
+// PrepareCustomQueries because it reads the files table (exists at pool init).
+func (cq *CustomQueries) QueryFilesForFolderIndexRebuild(ctx context.Context) (*sql.Rows, error) {
+	return cq.query(ctx, cq.queryFilesForFolderIndexRebuildStmt, sqlcqueries.QueryFilesForFolderIndexRebuildSQL())
+}
+
+// CountFilesForFolderIndexRebuild returns the number of folder-bearing files,
+// the same WHERE as the streaming SELECT. It is prepared at pool init because it
+// reads the files table (exists at pool init).
+func (cq *CustomQueries) CountFilesForFolderIndexRebuild(ctx context.Context) (int64, error) {
+	var count int64
+	if err := cq.countFilesForFolderIndexRebuildStmt.QueryRowContext(ctx).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count files for folder-index rebuild: %w", err)
+	}
+	return count, nil
+}
+
+// FileFolderIndexNewExists reports whether the file_folder_index_new dest table
+// exists. It is a non-aborting existence check (sqlite_master is allowed inside
+// gallerydb): when the table is missing it returns false with no error, so the
+// writebatcher flush can skip index rows only and still commit File/Cache writes.
+func (cq *CustomQueries) FileFolderIndexNewExists(ctx context.Context) (bool, error) {
+	var exists int64
+	err := cq.db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='file_folder_index_new'").Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("check file_folder_index_new existence: %w", err)
+	}
+	return exists > 0, nil
+}
+
+// InsertFileFolderIndexNewRows bulk-inserts rows into file_folder_index_new. It
+// requires WithTx (cq.tx != nil): the dest table is runtime CloneEmpty, so the
+// INSERT is prepared on the transaction exactly once (G6), then Exec'd per row
+// up to MaxBatchSize. It never calls cq.tx.ExecContext with an SQL string.
+func (cq *CustomQueries) InsertFileFolderIndexNewRows(ctx context.Context, rows []InsertFileFolderIndexNewParams) error {
+	if cq.tx == nil {
+		return fmt.Errorf("InsertFileFolderIndexNewRows requires WithTx (non-nil transaction)")
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	stmt, err := prepareContextFn(ctx, cq.tx, stripSQLComments(sqlcqueries.InsertFileFolderIndexNewSQL()))
+	if err != nil {
+		return fmt.Errorf("prepare folder index insert: %w", err)
+	}
+	defer func() {
+		if cerr := stmtCloseFn(stmt); cerr != nil {
+			slog.Debug("close folder index insert stmt", "err", cerr)
+		}
+	}()
+	for _, row := range rows {
+		var prevID, nextID any
+		if row.PrevID.Valid {
+			prevID = row.PrevID.Int64
+		} else {
+			prevID = nil
+		}
+		if row.NextID.Valid {
+			nextID = row.NextID.Int64
+		} else {
+			nextID = nil
+		}
+		if _, err := stmtExecContextFn(ctx, stmt,
+			row.FileID, row.FolderID, row.ImageIndex, row.ImageCount,
+			prevID, nextID, row.FirstID, row.LastID); err != nil {
+			return fmt.Errorf("insert folder index row for file %d: %w", row.FileID, err)
+		}
+	}
+	return nil
 }

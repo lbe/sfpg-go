@@ -5,6 +5,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -12,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/lbe/sfpg-go/internal/dbconnpool"
 	"github.com/lbe/sfpg-go/internal/gallerydb"
 	"github.com/lbe/sfpg-go/internal/humanize"
 	"github.com/lbe/sfpg-go/internal/server/config"
@@ -88,6 +90,21 @@ func (app *App) UpdateConfigWithPrecedence(c *config.Config, changedFields []str
 // ResetStats resets the file processing statistics counters.
 func (app *App) ResetStats() {
 	app.SubsystemManager.ResetStats()
+}
+
+// persistFileProcessingStats writes the completed discovery run's counters to
+// module_state.payload key file_processing on the discovery row so a
+// skip-startup-discovery restart can hydrate them. It is a no-op (nil error)
+// when processingStats or the module state service are nil, matching
+// waitForFileProcessingDrain and HydrateFileProcessingStats — nil stats never
+// call GetStats(). Errors are returned for the caller to log; a persist
+// failure must not fail discovery.
+func (app *App) persistFileProcessingStats(ctx context.Context) error {
+	sm := app.SubsystemManager
+	if sm.processingStats == nil || sm.moduleStateService == nil {
+		return nil
+	}
+	return sm.moduleStateService.SaveFileProcessing(ctx, "discovery", sm.processingStats.GetStats())
 }
 
 // ensureSession creates the session store and session manager if not already set.
@@ -172,7 +189,6 @@ func (app *App) Serve() error {
 			return err
 		}
 	}
-	app.scheduleStaleCacheDrop("serve-startup")
 
 	mux := app.getRouter()
 	app.ConfigManager.ConfigMu.RLock()
@@ -346,17 +362,21 @@ func (app *App) CheckAccountLockout(ctx context.Context, username string) (bool,
 	return app.SessionAuthFacade.CheckAccountLockout(ctx, username, app.dbRwPool)
 }
 
-// RecordFailedLoginAttempt records a failed login attempt and locks the account after 3 failures.
+// lockoutParamsFromConfig returns the configured lockout duration and threshold.
+// A nil config is seeded from DefaultConfig(); zero values pass through raw —
+// zero-to-default resolution happens in security.CalculateLockout.
+func lockoutParamsFromConfig(cfg *config.Config) (lockout, threshold int64) {
+	if cfg == nil {
+		def := config.DefaultConfig()
+		return int64(def.LockoutDuration), int64(def.LockoutThreshold)
+	}
+	return int64(cfg.LockoutDuration), int64(cfg.LockoutThreshold)
+}
+
+// RecordFailedLoginAttempt records a failed login attempt and locks the account
+// after the configured lockout threshold is exceeded.
 func (app *App) RecordFailedLoginAttempt(ctx context.Context, username string) error {
-	lockout := int64(3600)
-	threshold := int64(3)
-	cfg := app.GetConfig()
-	if cfg != nil && cfg.LockoutDuration > 0 {
-		lockout = int64(cfg.LockoutDuration)
-	}
-	if cfg != nil && cfg.LockoutThreshold > 0 {
-		threshold = int64(cfg.LockoutThreshold)
-	}
+	lockout, threshold := lockoutParamsFromConfig(app.GetConfig())
 	return app.SessionAuthFacade.RecordFailedLoginAttempt(
 		ctx, username, app.dbRwPool, lockout, threshold, app.SubsystemManager.scheduler, app.unlockAccountFromTask,
 	)
@@ -373,20 +393,27 @@ func (app *App) unlockAccountFromTask(ctx context.Context, username string) erro
 	return app.SessionAuthFacade.UnlockAccountFromTask(ctx, username, app.dbRwPool)
 }
 
-// TriggerDiscovery starts a background process to recursively scan the images directory.
-// It delegates to files.WalkImageDir with app-specific deps.
-// Updates module_state for "discovery" so batch load can guard against concurrent discovery.
-func (app *App) TriggerDiscovery() {
-	ctx := app.getCtx()
-
-	app.discoveryRunning.Store(true)
+// TriggerDiscovery walks the images directory, waits for file processing to
+// drain, then rebuilds file_folder_index. It updates module_state for
+// "discovery" so batch load can guard against concurrent discovery.
+func (app *App) TriggerDiscovery(ctx context.Context) error {
+	if !app.discoveryRunning.CompareAndSwap(false, true) {
+		slog.Info("discovery already in flight")
+		return nil
+	}
 	defer app.discoveryRunning.Store(false)
+
+	// Zero live counters only after winning the CAS, so a failed CAS leaves
+	// live counters and the persisted payload unchanged. A starting run must
+	// not add onto hydrated skip-startup last-run totals. Reset happens before
+	// the testSeams.TriggerDiscovery check so tests observe it via the seam.
+	app.ResetStats()
 
 	app.RuntimeManager.GalleryStats().markRunning(1)
 	defer app.RuntimeManager.GalleryStats().markRunning(-1)
 
 	if app.SubsystemManager.moduleStateService != nil {
-		if err := app.SubsystemManager.moduleStateService.SetActive(ctx, "discovery", true); err != nil {
+		if err := app.SubsystemManager.moduleStateService.SetActive(app.getCtx(), "discovery", true); err != nil {
 			slog.Error("failed to set discovery active in module_state", "err", err)
 		}
 		defer func() {
@@ -397,13 +424,56 @@ func (app *App) TriggerDiscovery() {
 		}()
 	}
 
+	if app.testSeams.TriggerDiscovery != nil {
+		return app.testSeams.TriggerDiscovery(ctx)
+	}
+
+	lifecycleCtx := app.getCtx()
+
 	files.WalkImageDir(&files.WalkDeps{
 		Wg:             &app.RuntimeManager.wg,
 		QSendersActive: &app.SubsystemManager.qSendersActive,
-		Ctx:            ctx,
+		Ctx:            lifecycleCtx,
 		ImagesDir:      app.imagesDir,
 		Q:              app.SubsystemManager.q,
 	})
 
-	app.scheduleStaleCacheDrop("discovery-complete")
+	if err := app.waitForFileProcessingDrain(lifecycleCtx); err != nil {
+		slog.Error("discovery drain cancelled during shutdown", "err", err)
+		return lifecycleCtx.Err()
+	}
+
+	// Persist the completed run's counters so a skip-startup-discovery restart
+	// can hydrate them. Skipped on drain cancel above; a persist failure is
+	// logged and does not fail discovery.
+	if err := app.persistFileProcessingStats(lifecycleCtx); err != nil {
+		slog.Error("failed to persist file processing stats", "err", err)
+	}
+
+	if app.dbRwPool == nil {
+		slog.Error("cannot rebuild file_folder_index: RW pool is nil")
+		return nil
+	}
+
+	rebuild := app.testSeams.RebuildFileFolderIndex
+	if rebuild == nil {
+		rebuild = func(ctx context.Context, db *dbconnpool.DbSQLConnPool) error {
+			if app.SubsystemManager.unifiedBatcher == nil {
+				return fmt.Errorf("%w: unified batcher is nil", files.ErrFolderIndexRebuild)
+			}
+			return files.RebuildFileFolderIndex(ctx, db, app.dbRoPool, app.SubsystemManager.unifiedBatcher)
+		}
+	}
+	if err := rebuild(lifecycleCtx, app.dbRwPool); err != nil {
+		slog.Error("failed to rebuild file_folder_index", "err", err)
+		if errors.Is(err, context.Canceled) {
+			return lifecycleCtx.Err()
+		}
+		// Non-cancel rebuild failures are already wrapped with
+		// files.ErrFolderIndexRebuild; return them so the startup goroutine can
+		// Shutdown instead of exec'ing a skip-discovery child.
+		return err
+	}
+
+	return nil
 }

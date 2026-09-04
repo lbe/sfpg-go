@@ -9,10 +9,18 @@ import (
 	"github.com/lbe/sfpg-go/internal/server/ui"
 )
 
+// ManualDiscoveryErrorSource exposes the in-memory manual discovery rebuild
+// error for the dashboard alert. Narrow interface so tests can inject a mock.
+type ManualDiscoveryErrorSource interface {
+	ManualDiscoveryError() string
+	SetManualDiscoveryError(msg string)
+}
+
 // DashboardHandlers holds dependencies for dashboard handlers.
 type DashboardHandlers struct {
 	sessionManager SessionManager
 	collector      MetricsCollector
+	discoveryError ManualDiscoveryErrorSource
 
 	// Template helpers
 	AddCommonTemplateData func(http.ResponseWriter, *http.Request, map[string]any, bool) map[string]any
@@ -33,12 +41,14 @@ type MetricsCollector interface {
 func NewDashboardHandlers(
 	sessionManager SessionManager,
 	collector MetricsCollector,
+	discoveryError ManualDiscoveryErrorSource,
 	addCommonTemplateData func(http.ResponseWriter, *http.Request, map[string]any, bool) map[string]any,
 	serverError func(http.ResponseWriter, *http.Request, error),
 ) *DashboardHandlers {
 	return &DashboardHandlers{
 		sessionManager:        sessionManager,
 		collector:             collector,
+		discoveryError:        discoveryError,
 		AddCommonTemplateData: addCommonTemplateData,
 		ServerError:           serverError,
 	}
@@ -56,8 +66,9 @@ func (h *DashboardHandlers) DashboardGet(w http.ResponseWriter, r *http.Request)
 	snapshot := h.collector.Collect(ctx)
 
 	data := map[string]any{
-		"Metrics":  snapshot,
-		"PageName": "dashboard",
+		"Metrics":                 snapshot,
+		"PageName":                "dashboard",
+		"FolderIndexRebuildError": h.discoveryError.ManualDiscoveryError(),
 	}
 
 	// Detect HTMX request for partial rendering (must be before AddCommonTemplateData for partial param)

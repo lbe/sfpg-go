@@ -2,6 +2,7 @@ package thumbnail_test
 
 import (
 	"bytes"
+	"crypto/md5"
 	"fmt"
 	"image"
 	"image/color"
@@ -259,7 +260,11 @@ func TestGenerateThumbnailAndHashes(t *testing.T) {
 
 	t.Run("Valid static image with hash check", func(t *testing.T) {
 		imagePath := createStaticGradientTestImage(t, tempDir, "static_gradient.png")
-		expectedMD5 := "08d35dda2e5ab91773f4238f9b0120e7"
+		srcBytes, err := os.ReadFile(imagePath)
+		if err != nil {
+			t.Fatalf("read source file: %v", err)
+		}
+		wantMD5 := fmt.Sprintf("%x", md5.Sum(srcBytes))
 		// This value overflows int64, which is the expected behavior based on the user's direction.
 		// Updated 2025-12-26: New value reflects the deterministic integer-arithmetic grayscale conversion
 		// that ensures consistent pHash results between x86-64 and ARM64 architectures.
@@ -277,13 +282,13 @@ func TestGenerateThumbnailAndHashes(t *testing.T) {
 			}
 		}()
 
-		_, md5, phash, err := thumbnail.GenerateThumbnailAndHashes(file, 100, 50)
+		_, gotMD5, phash, err := thumbnail.GenerateThumbnailAndHashes(file, 100, 50)
 		if err != nil {
 			t.Fatalf("GenerateThumbnailAndHashes failed: %v", err)
 		}
 
-		if !md5.Valid || md5.String != expectedMD5 {
-			t.Errorf("MD5 mismatch:\nGot:  %q\nWant: %q", md5.String, expectedMD5)
+		if !gotMD5.Valid || gotMD5.String != wantMD5 {
+			t.Errorf("MD5 mismatch:\nGot:  %q\nWant: %q", gotMD5.String, wantMD5)
 		}
 		// Compare against the overflowed int64 value
 		if !phash.Valid || phash.Int64 != expectedPHashInt64 {

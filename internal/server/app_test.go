@@ -43,6 +43,11 @@ func TestNew(t *testing.T) {
 			t.Errorf("Expected sessionSecret to be %q, got %q", ss, app.SessionAuthFacade.sessionSecret)
 		}
 	})
+	t.Run("RebuildFileFolderIndex seam is nil", func(t *testing.T) {
+		if app.testSeams.RebuildFileFolderIndex != nil {
+			t.Fatal("New() must not stub RebuildFileFolderIndex; TriggerDiscovery would skip files.RebuildFileFolderIndex")
+		}
+	})
 }
 
 func TestNew_DoesNotCreatePool(t *testing.T) {
@@ -343,21 +348,6 @@ func TestConfigManager_GetETagVersion_And_UpdateConfigWithPrecedence(t *testing.
 	cm.UpdateConfigWithPrecedence(updated, []string{"ListenerPort"}, opt)
 	if cm.GetConfig() != updated {
 		t.Error("UpdateConfigWithPrecedence did not replace the stored config")
-	}
-}
-
-func TestApp_ScheduleStaleCacheDrop(t *testing.T) {
-	app := newAppForUnlock(t)
-	app.scheduleStaleCacheDrop("test")
-
-	// Wait until the async drop goroutine completes so it cannot race with
-	// the pool shutdown in t.Cleanup.
-	deadline := time.Now().Add(5 * time.Second)
-	for app.RuntimeManager.staleCacheDropInFlight.Load() {
-		if time.Now().After(deadline) {
-			t.Fatal("stale cache drop did not complete")
-		}
-		time.Sleep(10 * time.Millisecond)
 	}
 }
 
@@ -858,6 +848,33 @@ func TestApp_Run_SetRestartRequired_DoesNotExecRestart(t *testing.T) {
 
 	if execCalled {
 		t.Error("ExecRestart should not be called when only SetRestartRequired was set")
+	}
+}
+
+func TestApp_Run_Shutdown_DoesNotLogCanceledScheduler(t *testing.T) {
+	tempDir := t.TempDir()
+	opt := getopt.Opt{SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true}}
+	app := New(opt, "x.y.z")
+	defer app.Shutdown()
+
+	app.setRootDir(&tempDir)
+	app.testSeams.Serve = (&recordingServeHook{}).Serve
+	app.testSeams.MemoryReclaimer = func(MemoryReclaimerConfig) {}
+
+	if err := app.Run(1, 1); err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+	app.Shutdown()
+
+	if app.logger == nil {
+		t.Fatal("app.logger is nil")
+	}
+	data, err := os.ReadFile(app.logger.FilePath())
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	if strings.Contains(string(data), "scheduler error") {
+		t.Errorf("canceled scheduler should not log ERROR, got: %s", data)
 	}
 }
 

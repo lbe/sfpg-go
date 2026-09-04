@@ -23,5 +23,6 @@ func cleanupBatchedWriteResources(batch []BatchedWrite) {
 			bw.CacheEntry = nil
 		}
 		bw.File = nil
+		bw.FolderIndex = nil
 	}
 }

@@ -32,8 +32,8 @@ The `internal/server` package implements the entire web server layer of SFPG. It
 - **`conditional/`** — Conditional request handling (`If-None-Match`, `If-Modified-Since`)
 - **`config/`** — Config domain (service, loader, saver, validator, exporter)
 - **`database/`** — SQLite pool creation, WAL mode configuration, schema access
-- **`files/`** — File processing (processor, service, walker, thumbnail, metadata)
-- **`handlers/`** — HTTP handler groups (auth, config, dashboard, gallery, health, menu, server, theme)
+- **`files/`** — File processing (processor, service, walker, thumbnail, metadata) and `file_folder_index` rebuild (`CloneEmpty` → populate → `CreateIndexes` → `Swap`; `Swap` drops the stale table before it returns)
+- **`handlers/`** — HTTP handler groups (auth, config, dashboard, gallery, health, menu, server, theme); wired via `HandlerManager` in `handler_manager.go`
 - **`interfaces/`** — Shared interfaces (`HandlerQueries`, `Server`, etc.) for testability
 - **`logging/`** — Structured request/response logging middleware
 - **`metrics/`** — Prometheus-style metrics (gallery stats, cache hit rates, worker pool depth)

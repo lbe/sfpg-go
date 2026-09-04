@@ -7,12 +7,16 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
 	"time"
 
 	"golang.org/x/net/html"
@@ -21,6 +25,7 @@ import (
 	"github.com/lbe/sfpg-go/internal/gallerydb"
 	"github.com/lbe/sfpg-go/internal/getopt"
 	"github.com/lbe/sfpg-go/internal/server/config"
+	"github.com/lbe/sfpg-go/internal/server/files"
 	"github.com/lbe/sfpg-go/internal/server/session"
 	"github.com/lbe/sfpg-go/internal/server/ui"
 )
@@ -283,6 +288,15 @@ func TestIntegration_HTMLPartialRoutes_CacheHitPreservesContentType(t *testing.T
 		t.Fatalf("UpsertFileReturningFile: %v", err)
 	}
 	fileID := file.ID
+
+	// Populate file_folder_index so lightbox/info-image queries find the file.
+	_, err = cpcRw.Conn.ExecContext(ctx,
+		`INSERT INTO file_folder_index (file_id, folder_id, image_index, image_count, prev_id, next_id, first_id, last_id)
+		 VALUES (?, ?, 1, 1, NULL, NULL, ?, ?)`,
+		fileID, rootFolderID, fileID, fileID)
+	if err != nil {
+		t.Fatalf("insert file_folder_index: %v", err)
+	}
 
 	// Per-route subtests: MISS -> HIT with Content-Type assertion.
 	wantCT := "text/html; charset=utf-8"
@@ -879,26 +893,6 @@ func waitForCacheStatus(t *testing.T, router http.Handler, req *http.Request, wa
 	}
 }
 
-func waitForTableExistence(t *testing.T, ctx context.Context, app *App, tableName string, wantExists bool) {
-	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		exists, err := tableExists(ctx, app, tableName)
-		if err != nil {
-			t.Fatalf("tableExists(%s): %v", tableName, err)
-		}
-		if exists == wantExists {
-			return
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	final, err := tableExists(ctx, app, tableName)
-	if err != nil {
-		t.Fatalf("tableExists(%s): %v", tableName, err)
-	}
-	t.Fatalf("timed out waiting for table %s existence=%v, got %v", tableName, wantExists, final)
-}
-
 func TestETagIncrement_InvalidatesHTTPCache(t *testing.T) {
 	opt := getopt.Opt{}
 	opt.EnableHTTPCache = getopt.OptBool{Bool: true, IsSet: true}
@@ -958,12 +952,12 @@ func TestETagIncrement_InvalidatesHTTPCache(t *testing.T) {
 		t.Error("expected HTTP cache to be cleared after ETag increment, but entry still exists")
 	}
 
-	rotatedExists, err := tableExists(ctx, app, "http_cache_to_be_dropped")
+	exists, err := tableExists(ctx, app, "http_cache_to_be_dropped")
 	if err != nil {
 		t.Fatalf("tableExists(http_cache_to_be_dropped): %v", err)
 	}
-	if !rotatedExists {
-		t.Fatal("expected rotated stale cache table http_cache_to_be_dropped to exist after ETag invalidation")
+	if exists {
+		t.Fatal("http_cache_to_be_dropped still exists after Swap")
 	}
 }
 
@@ -1011,12 +1005,12 @@ func TestApplyConfig_InvalidatesCacheWhenETagChanges(t *testing.T) {
 		t.Error("expected HTTP cache to be cleared when ETag changed in applyConfig, but entry still exists")
 	}
 
-	rotatedExists, err := tableExists(ctx, app, "http_cache_to_be_dropped")
+	exists, err := tableExists(ctx, app, "http_cache_to_be_dropped")
 	if err != nil {
 		t.Fatalf("tableExists(http_cache_to_be_dropped): %v", err)
 	}
-	if !rotatedExists {
-		t.Fatal("expected rotated stale cache table http_cache_to_be_dropped to exist after applyConfig ETag invalidation")
+	if exists {
+		t.Fatal("http_cache_to_be_dropped still exists after Swap")
 	}
 }
 
@@ -1275,30 +1269,147 @@ func TestETagIncrementIntegration(t *testing.T) {
 	}
 }
 
-func TestWalkImageDir_DropsStaleCacheTable(t *testing.T) {
-	app, ctx := createAppWithContext(t)
+func TestIntegration_TriggerDiscovery_RebuildsFileFolderIndex(t *testing.T) {
+	app := CreateApp(t)
 	defer app.Shutdown()
 
-	cpcRw, err := app.dbRwPool.Get()
-	if err != nil {
-		t.Fatalf("failed to get rw pool connection: %v", err)
-	}
-	_, err = cpcRw.Conn.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS http_cache_to_be_dropped (id INTEGER PRIMARY KEY, body BLOB)`)
-	app.dbRwPool.Put(cpcRw)
-	if err != nil {
-		t.Fatalf("failed to create http_cache_to_be_dropped: %v", err)
+	// processingStats must be non-nil so waitForFileProcessingDrain does not
+	// short-circuit. CreateApp sets q and fileProcessor but not processingStats.
+	app.SubsystemManager.processingStats = &files.ProcessingStats{}
+
+	// Start pool with processingStats wired in so drain polls real counters.
+	app.SubsystemManager.pool.MinWorkers = 1
+	app.SubsystemManager.pool.MaxWorkers = 1
+	app.RuntimeManager.poolDone = make(chan struct{})
+	pf := files.NewPoolFuncWithProcessor(app.SubsystemManager.fileProcessor,
+		app.SubsystemManager.q, app.normalizedImagesDir, removeImagesDirPrefix,
+		app.SubsystemManager.processingStats, nil)
+	go func() {
+		defer close(app.RuntimeManager.poolDone)
+		app.SubsystemManager.pool.StartWorkerPool(pf, app.dbRoPool, app.dbRwPool, app.SubsystemManager.q.Len)
+	}()
+
+	// Copy 3 JPEGs into a subfolder so they share a folder_id.
+	src := "../../testdata/thumbnail/no-exif-thumb.jpg"
+	subDir := filepath.Join(app.imagesDir, "test-folder")
+	if err := os.MkdirAll(subDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
 	}
 
-	beforeExists, err := tableExists(ctx, app, "http_cache_to_be_dropped")
-	if err != nil {
-		t.Fatalf("tableExists before walkImageDir: %v", err)
-	}
-	if !beforeExists {
-		t.Fatal("expected stale table to exist before walkImageDir")
+	copyJPEG := func(dst string) {
+		s, err := os.Open(src)
+		if err != nil {
+			t.Fatalf("open src: %v", err)
+		}
+		defer s.Close()
+		d, err := os.Create(dst)
+		if err != nil {
+			t.Fatalf("create dst: %v", err)
+		}
+		defer d.Close()
+		if _, err := io.Copy(d, s); err != nil {
+			t.Fatalf("copy: %v", err)
+		}
 	}
 
-	app.TriggerDiscovery()
-	waitForTableExistence(t, ctx, app, "http_cache_to_be_dropped", false)
+	copyJPEG(filepath.Join(subDir, "a-first.jpg"))
+	copyJPEG(filepath.Join(subDir, "b-middle.jpg"))
+	copyJPEG(filepath.Join(subDir, "c-last.jpg"))
+
+	app.testSeams.RebuildFileFolderIndex = nil // real rebuild
+
+	// Single TriggerDiscovery: walk → drain (pool processes files) → rebuild.
+	if err := app.TriggerDiscovery(context.Background()); err != nil {
+		t.Fatalf("TriggerDiscovery: %v", err)
+	}
+
+	// Query file_folder_index — should have 3 rows for this folder.
+	cpc, err := app.dbRwPool.Get()
+	if err != nil {
+		t.Fatalf("get connection: %v", err)
+	}
+	defer app.dbRwPool.Put(cpc)
+
+	rows, err := cpc.Conn.QueryContext(context.Background(),
+		`SELECT ffi.file_id, ffi.folder_id, ffi.image_index, ffi.image_count,
+		        ffi.prev_id, ffi.next_id, ffi.first_id, ffi.last_id
+		   FROM file_folder_index ffi
+		   JOIN files f ON f.id = ffi.file_id
+		   JOIN folders fol ON fol.id = f.folder_id
+		   JOIN folder_paths fp ON fp.id = fol.path_id
+		  WHERE fp.path = 'test-folder'
+		  ORDER BY ffi.image_index`)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	defer rows.Close()
+
+	var results []struct {
+		fileID, folderID, imageIndex, imageCount int64
+		prevID, nextID, firstID, lastID          sql.NullInt64
+	}
+	for rows.Next() {
+		var r struct {
+			fileID, folderID, imageIndex, imageCount int64
+			prevID, nextID, firstID, lastID          sql.NullInt64
+		}
+		if err := rows.Scan(&r.fileID, &r.folderID, &r.imageIndex, &r.imageCount,
+			&r.prevID, &r.nextID, &r.firstID, &r.lastID); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		results = append(results, r)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+
+	if len(results) != 3 {
+		t.Fatalf("expected 3 rows in file_folder_index, got %d", len(results))
+	}
+
+	// All rows share the same folder_id, image_count, first_id, last_id.
+	folderID := results[0].folderID
+	for _, r := range results {
+		if r.folderID != folderID {
+			t.Errorf("inconsistent folder_id: %d vs %d", r.folderID, folderID)
+		}
+		if r.imageCount != 3 {
+			t.Errorf("expected image_count=3, got %d", r.imageCount)
+		}
+		if r.firstID.Int64 != results[0].fileID {
+			t.Errorf("expected first_id=%d, got %d", results[0].fileID, r.firstID.Int64)
+		}
+		if r.lastID.Int64 != results[2].fileID {
+			t.Errorf("expected last_id=%d, got %d", results[2].fileID, r.lastID.Int64)
+		}
+	}
+
+	// Verify image_index order: 1, 2, 3.
+	for i, r := range results {
+		if r.imageIndex != int64(i+1) {
+			t.Errorf("expected image_index=%d, got %d", i+1, r.imageIndex)
+		}
+	}
+
+	// prev_id / next_id chain.
+	if results[0].prevID.Valid {
+		t.Error("first file should have null prev_id")
+	}
+	if results[2].nextID.Valid {
+		t.Error("last file should have null next_id")
+	}
+	if results[0].nextID.Int64 != results[1].fileID {
+		t.Errorf("first.next = %d, want %d", results[0].nextID.Int64, results[1].fileID)
+	}
+	if results[1].prevID.Int64 != results[0].fileID {
+		t.Errorf("middle.prev = %d, want %d", results[1].prevID.Int64, results[0].fileID)
+	}
+	if results[1].nextID.Int64 != results[2].fileID {
+		t.Errorf("middle.next = %d, want %d", results[1].nextID.Int64, results[2].fileID)
+	}
+	if results[2].prevID.Int64 != results[1].fileID {
+		t.Errorf("last.prev = %d, want %d", results[2].prevID.Int64, results[1].fileID)
+	}
 }
 
 func TestIntegration_PprofLoopbackAndAuth(t *testing.T) {

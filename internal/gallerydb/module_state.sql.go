@@ -11,7 +11,7 @@ import (
 )
 
 const getModuleState = `-- name: GetModuleState :one
-SELECT name, is_active, last_started_at, last_finished_at
+SELECT name, is_active, last_started_at, last_finished_at, payload
 FROM module_state
 WHERE name = ?
 `
@@ -24,6 +24,7 @@ func (q *Queries) GetModuleState(ctx context.Context, name string) (ModuleState,
 		&i.IsActive,
 		&i.LastStartedAt,
 		&i.LastFinishedAt,
+		&i.Payload,
 	)
 	return i, err
 }
@@ -51,5 +52,19 @@ func (q *Queries) SetModuleState(ctx context.Context, arg SetModuleStateParams) 
 		arg.LastStartedAt,
 		arg.LastFinishedAt,
 	)
+	return err
+}
+
+const setModuleStatePayload = `-- name: SetModuleStatePayload :exec
+UPDATE module_state SET payload = ? WHERE name = ?
+`
+
+type SetModuleStatePayloadParams struct {
+	Payload sql.NullString
+	Name    string
+}
+
+func (q *Queries) SetModuleStatePayload(ctx context.Context, arg SetModuleStatePayloadParams) error {
+	_, err := q.exec(ctx, q.setModuleStatePayloadStmt, setModuleStatePayload, arg.Payload, arg.Name)
 	return err
 }

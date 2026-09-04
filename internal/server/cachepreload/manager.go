@@ -35,6 +35,7 @@ type PreloadManager struct {
 	scheduler       *scheduler.Scheduler
 	schedulerCtx    context.Context
 	schedulerCancel context.CancelFunc
+	schedulerDone   chan struct{}
 	cacheableRoutes []string
 	onSetEnabled    func(bool) // optional callback for tests
 
@@ -120,7 +121,10 @@ func (pm *PreloadManager) startScheduler() {
 	pm.schedulerCancel = cancel
 	sched := scheduler.NewScheduler(4 * runtime.NumCPU())
 	pm.scheduler = sched
+	done := make(chan struct{})
+	pm.schedulerDone = done
 	go func() {
+		defer close(done)
 		if err := sched.Start(ctx); err != nil && !errors.Is(err, context.Canceled) {
 			slog.Debug("cache preload scheduler stopped", "error", err)
 		}
@@ -131,6 +135,10 @@ func (pm *PreloadManager) stopScheduler() {
 	if pm.schedulerCancel != nil {
 		pm.schedulerCancel()
 		pm.schedulerCancel = nil
+	}
+	if pm.schedulerDone != nil {
+		<-pm.schedulerDone
+		pm.schedulerDone = nil
 	}
 	if pm.scheduler != nil {
 		if err := pm.scheduler.Shutdown(); err != nil {

@@ -52,6 +52,7 @@ func TestGoldenBaseline(t *testing.T) {
 		LockoutThreshold:                      5,
 		LoginRateLimitPerIP:                   20,
 		RunFileDiscovery:                      false,
+		RestartAfterDiscovery:                 true,
 		DiscoveryQueueMax:                     10000,
 	}
 
@@ -96,6 +97,7 @@ func TestGoldenBaseline(t *testing.T) {
 		LockoutThreshold:                      99,
 		LoginRateLimitPerIP:                   50,
 		RunFileDiscovery:                      true,
+		RestartAfterDiscovery:                 false,
 		DiscoveryQueueMax:                     50000,
 	}
 
@@ -138,6 +140,7 @@ func TestGoldenBaseline(t *testing.T) {
 			"lockout_threshold":                           "5",
 			"login_rate_limit_per_ip":                     "20",
 			"run_file_discovery":                          "false",
+			"restart_after_discovery":                     "true",
 			"discovery_queue_max":                         "10000",
 		}
 		if !reflect.DeepEqual(got, want) {
@@ -204,6 +207,7 @@ func TestGoldenBaseline(t *testing.T) {
 			"lockout-threshold":                           5,
 			"login-rate-limit-per-ip":                     20,
 			"discover":                                    false,
+			"restart-after-discovery":                     true,
 			"discovery-queue-max":                         10000,
 		}
 		if !reflect.DeepEqual(got, want) {
@@ -238,7 +242,7 @@ func TestGoldenBaseline(t *testing.T) {
 			"http-cache", "image-directory", "listener-address", "listener-port",
 			"log-directory", "log-level", "log-retention-count", "log-rollover",
 			"lockout-duration", "lockout-threshold", "login-rate-limit-per-ip", "max-http-cache-entry-insert-per-transaction", "queue-size",
-			"session-http-only", "session-max-age", "session-same-site",
+			"restart-after-discovery", "session-http-only", "session-max-age", "session-same-site",
 			"session-secure", "site-name", "themes", "worker-pool-max",
 			"worker-pool-max-idle-time", "worker-pool-min-idle",
 			"http-cache-body-codec",
@@ -382,6 +386,9 @@ func TestGoldenBaseline(t *testing.T) {
 		if zeroConfig.RunFileDiscovery != false {
 			t.Errorf("RunFileDiscovery = %v, want false", zeroConfig.RunFileDiscovery)
 		}
+		if zeroConfig.RestartAfterDiscovery != false {
+			t.Errorf("RestartAfterDiscovery = %v, want false", zeroConfig.RestartAfterDiscovery)
+		}
 		if zeroConfig.DiscoveryQueueMax != 0 {
 			t.Errorf("DiscoveryQueueMax = %d, want 0", zeroConfig.DiscoveryQueueMax)
 		}
@@ -504,6 +511,9 @@ func TestGoldenBaseline(t *testing.T) {
 		}
 		if zeroConfig.RunFileDiscovery != def.RunFileDiscovery {
 			t.Errorf("RunFileDiscovery = %v, want %v", zeroConfig.RunFileDiscovery, def.RunFileDiscovery)
+		}
+		if zeroConfig.RestartAfterDiscovery != def.RestartAfterDiscovery {
+			t.Errorf("RestartAfterDiscovery = %v, want %v", zeroConfig.RestartAfterDiscovery, def.RestartAfterDiscovery)
 		}
 		if zeroConfig.DiscoveryQueueMax != def.DiscoveryQueueMax {
 			t.Errorf("DiscoveryQueueMax = %d, want %d", zeroConfig.DiscoveryQueueMax, def.DiscoveryQueueMax)

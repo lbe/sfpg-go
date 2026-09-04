@@ -76,7 +76,7 @@ I **WILL** seek concrete answers and solutions.
 
 `sfpg-go` is a self-hosted photo gallery web application written in Go. It serves images from a local directory, generates thumbnails on the fly, and provides a responsive admin-configurable web UI.
 
-**Stack:** Go (1.26+), SQLite (ncruces/go-sqlite3), Go `html/template`, HTMX, Hyperscript, daisyUI, TailwindCSS. Concurrency via goroutines, channels, `errgroup`, and worker pools.
+**Stack:** Go (1.27+), SQLite (ncruces/go-sqlite3), Go `html/template`, HTMX, Hyperscript, daisyUI, TailwindCSS. Concurrency via goroutines, channels, `errgroup`, and worker pools.
 
 Package map, schema, middleware, data flows, and design patterns: see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 

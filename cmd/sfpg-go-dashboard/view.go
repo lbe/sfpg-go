@@ -11,6 +11,12 @@ import (
 
 // Style definitions for the dashboard UI using lipgloss.
 // Colors use 256-color terminal palette indices.
+//
+// dashboardPairMinWidth is the minimum terminal width at which sibling cards
+// are joined on one row via lipgloss.JoinHorizontal; below it they stack
+// vertically while preserving web section order.
+const dashboardPairMinWidth = 100
+
 var (
 	// headerStyle styles the top header bar with dark blue background.
 	headerStyle = lipgloss.NewStyle().
@@ -150,19 +156,25 @@ func (m Model) viewLogin() string {
 }
 
 // viewDashboard renders the main dashboard with all metrics sections.
-// Layout:
-//   - Header with title and timestamp (far right)
-//   - Module status (single line)
-//   - Memory and Runtime cards (side by side)
-//   - Write Batcher card
-//   - Worker Pool and File Queue cards (side by side)
-//   - File Processing card
-//   - Cache cards (Preload, Batch, HTTP - side by side)
+// Layout (section order matches the web dashboard):
+//   - Header bar with three zones: title left, version centered,
+//     Live/Paused/Refreshing + last-updated time right
+//   - Memory and Runtime cards (paired when wide)
+//   - Gallery Statistics and File Processing cards (paired when wide;
+//     Queued Items is a field inside File Processing)
+//   - Cache cards: Cache Preload, Cache Batch Load, HTTP Cache (paired when wide)
+//   - Worker Pool and Write Batcher cards (paired when wide)
 //   - Footer with controls
 func (m Model) viewDashboard() string {
 	var b strings.Builder
 
-	leftPart := " System Dashboard"
+	leftPart := " Performance & Health Dashboard"
+
+	var centerPart string
+	if v := strings.TrimSpace(m.metrics.Version); v != "" {
+		centerPart = "Version " + v
+	}
+
 	var rightPart string
 	switch {
 	case m.loading:
@@ -178,26 +190,33 @@ func (m Model) viewDashboard() string {
 		headerWidth = 80
 	}
 
-	spacing := headerWidth - lipgloss.Width(leftPart) - lipgloss.Width(rightPart) - 2
-	if spacing < 1 {
-		spacing = 1
-	}
+	// Bar content area measured between the header's two horizontal padding cells.
+	barWidth := headerWidth - 2
+	leftW := lipgloss.Width(leftPart)
+	centerW := lipgloss.Width(centerPart)
+	rightW := lipgloss.Width(rightPart)
 
-	header := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("15")).
-		Background(lipgloss.Color("62")).
-		Padding(0, 1).
-		Width(headerWidth).
-		Render(leftPart + strings.Repeat(" ", spacing) + rightPart)
-	b.WriteString(header)
+	// Start the center zone so its visual center lands on the bar's middle,
+	// keeping at least one cell clear of the left-aligned title. The right
+	// zone stays right-aligned via the trailing gap.
+	centerStart := max((barWidth-centerW)/2, leftW+1)
+	gapLeft := max(centerStart-leftW, 1)
+	gapRight := max(barWidth-(centerStart+centerW)-rightW, 1)
+
+	b.WriteString(headerStyle.Width(headerWidth).Render(
+		leftPart + strings.Repeat(" ", gapLeft) + centerPart + strings.Repeat(" ", gapRight) + rightPart,
+	))
 	b.WriteString("\n")
 
+	if msg := strings.TrimSpace(m.metrics.FolderIndexRebuildError); msg != "" {
+		b.WriteString(errorBoxStyle.Render(" Folder Index Rebuild Failed\n " + msg + " "))
+		b.WriteString("\n")
+	}
+
 	b.WriteString(m.renderMemoryRuntime())
-	b.WriteString(m.renderWriteBatcher())
-	b.WriteString(m.renderWorkerPoolQueue())
-	b.WriteString(m.renderFileProcessing())
+	b.WriteString(m.renderGalleryFileProcessing())
 	b.WriteString(m.renderCaches())
+	b.WriteString(m.renderWorkerWriteBatcher())
 
 	if m.err != nil {
 		b.WriteString(errorBoxStyle.Render(" " + m.err.Error() + " "))
@@ -228,27 +247,23 @@ func (m Model) viewDashboard() string {
 		m.scrollY = 0
 	}
 
-	maxScroll := len(lines) - visibleHeight
-	if maxScroll < 0 {
-		maxScroll = 0
-	}
+	maxScroll := max(len(lines)-visibleHeight, 0)
 	if m.scrollY > maxScroll {
 		m.scrollY = maxScroll
 	}
 
 	start := m.scrollY
-	end := start + visibleHeight
-	if end > len(lines) {
-		end = len(lines)
-	}
+	end := min(start+visibleHeight, len(lines))
 
 	visibleLines := lines[start:end]
 	return strings.Join(visibleLines, "\n") + "\n"
 }
 
-// renderMemoryRuntime renders Memory and Runtime cards side by side.
+// renderMemoryRuntime renders Memory and Runtime cards together.
 // Memory: Allocated, Heap In Use, Heap Released, Heap Objects
 // Runtime: Goroutines, CPU Count, Next GC, Uptime
+// Cards are paired side by side when m.width >= dashboardPairMinWidth, else
+// stacked preserving web order.
 func (m Model) renderMemoryRuntime() string {
 	var b strings.Builder
 
@@ -269,48 +284,78 @@ func (m Model) renderMemoryRuntime() string {
 	memCard := cardStyle.Render(titleInCardStyle.Render("Memory") + "\n" + memContent)
 	runtimeCard := cardStyle.Render(titleInCardStyle.Render("Runtime") + "\n" + runtimeContent)
 
-	row := lipgloss.JoinHorizontal(lipgloss.Top, memCard, "  ", runtimeCard)
-	b.WriteString(row)
+	if m.width >= dashboardPairMinWidth {
+		b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, memCard, "  ", runtimeCard))
+	} else {
+		b.WriteString(memCard)
+		b.WriteString("\n")
+		b.WriteString(runtimeCard)
+	}
 	b.WriteString("\n")
 
 	return b.String()
 }
 
-// renderWriteBatcher renders the Write Batcher card.
-// Shows: Pending/ChannelSize, Flushed, Errors, Batch Size, DQue
-func (m Model) renderWriteBatcher() string {
+// renderGalleryFileProcessing renders Gallery Statistics and File Processing
+// cards together, matching the web section order. File Processing carries its
+// five stats plus Queued Items inside the card (six fields). Cards are paired
+// side by side when m.width >= dashboardPairMinWidth, else stacked preserving
+// web order.
+func (m Model) renderGalleryFileProcessing() string {
 	var b strings.Builder
 
-	errorsStyle := valueStyle
-	if m.metrics.WriteBatcher.TotalErrors != "0" {
-		errorsStyle = errorStyle
-	}
+	galleryCard := m.renderGalleryCard()
 
-	dqueLabel := "DQue:Off"
-	dqueVal := m.metrics.WriteBatcher.DQueSize + "/" + m.metrics.WriteBatcher.OverflowCount
-	if m.metrics.WriteBatcher.DQueEnabled == "Enabled" {
-		dqueLabel = "DQue:On"
-	}
-
-	content := fmt.Sprintf("%s: %s/%s  %s: %s  %s: %s  %s: %s  %s: %s",
-		labelStyle.Render("Pending"), valueStyle.Render(m.metrics.WriteBatcher.Pending),
-		valueStyle.Render(m.metrics.WriteBatcher.ChannelSize),
-		labelStyle.Render("Flushed"), valueStyle.Render(m.metrics.WriteBatcher.TotalFlushed),
-		labelStyle.Render("Errors"), errorsStyle.Render(m.metrics.WriteBatcher.TotalErrors),
-		labelStyle.Render("Batch"), valueStyle.Render(m.metrics.WriteBatcher.BatchSize),
-		labelStyle.Render(dqueLabel), valueStyle.Render(dqueVal),
+	fpContent := fmt.Sprintf("%s: %s  %s: %s  %s: %s  %s: %s  %s: %s  %s: %s",
+		labelStyle.Render("Total Found"), valueStyle.Render(m.metrics.FileProcessing.TotalFound),
+		labelStyle.Render("Existing"), warningStyle.Render(m.metrics.FileProcessing.Existing),
+		labelStyle.Render("New"), successStyle.Render(m.metrics.FileProcessing.New),
+		labelStyle.Render("Invalid"), errorStyle.Render(m.metrics.FileProcessing.Invalid),
+		labelStyle.Render("In Flight"), valueStyle.Render(m.metrics.FileProcessing.InFlight),
+		labelStyle.Render("Queued Items"), valueStyle.Render(m.metrics.Queue.Queued),
 	)
+	fpCard := cardStyle.Render(titleInCardStyle.Render("File Processing") + "\n" + fpContent)
 
-	b.WriteString(cardStyle.Render(titleInCardStyle.Render("Write Batcher") + "\n" + content))
+	if m.width >= dashboardPairMinWidth {
+		b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, galleryCard, "  ", fpCard))
+	} else {
+		b.WriteString(galleryCard)
+		b.WriteString("\n")
+		b.WriteString(fpCard)
+	}
 	b.WriteString("\n")
 
 	return b.String()
 }
 
-// renderWorkerPoolQueue renders Worker Pool and Queued Items cards side by side.
-// Worker Pool: Running/Max, Completed, Successful, Failed
-// Queued Items: Queued queue length
-func (m Model) renderWorkerPoolQueue() string {
+// renderGalleryCard renders the Gallery Statistics card alone (used inside
+// renderGalleryFileProcessing). Shows Folders, Images, Images Size on one
+// line; First and Last discovery dates each on their own line. Presents a
+// loading state when the web card has no data yet (Present false).
+func (m Model) renderGalleryCard() string {
+	var content string
+	if !m.metrics.Gallery.Present {
+		content = dimStyle.Render("Loading gallery data...")
+	} else {
+		g := m.metrics.Gallery
+		content = fmt.Sprintf("%s: %s  %s: %s  %s: %s\n%s: %s\n%s: %s",
+			labelStyle.Render("Folders"), valueStyle.Render(g.Folders),
+			labelStyle.Render("Images"), valueStyle.Render(g.Images),
+			labelStyle.Render("Images Size"), valueStyle.Render(g.ImagesSize),
+			labelStyle.Render("First"), valueStyle.Render(dashOrUnknown(g.FirstDiscovery)),
+			labelStyle.Render("Last"), valueStyle.Render(dashOrUnknown(g.LastDiscovery)),
+		)
+	}
+	return cardStyle.Render(titleInCardStyle.Render("Gallery Statistics") + "\n" + content)
+}
+
+// renderWorkerWriteBatcher renders Worker Pool and Write Batcher cards
+// together, matching the web section order. Cards are paired side by side
+// when m.width >= dashboardPairMinWidth, else stacked preserving web order.
+// Worker Pool: Running Workers, Completed Tasks, Successful, Failed
+// Write Batcher: Pending, Total Flushed, Errors, Batch Size, DQue Overflow
+// (Enabled/Off), Disk Usage, Disk Quota
+func (m Model) renderWorkerWriteBatcher() string {
 	var b strings.Builder
 
 	failedStyle := valueStyle
@@ -319,44 +364,55 @@ func (m Model) renderWorkerPoolQueue() string {
 	}
 
 	poolContent := fmt.Sprintf("%s: %s/%s\n%s: %s\n%s: %s\n%s: %s",
-		labelStyle.Render("Running"), valueStyle.Render(m.metrics.WorkerPool.RunningWorkers),
+		labelStyle.Render("Running Workers"), valueStyle.Render(m.metrics.WorkerPool.RunningWorkers),
 		valueStyle.Render(m.metrics.WorkerPool.MaxWorkers),
-		labelStyle.Render("Completed"), valueStyle.Render(m.metrics.WorkerPool.CompletedTasks),
+		labelStyle.Render("Completed Tasks"), valueStyle.Render(m.metrics.WorkerPool.CompletedTasks),
 		labelStyle.Render("Successful"), successStyle.Render(m.metrics.WorkerPool.Successful),
 		labelStyle.Render("Failed"), failedStyle.Render(m.metrics.WorkerPool.Failed),
 	)
-
-	queueContent := fmt.Sprintf("%s: %s",
-		labelStyle.Render("Queued"), valueStyle.Render(m.metrics.Queue.Queued),
-	)
-
 	poolCard := cardStyle.Render(titleInCardStyle.Render("Worker Pool") + "\n" + poolContent)
-	queueCard := cardStyle.Render(titleInCardStyle.Render("Queued Items") + "\n" + queueContent)
 
-	row := lipgloss.JoinHorizontal(lipgloss.Top, poolCard, "  ", queueCard)
-	b.WriteString(row)
+	errorsStyle := valueStyle
+	if m.metrics.WriteBatcher.TotalErrors != "0" {
+		errorsStyle = errorStyle
+	}
+
+	dqueValue := "Off"
+	if m.metrics.WriteBatcher.DQueEnabled == "Enabled" {
+		dqueValue = "Enabled"
+	}
+
+	batcherContent := fmt.Sprintf("%s: %s/%s  %s: %s  %s: %s  %s: %s  %s: %s  %s: %s  %s: %s",
+		labelStyle.Render("Pending"), valueStyle.Render(m.metrics.WriteBatcher.Pending),
+		valueStyle.Render(m.metrics.WriteBatcher.ChannelSize),
+		labelStyle.Render("Total Flushed"), valueStyle.Render(m.metrics.WriteBatcher.TotalFlushed),
+		labelStyle.Render("Errors"), errorsStyle.Render(m.metrics.WriteBatcher.TotalErrors),
+		labelStyle.Render("Batch Size"), valueStyle.Render(m.metrics.WriteBatcher.BatchSize),
+		labelStyle.Render("DQue Overflow"), valueStyle.Render(dqueValue),
+		labelStyle.Render("Disk Usage"), valueStyle.Render(m.metrics.WriteBatcher.DiskUsageBytes),
+		labelStyle.Render("Disk Quota"), valueStyle.Render(m.metrics.WriteBatcher.DiskQuotaBytes),
+	)
+	batcherCard := cardStyle.Render(titleInCardStyle.Render("Write Batcher") + "\n" + batcherContent)
+
+	if m.width >= dashboardPairMinWidth {
+		b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, poolCard, "  ", batcherCard))
+	} else {
+		b.WriteString(poolCard)
+		b.WriteString("\n")
+		b.WriteString(batcherCard)
+	}
 	b.WriteString("\n")
 
 	return b.String()
 }
 
-// renderFileProcessing renders the File Processing card.
-// Shows: Total, Existing, New, Invalid, In Flight counts
-func (m Model) renderFileProcessing() string {
-	var b strings.Builder
-
-	content := fmt.Sprintf("%s: %s  %s: %s  %s: %s  %s: %s  %s: %s",
-		labelStyle.Render("Total"), valueStyle.Render(m.metrics.FileProcessing.TotalFound),
-		labelStyle.Render("Existing"), warningStyle.Render(m.metrics.FileProcessing.Existing),
-		labelStyle.Render("New"), successStyle.Render(m.metrics.FileProcessing.New),
-		labelStyle.Render("Invalid"), errorStyle.Render(m.metrics.FileProcessing.Invalid),
-		labelStyle.Render("In Flight"), valueStyle.Render(m.metrics.FileProcessing.InFlight),
-	)
-
-	b.WriteString(cardStyle.Render(titleInCardStyle.Render("File Processing") + "\n" + content))
-	b.WriteString("\n")
-
-	return b.String()
+// dashOrUnknown returns "unknown" for empty/blank strings, used for the
+// Gallery First/Last discovery dates when the web card omits them.
+func dashOrUnknown(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return "unknown"
+	}
+	return s
 }
 
 // renderCaches renders Cache Preload, Cache Batch, and HTTP Cache cards side by side.
@@ -415,8 +471,10 @@ func (m Model) renderCaches() string {
 	progress = strings.ReplaceAll(progress, "/ ", "/")
 	progress = strings.TrimSpace(progress)
 
-	batchContent := fmt.Sprintf("%s %s\n%s: %s\n%s: %s\n%s: %s",
+	batchContent := fmt.Sprintf("%s %s\n%s: %s\n%s: %s\n%s: %s\n%s: %s\n%s: %s",
 		batchIcon, batchStatus,
+		labelStyle.Render("Loaded"), valueStyle.Render(m.metrics.CacheBatchLoad.Loaded),
+		labelStyle.Render("Total"), valueStyle.Render(m.metrics.CacheBatchLoad.Total),
 		labelStyle.Render("Progress"), progress,
 		labelStyle.Render("Failed"), batchFailedStyle.Render(m.metrics.CacheBatchLoad.Failed),
 		labelStyle.Render("Skipped"), valueStyle.Render(m.metrics.CacheBatchLoad.Skipped),
@@ -439,11 +497,18 @@ func (m Model) renderCaches() string {
 	)
 
 	preloadCard := cardStyle.Width(28).Render(titleInCardStyle.Render("Cache Preload") + "\n" + preloadContent)
-	batchCard := cardStyle.Width(32).Render(titleInCardStyle.Render("Cache Batch") + "\n" + batchContent)
+	batchCard := cardStyle.Width(32).Render(titleInCardStyle.Render("Cache Batch Load") + "\n" + batchContent)
 	httpCard := cardStyle.Width(34).Render(titleInCardStyle.Render("HTTP Cache") + "\n" + httpContent)
 
-	row := lipgloss.JoinHorizontal(lipgloss.Top, preloadCard, " ", batchCard, " ", httpCard)
-	b.WriteString(row)
+	if m.width >= dashboardPairMinWidth {
+		b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, preloadCard, " ", batchCard, " ", httpCard))
+	} else {
+		b.WriteString(preloadCard)
+		b.WriteString("\n")
+		b.WriteString(batchCard)
+		b.WriteString("\n")
+		b.WriteString(httpCard)
+	}
 	b.WriteString("\n")
 
 	return b.String()

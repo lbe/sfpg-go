@@ -124,8 +124,8 @@ type OnSuccessFunc[T any] func(batch []T)
 // OnAfterCommitFunc is called after a successful commit, before the next batch.
 // No transaction is active, making it safe for operations like WAL checkpointing
 // or PRAGMA optimize that require no active transactions.
-// Receives the context, time of last WAL checkpoint, time of last PRAGMA optimize, and total committed count.
-type OnAfterCommitFunc[T any] func(ctx context.Context, lastWalCheckpointTime time.Time, lastOptimizeTime time.Time, totalCommitted int64)
+// Receives the context, time of last WAL checkpoint, time of last PRAGMA optimize, total committed count, and whether this call came from a flush (postFlush=true) or the maintenance timer (postFlush=false).
+type OnAfterCommitFunc[T any] func(ctx context.Context, lastWalCheckpointTime time.Time, lastOptimizeTime time.Time, totalCommitted int64, postFlush bool)
 
 // Config holds all parameters for a WriteBatcher. BeginTx and Flush are
 // required; other fields have defaults (MaxBatchSize 50, FlushInterval 200ms,
@@ -160,6 +160,13 @@ type Config[T any] struct {
 	// DeferDQueDrain when true keeps persisted dque items on disk until
 	// StartDQueDrain is called. Channel submits and flushes work normally.
 	DeferDQueDrain bool
+
+	// DropWithoutFlush is an optional hook called before BeginTx. If it
+	// returns true for a batch, the entire batch is dropped without a
+	// transaction: BeginTx, Flush, Commit, and OnAfterCommit are skipped.
+	// OnSuccess is still called (if set) and PendingCount still decrements.
+	// When nil or when it returns false, the batch proceeds to BeginTx.
+	DropWithoutFlush func(batch []T) bool
 
 	// testQueue is an optional override for the durable queue. When nil,
 	// openDQue creates a real *dque.DQue[T]. Tests set this to inject
@@ -482,7 +489,7 @@ func (wb *WriteBatcher[T]) worker() {
 				lastWalCheckpoint, _ := wb.lastWalCheckpointTime.Load().(time.Time)
 				lastOptimize, _ := wb.lastOptimizeTime.Load().(time.Time)
 				totalCommitted := wb.totalCommitted.Load()
-				wb.cfg.OnAfterCommit(wb.ctx, lastWalCheckpoint, lastOptimize, totalCommitted)
+				wb.cfg.OnAfterCommit(wb.ctx, lastWalCheckpoint, lastOptimize, totalCommitted, false)
 
 				// Update both times after running maintenance callback
 				now := time.Now()
@@ -533,17 +540,6 @@ func (wb *WriteBatcher[T]) drainDQueAll(batch *[]T, batchBytes *int64, flushTime
 		default:
 		}
 
-		// Check flush timer to prevent starvation during long drain
-		select {
-		case <-flushTimer.C:
-			if len(*batch) > 0 {
-				wb.flush(wb.ctx, *batch, *batchBytes, "timeout")
-				*batch = (*batch)[:0]
-				*batchBytes = 0
-			}
-		default:
-		}
-
 		// Non-blocking channel receive (interleaving to prevent channel fill)
 		select {
 		case item, ok := <-wb.ch:
@@ -567,10 +563,6 @@ func (wb *WriteBatcher[T]) drainDQueAll(batch *[]T, batchBytes *int64, flushTime
 			}
 			wb.overflowCount.Add(-1)
 			drained++
-			slog.Debug("writebatcher: dque dequeue",
-				"drained", drained,
-				"remaining", wb.dq.Size(),
-				"overflow_total", wb.overflowCount.Load())
 			if drained%logInterval == 0 {
 				slog.Info("writebatcher: draining dque progress",
 					"drained_so_far", drained,
@@ -581,7 +573,15 @@ func (wb *WriteBatcher[T]) drainDQueAll(batch *[]T, batchBytes *int64, flushTime
 			continue
 		}
 
-		// Both empty — exit drain phase
+		// Both empty — exit drain phase. Flush leftover only if this
+		// invocation dequeued at least one item (drain_end). Idle polls
+		// (drained==0) leave the batch for the worker-main interval flush.
+		if drained > 0 && len(*batch) > 0 {
+			wb.flush(wb.ctx, *batch, *batchBytes, "drain_end")
+			*batch = (*batch)[:0]
+			*batchBytes = 0
+			wb.stopFlushTimer(flushTimer)
+		}
 		return false
 	}
 }
@@ -660,6 +660,16 @@ func (wb *WriteBatcher[T]) flush(ctx context.Context, batch []T, batchBytes int6
 	flushCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
+	// DropWithoutFlush: skip BeginTx / Flush / Commit / OnAfterCommit when
+	// the hook says this entire batch is discardable. OnSuccess still runs.
+	if wb.cfg.DropWithoutFlush != nil && wb.cfg.DropWithoutFlush(batch) {
+		wb.totalFlushed.Add(n)
+		if wb.cfg.OnSuccess != nil {
+			wb.cfg.OnSuccess(batch)
+		}
+		return
+	}
+
 	tx, err := wb.cfg.BeginTx(flushCtx)
 	if err != nil {
 		wb.totalErrors.Add(1)
@@ -719,7 +729,7 @@ func (wb *WriteBatcher[T]) flush(ctx context.Context, batch []T, batchBytes int6
 	// Pass zero times to skip time-based checks - only size-based checks run from flush.
 	// Time-based checks are handled by the maintenance timer.
 	if wb.cfg.OnAfterCommit != nil {
-		wb.cfg.OnAfterCommit(wb.ctx, time.Time{}, time.Time{}, wb.totalCommitted.Load())
+		wb.cfg.OnAfterCommit(wb.ctx, time.Time{}, time.Time{}, wb.totalCommitted.Load(), true)
 	}
 
 	totalElapsed := time.Since(t0)

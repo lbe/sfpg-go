@@ -785,6 +785,8 @@ func TestSetValueFromString_Comprehensive(t *testing.T) {
 		{"max_http_cache_entry_insert_per_transaction", "max_http_cache_entry_insert_per_transaction", "25", false, "", func(c *Config) bool { return c.MaxHTTPCacheEntryInsertPerTransaction == 25 }},
 		{"max_http_cache_entry_insert_per_transaction_invalid", "max_http_cache_entry_insert_per_transaction", "x", true, "invalid max http cache entry insert per transaction", nil},
 		{"run_file_discovery_true", "run_file_discovery", "true", false, "", func(c *Config) bool { return c.RunFileDiscovery == true }},
+		{"restart_after_discovery_true", "restart_after_discovery", "true", false, "", func(c *Config) bool { return c.RestartAfterDiscovery == true }},
+		{"restart_after_discovery_false", "restart_after_discovery", "false", false, "", func(c *Config) bool { return c.RestartAfterDiscovery == false }},
 		// Int64 fields
 		{"cache_max_size", "cache_max_size", "524288000", false, "", func(c *Config) bool { return c.CacheMaxSize == 524288000 }},
 		{"cache_max_size_invalid", "cache_max_size", "not-a-number", true, "invalid cache max size", nil},

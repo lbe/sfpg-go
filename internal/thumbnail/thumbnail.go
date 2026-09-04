@@ -220,13 +220,7 @@ func chooseJPEGDCTSize(srcW, srcH int) int {
 	needW, needH := fitInsideBoxDims(galleryThumbMaxW, galleryThumbMaxH, srcW, srcH)
 	dctW := (needW*8 + srcW - 1) / srcW // ceil(needW*8/srcW)
 	dctH := (needH*8 + srcH - 1) / srcH // ceil(needH*8/srcH)
-	dct := max(dctW, dctH)
-	if dct < 1 {
-		dct = 1
-	}
-	if dct > 8 {
-		dct = 8
-	}
+	dct := min(max(max(dctW, dctH), 1), 8)
 	return dct
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -115,12 +116,7 @@ func TestRuntimeManager_ExecRestart_Success(t *testing.T) {
 
 // envHasValue reports whether env contains an exact key=value entry.
 func envHasValue(env []string, key, value string) bool {
-	for _, kv := range env {
-		if kv == key+"="+value {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(env, key+"="+value)
 }
 
 // TestRuntimeManager_ExecRestart_InjectsSkipEnv verifies ExecRestart adds
@@ -320,5 +316,32 @@ func TestRuntimeManager_Serve_DefaultCoverage(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for Serve to return")
+	}
+}
+
+// TestRuntimeManager_Serve_SkipsListenWhenRestartRequested verifies that when
+// a restart has already been requested (e.g. by the startup completion monitor
+// before the HTTP server is assigned), Serve skips ListenAndServe and returns
+// nil so Run can proceed to ExecRestart. The test must launch Serve on a
+// goroutine: a missed skip would hang in ListenAndServe and the 5s deadline
+// would never be reached (go test default timeout is 10m).
+func TestRuntimeManager_Serve_SkipsListenWhenRestartRequested(t *testing.T) {
+	m := NewRuntimeManager(context.Background())
+
+	// Completion monitor raced ahead of Serve and set the flag on a nil server.
+	m.TriggerRestart()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- m.Serve(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), "127.0.0.1:0")
+	}()
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Serve returned error: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for Serve to skip listen and return")
 	}
 }

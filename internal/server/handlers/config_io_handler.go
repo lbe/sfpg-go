@@ -172,8 +172,8 @@ func (h *ConfigHandlers) ImportConfigCommitHandler(w http.ResponseWriter, r *htt
 
 	applyResult, err := config.ApplyConfig(h.Ctx, h.ConfigService, oldConfig, importedConfig)
 	if err != nil {
-		var validationErr *config.ApplyValidationError
-		if errors.As(err, &validationErr) {
+		if validationErr, ok := errors.AsType[*config.ApplyValidationError](err); ok {
+			_ = validationErr
 			http.Error(w, "Import failed", http.StatusBadRequest)
 			return
 		}
@@ -269,9 +269,8 @@ func (h *ConfigHandlers) RestoreLastKnownGoodHandler(w http.ResponseWriter, r *h
 
 	applyResult, err := config.ApplyConfig(h.Ctx, h.ConfigService, currentConfig, restoredConfig)
 	if err != nil {
-		var validationErr *config.ApplyValidationError
-		if errors.As(err, &validationErr) {
-			slog.Warn("restored config is invalid", "err", err)
+		if validationErr, ok := errors.AsType[*config.ApplyValidationError](err); ok {
+			slog.Warn("restored config is invalid", "err", validationErr)
 			http.Error(w, "Restored config is invalid", http.StatusBadRequest)
 			return
 		}

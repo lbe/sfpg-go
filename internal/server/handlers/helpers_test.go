@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"sync"
 	"testing"
 
 	"github.com/lbe/sfpg-go/internal/dbconnpool"
@@ -325,13 +326,38 @@ func (m *mockGalleryOps) ImagesDir() string      { return m.ImgDir }
 type mockServerControl struct {
 	BatchLoad interfaces.StartCacheBatchLoadResult
 	BatchErr  error
+
+	// Manual discovery rebuild error state (in-memory). Guarded by mu,
+	// matching App.manualDiscoveryErrorMu — discovery writes it from a
+	// goroutine while DashboardGet reads it.
+	mu            sync.Mutex
+	ManualErr     string
+	TriggerErr    error
+	TriggerCalled bool
+	// ResetStatsCalled records whether ResetStats was invoked. Handler tests
+	// assert it stays false: POST /server/discovery must not reset before
+	// TriggerDiscovery (reset lives inside App.TriggerDiscovery after the CAS).
+	ResetStatsCalled bool
 }
 
-func (m *mockServerControl) Shutdown()         {}
-func (m *mockServerControl) TriggerDiscovery() {}
-func (m *mockServerControl) ResetStats()       {}
+func (m *mockServerControl) Shutdown() {}
+func (m *mockServerControl) TriggerDiscovery(ctx context.Context) error {
+	m.TriggerCalled = true
+	return m.TriggerErr
+}
+func (m *mockServerControl) ResetStats() { m.ResetStatsCalled = true }
 func (m *mockServerControl) StartCacheBatchLoad() (interfaces.StartCacheBatchLoadResult, error) {
 	return m.BatchLoad, m.BatchErr
+}
+func (m *mockServerControl) ManualDiscoveryError() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.ManualErr
+}
+func (m *mockServerControl) SetManualDiscoveryError(msg string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.ManualErr = msg
 }
 
 // mockTemplateHelpers provides AddCommonTemplateData and ServerError for tests.

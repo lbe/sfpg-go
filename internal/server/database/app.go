@@ -22,8 +22,19 @@ import (
 	"github.com/lbe/sfpg-go/internal/gallerydb"
 	"github.com/lbe/sfpg-go/internal/gallerylib"
 	"github.com/lbe/sfpg-go/internal/server/config"
+	"github.com/lbe/sfpg-go/internal/sqlite3stat"
 	"github.com/lbe/sfpg-go/migrations"
 )
+
+func init() {
+	fn := DefaultPutDebugHook
+	sqlite3stat.PutDebugHook = &fn
+}
+
+// DefaultPutDebugHook is the production Put debug hook for sqlite3stat.
+func DefaultPutDebugHook(conn *sql.Conn) []slog.Attr {
+	return sqlite3stat.DefaultPutDebugAttrs(conn)
+}
 
 // Testable hooks for dependency injection. Defaults delegate to real implementations.
 var (
@@ -145,12 +156,16 @@ func migrateDB(dbPath string) (bool, error) {
 	}
 	defer m.Close()
 
+	logMigrationStart("main", dbPath, m)
+
 	if err := m.Up(); err != nil {
 		if errors.Is(err, migrate.ErrNoChange) {
+			logMigrationFinish("main", false, m)
 			return false, nil
 		}
 		return false, fmt.Errorf("up migration failed: %w", err)
 	}
+	logMigrationFinish("main", true, m)
 	return true, nil
 }
 
@@ -172,13 +187,37 @@ func migrateBlobsDB(dbPath string) (bool, error) {
 	}
 	defer m.Close()
 
+	logMigrationStart("thumbs", dbPath, m)
+
 	if err := m.Up(); err != nil {
 		if errors.Is(err, migrate.ErrNoChange) {
+			logMigrationFinish("thumbs", false, m)
 			return false, nil
 		}
 		return false, fmt.Errorf("thumbs up migration failed: %w", err)
 	}
+	logMigrationFinish("thumbs", true, m)
 	return true, nil
+}
+
+func logMigrationStart(database, dbPath string, m *migrate.Migrate) {
+	attrs := []any{"database", database, "path", dbPath}
+	if ver, dirty, verErr := m.Version(); verErr == nil {
+		attrs = append(attrs, "from_version", ver, "dirty", dirty)
+	} else if errors.Is(verErr, migrate.ErrNilVersion) {
+		attrs = append(attrs, "from_version", "none")
+	}
+	slog.Info("database migration starting", attrs...)
+}
+
+func logMigrationFinish(database string, applied bool, m *migrate.Migrate) {
+	attrs := []any{"database", database, "applied", applied}
+	if ver, dirty, verErr := m.Version(); verErr == nil {
+		attrs = append(attrs, "version", ver, "dirty", dirty)
+	} else if errors.Is(verErr, migrate.ErrNilVersion) {
+		attrs = append(attrs, "version", "none")
+	}
+	slog.Info("database migration finished", attrs...)
 }
 
 func configureDatabaseDSN(dbPath string) (roDsn, rwDsn string) {

@@ -168,6 +168,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.setModuleStateStmt, err = db.PrepareContext(ctx, setModuleState); err != nil {
 		return nil, fmt.Errorf("error preparing query SetModuleState: %w", err)
 	}
+	if q.setModuleStatePayloadStmt, err = db.PrepareContext(ctx, setModuleStatePayload); err != nil {
+		return nil, fmt.Errorf("error preparing query SetModuleStatePayload: %w", err)
+	}
 	if q.unlockAccountStmt, err = db.PrepareContext(ctx, unlockAccount); err != nil {
 		return nil, fmt.Errorf("error preparing query UnlockAccount: %w", err)
 	}
@@ -458,6 +461,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing setModuleStateStmt: %w", cerr)
 		}
 	}
+	if q.setModuleStatePayloadStmt != nil {
+		if cerr := q.setModuleStatePayloadStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing setModuleStatePayloadStmt: %w", cerr)
+		}
+	}
 	if q.unlockAccountStmt != nil {
 		if cerr := q.unlockAccountStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing unlockAccountStmt: %w", cerr)
@@ -620,6 +628,7 @@ type Queries struct {
 	insertConfigIfNotExistsStmt               *sql.Stmt
 	insertIPTCKeywordStmt                     *sql.Stmt
 	setModuleStateStmt                        *sql.Stmt
+	setModuleStatePayloadStmt                 *sql.Stmt
 	unlockAccountStmt                         *sql.Stmt
 	updateFolderTileIdStmt                    *sql.Stmt
 	upsertConfigValueOnlyStmt                 *sql.Stmt
@@ -639,28 +648,28 @@ type Queries struct {
 
 func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 	return &Queries{
-		db:                                        tx,
-		tx:                                        tx,
-		clearHttpCacheStmt:                        q.clearHttpCacheStmt,
-		clearLoginAttemptsStmt:                    q.clearLoginAttemptsStmt,
-		configKeyExistsStmt:                       q.configKeyExistsStmt,
-		countHttpCacheEntriesStmt:                 q.countHttpCacheEntriesStmt,
-		deleteHttpCacheByIDStmt:                   q.deleteHttpCacheByIDStmt,
-		deleteHttpCacheByKeyStmt:                  q.deleteHttpCacheByKeyStmt,
-		deleteHttpCacheExpiredStmt:                q.deleteHttpCacheExpiredStmt,
-		deleteIPTCStmt:                            q.deleteIPTCStmt,
-		deleteIPTCKeywordStmt:                     q.deleteIPTCKeywordStmt,
-		deleteInvalidFileByPathStmt:               q.deleteInvalidFileByPathStmt,
-		deleteXMPPropertyStmt:                     q.deleteXMPPropertyStmt,
-		deleteXMPRawStmt:                          q.deleteXMPRawStmt,
-		getConfigValueByKeyStmt:                   q.getConfigValueByKeyStmt,
-		getConfigsStmt:                            q.getConfigsStmt,
-		getExifByFileStmt:                         q.getExifByFileStmt,
-		getFileByPathStmt:                         q.getFileByPathStmt,
-		getFileCountAndTimestampsStmt:             q.getFileCountAndTimestampsStmt,
-		getFileFolderIndexByIDStmt:                q.getFileFolderIndexByIDStmt,
-		getFileSizeSumStmt:                        q.getFileSizeSumStmt,
-		getFileViewByIDStmt:                       q.getFileViewByIDStmt,
+		db:                            tx,
+		tx:                            tx,
+		clearHttpCacheStmt:            q.clearHttpCacheStmt,
+		clearLoginAttemptsStmt:        q.clearLoginAttemptsStmt,
+		configKeyExistsStmt:           q.configKeyExistsStmt,
+		countHttpCacheEntriesStmt:     q.countHttpCacheEntriesStmt,
+		deleteHttpCacheByIDStmt:       q.deleteHttpCacheByIDStmt,
+		deleteHttpCacheByKeyStmt:      q.deleteHttpCacheByKeyStmt,
+		deleteHttpCacheExpiredStmt:    q.deleteHttpCacheExpiredStmt,
+		deleteIPTCStmt:                q.deleteIPTCStmt,
+		deleteIPTCKeywordStmt:         q.deleteIPTCKeywordStmt,
+		deleteInvalidFileByPathStmt:   q.deleteInvalidFileByPathStmt,
+		deleteXMPPropertyStmt:         q.deleteXMPPropertyStmt,
+		deleteXMPRawStmt:              q.deleteXMPRawStmt,
+		getConfigValueByKeyStmt:       q.getConfigValueByKeyStmt,
+		getConfigsStmt:                q.getConfigsStmt,
+		getExifByFileStmt:             q.getExifByFileStmt,
+		getFileByPathStmt:             q.getFileByPathStmt,
+		getFileCountAndTimestampsStmt: q.getFileCountAndTimestampsStmt,
+		getFileFolderIndexByIDStmt:    q.getFileFolderIndexByIDStmt,
+		getFileSizeSumStmt:            q.getFileSizeSumStmt,
+		getFileViewByIDStmt:           q.getFileViewByIDStmt,
 		getFileViewsByFolderIDOrderByFileNameStmt: q.getFileViewsByFolderIDOrderByFileNameStmt,
 		getFolderByIDStmt:                         q.getFolderByIDStmt,
 		getFolderByPathStmt:                       q.getFolderByPathStmt,
@@ -689,6 +698,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		insertConfigIfNotExistsStmt:               q.insertConfigIfNotExistsStmt,
 		insertIPTCKeywordStmt:                     q.insertIPTCKeywordStmt,
 		setModuleStateStmt:                        q.setModuleStateStmt,
+		setModuleStatePayloadStmt:                 q.setModuleStatePayloadStmt,
 		unlockAccountStmt:                         q.unlockAccountStmt,
 		updateFolderTileIdStmt:                    q.updateFolderTileIdStmt,
 		upsertConfigValueOnlyStmt:                 q.upsertConfigValueOnlyStmt,

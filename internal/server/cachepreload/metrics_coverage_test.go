@@ -71,9 +71,9 @@ func TestPreloadMetrics_Summary_ConcurrentAccess(t *testing.T) {
 
 	done := make(chan struct{})
 	// Concurrent writes
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		go func(n int) {
-			for j := 0; j < 50; j++ {
+			for range 50 {
 				m.RecordSuccess("/test/path", time.Duration(n)*time.Millisecond)
 			}
 			done <- struct{}{}
@@ -81,16 +81,16 @@ func TestPreloadMetrics_Summary_ConcurrentAccess(t *testing.T) {
 	}
 
 	// Concurrent reads
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		go func() {
-			for j := 0; j < 50; j++ {
+			for range 50 {
 				_ = m.Summary()
 			}
 			done <- struct{}{}
 		}()
 	}
 
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		<-done
 	}
 

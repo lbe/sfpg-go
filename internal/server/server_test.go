@@ -18,6 +18,7 @@ import (
 	"github.com/lbe/sfpg-go/internal/server/files"
 	"github.com/lbe/sfpg-go/internal/server/handlers"
 	"github.com/lbe/sfpg-go/internal/server/interfaces"
+	"github.com/lbe/sfpg-go/internal/server/metrics"
 	"github.com/lbe/sfpg-go/internal/server/session"
 	"github.com/lbe/sfpg-go/internal/testutil"
 	"github.com/lbe/sfpg-go/web"
@@ -439,6 +440,52 @@ func TestInitForUnlock_Multiple(t *testing.T) {
 	}
 }
 
+func TestLockoutParamsFromConfig(t *testing.T) {
+	def := config.DefaultConfig()
+	tests := []struct {
+		name          string
+		cfg           *config.Config
+		wantLockout   int64
+		wantThreshold int64
+	}{
+		{
+			name:          "nil config seeds from DefaultConfig",
+			cfg:           nil,
+			wantLockout:   int64(def.LockoutDuration),
+			wantThreshold: int64(def.LockoutThreshold),
+		},
+		{
+			name:          "zero duration and threshold pass through raw",
+			cfg:           &config.Config{LockoutDuration: 0, LockoutThreshold: 0},
+			wantLockout:   0,
+			wantThreshold: 0,
+		},
+		{
+			name:          "zero duration with custom threshold passes through raw",
+			cfg:           &config.Config{LockoutDuration: 0, LockoutThreshold: 2},
+			wantLockout:   0,
+			wantThreshold: 2,
+		},
+		{
+			name:          "non-zero custom pair passes through raw",
+			cfg:           &config.Config{LockoutDuration: 7200, LockoutThreshold: 5},
+			wantLockout:   7200,
+			wantThreshold: 5,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			lockout, threshold := lockoutParamsFromConfig(tc.cfg)
+			if lockout != tc.wantLockout {
+				t.Errorf("lockoutParamsFromConfig() lockout = %d, want %d", lockout, tc.wantLockout)
+			}
+			if threshold != tc.wantThreshold {
+				t.Errorf("lockoutParamsFromConfig() threshold = %d, want %d", threshold, tc.wantThreshold)
+			}
+		})
+	}
+}
+
 func TestApp_AuthWrappers(t *testing.T) {
 	app := newAppForUnlock(t)
 	ctx := context.Background()
@@ -668,13 +715,17 @@ func (m *mockServerDeps) ImagesDir() string { return "" }
 
 func (m *mockServerDeps) Shutdown() {}
 
-func (m *mockServerDeps) TriggerDiscovery() {}
+func (m *mockServerDeps) TriggerDiscovery(ctx context.Context) error { return nil }
 
 func (m *mockServerDeps) ResetStats() {}
 
 func (m *mockServerDeps) StartCacheBatchLoad() (interfaces.StartCacheBatchLoadResult, error) {
 	return m.BatchLoad, m.BatchErr
 }
+
+func (m *mockServerDeps) ManualDiscoveryError() string { return "" }
+
+func (m *mockServerDeps) SetManualDiscoveryError(msg string) {}
 
 func (m *mockServerDeps) GetConfig() *config.Config { return m.Cfg }
 
@@ -713,6 +764,7 @@ func setupTestApp(t *testing.T) *App {
 		Cfg: config.DefaultConfig(),
 	}
 	app.HandlerManager.serverHandlers = handlers.NewServerHandlers(&fakeSessionManager{}, deps, deps.AddCommonTemplateData, deps.ServerError)
+	app.HandlerManager.dashboardHandlers = handlers.NewDashboardHandlers(&fakeSessionManager{}, metrics.NewCollector(), deps, deps.AddCommonTemplateData, deps.ServerError)
 
 	return app
 }

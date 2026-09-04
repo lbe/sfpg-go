@@ -434,6 +434,7 @@ func TestIdentifyChanges_AllFieldTypes(t *testing.T) {
 		{"worker_pool_max_idle_time", func(c *Config) { c.WorkerPoolMaxIdleTime = 20 * time.Second }, "worker-pool-max-idle-time"},
 		{"queue_size", func(c *Config) { c.QueueSize = 5000 }, "queue-size"},
 		{"run_file_discovery", func(c *Config) { c.RunFileDiscovery = false }, "discover"},
+		{"restart_after_discovery", func(c *Config) { c.RestartAfterDiscovery = true }, "restart-after-discovery"},
 		{"enable_cache_preload", func(c *Config) { c.EnableCachePreload = false }, "enable-cache-preload"},
 	}
 

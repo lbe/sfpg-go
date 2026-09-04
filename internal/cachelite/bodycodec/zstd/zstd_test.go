@@ -19,10 +19,10 @@ func TestConcurrentCompress_MedFixture(t *testing.T) {
 	const iters = 100
 	var wg sync.WaitGroup
 	wg.Add(goroutines)
-	for g := 0; g < goroutines; g++ {
+	for range goroutines {
 		go func() {
 			defer wg.Done()
-			for i := 0; i < iters; i++ {
+			for range iters {
 				compressed, err := c.Compress(data)
 				if err != nil {
 					t.Error(err)

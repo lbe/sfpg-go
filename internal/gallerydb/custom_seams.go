@@ -18,6 +18,13 @@ var (
 		return s.Close()
 	}
 
+	// stmtExecContextFn is a testable hook for *sql.Stmt.ExecContext. The folder-index
+	// INSERT flush calls it per row through the transaction-prepared statement so the
+	// G6 test can count Exec calls (one Prepare, many Exec).
+	stmtExecContextFn = func(ctx context.Context, s *sql.Stmt, args ...any) (sql.Result, error) {
+		return s.ExecContext(ctx, args...)
+	}
+
 	// rowsCloseFn is a testable hook for *sql.Rows.Close.
 	rowsCloseFn = func(r *sql.Rows) error {
 		return r.Close()

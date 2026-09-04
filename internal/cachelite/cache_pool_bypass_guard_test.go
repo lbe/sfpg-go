@@ -108,9 +108,7 @@ func TestHTTPCacheMiddleware_ConcurrentLookupPath(t *testing.T) {
 	errCh := make(chan string, workers)
 
 	for range workers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			req := httptest.NewRequest(http.MethodGet, "/gallery/123", nil)
 			req.Header.Set("Hx-Request", "true")
 			w := httptest.NewRecorder()
@@ -124,7 +122,7 @@ func TestHTTPCacheMiddleware_ConcurrentLookupPath(t *testing.T) {
 			if xCache != "HIT" && xCache != "MISS" {
 				errCh <- "unexpected X-Cache value: " + xCache
 			}
-		}()
+		})
 	}
 
 	wg.Wait()

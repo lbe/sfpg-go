@@ -12,9 +12,11 @@ import (
 	"github.com/lbe/sfpg-go/internal/cachelite"
 	"github.com/lbe/sfpg-go/internal/dbconnpool"
 	"github.com/lbe/sfpg-go/internal/profiler"
+	"github.com/lbe/sfpg-go/internal/rssmonitor"
 	"github.com/lbe/sfpg-go/internal/scheduler"
 	"github.com/lbe/sfpg-go/internal/server/cachebatch"
 	"github.com/lbe/sfpg-go/internal/server/config"
+	"github.com/lbe/sfpg-go/internal/server/files"
 	"github.com/lbe/sfpg-go/internal/server/metrics"
 	"github.com/lbe/sfpg-go/web"
 )
@@ -83,6 +85,33 @@ func (app *App) logStartupConfigSummary(queueSize int, runDiscovery bool) {
 }
 
 // Run initializes the application, starts background workers, and blocks until shutdown or error.
+// waitForFileProcessingDrain polls until all queue senders, queue items,
+// in-flight processing, and pending writes reach zero, or ctx is cancelled.
+// Callers pass app.getCtx() for shutdown cancellation. No timeout or deadline.
+func (app *App) waitForFileProcessingDrain(ctx context.Context) error {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		sm := app.SubsystemManager
+		// When subsystems aren't initialized, treat all counters as zero.
+		if sm.q == nil || sm.processingStats == nil || sm.fileProcessor == nil {
+			return nil
+		}
+		activeSenders := sm.qSendersActive.Load()
+		queueLen := sm.q.Len()
+		inFlight := sm.processingStats.InFlight.Load()
+		pendingWrites := sm.fileProcessor.PendingWriteCount()
+		if activeSenders == 0 && queueLen == 0 && inFlight == 0 && pendingWrites == 0 {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
 func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 	if app.rootDir == "" {
 		app.setRootDir(nil)
@@ -94,7 +123,7 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 	// Initialize scheduler (defaults to runtime.NumCPU() when maxConcurrentTasks is 0)
 	app.SubsystemManager.scheduler = scheduler.NewScheduler(0)
 	go func() {
-		if err := app.SubsystemManager.scheduler.Start(app.RuntimeManager.ctx); err != nil {
+		if err := app.SubsystemManager.scheduler.Start(app.RuntimeManager.ctx); err != nil && !errors.Is(err, context.Canceled) {
 			slog.Error("scheduler error", "err", err)
 		}
 	}()
@@ -190,6 +219,11 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 		}
 	}
 
+	rssmonitor.Run(app.RuntimeManager.ctx, rssmonitor.Config{
+		NumRWConnections: app.dbPoolRWConnectionCount,
+		NumROConnections: app.dbPoolROConnectionCount,
+	})
+
 	// Read the configured dque disk quota before StartWriteBatcher; ApplyConfig
 	// below handles hot-reloads after save, not first boot.
 	app.ConfigManager.ConfigMu.RLock()
@@ -205,12 +239,10 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 	// Apply config to app fields
 	app.ApplyConfig()
 
-	// Ensure HTTP cache key format is current *before* stale cache drop
-	// and initializeHTTPCache, so legacy rows from a previous key version
-	// are invalidated before the cache middleware starts serving.
+	// Ensure HTTP cache key format is current before initializeHTTPCache so
+	// legacy rows from a previous key version are invalidated before the
+	// cache middleware starts serving.
 	app.ensureHTTPCacheKeyFormatCurrent()
-
-	app.scheduleStaleCacheDrop("run-startup")
 
 	// Initialize HTTP cache middleware after config is loaded
 	app.initializeHTTPCache()
@@ -242,6 +274,15 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 		os.Unsetenv(skipStartupDiscoveryEnv)
 	}
 
+	// Hydrate the persisted last-run file processing counters only when startup
+	// discovery will not run. When runDiscovery is true the walk and the
+	// completion monitor own the counters; a hydrated TotalFound would make the
+	// monitor treat the run as started and log completion / schedule the pragma
+	// on stale last-run data.
+	if !runDiscovery {
+		app.SubsystemManager.HydrateFileProcessingStats(app.getCtx())
+	}
+
 	app.startGalleryStatsBaselines()
 
 	app.ConfigManager.ConfigMu.RLock()
@@ -268,11 +309,24 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 	}
 
 	if runDiscovery {
-		if app.testSeams.TriggerDiscovery != nil {
-			go app.testSeams.TriggerDiscovery()
-		} else {
-			go app.TriggerDiscovery()
-		}
+		go func() {
+			err := app.TriggerDiscovery(context.Background())
+			if errors.Is(err, files.ErrFolderIndexRebuild) {
+				slog.Error("startup folder-index rebuild failed; shutting down", "err", err)
+				app.Shutdown()
+				return
+			}
+			if err != nil {
+				return
+			}
+			app.ConfigManager.ConfigMu.RLock()
+			restartAfter := app.ConfigManager.Config != nil && app.ConfigManager.Config.RestartAfterDiscovery
+			app.ConfigManager.ConfigMu.RUnlock()
+			if restartAfter {
+				slog.Info("discovery complete; requesting process restart", "reason", "discovery-complete")
+				app.TriggerRestart()
+			}
+		}()
 	}
 
 	// Worker pool startup
@@ -304,29 +358,17 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 			}
 
 		wait_for_end:
-			// 2. Wait for discovery to finish AND queue to drain AND workers to finish
-			for {
-				select {
-				case <-app.RuntimeManager.ctx.Done():
-					return
-				case <-ticker.C:
-					activeSenders := app.SubsystemManager.qSendersActive.Load()
-					queueLen := app.SubsystemManager.q.Len()
-					inFlight := app.SubsystemManager.processingStats.InFlight.Load()
-					pendingWrites := app.SubsystemManager.fileProcessor.PendingWriteCount()
-
-					if activeSenders == 0 && queueLen == 0 && inFlight == 0 && pendingWrites == 0 {
-						slog.Info("File processing completed",
-							"found", app.SubsystemManager.processingStats.TotalFound.Load(),
-							"existing", app.SubsystemManager.processingStats.AlreadyExisting.Load(),
-							"inserted", app.SubsystemManager.processingStats.NewlyInserted.Load(),
-							"skipped_invalid", app.SubsystemManager.processingStats.SkippedInvalid.Load(),
-						)
-						app.scheduleDiscoveryCompletePragmaOptimize()
-						return
-					}
-				}
+			// 2. Wait for queue to drain and workers to finish.
+			if err := app.waitForFileProcessingDrain(app.RuntimeManager.ctx); err != nil {
+				return
 			}
+			slog.Info("File processing completed",
+				"found", app.SubsystemManager.processingStats.TotalFound.Load(),
+				"existing", app.SubsystemManager.processingStats.AlreadyExisting.Load(),
+				"inserted", app.SubsystemManager.processingStats.NewlyInserted.Load(),
+				"skipped_invalid", app.SubsystemManager.processingStats.SkippedInvalid.Load(),
+			)
+			app.scheduleDiscoveryCompletePragmaOptimize()
 		}()
 	}
 
@@ -486,4 +528,18 @@ func (app *App) startGalleryStatsBaselines() {
 		gs.addImagesSize(sz)
 		return nil
 	})
+}
+
+func (app *App) dbPoolRWConnectionCount() int64 {
+	if app.dbRwPool == nil {
+		return 0
+	}
+	return app.dbRwPool.NumConnections()
+}
+
+func (app *App) dbPoolROConnectionCount() int64 {
+	if app.dbRoPool == nil {
+		return 0
+	}
+	return app.dbRoPool.NumConnections()
 }

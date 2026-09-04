@@ -50,8 +50,7 @@ func TestWrapUnwrap(t *testing.T) {
 		t.Fatal("expected errors.Is(wrapped, cause) to be true")
 	}
 
-	var target *wrappedError
-	if !stderrors.As(wrapped, &target) {
+	if _, ok := stderrors.AsType[*wrappedError](wrapped); !ok {
 		t.Fatal("expected errors.As to find wrappedError")
 	}
 }

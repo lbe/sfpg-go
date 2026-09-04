@@ -831,6 +831,67 @@ func TestModuleStateQueries(t *testing.T) {
 	}
 }
 
+// TestModuleStatePayload_PreservedAcrossSetActive verifies that a JSON payload
+// stored via SetModuleStatePayload survives a subsequent SetModuleState call that
+// flips the module inactive. SetModuleState must never clobber the payload column.
+func TestModuleStatePayload_PreservedAcrossSetActive(t *testing.T) {
+	_, q, ctx := setupTestDB(t)
+
+	payloadJSON := `{"file_processing":{"total_found":7,"already_existing":6,"newly_inserted":1,"skipped_invalid":2}}`
+
+	startedAt := time.Now().Unix()
+	err := q.SetModuleState(ctx, SetModuleStateParams{
+		Name:          "discovery",
+		IsActive:      1,
+		LastStartedAt: sql.NullInt64{Int64: startedAt, Valid: true},
+	})
+	if err != nil {
+		t.Fatalf("SetModuleState (active) failed: %v", err)
+	}
+
+	if err := q.SetModuleStatePayload(ctx, SetModuleStatePayloadParams{
+		Name:    "discovery",
+		Payload: sql.NullString{String: payloadJSON, Valid: true},
+	}); err != nil {
+		t.Fatalf("SetModuleStatePayload failed: %v", err)
+	}
+
+	state, err := q.GetModuleState(ctx, "discovery")
+	if err != nil {
+		t.Fatalf("GetModuleState failed: %v", err)
+	}
+	if !state.Payload.Valid {
+		t.Fatal("expected Payload.Valid=true after SetModuleStatePayload")
+	}
+	if state.Payload.String != payloadJSON {
+		t.Errorf("payload mismatch:\n got %q\nwant %q", state.Payload.String, payloadJSON)
+	}
+
+	finishedAt := startedAt + 10
+	err = q.SetModuleState(ctx, SetModuleStateParams{
+		Name:           "discovery",
+		IsActive:       0,
+		LastFinishedAt: sql.NullInt64{Int64: finishedAt, Valid: true},
+	})
+	if err != nil {
+		t.Fatalf("SetModuleState (inactive) failed: %v", err)
+	}
+
+	state, err = q.GetModuleState(ctx, "discovery")
+	if err != nil {
+		t.Fatalf("GetModuleState (after inactive) failed: %v", err)
+	}
+	if state.IsActive != 0 {
+		t.Errorf("expected IsActive=0, got %d", state.IsActive)
+	}
+	if !state.Payload.Valid {
+		t.Fatal("expected payload to survive SetModuleState")
+	}
+	if state.Payload.String != payloadJSON {
+		t.Errorf("payload not preserved across SetModuleState:\n got %q\nwant %q", state.Payload.String, payloadJSON)
+	}
+}
+
 func seedIPTCKeywordRows(t *testing.T, q *CustomQueries, ctx context.Context) int64 {
 	t.Helper()
 	folderPathID, err := q.UpsertFolderPathReturningID(ctx, "/seediptc")

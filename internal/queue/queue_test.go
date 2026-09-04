@@ -2,6 +2,7 @@ package queue
 
 import (
 	"errors"
+	"slices"
 	"sync"
 	"testing"
 )
@@ -49,13 +50,13 @@ func TestQueueStackOps(t *testing.T) {
 			t.Errorf("Push failed: %v", err)
 		}
 	}
-	for i := len(words) - 1; i >= 0; i-- {
+	for _, word := range slices.Backward(words) {
 		v, err := q.Pop()
 		if err != nil {
 			t.Errorf("Pop failed: %v", err)
 		}
-		if v != words[i] {
-			t.Errorf("Expected %s, got %s", words[i], v)
+		if v != word {
+			t.Errorf("Expected %s, got %s", word, v)
 		}
 	}
 	if !q.IsEmpty() {

@@ -1,5 +1,12 @@
 import { test, expect } from "@playwright/test";
-import { loginViaUI, goToDashboard, openMenu, menu } from "./helpers";
+import {
+  loginViaUI,
+  goToDashboard,
+  openMenu,
+  menu,
+  waitForDashboardPollCycles,
+  waitForLastUpdatedChange,
+} from "./helpers";
 
 // Dashboard polls every 5s; some tests wait for multiple cycles.
 test.describe.configure({ timeout: 90000 });
@@ -105,8 +112,8 @@ test("Test 1: Dashboard layout is consistent across initial load and polled refr
   const initialBBox = await page.locator("#dashboard-container").boundingBox();
   expect(initialBBox).not.toBeNull();
 
-  // ── Wait for at least 2 polling cycles (~10s) ────────────────────
-  await page.waitForTimeout(11_000);
+  // ── Wait for at least 2 polling cycles ───────────────────────────
+  await waitForDashboardPollCycles(page, 2);
 
   // #dashboard-container must still be exactly 1 (no nesting!)
   await expect(containers).toHaveCount(1);
@@ -143,7 +150,7 @@ test("Test 2: Open dashboard in new tab, refresh, and hard refresh", async ({
   await goToDashboard(page);
 
   // Wait for at least one poll cycle on the original page
-  await page.waitForTimeout(5500);
+  await waitForDashboardPollCycles(page, 1);
 
   // ── Backspace to return to gallery ───────────────────────────────
   await page.goBack();
@@ -240,7 +247,7 @@ test("Test 2: Open dashboard in new tab, refresh, and hard refresh", async ({
   await expect(newTab.locator("#runtime-goroutines")).toBeVisible();
 
   // Polling should still work after hard refresh - wait one cycle
-  await newTab.waitForTimeout(6000);
+  await waitForDashboardPollCycles(newTab, 1);
   await expect(newTab.locator("#dashboard-container")).toHaveCount(1);
   await expect(
     newTab.getByText("Performance & Health Dashboard"),
@@ -261,11 +268,7 @@ test("Test 3: Metrics update on poll", async ({ page }) => {
   const initialText = await page.locator("#last-updated").textContent();
   expect(initialText).not.toBeNull();
 
-  // Wait for 2+ polling cycles (5s each, wait 11s)
-  await page.waitForTimeout(11_000);
-
-  // last-updated should have changed
-  const newText = await page.locator("#last-updated").textContent();
+  const newText = await waitForLastUpdatedChange(page, initialText);
   expect(newText).not.toBe(initialText);
 });
 

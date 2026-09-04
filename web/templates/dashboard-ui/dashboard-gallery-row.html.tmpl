@@ -27,7 +27,7 @@
               Gallery Statistics
             </h3>
             <!-- prettier-ignore -->
-            <span class="tooltip tooltip-bottom" id="gallery-discovery-tip" data-tip="{{- if and .GalleryStats.FirstDiscovery .GalleryStats.LastDiscovery }}First: {{ .GalleryStats.FirstDiscovery }} · Last: {{ .GalleryStats.LastDiscovery }}{{ else if .GalleryStats.FirstDiscovery }}First: {{ .GalleryStats.FirstDiscovery }}{{ else if .GalleryStats.LastDiscovery }}Last: {{ .GalleryStats.LastDiscovery }}{{ else }}Discovery: unknown{{ end -}}">
+            <span class="tooltip tooltip-bottom" id="gallery-discovery-tip" data-tip="{{- if and .GalleryStats.FirstDiscovery .GalleryStats.LastDiscovery }}First: {{ .GalleryStats.FirstDiscovery }} · Last: {{ .GalleryStats.LastDiscovery }}{{ else if .GalleryStats.FirstDiscovery }}First: {{ .GalleryStats.FirstDiscovery }}{{ else if .GalleryStats.LastDiscovery }}Last: {{ .GalleryStats.LastDiscovery }}{{ else }}Discovery: unknown{{ end -}}" data-first-discovery="{{ .GalleryStats.FirstDiscovery }}" data-last-discovery="{{ .GalleryStats.LastDiscovery }}">
               <svg
                 xmlns="http://www.w3.org/2000/svg"
                 viewBox="0 0 20 20"
@@ -47,19 +47,25 @@
           >
             <div class="stat gap-0 !px-2 !py-1">
               <div class="stat-title !text-[11px] opacity-60">Folders</div>
-              <div class="stat-value text-sm font-semibold">
+              <div
+                id="gallery-folders"
+                class="stat-value text-sm font-semibold"
+              >
                 {{ .GalleryStats.Folders }}
               </div>
             </div>
             <div class="stat gap-0 !px-2 !py-1">
               <div class="stat-title !text-[11px] opacity-60">Images</div>
-              <div class="stat-value text-sm font-semibold">
+              <div id="gallery-images" class="stat-value text-sm font-semibold">
                 {{ .GalleryStats.Images }}
               </div>
             </div>
             <div class="stat gap-0 !px-2 !py-1">
               <div class="stat-title !text-[11px] opacity-60">Images Size</div>
-              <div class="stat-value text-sm font-semibold">
+              <div
+                id="gallery-images-size"
+                class="stat-value text-sm font-semibold"
+              >
                 {{ .GalleryStats.ImagesSize | formatBytesInt64 }}
               </div>
             </div>
@@ -70,11 +76,12 @@
       <div class="card border border-base-300/60 bg-base-200 shadow-none">
         <div class="card-body gap-2 !p-2.5">
           <h3
+            id="card-gallery-stats"
             class="flex items-center gap-2 text-xs font-semibold tracking-wide"
           >
             Gallery Statistics
           </h3>
-          <div class="text-xs text-base-content/60">
+          <div id="gallery-loading" class="text-xs text-base-content/60">
             Loading gallery data...
           </div>
         </div>
@@ -85,7 +92,10 @@
     <!-- File Processing Stats -->
     <div class="card border border-base-300/60 bg-base-200 shadow-none">
       <div class="card-body gap-2 !p-2.5">
-        <h3 class="flex items-center gap-2 text-xs font-semibold tracking-wide">
+        <h3
+          id="card-file-processing"
+          class="flex items-center gap-2 text-xs font-semibold tracking-wide"
+        >
           <svg
             xmlns="http://www.w3.org/2000/svg"
             class="h-4 w-4 shrink-0 opacity-70"

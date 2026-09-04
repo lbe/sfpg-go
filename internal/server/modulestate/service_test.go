@@ -3,8 +3,11 @@ package modulestate
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -16,6 +19,7 @@ import (
 
 	"github.com/lbe/sfpg-go/internal/dbconnpool"
 	"github.com/lbe/sfpg-go/internal/gallerydb"
+	"github.com/lbe/sfpg-go/internal/server/metrics"
 	"github.com/lbe/sfpg-go/migrations"
 )
 
@@ -227,8 +231,9 @@ func (f *fakePool) Get() (*dbconnpool.CpConn, error) { return f.getFunc() }
 func (f *fakePool) Put(cpc *dbconnpool.CpConn)       { f.putFunc(cpc) }
 
 type fakeQuerier struct {
-	getFunc func(ctx context.Context, name string) (gallerydb.ModuleState, error)
-	setFunc func(ctx context.Context, arg gallerydb.SetModuleStateParams) error
+	getFunc        func(ctx context.Context, name string) (gallerydb.ModuleState, error)
+	setFunc        func(ctx context.Context, arg gallerydb.SetModuleStateParams) error
+	setPayloadFunc func(ctx context.Context, arg gallerydb.SetModuleStatePayloadParams) error
 }
 
 func (f *fakeQuerier) GetModuleState(ctx context.Context, name string) (gallerydb.ModuleState, error) {
@@ -236,6 +241,9 @@ func (f *fakeQuerier) GetModuleState(ctx context.Context, name string) (galleryd
 }
 func (f *fakeQuerier) SetModuleState(ctx context.Context, arg gallerydb.SetModuleStateParams) error {
 	return f.setFunc(ctx, arg)
+}
+func (f *fakeQuerier) SetModuleStatePayload(ctx context.Context, arg gallerydb.SetModuleStatePayloadParams) error {
+	return f.setPayloadFunc(ctx, arg)
 }
 
 func TestService_IsActive_NilService(t *testing.T) {
@@ -528,5 +536,168 @@ func TestService_SetActive_QueryError(t *testing.T) {
 	}
 	if putCalls != 1 {
 		t.Fatalf("expected Put called once, got %d calls", putCalls)
+	}
+}
+
+// seedModuleStatePayload creates an inactive row for name and sets its payload.
+func seedModuleStatePayload(t *testing.T, pool *dbconnpool.DbSQLConnPool, name, payload string) {
+	t.Helper()
+	ctx := context.Background()
+	conn, err := pool.Get()
+	if err != nil {
+		t.Fatalf("pool.Get error: %v", err)
+	}
+	defer pool.Put(conn)
+	if setErr := conn.Queries.SetModuleState(ctx, gallerydb.SetModuleStateParams{Name: name, IsActive: 0}); setErr != nil {
+		t.Fatalf("SetModuleState error: %v", setErr)
+	}
+	err = conn.Queries.SetModuleStatePayload(ctx, gallerydb.SetModuleStatePayloadParams{
+		Payload: sql.NullString{String: payload, Valid: true},
+		Name:    name,
+	})
+	if err != nil {
+		t.Fatalf("SetModuleStatePayload error: %v", err)
+	}
+}
+
+// readRawModuleStatePayload returns the raw payload TEXT for name, failing the
+// test when the row is missing or the payload is NULL.
+func readRawModuleStatePayload(t *testing.T, pool *dbconnpool.DbSQLConnPool, name string) string {
+	t.Helper()
+	ctx := context.Background()
+	conn, err := pool.Get()
+	if err != nil {
+		t.Fatalf("pool.Get error: %v", err)
+	}
+	defer pool.Put(conn)
+	row, err := conn.Queries.GetModuleState(ctx, name)
+	if err != nil {
+		t.Fatalf("GetModuleState error: %v", err)
+	}
+	if !row.Payload.Valid {
+		t.Fatal("expected non-null payload")
+	}
+	return row.Payload.String
+}
+
+// fileProcessingKeys returns the sorted top-level JSON keys inside a
+// file_processing payload object.
+func fileProcessingKeys(t *testing.T, payload string) []string {
+	t.Helper()
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(payload), &doc); err != nil {
+		t.Fatalf("payload failed to parse as JSON object: %v", err)
+	}
+	fpRaw, ok := doc["file_processing"]
+	if !ok {
+		t.Fatal(`payload missing "file_processing" key`)
+	}
+	var fpObj map[string]json.RawMessage
+	if err := json.Unmarshal(fpRaw, &fpObj); err != nil {
+		t.Fatalf(`"file_processing" is not a JSON object: %v`, err)
+	}
+	keys := make([]string, 0, len(fpObj))
+	for k := range fpObj {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func TestService_SaveLoadFileProcessing_RoundTrip(t *testing.T) {
+	pool, cleanup := setupModuleStatePool(t)
+	defer cleanup()
+
+	svc := NewService(pool)
+	ctx := context.Background()
+	name := "discovery"
+
+	fp := metrics.FileProcessingMetrics{
+		TotalFound:      15666608,
+		AlreadyExisting: 15620677,
+		NewlyInserted:   40000,
+		SkippedInvalid:  5931,
+		InFlight:        42, // live state; must never be persisted
+	}
+	if err := svc.SaveFileProcessing(ctx, name, fp); err != nil {
+		t.Fatalf("SaveFileProcessing error: %v", err)
+	}
+
+	got, err := svc.LoadFileProcessing(ctx, name)
+	if err != nil {
+		t.Fatalf("LoadFileProcessing error: %v", err)
+	}
+	fp.InFlight = 0
+	if got != fp {
+		t.Fatalf("round-trip mismatch: got %+v, want %+v", got, fp)
+	}
+
+	wantKeys := []string{"already_existing", "newly_inserted", "skipped_invalid", "total_found"}
+	gotKeys := fileProcessingKeys(t, readRawModuleStatePayload(t, pool, name))
+	if !slices.Equal(gotKeys, wantKeys) {
+		t.Fatalf(`file_processing keys = %v, want exactly %v (InFlight must be omitted)`, gotKeys, wantKeys)
+	}
+}
+
+func TestService_SaveFileProcessing_MergesExistingKeys(t *testing.T) {
+	pool, cleanup := setupModuleStatePool(t)
+	defer cleanup()
+
+	svc := NewService(pool)
+	ctx := context.Background()
+	name := "discovery"
+
+	seedModuleStatePayload(t, pool, name, `{"other":true}`)
+
+	if err := svc.SaveFileProcessing(ctx, name, metrics.FileProcessingMetrics{NewlyInserted: 7}); err != nil {
+		t.Fatalf("SaveFileProcessing error: %v", err)
+	}
+
+	payload := readRawModuleStatePayload(t, pool, name)
+	if !strings.Contains(payload, `"other":true`) {
+		t.Fatalf("sibling key lost after merge: %s", payload)
+	}
+
+	got, err := svc.LoadFileProcessing(ctx, name)
+	if err != nil {
+		t.Fatalf("LoadFileProcessing error: %v", err)
+	}
+	if got.NewlyInserted != 7 {
+		t.Fatalf("NewlyInserted lost after merge: got %d, want 7", got.NewlyInserted)
+	}
+
+	gotKeys := fileProcessingKeys(t, payload)
+	if !slices.Equal(gotKeys, []string{"already_existing", "newly_inserted", "skipped_invalid", "total_found"}) {
+		t.Fatalf(`file_processing keys = %v, want only the four locked keys`, gotKeys)
+	}
+}
+
+func TestService_LoadFileProcessing_MissingRow(t *testing.T) {
+	pool, cleanup := setupModuleStatePool(t)
+	defer cleanup()
+
+	svc := NewService(pool)
+	got, err := svc.LoadFileProcessing(context.Background(), "nonexistent")
+	if err != nil {
+		t.Fatalf("expected nil error for missing row, got: %v", err)
+	}
+	if got != (metrics.FileProcessingMetrics{}) {
+		t.Fatalf("expected zero value for missing row, got %+v", got)
+	}
+}
+
+func TestService_LoadFileProcessing_BadJSON(t *testing.T) {
+	pool, cleanup := setupModuleStatePool(t)
+	defer cleanup()
+
+	svc := NewService(pool)
+	seedModuleStatePayload(t, pool, "discovery", "not-json")
+
+	got, err := svc.LoadFileProcessing(context.Background(), "discovery")
+	if err == nil {
+		t.Fatal("expected error for corrupt payload so hydrate can log it")
+	}
+	if got != (metrics.FileProcessingMetrics{}) {
+		t.Fatalf("expected zero value on bad JSON, got %+v", got)
 	}
 }

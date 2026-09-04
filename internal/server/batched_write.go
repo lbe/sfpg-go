@@ -30,8 +30,9 @@ func init() {
 // BatchedWrite is a union type for all high-volume database writes.
 // Exactly one field should be non-nil per instance.
 type BatchedWrite struct {
-	File       *files.File               // File metadata + EXIF + thumbnails
-	CacheEntry *cachelite.HTTPCacheEntry // HTTP cache entries
+	File        *files.File               // File metadata + EXIF + thumbnails
+	CacheEntry  *cachelite.HTTPCacheEntry // HTTP cache entries
+	FolderIndex *files.FolderIndexRow     // file_folder_index navigation row
 }
 
 // batchedWriteWire is the gob-safe wire format for BatchedWrite.
@@ -43,8 +44,9 @@ type BatchedWrite struct {
 // *bytes.Buffer Thumbnail field (which cannot be gob-encoded directly
 // because bytes.Buffer has no exported fields).
 type batchedWriteWire struct {
-	FileData       []byte // gob-encoded files.File (has GobEncode handling Thumbnail)
-	CacheEntryData []byte // gob-encoded cachelite.HTTPCacheEntry (nil if file write)
+	FileData        []byte // gob-encoded files.File (has GobEncode handling Thumbnail)
+	CacheEntryData  []byte // gob-encoded cachelite.HTTPCacheEntry (nil if file write)
+	FolderIndexData []byte // gob-encoded files.FolderIndexRow (nil if not a folder-index write)
 }
 
 // GobEncode serializes BatchedWrite into a gob-safe wire format.
@@ -68,6 +70,14 @@ func (bw BatchedWrite) GobEncode() ([]byte, error) {
 			return nil, fmt.Errorf("gob encode CacheEntry: %w", err)
 		}
 		w.CacheEntryData = buf.Bytes()
+	}
+
+	if bw.FolderIndex != nil {
+		var buf bytes.Buffer
+		if err := gob.NewEncoder(&buf).Encode(bw.FolderIndex); err != nil {
+			return nil, fmt.Errorf("gob encode FolderIndex: %w", err)
+		}
+		w.FolderIndexData = buf.Bytes()
 	}
 
 	var buf bytes.Buffer
@@ -102,6 +112,14 @@ func (bw *BatchedWrite) GobDecode(data []byte) error {
 		bw.CacheEntry = &e
 	}
 
+	if len(w.FolderIndexData) > 0 {
+		var r files.FolderIndexRow
+		if err := gob.NewDecoder(bytes.NewReader(w.FolderIndexData)).Decode(&r); err != nil {
+			return fmt.Errorf("gob decode FolderIndex: %w", err)
+		}
+		bw.FolderIndex = &r
+	}
+
 	return nil
 }
 
@@ -120,6 +138,11 @@ func (bw BatchedWrite) Size() int64 {
 	if bw.CacheEntry != nil {
 		size := int64(len(bw.CacheEntry.Body))
 		return size + 256
+	}
+
+	if bw.FolderIndex != nil {
+		const folderIndexOverhead = 128
+		return folderIndexOverhead
 	}
 
 	return overhead

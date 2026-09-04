@@ -25,15 +25,19 @@
             </svg>
             Cache Preload
           </h3>
-          {{ if .Metrics.CachePreload.IsEnabled }}
-            <span id="preload-status" class="badge badge-success badge-sm"
-              >Enabled</span
-            >
-          {{ else }}
-            <span id="preload-status" class="badge badge-ghost badge-sm"
-              >Disabled</span
-            >
-          {{ end }}
+          <span
+            id="preload-status"
+            class="{{ if .Metrics.CachePreload.IsEnabled }}
+              badge-success
+            {{ else }}
+              badge-ghost
+            {{ end }} badge badge-sm"
+            >{{ if .Metrics.CachePreload.IsEnabled }}
+              Enabled
+            {{ else }}
+              Disabled
+            {{ end }}</span
+          >
         </div>
         <div
           class="stats stats-vertical w-full bg-transparent lg:stats-horizontal"
@@ -104,15 +108,19 @@
             </svg>
             HTTP Cache
           </h3>
-          {{ if .Metrics.HTTPCache.Enabled }}
-            <span id="http-status" class="badge badge-success badge-sm"
-              >Enabled</span
-            >
-          {{ else }}
-            <span id="http-status" class="badge badge-ghost badge-sm"
-              >Disabled</span
-            >
-          {{ end }}
+          <span
+            id="http-status"
+            class="{{ if .Metrics.HTTPCache.Enabled }}
+              badge-success
+            {{ else }}
+              badge-ghost
+            {{ end }} badge badge-sm"
+            >{{ if .Metrics.HTTPCache.Enabled }}
+              Enabled
+            {{ else }}
+              Disabled
+            {{ end }}</span
+          >
         </div>
         <div
           class="stats stats-vertical grid w-full grid-cols-2 gap-2 bg-transparent"

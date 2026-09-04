@@ -2,14 +2,17 @@
 // sfpg-go server metrics in real-time.
 //
 // The dashboard displays system metrics including:
-//   - Module status (discovery, cache_preload)
-//   - Memory statistics (allocated, heap in use/released/objects)
-//   - Runtime statistics (goroutines, CPU count, next GC, uptime)
-//   - Write batcher metrics (pending, flushed, errors, batch size)
-//   - Worker pool metrics (running, completed, successful, failed)
-//   - File queue metrics (queued, utilization, available)
-//   - File processing statistics (total, existing, new, invalid, in flight)
-//   - Cache statistics (preload, batch load, HTTP cache)
+//   - Header: three-zone bar (title left, version centered, live/paused/refreshing + last-updated right)
+//   - Folder-index rebuild error banner (display-only; web ack not in TUI)
+//   - Memory, Runtime (paired on one row when wide)
+//   - Gallery Statistics; File Processing with Queued Items as a field inside it (paired when wide)
+//   - Cache Preload, Cache Batch Load, HTTP Cache (paired on one row when wide)
+//   - Worker Pool, Write Batcher (incl. DQue Overflow enabled/off, disk usage/quota) (paired when wide)
+//
+// `view.go` follows web section order; sibling cards are joined side by side
+// with lipgloss.JoinHorizontal when the terminal is at least
+// dashboardPairMinWidth wide and stack vertically below it, preserving order.
+// No separate Queued Items card exists on the TUI.
 //
 // # Authentication
 //

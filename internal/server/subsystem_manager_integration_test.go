@@ -508,3 +508,53 @@ func TestSubsystemManager_WireMetrics_WiresAllSources(t *testing.T) {
 		t.Error("FileProcessor metrics not wired")
 	}
 }
+
+// TestSubsystemManager_HydrateFileProcessingStats verifies the incident path:
+// after SaveFileProcessing on "discovery", a zeroed processingStats hydrates
+// the four last-run counters and leaves InFlight at 0 (live state is never
+// persisted or hydrated). CreateApp leaves processingStats and
+// moduleStateService nil, so hydrate must first no-op without panicking.
+func TestSubsystemManager_HydrateFileProcessingStats(t *testing.T) {
+	ctx := context.Background()
+
+	app := CreateApp(t)
+	// CreateApp never calls Start: processingStats and moduleStateService are
+	// both nil, so hydrate must be a no-op.
+	app.SubsystemManager.HydrateFileProcessingStats(ctx)
+
+	sm, _ := startTestManager(t, 1, 2, config.DefaultConfig())
+	if sm.processingStats == nil {
+		t.Fatal("processingStats not allocated by SubsystemManager.Start")
+	}
+	if sm.moduleStateService == nil {
+		t.Fatal("moduleStateService not created by SubsystemManager.Start")
+	}
+
+	if err := sm.moduleStateService.SaveFileProcessing(ctx, "discovery", metrics.FileProcessingMetrics{
+		TotalFound:      15666608,
+		AlreadyExisting: 15620677,
+		NewlyInserted:   40000,
+		SkippedInvalid:  5931,
+	}); err != nil {
+		t.Fatalf("SaveFileProcessing: %v", err)
+	}
+
+	// The stats are fresh zeros; hydrate must match the saved payload.
+	sm.HydrateFileProcessingStats(ctx)
+
+	if got := sm.processingStats.TotalFound.Load(); got != 15666608 {
+		t.Errorf("TotalFound = %d, want 15666608", got)
+	}
+	if got := sm.processingStats.AlreadyExisting.Load(); got != 15620677 {
+		t.Errorf("AlreadyExisting = %d, want 15620677", got)
+	}
+	if got := sm.processingStats.NewlyInserted.Load(); got != 40000 {
+		t.Errorf("NewlyInserted = %d, want 40000", got)
+	}
+	if got := sm.processingStats.SkippedInvalid.Load(); got != 5931 {
+		t.Errorf("SkippedInvalid = %d, want 5931", got)
+	}
+	if got := sm.processingStats.InFlight.Load(); got != 0 {
+		t.Errorf("InFlight = %d, want 0 (InFlight is never hydrated)", got)
+	}
+}

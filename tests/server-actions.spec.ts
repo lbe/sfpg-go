@@ -1,12 +1,10 @@
 import { test, expect } from "@playwright/test";
-import { loginViaUI, openMenu, menu } from "./helpers";
-import {
-  enableHTTPCache,
-  expectRestartDialogOpen,
-  waitForServerRestart,
-} from "./config-helpers";
+import { ensureGallerySession, openMenu, menu } from "./helpers";
 
 test.describe.configure({ timeout: 120000 });
+
+// Server restart UX is covered by config.spec.ts "13: Config restart" and
+// tests/htmx-restart-alert.spec.ts — no duplicate restart test here.
 
 // Server actions trigger background processing — use serial to avoid conflicts.
 test.describe.serial("Server Actions", () => {
@@ -14,7 +12,7 @@ test.describe.serial("Server Actions", () => {
     if (testInfo.title.startsWith("8:")) {
       return;
     }
-    await loginViaUI(page);
+    await ensureGallerySession(page);
   });
 
   test("1: Server submenu renders", async ({ page }) => {
@@ -112,61 +110,6 @@ test.describe.serial("Server Actions", () => {
 
   test("6: Server shutdown", async ({ page }) => {
     test.skip(true, "Destructive — server process would stop");
-  });
-
-  test("7: Server restart", async ({ page, request }) => {
-    // Server restart is non-destructive — the process restarts in <10s.
-    // We trigger restart via the UI (same-origin HTMX POST; COP at router).
-    // The finally block restores the original config so the server is left
-    // in a clean state.
-
-    try {
-      await openMenu(page);
-      await page.locator('a[aria-label="Configuration"]').click();
-      await page.waitForSelector("#config-form", { timeout: 5000 });
-
-      // http-cache is in the Performance tab (not Server!). Switch tabs first.
-      await page.locator("#tab-performance-btn").click();
-      await page.waitForTimeout(200);
-
-      const cacheCheckbox = page.locator('input[name="enable_http_cache"]');
-      await expect(cacheCheckbox).toBeVisible({ timeout: 3000 });
-      // Flip http-cache from its current state so the save is always a real
-      // restart-required change (default http-cache is false, so a plain
-      // uncheck would be a no-op).
-      if (await cacheCheckbox.isChecked()) {
-        await cacheCheckbox.uncheck();
-      } else {
-        await cacheCheckbox.check();
-      }
-
-      // Save the config — this triggers the restart-required flow
-      await page.locator("#config-form button[type='submit']").first().click();
-
-      // The restart modal should appear (restart-diff-modal). Assert the full
-      // dialog-open contract: success alert with restart text, badge
-      // visible/not hidden, modal toggle checked, and a non-empty diff table.
-      await expectRestartDialogOpen(page);
-
-      // Click Restart Server scoped to the open restart dialog (no force).
-      const restartModalBtn = page.locator(
-        'div.modal:has(#restart-diff-content) button[hx-post="/config/restart"]',
-      );
-      await expect(restartModalBtn).toBeVisible({ timeout: 5000 });
-      await restartModalBtn.click();
-
-      await waitForServerRestart(page.request);
-
-      // Verify the app is fully functional after restart
-      await page.goto("/gallery/1");
-      await expect(page.locator("#gallery-content")).toBeVisible({
-        timeout: 10000,
-      });
-    } finally {
-      // Re-enable HTTP cache so the server is left in a clean state for
-      // subsequent tests and the dev session.
-      await enableHTTPCache(request);
-    }
   });
 
   test("8: Unauthenticated access to server discovery", async ({ page }) => {

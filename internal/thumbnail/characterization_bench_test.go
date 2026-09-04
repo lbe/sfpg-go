@@ -112,8 +112,8 @@ func BenchmarkPhase_ResizePHash(b *testing.B) {
 func BenchmarkPhase_JPEGEncode(b *testing.B) {
 	b.ReportAllocs()
 	img := image.NewRGBA(image.Rect(0, 0, galleryThumbMaxW, galleryThumbMaxH))
-	for y := 0; y < galleryThumbMaxH; y++ {
-		for x := 0; x < galleryThumbMaxW; x++ {
+	for y := range galleryThumbMaxH {
+		for x := range galleryThumbMaxW {
 			img.Set(x, y, color.RGBA{R: uint8(x), G: uint8(y), B: uint8(x + y), A: 255})
 		}
 	}

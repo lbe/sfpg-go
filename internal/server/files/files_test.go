@@ -1385,10 +1385,8 @@ func TestCheckIfFileModified_SkipsInvalidFile(t *testing.T) {
 	}
 
 	fq := &fakeQueriesForInvalid{
-		fakeQueriesForCheck: fakeQueriesForCheck{
-			ret: gallerydb.File{}, // No matching file in DB
-			err: sql.ErrNoRows,
-		},
+		ret:        gallerydb.File{}, // No matching file in DB
+		err:        sql.ErrNoRows,
 		invalidRet: invalidFile,
 		invalidErr: nil,
 	}
@@ -1424,9 +1422,9 @@ func TestCheckIfFileModified_ReprocessesChangedInvalidFile(t *testing.T) {
 		Reason: sql.NullString{String: "non-image", Valid: true},
 	}
 	fq := &fakeQueriesForInvalid{
-		fakeQueriesForCheck: fakeQueriesForCheck{ret: gallerydb.File{}, err: sql.ErrNoRows},
-		invalidRet:          invalidFile,
-		invalidErr:          nil,
+		ret: gallerydb.File{}, err: sql.ErrNoRows,
+		invalidRet: invalidFile,
+		invalidErr: nil,
 	}
 	unchanged, err := CheckIfFileModifiedWithQueries(context.Background(), fq, file)
 	if err != nil {

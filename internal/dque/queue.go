@@ -61,6 +61,12 @@ type DQue[T any] struct {
 
 	emptyCond *sync.Cond
 
+	// cachedDiskBytes is the cached sum of all non-directory file sizes in the
+	// queue directory (lock.lock plus every segment file). It is seeded once
+	// after the queue is loaded and maintained on enqueue/dequeue so that
+	// DiskBytes() is O(1) and never re-reads the directory.
+	cachedDiskBytes int64
+
 	turbo bool
 
 	// closed is set to true when Close() is called and is used by unsynchronized
@@ -239,10 +245,19 @@ func (q *DQue[T]) Enqueue(obj *T) error {
 
 	}
 
+	// Remember the last segment's size before adding so we can track the growth.
+	oldSize := sizeOfFile(q.lastSegment.filePath())
+
 	// Add the item to the last segment
 	if err := q.lastSegment.add(obj); err != nil {
 		return errors.Wrap(err, "error adding item to the last segment")
 	}
+
+	// Maintain the cached disk total by the growth of this one segment file
+	// (newSize - oldSize). oldSize is 0 when this Enqueue created a new segment
+	// file, so this adds only the new file's bytes. Do NOT assign Size() (drops
+	// lock.lock and other segments) and do NOT += Size() (double-counts).
+	q.cachedDiskBytes += sizeOfFile(q.lastSegment.filePath()) - oldSize
 
 	// Wakeup any goroutine that is currently waiting for an item to be enqueued
 	q.emptyCond.Broadcast()
@@ -269,6 +284,10 @@ func (q *DQue[T]) dequeueLocked() (*T, error) {
 		return nil, ErrQueueClosed
 	}
 
+	// Remember the first segment's size before remove so we can track the
+	// growth caused by the 4-byte deletion marker it appends.
+	firstOldSize := sizeOfFile(q.firstSegment.filePath())
+
 	// Remove the first object from the first segment
 	obj, err := q.firstSegment.remove()
 	if errors.Is(err, errEmptySegment) {
@@ -278,15 +297,24 @@ func (q *DQue[T]) dequeueLocked() (*T, error) {
 		return nil, errors.Wrap(err, "error removing item from the first segment")
 	}
 
+	// remove() appended a 4-byte deletion marker and grew the first segment
+	// without deleting it. Add that growth to the cached disk total.
+	q.cachedDiskBytes += sizeOfFile(q.firstSegment.filePath()) - firstOldSize
+
 	// If this segment is empty and we've reached the max for this segment
 	// then delete the file and open the next one.
 	if q.firstSegment.size() == 0 &&
 		q.firstSegment.sizeOnDisk() >= q.config.ItemsPerSegment {
 
+		// Size of the (now-marked) first segment file before deleting it.
+		deletedSize := sizeOfFile(q.firstSegment.filePath())
+
 		// Delete the segment file
 		if err := q.firstSegment.delete(); err != nil {
 			return obj, errors.Wrap(err, "error deleting queue segment "+q.firstSegment.filePath()+". Queue is in inconsistent state")
 		}
+		// Subtract the deleted file's bytes from the cached total.
+		q.cachedDiskBytes -= deletedSize
 
 		// We have only one segment and it's now empty so destroy it and
 		// create a new one.
@@ -299,6 +327,9 @@ func (q *DQue[T]) dequeueLocked() (*T, error) {
 			}
 			q.firstSegment = seg
 			q.lastSegment = seg
+
+			// Add the new replacement segment's bytes to the cached total.
+			q.cachedDiskBytes += sizeOfFile(seg.filePath())
 
 		} else {
 
@@ -418,7 +449,7 @@ func (q *DQue[T]) DiskBytes() int64 {
 	if q.closed {
 		return 0
 	}
-	return q.diskBytesLocked()
+	return q.cachedDiskBytes
 }
 
 func (q *DQue[T]) diskBytesLocked() int64 {
@@ -438,6 +469,17 @@ func (q *DQue[T]) diskBytesLocked() int64 {
 		total += info.Size()
 	}
 	return total
+}
+
+// sizeOfFile returns the size of the named file in bytes, or 0 if the file does
+// not exist or cannot be stat'd. It is used to maintain the cached disk total
+// as segments are added, grown, or deleted.
+func sizeOfFile(path string) int64 {
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	return info.Size()
 }
 
 // SizeUnsafe returns the approximate number of items in the queue.  Use Size() if
@@ -672,5 +714,9 @@ func (q *DQue[T]) initQueue(fullPath string, itemsPerSegment int) error {
 		}
 		return err
 	}
+	// Seed the cached disk total. A seed-time ReadDir error leaves the cache at
+	// 0 but does NOT fail initQueue: load already completed successfully, so the
+	// queue is usable. Subsequent DiskBytes() returns the cached (0) value.
+	q.cachedDiskBytes = q.diskBytesLocked()
 	return nil
 }

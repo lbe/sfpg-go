@@ -58,9 +58,16 @@ type GalleryOps interface {
 // from ServerDeps.
 type ServerControl interface {
 	Shutdown()
-	TriggerDiscovery()
+	TriggerDiscovery(ctx context.Context) error
 	ResetStats()
 	StartCacheBatchLoad() (StartCacheBatchLoadResult, error)
+	// ManualDiscoveryError returns the in-memory error from a manual
+	// POST /server/discovery rebuild failure, or "" when none. Cleared on
+	// restart.
+	ManualDiscoveryError() string
+	// SetManualDiscoveryError sets or clears the manual discovery rebuild
+	// error. An empty msg clears it (acknowledged by the operator).
+	SetManualDiscoveryError(msg string)
 }
 
 // ServerDeps provides all server-level dependencies consumed by handler groups.

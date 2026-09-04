@@ -1,12 +1,57 @@
 {{ define "body" }}
+  {{ if .FolderIndexRebuildError }}
+    <div
+      id="folder-index-rebuild-error"
+      role="alert"
+      class="alert alert-error shadow-lg"
+    >
+      <div>
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          class="h-6 w-6 shrink-0 stroke-current"
+          fill="none"
+          viewBox="0 0 24 24"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"
+          />
+        </svg>
+        <div>
+          <h3 id="folder-index-rebuild-error-title" class="font-bold">
+            Folder Index Rebuild Failed
+          </h3>
+          <div id="folder-index-rebuild-error-msg" class="text-xs">
+            Manual discovery failed to rebuild the file&#39;s folder index. The
+            live index is unchanged.
+          </div>
+        </div>
+      </div>
+      <button
+        id="folder-index-rebuild-error-ack"
+        class="btn btn-sm"
+        hx-post="/dashboard/folder-index-error/ack"
+        hx-target="#folder-index-rebuild-error"
+        hx-swap="delete"
+      >
+        Acknowledge
+      </button>
+    </div>
+  {{ end }}
+
+
   <!-- Dashboard Header -->
   <div class="relative flex items-center justify-between">
-    <h1 class="text-2xl font-semibold">Performance &amp; Health Dashboard</h1>
+    <h1 id="dashboard-title" class="text-2xl font-semibold">
+      Performance &amp; Health Dashboard
+    </h1>
     <span
       class="absolute left-1/2 -translate-x-1/2 text-sm text-base-content/60"
     >
       Version
-      {{ .Version }}
+      <span id="dashboard-version">{{ .Version }}</span>
     </span>
     <div class="flex items-center gap-3">
       <div class="indicator">
@@ -15,7 +60,9 @@
         ></span>
         <span class="badge badge-success badge-xs"></span>
       </div>
-      <span class="badge badge-success badge-outline">Live</span>
+      <span id="dashboard-live" class="badge badge-success badge-outline"
+        >Live</span
+      >
       <span id="last-updated" class="text-xs text-base-content/50">
         {{ .Metrics.Timestamp.Format "15:04:05" }}
       </span>

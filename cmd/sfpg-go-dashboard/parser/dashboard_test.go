@@ -17,6 +17,16 @@ func TestParseDashboard(t *testing.T) {
 <body>
 <div id="dashboard-container">
 	<div id="last-updated">22:30:00</div>
+	<span id="dashboard-version">0.14.1-test</span>
+	<!-- Folder-index rebuild error -->
+	<div id="folder-index-rebuild-error">
+		<h3>Folder Index Rebuild Failed</h3>
+		<div id="folder-index-rebuild-error-msg">
+			Manual discovery failed to rebuild the file's folder index. The
+			live index is unchanged.
+		</div>
+		<button id="folder-index-rebuild-error-ack">Acknowledge</button>
+	</div>
 	<!-- Memory Stats -->
 	<div>
 		<div class="stat-title">Allocated</div>
@@ -51,6 +61,23 @@ func TestParseDashboard(t *testing.T) {
 		<div class="stat-title">Uptime</div>
 		<div id="runtime-uptime" class="stat-value">1m30s</div>
 	</div>
+	<!-- Gallery Stats - DISTINCT value: 42 folders, 99 images, 3.0 GiB -->
+	<div id="card-gallery-stats" class="card-title">Gallery Statistics</div>
+	<div>
+		<div class="stat-title">Folders</div>
+		<div id="gallery-folders" class="stat-value">42</div>
+	</div>
+	<div>
+		<div class="stat-title">Images</div>
+		<div id="gallery-images" class="stat-value">99</div>
+	</div>
+	<div>
+		<div class="stat-title">Images Size</div>
+		<div id="gallery-images-size" class="stat-value">3.0 GiB</div>
+	</div>
+	<span id="gallery-discovery-tip"
+		data-first-discovery="2026-03-01 00:00:00"
+		data-last-discovery="2026-03-02 00:00:00"></span>
 	<!-- Write Batcher Stats -->
 	<div>
 		<div class="stat-title">Pending</div>
@@ -158,6 +185,10 @@ func TestParseDashboard(t *testing.T) {
 		<div id="batch-total-desc" class="stat-desc">100 total</div>
 	</div>
 	<div>
+		<div class="stat-title">Loaded</div>
+		<div id="batch-loaded" class="stat-value">77</div>
+	</div>
+	<div>
 		<div class="stat-title">Failed</div>
 		<div id="batch-failed" class="stat-value">0</div>
 	</div>
@@ -202,6 +233,17 @@ func TestParseDashboard(t *testing.T) {
 		t.Errorf("LastUpdated = %q, want %q", metrics.LastUpdated, "22:30:00")
 	}
 
+	// Verify version
+	if metrics.Version != "0.14.1-test" {
+		t.Errorf("Version = %q, want %q", metrics.Version, "0.14.1-test")
+	}
+
+	// Verify folder-index rebuild error (whitespace collapsed, no Acknowledge)
+	const wantRebuildMsg = "Manual discovery failed to rebuild the file's folder index. The live index is unchanged."
+	if metrics.FolderIndexRebuildError != wantRebuildMsg {
+		t.Errorf("FolderIndexRebuildError = %q, want %q", metrics.FolderIndexRebuildError, wantRebuildMsg)
+	}
+
 	// Verify memory stats
 	if metrics.Memory.Allocated != "15.0 MiB" {
 		t.Errorf("Memory.Allocated = %q, want %q", metrics.Memory.Allocated, "15.0 MiB")
@@ -230,6 +272,26 @@ func TestParseDashboard(t *testing.T) {
 		t.Errorf("Runtime.Uptime = %q, want %q", metrics.Runtime.Uptime, "1m30s")
 	}
 
+	// Verify gallery stats - DISTINCT from other sections
+	if !metrics.Gallery.Present {
+		t.Error("Gallery.Present = false, want true")
+	}
+	if metrics.Gallery.Folders != "42" {
+		t.Errorf("Gallery.Folders = %q, want %q", metrics.Gallery.Folders, "42")
+	}
+	if metrics.Gallery.Images != "99" {
+		t.Errorf("Gallery.Images = %q, want %q", metrics.Gallery.Images, "99")
+	}
+	if metrics.Gallery.ImagesSize != "3.0 GiB" {
+		t.Errorf("Gallery.ImagesSize = %q, want %q", metrics.Gallery.ImagesSize, "3.0 GiB")
+	}
+	if metrics.Gallery.FirstDiscovery != "2026-03-01 00:00:00" {
+		t.Errorf("Gallery.FirstDiscovery = %q, want %q", metrics.Gallery.FirstDiscovery, "2026-03-01 00:00:00")
+	}
+	if metrics.Gallery.LastDiscovery != "2026-03-02 00:00:00" {
+		t.Errorf("Gallery.LastDiscovery = %q, want %q", metrics.Gallery.LastDiscovery, "2026-03-02 00:00:00")
+	}
+
 	// Verify write batcher
 	if metrics.WriteBatcher.Pending != "0" {
 		t.Errorf("WriteBatcher.Pending = %q, want %q", metrics.WriteBatcher.Pending, "0")
@@ -248,6 +310,9 @@ func TestParseDashboard(t *testing.T) {
 	}
 	if metrics.WriteBatcher.DQueSize != "12" {
 		t.Errorf("WriteBatcher.DQueSize = %q, want %q", metrics.WriteBatcher.DQueSize, "12")
+	}
+	if metrics.WriteBatcher.DQueEnabled != "Enabled" {
+		t.Errorf("WriteBatcher.DQueEnabled = %q, want %q", metrics.WriteBatcher.DQueEnabled, "Enabled")
 	}
 	if metrics.WriteBatcher.OverflowCount != "5" {
 		t.Errorf("WriteBatcher.OverflowCount = %q, want %q", metrics.WriteBatcher.OverflowCount, "5")
@@ -329,6 +394,9 @@ func TestParseDashboard(t *testing.T) {
 	}
 	if metrics.CacheBatchLoad.Total != "100" {
 		t.Errorf("CacheBatchLoad.Total = %q, want %q", metrics.CacheBatchLoad.Total, "100")
+	}
+	if metrics.CacheBatchLoad.Loaded != "77" {
+		t.Errorf("CacheBatchLoad.Loaded = %q, want %q", metrics.CacheBatchLoad.Loaded, "77")
 	}
 	if metrics.CacheBatchLoad.Failed != "0" {
 		t.Errorf("CacheBatchLoad.Failed = %q, want %q", metrics.CacheBatchLoad.Failed, "0")
@@ -489,6 +557,46 @@ func TestParseDashboardDisabledStates(t *testing.T) {
 	// Verify progress parsing
 	if metrics.CacheBatchLoad.Progress != "50/100" {
 		t.Errorf("CacheBatchLoad.Progress = %q, want %q", metrics.CacheBatchLoad.Progress, "50/100")
+	}
+}
+
+// TestParseDashboard_RebuildErrorAbsent returns an empty
+// FolderIndexRebuildError when the rebuild-error alert is absent.
+func TestParseDashboard_RebuildErrorAbsent(t *testing.T) {
+	html := `<!DOCTYPE html>
+<html>
+<body>
+<div id="dashboard-container">
+	<div id="last-updated">22:30:00</div>
+</div>
+</body>
+</html>`
+	metrics, err := ParseDashboard(strings.NewReader(html))
+	if err != nil {
+		t.Fatalf("ParseDashboard failed: %v", err)
+	}
+	if metrics.FolderIndexRebuildError != "" {
+		t.Errorf("FolderIndexRebuildError = %q, want empty", metrics.FolderIndexRebuildError)
+	}
+}
+
+// TestParseDashboard_GalleryMissing returns Present=false when the web
+// "Loading gallery data..." branch omits #gallery-folders.
+func TestParseDashboard_GalleryMissing(t *testing.T) {
+	html := `<!DOCTYPE html>
+<html>
+<body>
+<div id="dashboard-container">
+	<div id="last-updated">22:30:00</div>
+</div>
+</body>
+</html>`
+	metrics, err := ParseDashboard(strings.NewReader(html))
+	if err != nil {
+		t.Fatalf("ParseDashboard failed: %v", err)
+	}
+	if metrics.Gallery.Present {
+		t.Error("Gallery.Present = true, want false")
 	}
 }
 

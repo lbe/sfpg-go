@@ -1,5 +1,8 @@
 import { type Page, type Locator, expect } from "@playwright/test";
 
+// Dashboard polls every 5s via HTMX; #last-updated changes on each refresh.
+const DASHBOARD_POLL_TIMEOUT_MS = 15_000;
+
 // ── Menu ──────────────────────────────────────────────────────────
 
 /** Click the hamburger button and wait for the dropdown to become visible. */
@@ -112,4 +115,44 @@ export async function goToDashboard(page: Page): Promise<void> {
   await page.goto("/dashboard");
   await page.waitForSelector("#dashboard-container", { timeout: 10000 });
   await page.waitForTimeout(300); // let hyperscript init run
+}
+
+/** Land on gallery with storage-state session (serial suite beforeEach). */
+export async function ensureGallerySession(page: Page): Promise<void> {
+  await page.goto("/gallery/1");
+  await page.waitForSelector("#gallery-content", { timeout: 10000 });
+}
+
+/** Wait until #last-updated text differs from `from` (one poll cycle). */
+export async function waitForLastUpdatedChange(
+  page: Page,
+  from: string | null,
+): Promise<string> {
+  const locator = page.locator("#last-updated");
+  let changed = "";
+  await expect
+    .poll(
+      async () => {
+        const cur = await locator.textContent();
+        if (cur && cur !== from) {
+          changed = cur;
+          return true;
+        }
+        return false;
+      },
+      { timeout: DASHBOARD_POLL_TIMEOUT_MS },
+    )
+    .toBe(true);
+  return changed;
+}
+
+/** Wait for N dashboard poll cycles (last-updated changes N times). */
+export async function waitForDashboardPollCycles(
+  page: Page,
+  cycles: number,
+): Promise<void> {
+  let prev = await page.locator("#last-updated").textContent();
+  for (let i = 0; i < cycles; i++) {
+    prev = await waitForLastUpdatedChange(page, prev);
+  }
 }

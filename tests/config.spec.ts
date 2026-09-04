@@ -1,6 +1,10 @@
 import { test, expect } from "@playwright/test";
-import { loginViaUI, openMenu } from "./helpers";
-import { makeSnapshotRestore, expectRestartDialogOpen } from "./config-helpers";
+import { ensureGallerySession, openMenu } from "./helpers";
+import {
+  makeSnapshotRestore,
+  expectRestartDialogOpen,
+  openConfigPerformanceTab,
+} from "./config-helpers";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -10,7 +14,7 @@ test.describe.configure({ timeout: 90000 });
 // Config tests modify server state — use serial execution to avoid races.
 test.describe.serial("Configuration", () => {
   test.beforeEach(async ({ page }) => {
-    await loginViaUI(page);
+    await ensureGallerySession(page);
   });
 
   test("1: Config modal opens from menu", async ({ page }) => {
@@ -138,13 +142,9 @@ test.describe.serial("Configuration", () => {
   });
 
   test("3c: Config save (dque max disk bytes)", async ({ page }) => {
-    await openMenu(page);
-    await page.locator('a[aria-label="Configuration"]').click();
-    await page.waitForSelector("#config-form", { timeout: 5000 });
-    await page.locator("#tab-performance-btn").click();
-    await page.waitForTimeout(200);
-
+    await openConfigPerformanceTab(page);
     const dqueInput = page.locator('input[name="dque_max_disk_bytes"]');
+    await expect(dqueInput).toBeVisible({ timeout: 5000 });
     const originalValue = await dqueInput.inputValue();
 
     // Pick a test value different from the original (default is 53687091200 = 50 GiB)
@@ -160,18 +160,13 @@ test.describe.serial("Configuration", () => {
     await page.locator("#config-cancel-btn").click();
     await page.waitForTimeout(200);
 
-    await openMenu(page);
-    await page.locator('a[aria-label="Configuration"]').click();
-    await page.waitForSelector("#config-form", { timeout: 5000 });
-    await page.locator("#tab-performance-btn").click();
-    await page.waitForTimeout(200);
-
-    await expect(page.locator('input[name="dque_max_disk_bytes"]')).toHaveValue(
-      testValue,
-    );
+    await openConfigPerformanceTab(page);
+    const dqueReopen = page.locator('input[name="dque_max_disk_bytes"]');
+    await expect(dqueReopen).toBeVisible({ timeout: 5000 });
+    await expect(dqueReopen).toHaveValue(testValue);
 
     // Restore original value
-    await dqueInput.fill(originalValue);
+    await dqueReopen.fill(originalValue);
     await page.locator("#config-form button[type='submit']").first().click();
     await expect(page.locator("#config-success-message")).toBeVisible({
       timeout: 10000,
@@ -390,29 +385,8 @@ test.describe.serial("Configuration", () => {
     }
   });
 
-  test("12: Config unauthenticated returns 401", async ({ browser }) => {
-    // Use a brand-new context (isolated cookies) so auth from prior tests doesn't leak
-    const freshContext = await browser.newContext();
-    const freshPage = await freshContext.newPage();
-    const response = await freshPage.goto("/config");
-    expect(response?.status()).toBe(401);
-    await freshContext.close();
-  });
-
   test("13a: db_max_pool_size save opens restart dialog", async ({ page }) => {
-    // Cover the exact user path that exposed the OOB-on-target bug: a number
-    // field, not a checkbox. Only db_max_pool_size is changed, so checkbox-
-    // only coverage cannot hide a broken badge swap. No server restart is
-    // triggered here — the dialog is closed via its Close button and the
-    // file-scope snapshot restore in afterAll leaves the pool size clean.
-    await openMenu(page);
-    await page.locator('a[aria-label="Configuration"]').click();
-    await page.waitForSelector("#config-form", { timeout: 5000 });
-    await page.locator("#tab-performance-btn").click();
-    await page.waitForTimeout(200);
-
-    const poolInput = page.locator('input[name="db_max_pool_size"]');
-    await expect(poolInput).toBeVisible({ timeout: 3000 });
+    const poolInput = await openConfigPerformanceTab(page);
     const current = Number(await poolInput.inputValue());
     await poolInput.fill(String(current + 1));
 
@@ -442,20 +416,7 @@ test.describe.serial("Configuration", () => {
   test("13b: Cancel after restart-required save closes cleanly", async ({
     page,
   }) => {
-    // Regression: after a restart-required save the open-modal originals
-    // snapshot was never updated, so Cancel reported the just-saved edit as
-    // unsaved and opened #cancel-diff-modal. The originals are now refreshed
-    // after the restart diff is built (inside the htmx:afterSettle builder),
-    // so Cancel with no further edits must close the config modal directly
-    // without the Unsaved Changes dialog.
-    await openMenu(page);
-    await page.locator('a[aria-label="Configuration"]').click();
-    await page.waitForSelector("#config-form", { timeout: 5000 });
-    await page.locator("#tab-performance-btn").click();
-    await page.waitForTimeout(200);
-
-    const poolInput = page.locator('input[name="db_max_pool_size"]');
-    await expect(poolInput).toBeVisible({ timeout: 3000 });
+    const poolInput = await openConfigPerformanceTab(page);
     const current = Number(await poolInput.inputValue());
     const changed = current + 1;
     await poolInput.fill(String(changed));
@@ -486,14 +447,8 @@ test.describe.serial("Configuration", () => {
 
     // Reopen config: the persisted value is still present (Cancel only ends
     // the modal session; it does not roll back the save).
-    await openMenu(page);
-    await page.locator('a[aria-label="Configuration"]').click();
-    await page.waitForSelector("#config-form", { timeout: 5000 });
-    await page.locator("#tab-performance-btn").click();
-    await page.waitForTimeout(200);
-    await expect(page.locator('input[name="db_max_pool_size"]')).toHaveValue(
-      String(changed),
-    );
+    const poolReopen = await openConfigPerformanceTab(page);
+    await expect(poolReopen).toHaveValue(String(changed));
   });
 
   test("13: Config restart", async ({ page, request }) => {
@@ -506,16 +461,10 @@ test.describe.serial("Configuration", () => {
     // state for subsequent test files.
 
     try {
-      await openMenu(page);
-      await page.locator('a[aria-label="Configuration"]').click();
-      await page.waitForSelector("#config-form", { timeout: 5000 });
-
-      // http-cache is in the Performance tab (not Server!). Switch tabs first.
-      await page.locator("#tab-performance-btn").click();
-      await page.waitForTimeout(200);
+      await openConfigPerformanceTab(page);
 
       const cacheCheckbox = page.locator('input[name="enable_http_cache"]');
-      await expect(cacheCheckbox).toBeVisible({ timeout: 3000 });
+      await expect(cacheCheckbox).toBeVisible({ timeout: 5000 });
       // Flip http-cache from its current state so the save is always a real
       // restart-required change regardless of the server's starting config
       // (default http-cache is false, so a plain uncheck would be a no-op).

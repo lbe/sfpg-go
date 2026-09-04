@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 
@@ -72,11 +73,17 @@ func (h *ServerHandlers) ServerDiscoveryPost(w http.ResponseWriter, r *http.Requ
 
 	slog.Info("Discovery requested via web interface")
 
-	// Reset stats before starting new discovery
-	h.serverControl.ResetStats()
-
-	// Trigger discovery in a goroutine so it doesn't block the HTTP response
-	go h.serverControl.TriggerDiscovery()
+	// Trigger discovery in a goroutine so it doesn't block the HTTP response.
+	// Counter zeroing is owned by App.TriggerDiscovery: it clears live counters
+	// only after winning the in-flight CAS, never before triggering.
+	// A rebuild failure is captured for the dashboard alert (cleared when the
+	// operator acknowledges it). The server keeps serving — no Shutdown.
+	go func() {
+		err := h.serverControl.TriggerDiscovery(context.Background())
+		if err != nil {
+			h.serverControl.SetManualDiscoveryError(err.Error())
+		}
+	}()
 
 	// Return success notification
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -92,6 +99,21 @@ func (h *ServerHandlers) ServerDiscoveryPost(w http.ResponseWriter, r *http.Requ
 		slog.Error("failed to render discovery started notification", "err", err)
 		w.Write([]byte("File discovery started"))
 	}
+}
+
+// ServerDiscoveryErrorAckPost handles POST /dashboard/folder-index-error/ack.
+// Requires authentication. Clears the in-memory manual discovery rebuild error
+// and returns an HTMX 200 so the client can delete the alert via hx-swap.
+func (h *ServerHandlers) ServerDiscoveryErrorAckPost(w http.ResponseWriter, r *http.Request) {
+	if !h.sessionManager.IsAuthenticated(w, r) {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	h.serverControl.SetManualDiscoveryError("")
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
 }
 
 // ServerCacheBatchLoadPost handles POST /server/cache-batch-load requests.

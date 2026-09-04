@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -37,8 +38,7 @@ type RuntimeManager struct {
 	shutdownOnce     sync.Once
 	poolDone         chan struct{}
 
-	galleryStats           *GalleryStats
-	staleCacheDropInFlight atomic.Bool
+	galleryStats *GalleryStats
 
 	testSeams RuntimeManagerTestSeams
 	onListen  func()
@@ -67,11 +67,20 @@ func (m *RuntimeManager) Serve(handler http.Handler, addr string) error {
 	if m.testSeams.BeforeListen != nil {
 		m.testSeams.BeforeListen()
 	}
+	if m.IsRestartRequested() {
+		slog.Info("restart already requested; skipping listen")
+		return nil
+	}
 
 	m.httpServerMu.Lock()
 	m.httpServer = &http.Server{Addr: addr, Handler: handler}
 	httpServer := m.httpServer
 	m.httpServerMu.Unlock()
+
+	if m.IsRestartRequested() {
+		slog.Info("restart already requested; skipping listen")
+		return nil
+	}
 
 	slog.Info("starting web server", "addr", addr)
 
@@ -173,12 +182,7 @@ func environWithSkipStartupDiscovery(env []string) []string {
 // with the exact value "1". Missing keys and other values (e.g. "0") are false.
 func envTruthySkipStartupDiscovery(env []string) bool {
 	prefix := skipStartupDiscoveryEnv + "="
-	for _, kv := range env {
-		if kv == prefix+"1" {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(env, prefix+"1")
 }
 
 // ExecRestart replaces the current process image with a fresh instance.

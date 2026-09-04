@@ -297,8 +297,7 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 
 	applyResult, err := config.ApplyConfig(h.Ctx, h.ConfigService, oldConfig, &newConfig)
 	if err != nil {
-		var validationErr *config.ApplyValidationError
-		if errors.As(err, &validationErr) {
+		if validationErr, ok := errors.AsType[*config.ApplyValidationError](err); ok {
 			w.WriteHeader(http.StatusOK)
 			if renderErr := ui.RenderTemplate(w, "config-validation-error.html.tmpl", map[string]any{
 				"Errors": map[string]string{"_global": validationErr.Error()},

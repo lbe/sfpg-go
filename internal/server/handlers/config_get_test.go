@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -19,12 +20,7 @@ import (
 
 // hasClass reports whether n has the given token in its class attribute.
 func hasClass(n *html.Node, class string) bool {
-	for _, c := range strings.Fields(testutil.GetAttr(n, "class")) {
-		if c == class {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(strings.Fields(testutil.GetAttr(n, "class")), class)
 }
 
 // normalizeSpace collapses whitespace in s to a single space and trims it.

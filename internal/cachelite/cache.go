@@ -5,68 +5,23 @@ package cachelite
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/lbe/sfpg-go/internal/dbconnpool"
 	"github.com/lbe/sfpg-go/internal/gallerydb"
+	"github.com/lbe/sfpg-go/internal/tableswap"
 )
+
+var _ tableswap.DB = (*sql.Conn)(nil) // REQUIRED gate — if this fails to compile, STOP
 
 var (
 	// getHttpCacheSizeBytes is a testable hook for the SUM query used by GetCacheSizeBytes.
 	getHttpCacheSizeBytes = func(ctx context.Context, cpc *dbconnpool.CpConn) (int64, error) {
 		return cpc.Queries.GetHttpCacheSizeBytes(ctx)
 	}
-
-	// txExecContext is a testable hook for (*sql.Tx).ExecContext.
-	txExecContext = (*sql.Tx).ExecContext
-
-	// txCommit is a testable hook for (*sql.Tx).Commit.
-	txCommit = (*sql.Tx).Commit
-
-	// txRollback is a testable hook for (*sql.Tx).Rollback so the defer warning path can be exercised.
-	txRollback = (*sql.Tx).Rollback
 )
-
-var httpCacheIndexDropStatements = []string{
-	"DROP INDEX IF EXISTS idx_http_cache_key",
-	"DROP INDEX IF EXISTS idx_http_cache_path",
-	"DROP INDEX IF EXISTS idx_http_cache_created",
-	"DROP INDEX IF EXISTS idx_http_cache_expires",
-	"DROP INDEX IF EXISTS idx_http_cache_content_length",
-}
-
-var httpCacheIndexCreateStatements = []string{
-	"CREATE INDEX IF NOT EXISTS idx_http_cache_key ON http_cache(key)",
-	"CREATE INDEX IF NOT EXISTS idx_http_cache_path ON http_cache(path)",
-	"CREATE INDEX IF NOT EXISTS idx_http_cache_created ON http_cache(created_at)",
-	"CREATE INDEX IF NOT EXISTS idx_http_cache_expires ON http_cache(expires_at)",
-	"CREATE INDEX IF NOT EXISTS idx_http_cache_content_length ON http_cache(content_length)",
-}
-
-const rotateDropStaleTableSQL = "DROP TABLE IF EXISTS http_cache_to_be_dropped"
-const rotateRenameActiveTableSQL = "ALTER TABLE http_cache RENAME TO http_cache_to_be_dropped"
-const rotateCreateActiveTableSQL = `
-CREATE TABLE IF NOT EXISTS http_cache (
-  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-  key                 TEXT NOT NULL UNIQUE,
-  method              TEXT NOT NULL,
-  path                TEXT NOT NULL,
-  query_string        TEXT,
-  status              INTEGER NOT NULL,
-  content_type        TEXT,
-  cache_control       TEXT,
-  etag                TEXT,
-  last_modified       TEXT,
-  vary                TEXT,
-  body                BLOB NOT NULL,
-  content_length      INTEGER,
-  created_at          INTEGER NOT NULL,
-  expires_at          INTEGER
-)`
 
 // HTTPCacheEntry represents a cached HTTP response.
 type HTTPCacheEntry struct {
@@ -252,73 +207,28 @@ func ClearCache(ctx context.Context, db *dbconnpool.DbSQLConnPool) error {
 	return cpc.Queries.ClearHttpCache(ctx)
 }
 
-// RotateCacheTable atomically swaps out http_cache by renaming the current table,
-// recreating a fresh http_cache table, and rebuilding its indexes.
+// RotateCacheTable replaces http_cache with an empty table via tableswap.
+// It leases one RW connection, runs CloneEmpty and CreateIndexes on it, then
+// calls Swap, which DROP TABLEs http_cache_to_be_dropped and Puts the
+// connection before returning. If CloneEmpty or CreateIndexes fails,
+// RotateCacheTable Puts the connection itself.
 func RotateCacheTable(ctx context.Context, db *dbconnpool.DbSQLConnPool) error {
 	cpc, err := db.Get()
 	if err != nil {
 		return fmt.Errorf("failed to get connection: %w", err)
 	}
-	defer db.Put(cpc)
-
-	tx, err := cpc.Conn.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin rotation transaction: %w", err)
+	if err := tableswap.CloneEmpty(ctx, cpc.Conn, "http_cache"); err != nil {
+		db.Put(cpc)
+		return fmt.Errorf("clone empty http_cache: %w", err)
 	}
-	defer func() {
-		if err := txRollback(tx); err != nil && !errors.Is(err, sql.ErrTxDone) {
-			slog.Warn("cache rotation tx rollback failed", "err", err)
-		}
-	}()
-
-	if _, err := txExecContext(tx, ctx, rotateDropStaleTableSQL); err != nil {
-		return fmt.Errorf("drop previous stale cache table: %w", err)
+	if err := tableswap.CreateIndexes(ctx, cpc.Conn, "http_cache"); err != nil {
+		db.Put(cpc)
+		return fmt.Errorf("create http_cache indexes on dest: %w", err)
 	}
-	if _, err := txExecContext(tx, ctx, rotateRenameActiveTableSQL); err != nil {
-		return fmt.Errorf("rename http_cache to stale table: %w", err)
-	}
-	for _, stmt := range httpCacheIndexDropStatements {
-		if _, err := txExecContext(tx, ctx, stmt); err != nil {
-			return fmt.Errorf("drop stale cache index failed (%s): %w", stmt, err)
-		}
-	}
-	if _, err := txExecContext(tx, ctx, rotateCreateActiveTableSQL); err != nil {
-		return fmt.Errorf("create fresh http_cache table: %w", err)
-	}
-	for _, stmt := range httpCacheIndexCreateStatements {
-		if _, err := txExecContext(tx, ctx, stmt); err != nil {
-			return fmt.Errorf("create cache index failed (%s): %w", stmt, err)
-		}
-	}
-
-	if err := txCommit(tx); err != nil {
-		return fmt.Errorf("commit cache table rotation: %w", err)
+	if err := tableswap.Swap(ctx, cpc, db.Put, "http_cache"); err != nil {
+		return fmt.Errorf("swap http_cache: %w", err)
 	}
 	return nil
-}
-
-// DropStaleCacheTableIfExists removes the deferred stale cache table.
-// Returns true when a stale table was present and dropped.
-func DropStaleCacheTableIfExists(ctx context.Context, db *dbconnpool.DbSQLConnPool) (bool, error) {
-	cpc, err := db.Get()
-	if err != nil {
-		return false, fmt.Errorf("failed to get connection: %w", err)
-	}
-	defer db.Put(cpc)
-
-	row := cpc.Conn.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'http_cache_to_be_dropped')`)
-	var exists int64
-	if err := row.Scan(&exists); err != nil {
-		return false, fmt.Errorf("check stale cache table existence: %w", err)
-	}
-	if exists == 0 {
-		return false, nil
-	}
-
-	if _, err := cpc.Conn.ExecContext(ctx, rotateDropStaleTableSQL); err != nil {
-		return false, fmt.Errorf("drop stale cache table: %w", err)
-	}
-	return true, nil
 }
 
 // EvictLRU removes oldest cache entries until at least targetFreeBytes are available.

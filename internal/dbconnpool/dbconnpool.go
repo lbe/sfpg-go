@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/lbe/sfpg-go/internal/gallerydb"
+	"github.com/lbe/sfpg-go/internal/sqlite3stat"
 )
 
 // Common errors that can be returned by the connection pool.
@@ -104,6 +105,12 @@ type Config struct {
 	HealthCheckThreshold time.Duration
 }
 
+// RW pool recycle thresholds on Put (close instead of returning to idle channel).
+var (
+	rwRecycleMemBytes int64 = 10 * 1024 * 1024
+	rwRecyclePutCount int   = 100
+)
+
 // CpConn wraps an underlying *sql.Conn and holds a set of prepared queries
 // associated with that connection.
 type CpConn struct {
@@ -116,6 +123,9 @@ type CpConn struct {
 	// idleSince tracks when this connection was last returned to the pool.
 	// Used to determine whether a health-check ping is needed on Get().
 	idleSince time.Time
+
+	// putCount is the number of times this connection has been returned via Put.
+	putCount int
 }
 
 // Close closes the underlying connection and its prepared queries.
@@ -464,6 +474,54 @@ retry:
 	}
 }
 
+func (p *DbSQLConnPool) logPut(cpc *CpConn) {
+	ctx := context.Background()
+	attrs := []slog.Attr{
+		slog.String("pool", p.name),
+		slog.Int64("total_puts", ct_put.Load()),
+		slog.Int64("num_connections", p.numConnections.Load()),
+		slog.Int("idle_connections", len(p.connections)),
+	}
+	if slog.Default().Enabled(ctx, slog.LevelDebug) && cpc != nil {
+		attrs = append(attrs, sqlite3stat.PutDebugAttrs(cpc.Conn)...)
+	}
+	slog.LogAttrs(ctx, slog.LevelDebug, "Put connection", attrs...)
+}
+
+func (p *DbSQLConnPool) rwRecycleReason(cpc *CpConn) string {
+	if cpc.putCount > rwRecyclePutCount {
+		return "put_count"
+	}
+	return "db_status_mem"
+}
+
+func (p *DbSQLConnPool) shouldRecycleRWOnPut(cpc *CpConn) bool {
+	if p.name != "RW" {
+		return false
+	}
+	if cpc.putCount > rwRecyclePutCount {
+		return true
+	}
+	mem, ok := sqlite3stat.DBStatusMem(cpc.Conn)
+	return ok && mem > rwRecycleMemBytes
+}
+
+func (p *DbSQLConnPool) recycleRWOnPut(cpc *CpConn) {
+	reason := p.rwRecycleReason(cpc)
+	mem, _ := sqlite3stat.DBStatusMem(cpc.Conn)
+	slog.Debug(
+		"RW connection recycled on Put",
+		"pool", p.name,
+		"reason", reason,
+		"put_count", cpc.putCount,
+		"db_status_mem", mem,
+	)
+	p.numConnections.Add(-1)
+	if err := cpc.Close(); err != nil {
+		slog.Error("Error closing recycled RW connection", "pool", p.name, "err", err)
+	}
+}
+
 // Put returns a connection to the pool for reuse.
 // The connection's idleSince is stamped so that Get() can skip health-check
 // pings for recently-returned connections.
@@ -471,7 +529,11 @@ retry:
 // Safe to call with nil (no-op).
 func (p *DbSQLConnPool) Put(cpc *CpConn) {
 	ct_put.Add(1)
-	slog.Debug("Put connection", "pool", p.name, "total_puts", ct_put.Load(), "num_connections", p.numConnections.Load(), "idle_connections", len(p.connections))
+
+	if cpc != nil {
+		cpc.putCount++
+	}
+	p.logPut(cpc)
 
 	if cpc == nil {
 		return
@@ -484,6 +546,11 @@ func (p *DbSQLConnPool) Put(cpc *CpConn) {
 				"Error closing connection in closed pool", "pool", p.name, "err", err,
 			)
 		}
+		return
+	}
+
+	if p.shouldRecycleRWOnPut(cpc) {
+		p.recycleRWOnPut(cpc)
 		return
 	}
 
@@ -678,7 +745,7 @@ func (p *DbSQLConnPool) monitor() {
 			currentIdle = int64(len(p.connections))
 			excess := currentIdle - minIdle
 		shrinkLoop:
-			for i := int64(0); i < excess; i++ {
+			for range excess {
 				select {
 				case cpc := <-p.connections:
 					cpc.Close()

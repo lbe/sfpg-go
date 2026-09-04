@@ -4,9 +4,12 @@ package cachelite
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/lbe/sfpg-go/internal/dbconnpool"
 )
 
 func TestRotateCacheTable(t *testing.T) {
@@ -42,33 +45,84 @@ func TestRotateCacheTable(t *testing.T) {
 		t.Fatalf("CountCacheEntries after rotation = %d, want 0", count)
 	}
 
-	dropped, err := DropStaleCacheTableIfExists(ctx, db)
-	if err != nil {
-		t.Fatalf("DropStaleCacheTableIfExists first call: %v", err)
-	}
-	if !dropped {
-		t.Fatal("expected DropStaleCacheTableIfExists to return true on first call")
-	}
+	assertTableGone(t, db, "http_cache_to_be_dropped")
 
-	dropped, err = DropStaleCacheTableIfExists(ctx, db)
+	// After rotate, active http_cache must carry explicit indexes covering all columns.
+	cpc, err := db.Get()
 	if err != nil {
-		t.Fatalf("DropStaleCacheTableIfExists second call: %v", err)
+		t.Fatalf("Get: %v", err)
 	}
-	if dropped {
-		t.Fatal("expected DropStaleCacheTableIfExists to return false on second call")
+	defer db.Put(cpc)
+	activeHasHTTPCacheIndexes(t, ctx, cpc.Conn)
+}
+
+func assertTableGone(t *testing.T, db *dbconnpool.DbSQLConnPool, name string) {
+	t.Helper()
+	cpc, err := db.Get()
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	defer db.Put(cpc)
+	var n int64
+	if err := cpc.Conn.QueryRowContext(context.Background(),
+		`SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?)`, name).Scan(&n); err != nil {
+		t.Fatalf("exists %s: %v", name, err)
+	}
+	if n != 0 {
+		t.Fatalf("expected %s gone after Swap, still present", name)
 	}
 }
 
-func TestDropStaleCacheTableIfExists_NoStale(t *testing.T) {
-	db := createTestDBPoolInternal(t)
-	ctx := context.Background()
-
-	dropped, err := DropStaleCacheTableIfExists(ctx, db)
+func activeHasHTTPCacheIndexes(t *testing.T, ctx context.Context, conn *sql.Conn) {
+	t.Helper()
+	rows, err := conn.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='http_cache' AND name NOT LIKE 'sqlite_autoindex_%'`)
 	if err != nil {
-		t.Fatalf("DropStaleCacheTableIfExists: %v", err)
+		t.Fatalf("list indexes: %v", err)
 	}
-	if dropped {
-		t.Fatal("expected DropStaleCacheTableIfExists to return false when no stale table exists")
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			t.Fatalf("scan index: %v", err)
+		}
+		names = append(names, n)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("indexes err: %v", err)
+	}
+	if len(names) == 0 {
+		t.Fatal("expected at least one explicit index on http_cache")
+	}
+	found := map[string]bool{
+		"key": false, "path": false, "created_at": false, "expires_at": false, "content_length": false,
+	}
+	for _, name := range names {
+		info, err := conn.QueryContext(ctx, "PRAGMA index_info("+name+")")
+		if err != nil {
+			t.Fatalf("index_info %s: %v", name, err)
+		}
+		for info.Next() {
+			var seqno, cid int
+			var col string
+			if err := info.Scan(&seqno, &cid, &col); err != nil {
+				info.Close()
+				t.Fatalf("scan index_info: %v", err)
+			}
+			if _, ok := found[col]; ok {
+				found[col] = true
+			}
+		}
+		info.Close()
+	}
+	var missing []string
+	for col, ok := range found {
+		if !ok {
+			missing = append(missing, col)
+		}
+	}
+	if len(missing) > 0 {
+		t.Fatalf("http_cache missing explicit index covering %v; indexes=%v", missing, names)
 	}
 }
 
@@ -164,14 +218,5 @@ func TestRotateCacheTable_ConcurrentTransactionCausesError(t *testing.T) {
 
 	if err := RotateCacheTable(ctx, db); err == nil {
 		t.Fatal("expected RotateCacheTable to return error while another transaction holds the lock")
-	}
-}
-
-func TestDropStaleCacheTableIfExists_ClosedPoolReturnsError(t *testing.T) {
-	db := createTestDBPoolInternal(t)
-	db.Close()
-
-	if _, err := DropStaleCacheTableIfExists(context.Background(), db); err == nil {
-		t.Fatal("expected DropStaleCacheTableIfExists to return error with closed pool")
 	}
 }

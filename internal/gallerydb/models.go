@@ -55,6 +55,17 @@ type File struct {
 	UpdatedAt interface{}
 }
 
+type FileFolderIndex struct {
+	FileID     int64
+	FolderID   int64
+	ImageIndex int64
+	ImageCount int64
+	PrevID     sql.NullInt64
+	NextID     sql.NullInt64
+	FirstID    int64
+	LastID     int64
+}
+
 type FilePath struct {
 	ID   int64
 	Path string
@@ -166,6 +177,7 @@ type ModuleState struct {
 	IsActive       int64
 	LastStartedAt  sql.NullInt64
 	LastFinishedAt sql.NullInt64
+	Payload        sql.NullString
 }
 
 type QcFilePathSubsetFileName struct {

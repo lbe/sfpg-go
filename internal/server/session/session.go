@@ -6,6 +6,7 @@ package session
 import (
 	"fmt"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"strings"
@@ -281,9 +282,7 @@ func (m *Manager) SetAuthenticated(w http.ResponseWriter, r *http.Request, authe
 			return fmt.Errorf("rotate session on login: %w", err)
 		}
 		// Copy user values to the new session.
-		for k, v := range sess.Values {
-			newSess.Values[k] = v
-		}
+		maps.Copy(newSess.Values, sess.Values)
 		sess = newSess
 	}
 

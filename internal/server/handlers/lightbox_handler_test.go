@@ -30,9 +30,7 @@ func hasAttr(n *html.Node, key string) bool {
 
 func TestLightboxByID_NoImages(t *testing.T) {
 	qh := &lightboxNoNav{
-		fakeHandlerQueries: fakeHandlerQueries{
-			fileView: gallerydb.FileView{ID: 1, Path: "test.jpg", FolderID: sql.NullInt64{Int64: 1, Valid: true}},
-		},
+		fileView: gallerydb.FileView{ID: 1, Path: "test.jpg", FolderID: sql.NullInt64{Int64: 1, Valid: true}},
 	}
 	gh := setupTestGalleryHandlers(t, qh)
 
@@ -161,9 +159,7 @@ func TestLightboxByID_FolderViewError(t *testing.T) {
 
 func TestLightboxByID_BreadcrumbError(t *testing.T) {
 	qh := &breadcrumbErrorQueries{
-		fakeHandlerQueries: fakeHandlerQueries{
-			fileView: gallerydb.FileView{ID: 1, Path: "test.jpg", FolderID: sql.NullInt64{Int64: 1, Valid: true}},
-		},
+		fileView: gallerydb.FileView{ID: 1, Path: "test.jpg", FolderID: sql.NullInt64{Int64: 1, Valid: true}},
 	}
 	gh := setupTestGalleryHandlers(t, qh)
 
@@ -197,9 +193,7 @@ func TestLightboxByID_RenderTemplateError(t *testing.T) {
 
 func TestLightboxByID_Success(t *testing.T) {
 	qh := &lightboxNav{
-		fakeHandlerQueries: fakeHandlerQueries{
-			fileView: gallerydb.FileView{ID: 2, Path: "test.jpg", FolderID: sql.NullInt64{Int64: 1, Valid: true}},
-		},
+		fileView: gallerydb.FileView{ID: 2, Path: "test.jpg", FolderID: sql.NullInt64{Int64: 1, Valid: true}},
 		navRow: gallerydb.GetLightboxNavByFileIDRow{
 			CurrentIndex: 1, ImageCount: 3,
 			FirstID: 1, LastID: 3,
@@ -231,9 +225,7 @@ func TestLightboxByID_Success(t *testing.T) {
 
 func TestLightboxByID_WrapsPrevFromFirst(t *testing.T) {
 	qh := &lightboxNav{
-		fakeHandlerQueries: fakeHandlerQueries{
-			fileView: gallerydb.FileView{ID: 1, Path: "test.jpg", FolderID: sql.NullInt64{Int64: 1, Valid: true}},
-		},
+		fileView: gallerydb.FileView{ID: 1, Path: "test.jpg", FolderID: sql.NullInt64{Int64: 1, Valid: true}},
 		navRow: gallerydb.GetLightboxNavByFileIDRow{
 			CurrentIndex: 0, ImageCount: 3,
 			FirstID: 1, LastID: 3,
@@ -280,9 +272,7 @@ func TestLightboxByID_WrapsPrevFromFirst(t *testing.T) {
 
 func TestLightboxByID_WrapsNextFromLast(t *testing.T) {
 	qh := &lightboxNav{
-		fakeHandlerQueries: fakeHandlerQueries{
-			fileView: gallerydb.FileView{ID: 3, Path: "test.jpg", FolderID: sql.NullInt64{Int64: 1, Valid: true}},
-		},
+		fileView: gallerydb.FileView{ID: 3, Path: "test.jpg", FolderID: sql.NullInt64{Int64: 1, Valid: true}},
 		navRow: gallerydb.GetLightboxNavByFileIDRow{
 			CurrentIndex: 2, ImageCount: 3,
 			FirstID: 1, LastID: 3,

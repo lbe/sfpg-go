@@ -53,15 +53,15 @@ func TestProcessingStats_Reset(t *testing.T) {
 		stats.NewlyInserted.Store(30)
 
 		done := make(chan struct{})
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			go func() {
-				for j := 0; j < 100; j++ {
+				for range 100 {
 					stats.Reset()
 				}
 				done <- struct{}{}
 			}()
 			go func() {
-				for j := 0; j < 100; j++ {
+				for range 100 {
 					stats.TotalFound.Add(1)
 					stats.AlreadyExisting.Add(1)
 					stats.NewlyInserted.Add(1)
@@ -70,7 +70,7 @@ func TestProcessingStats_Reset(t *testing.T) {
 			}()
 		}
 
-		for i := 0; i < 20; i++ {
+		for range 20 {
 			<-done
 		}
 
@@ -141,32 +141,26 @@ func TestProcessingStats_ConcurrentAccess(t *testing.T) {
 	stats := &ProcessingStats{}
 
 	var wg sync.WaitGroup
-	for i := 0; i < 5; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := 0; j < 1000; j++ {
+	for range 5 {
+		wg.Go(func() {
+			for range 1000 {
 				stats.TotalFound.Add(1)
 				stats.AlreadyExisting.Add(1)
 				stats.NewlyInserted.Add(1)
 			}
-		}()
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := 0; j < 500; j++ {
+		})
+		wg.Go(func() {
+			for range 500 {
 				stats.Reset()
 			}
-		}()
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := 0; j < 500; j++ {
+		})
+		wg.Go(func() {
+			for range 500 {
 				_ = stats.TotalFound.Load()
 				_ = stats.AlreadyExisting.Load()
 				_ = stats.NewlyInserted.Load()
 			}
-		}()
+		})
 	}
 
 	wg.Wait()

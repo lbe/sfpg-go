@@ -242,9 +242,7 @@ func TestWalkImageDir_BackpressureOnFullQueue(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var consumerWg sync.WaitGroup
-	consumerWg.Add(1)
-	go func() {
-		defer consumerWg.Done()
+	consumerWg.Go(func() {
 		for {
 			select {
 			case <-ctx.Done():
@@ -260,7 +258,7 @@ func TestWalkImageDir_BackpressureOnFullQueue(t *testing.T) {
 				return
 			}
 		}
-	}()
+	})
 
 	// Run the walker — it should complete despite the bounded queue
 	// because the consumer drains items, creating space for backpressure.

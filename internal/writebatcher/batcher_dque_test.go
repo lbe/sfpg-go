@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -1036,7 +1037,7 @@ func TestClose_WithOverflowInFlight(t *testing.T) {
 	var (
 		mu               sync.Mutex
 		flushed          []int
-		successfulSubmit int64
+		successfulSubmit atomic.Int64
 	)
 
 	gate := newFlushGate()
@@ -1088,7 +1089,7 @@ func TestClose_WithOverflowInFlight(t *testing.T) {
 			defer submitWg.Done()
 			err := wb.Submit(inflightItem{Val: 100 + g})
 			if err == nil {
-				atomic.AddInt64(&successfulSubmit, 1)
+				successfulSubmit.Add(1)
 				select {
 				case landed <- struct{}{}:
 				default:
@@ -1117,7 +1118,7 @@ func TestClose_WithOverflowInFlight(t *testing.T) {
 	flushedCount := len(flushed)
 	mu.Unlock()
 
-	totalSubmitted := int(atomic.LoadInt64(&successfulSubmit)) + 7 // 7 pre-Close items
+	totalSubmitted := int(successfulSubmit.Load()) + 7 // 7 pre-Close items
 
 	if flushedCount > totalSubmitted {
 		t.Errorf("flushed %d items but only %d submitted successfully", flushedCount, totalSubmitted)
@@ -2187,5 +2188,65 @@ func TestFlushChannelExit_DQueDequeueError(t *testing.T) {
 	}
 	if wb.PendingCount() != 1 {
 		t.Errorf("expected PendingCount() = 1 (dque item preserved), got %d", wb.PendingCount())
+	}
+}
+
+// TestDrainDQueAll_DoesNotFlushOnInterval is a source guard: after GREEN,
+// the drainDQueAll method must not contain case <-flushTimer.C. It extracts
+// drainDQueAll from its signature to the next top-level method.
+func TestDrainDQueAll_DoesNotFlushOnInterval(t *testing.T) {
+	src, err := os.ReadFile("batcher.go")
+	if err != nil {
+		t.Fatalf("read batcher.go: %v", err)
+	}
+	text := string(src)
+
+	// Extract drainDQueAll from signature to next top-level method.
+	start := strings.Index(text, "func (wb *WriteBatcher[T]) drainDQueAll")
+	if start < 0 {
+		t.Fatal("drainDQueAll not found")
+	}
+	// Find the next top-level method after the signature.
+	rest := text[start:]
+	// Skip past the opening brace: find the first { after the signature.
+	brace := strings.Index(rest, "{")
+	if brace < 0 {
+		t.Fatal("opening brace not found")
+	}
+	body := rest[brace:]
+	// Brace-match to find the closing brace of drainDQueAll.
+	depth := 0
+	end := 0
+	for i, ch := range body {
+		if ch == '{' {
+			depth++
+		} else if ch == '}' {
+			depth--
+			if depth == 0 {
+				end = i + 1
+				break
+			}
+		}
+	}
+	if end == 0 {
+		t.Fatal("could not find end of drainDQueAll")
+	}
+	method := body[:end]
+
+	if strings.Contains(method, "case <-flushTimer.C") {
+		t.Fatal("drainDQueAll still contains case <-flushTimer.C (interval flush must be removed)")
+	}
+}
+
+// TestDrainDQueAll_DoesNotDebugLogEveryDequeue verifies D5: the per-dequeue
+// slog.Debug line is absent from batcher.go. Whole-file absence of the
+// unique literal locks the guard.
+func TestDrainDQueAll_DoesNotDebugLogEveryDequeue(t *testing.T) {
+	src, err := os.ReadFile("batcher.go")
+	if err != nil {
+		t.Fatalf("read batcher.go: %v", err)
+	}
+	if strings.Contains(string(src), `slog.Debug("writebatcher: dque dequeue"`) {
+		t.Fatal("batcher.go still contains per-dequeue slog.Debug(\"writebatcher: dque dequeue\") — D5")
 	}
 }

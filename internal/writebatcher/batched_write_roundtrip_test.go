@@ -198,11 +198,8 @@ func assertFilesFileEqual(t *testing.T, context string, a, b *files.File) {
 		if !bytes.Equal(a.Thumbnail.Bytes(), b.Thumbnail.Bytes()) {
 			aBytes := a.Thumbnail.Bytes()
 			bBytes := b.Thumbnail.Bytes()
-			minLen := len(aBytes)
-			if len(bBytes) < minLen {
-				minLen = len(bBytes)
-			}
-			for i := 0; i < minLen; i++ {
+			minLen := min(len(bBytes), len(aBytes))
+			for i := range minLen {
 				if aBytes[i] != bBytes[i] {
 					t.Errorf("%s: Thumbnail content mismatch at byte %d: got 0x%02x, want 0x%02x", context, i, bBytes[i], aBytes[i])
 					break
@@ -377,7 +374,7 @@ func assertHTTPCacheEntryEqual(t *testing.T, context string, a, b *cachelite.HTT
 	}
 }
 
-func assertInterfaceInt64(t *testing.T, fieldName string, got, want interface{}) {
+func assertInterfaceInt64(t *testing.T, fieldName string, got, want any) {
 	t.Helper()
 	gotInt64, ok := got.(int64)
 	if !ok {
@@ -400,48 +397,48 @@ func assertInterfaceInt64(t *testing.T, fieldName string, got, want interface{})
 func TestGob_SqlNullTypes(t *testing.T) {
 	tests := []struct {
 		name  string
-		value interface{}
-		equal func(a, b interface{}) bool
+		value any
+		equal func(a, b any) bool
 	}{
 		{
 			name:  "NullString valid",
 			value: sql.NullString{String: "hello", Valid: true},
-			equal: func(a, b interface{}) bool {
+			equal: func(a, b any) bool {
 				return a.(sql.NullString) == b.(sql.NullString)
 			},
 		},
 		{
 			name:  "NullString invalid",
 			value: sql.NullString{},
-			equal: func(a, b interface{}) bool {
+			equal: func(a, b any) bool {
 				return a.(sql.NullString) == b.(sql.NullString)
 			},
 		},
 		{
 			name:  "NullInt64 valid",
 			value: sql.NullInt64{Int64: 42, Valid: true},
-			equal: func(a, b interface{}) bool {
+			equal: func(a, b any) bool {
 				return a.(sql.NullInt64) == b.(sql.NullInt64)
 			},
 		},
 		{
 			name:  "NullInt64 invalid",
 			value: sql.NullInt64{},
-			equal: func(a, b interface{}) bool {
+			equal: func(a, b any) bool {
 				return a.(sql.NullInt64) == b.(sql.NullInt64)
 			},
 		},
 		{
 			name:  "NullFloat64 valid",
 			value: sql.NullFloat64{Float64: 3.14, Valid: true},
-			equal: func(a, b interface{}) bool {
+			equal: func(a, b any) bool {
 				return a.(sql.NullFloat64) == b.(sql.NullFloat64)
 			},
 		},
 		{
 			name:  "NullFloat64 invalid",
 			value: sql.NullFloat64{},
-			equal: func(a, b interface{}) bool {
+			equal: func(a, b any) bool {
 				return a.(sql.NullFloat64) == b.(sql.NullFloat64)
 			},
 		},
@@ -520,7 +517,7 @@ func TestGob_UpsertThumbnailReturningIDParams_InterfaceFields(t *testing.T) {
 
 func TestGob_Int64RegisteredForInterfaceFields(t *testing.T) {
 	type testStruct struct {
-		Value interface{}
+		Value any
 	}
 	s := testStruct{Value: int64(42)}
 

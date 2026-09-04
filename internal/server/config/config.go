@@ -110,6 +110,12 @@ type Config struct {
 	// Discovery settings (runtime)
 	RunFileDiscovery bool
 
+	// RestartAfterDiscovery, when true, requests a process restart after the
+	// startup TriggerDiscovery returns (walk, drain, and file_folder_index
+	// rebuild). Default false. Hot-reloadable; read after that return.
+	// Does not apply to POST /server/discovery.
+	RestartAfterDiscovery bool
+
 	// DiscoveryQueueMax is currently a no-op: the discovery work queue is a
 	// dedicated disk-backed dque (wipe-on-start), so SubsystemManager.Start
 	// ignores this field. It is retained for later removal and no longer bounds
@@ -188,8 +194,9 @@ func DefaultConfig() *Config {
 		HTTPCacheBodyCodec:                    "zstd-1",
 
 		// Discovery
-		RunFileDiscovery:  true,
-		DiscoveryQueueMax: 0, // no-op; Start ignores this field (see DiscoveryQueueMax godoc)
+		RunFileDiscovery:      true,
+		RestartAfterDiscovery: false,
+		DiscoveryQueueMax:     0, // no-op; Start ignores this field (see DiscoveryQueueMax godoc)
 
 		// Security
 		LockoutDuration:     3600, // 1 hour

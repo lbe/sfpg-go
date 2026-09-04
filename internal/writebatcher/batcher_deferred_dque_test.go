@@ -62,3 +62,57 @@ func TestDeferDQueDrain_HoldsUntilStartDQueDrain(t *testing.T) {
 	t.Fatalf("dque item not flushed after StartDQueDrain: flushed=%d pending=%d",
 		flushed.Load(), wb.PendingCount())
 }
+
+// TestDrainDQueAll_DrainEndFlushesLeftoverWhenDrained verifies that after
+// a drain that dequeued items, the leftover batch is flushed via drain_end
+// without waiting for FlushInterval.
+func TestDrainDQueAll_DrainEndFlushesLeftoverWhenDrained(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+
+	// Pre-seed dque with N items.
+	dq, err := dque.NewOrOpen[int]("writebatcher", dir, 250)
+	if err != nil {
+		t.Fatalf("dque.NewOrOpen: %v", err)
+	}
+	const N = 3
+	for i := range N {
+		v := i
+		if enqErr := dq.Enqueue(&v); enqErr != nil {
+			t.Fatalf("Enqueue: %v", enqErr)
+		}
+	}
+	if closeErr := dq.Close(); closeErr != nil {
+		t.Fatalf("Close: %v", closeErr)
+	}
+
+	var flushed atomic.Int32
+	wb, err := New(ctx, Config[int]{
+		BeginTx:     func(ctx context.Context) (*sql.Tx, error) { return nil, nil },
+		Flush:       func(ctx context.Context, tx *sql.Tx, batch []int) error { flushed.Add(int32(len(batch))); return nil },
+		DQueDirPath: dir,
+		// MaxBatchSize large so size-limit flush does not fire.
+		MaxBatchSize:  100,
+		FlushInterval: 10 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer wb.Close()
+
+	// drain_end must flush the N items in one batch well before FlushInterval.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if flushed.Load() > 0 && wb.PendingCount() == 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if got := flushed.Load(); got != N {
+		t.Errorf("flushed = %d, want %d (drain_end should flush leftover)", got, N)
+	}
+	if pc := wb.PendingCount(); pc != 0 {
+		t.Errorf("PendingCount() = %d, want 0", pc)
+	}
+}

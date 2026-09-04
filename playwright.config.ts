@@ -1,4 +1,8 @@
+import path from "path";
+
 import { defineConfig, devices } from "@playwright/test";
+
+const authFile = path.join("tmp", "playwright", ".auth", "admin.json");
 
 /**
  * Read environment variables from file.
@@ -20,7 +24,7 @@ export default defineConfig({
   /* Fail the build on CI if you accidentally left test.only in the source code. */
   forbidOnly: !!process.env.CI,
   /* Retry on CI only */
-  retries: process.env.CI ? 2 : 1,
+  retries: process.env.CI ? 2 : 0,
   /* Limit parallel workers locally to avoid overloading the dev server. */
   workers: process.env.CI ? 1 : 6,
   /* Reporter to use. See https://playwright.dev/docs/test-reporters */
@@ -37,6 +41,10 @@ export default defineConfig({
   /* Configure projects for major browsers */
   projects: [
     {
+      name: "setup",
+      testMatch: /auth\.setup\.ts/,
+    },
+    {
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
       // Config, server-actions, and the htmx restart-alert fixture run in
@@ -46,7 +54,11 @@ export default defineConfig({
     },
     {
       name: "chromium-serial",
-      use: { ...devices["Desktop Chrome"] },
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: authFile,
+      },
+      dependencies: ["setup"],
       testMatch:
         /config\.spec\.ts|server-actions\.spec\.ts|htmx-restart-alert\.spec\.ts/,
       fullyParallel: false,

@@ -145,13 +145,11 @@ func (m *Manager) Run(ctx context.Context) error {
 	}
 
 	for i := 0; i < maxWorkers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for j := range jobs {
 				m.runJob(ctx, j, queries, cfg, metrics)
 			}
-		}()
+		})
 	}
 
 	queryStr := "v=" + etagVersion

@@ -205,8 +205,12 @@ func CreateApp(t testing.TB, opts ...AppOption) *App {
 
 	app.SubsystemManager.q = queue.NewQueue[string](10_000)
 
-	// Initialize FileProcessor for tests
-	app.SubsystemManager.fileProcessor = files.NewFileProcessor(app.dbRoPool, app.dbRwPool, app.ImporterFactory, app.imagesDir, newFileBatcher(app.writeBatcher))
+	// Initialize FileProcessor for tests with the SAME adapter and the SAME
+	// InfrastructureService atomics used by SubsystemManager.Start, so the
+	// OnSuccess inflight decrement and a rebuild wait target the live counters.
+	fb := newFileBatcher(app.writeBatcher, &app.folderIndexInflight, &app.folderIndexRebuildActive, &app.folderIndexRebuildScanHeld, &app.folderIndexGeneration)
+	app.SubsystemManager.unifiedBatcher = fb
+	app.SubsystemManager.fileProcessor = files.NewFileProcessor(app.dbRoPool, app.dbRwPool, app.ImporterFactory, app.imagesDir, fb)
 
 	if cfg.startPool {
 		app.SubsystemManager.pool.MinWorkers = 1

@@ -136,12 +136,12 @@ func TestMapDiscoveryDequeueResult(t *testing.T) {
 		},
 		{
 			name:    "present item with nil err returns item",
-			ptr:     strPtr("/a.jpg"),
+			ptr:     new("/a.jpg"),
 			wantVal: "/a.jpg",
 		},
 		{
 			name:    "present item with cleanup err keeps item (no drop)",
-			ptr:     strPtr("/b.png"),
+			ptr:     new("/b.png"),
 			err:     cleanupErr,
 			wantVal: "/b.png",
 		},
@@ -162,8 +162,4 @@ func TestMapDiscoveryDequeueResult(t *testing.T) {
 			}
 		})
 	}
-}
-
-func strPtr(s string) *string {
-	return &s
 }

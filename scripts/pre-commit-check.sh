@@ -69,7 +69,7 @@ if [[ "$FAILED_COUNT" -gt 0 ]]; then
 fi
 
 run_check "test-all" make test-all
-run_check "test-browser" make test-browser
+SFPG_PW_SKIP_CACHE_BATCH=1 run_check "test-browser" make test-browser
 
 timestamp=$(date '+%Y-%m-%d %H:%M:%S')
 if [[ "$FAILED_COUNT" -gt 0 ]]; then

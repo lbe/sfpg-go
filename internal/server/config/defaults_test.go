@@ -152,6 +152,13 @@ func TestDiscoveryEnabled_ByDefault(t *testing.T) {
 	}
 }
 
+func TestDefaultConfig_RestartAfterDiscovery(t *testing.T) {
+	defaults := DefaultConfig()
+	if defaults.RestartAfterDiscovery {
+		t.Fatal("RestartAfterDiscovery should be false by default in config.DefaultConfig()")
+	}
+}
+
 func TestDefaultConfig_CacheEnabledByDefault(t *testing.T) {
 	cfg := DefaultConfig()
 	if !cfg.EnableHTTPCache {

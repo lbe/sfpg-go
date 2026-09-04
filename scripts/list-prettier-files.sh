@@ -4,9 +4,30 @@
 
 set -euo pipefail
 
-find . \( \
+# Do not descend into other filesystems (e.g. worktree bind mounts). GNU find: -xdev; BSD: -x.
+find_xdev_flag() {
+	local probe
+	if probe=$(command -v find); [[ -z "$probe" ]]; then
+		return 0
+	fi
+	if "$probe" . -xdev -maxdepth 0 >/dev/null 2>&1; then
+		echo -xdev
+	elif "$probe" . -x -maxdepth 0 >/dev/null 2>&1; then
+		echo -x
+	fi
+}
+
+XDEV=$(find_xdev_flag)
+FIND_ARGS=()
+if [[ -n "$XDEV" ]]; then
+	FIND_ARGS+=("$XDEV")
+fi
+
+find . "${FIND_ARGS[@]}" \( \
   -path './.git' -o \
   -path './.agents' -o \
+  -path './.worktrees' -o \
+  -path './.worktrees/*' -o \
   -path './node_modules' -o \
   -path './bin' -o \
   -path './tmp' -o \
@@ -17,6 +38,12 @@ find . \( \
   -path './scripts/perf-test/attacks' -o \
   -path './results' -o \
   -path './results/*' -o \
+  -path './results.*' -o \
+  -path './results.*/*' -o \
+  -path './playwright-report' -o \
+  -path './playwright-report/*' -o \
+  -path './test-results' -o \
+  -path './test-results/*' -o \
   -path '*/testdata' -o \
   -path '*/testdata/*' \
   \) -prune -o \

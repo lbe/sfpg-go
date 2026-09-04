@@ -2,8 +2,7 @@
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/lbe/sfpg-go.svg)](https://pkg.go.dev/github.com/lbe/sfpg-go)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Go Version](https://img.shields.io/badge/Go-1.26.0-blue.svg)](https://go.dev/dl/)
-[![Go Report Card](https://goreportcard.com/badge/github.com/lbe/sfpg-go)](https://goreportcard.com/report/github.com/lbe/sfpg-go)
+[![Go Version](https://img.shields.io/badge/Go-1.27.0-blue.svg)](https://go.dev/dl/)
 [![Release](https://github.com/lbe/sfpg-go/actions/workflows/releases.yml/badge.svg)](https://github.com/lbe/sfpg-go/actions/workflows/releases.yml)
 [![CI](https://github.com/lbe/sfpg-go/actions/workflows/ci.yml/badge.svg)](https://github.com/lbe/sfpg-go/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/lbe/sfpg-go/branch/main/graph/badge.svg)](https://codecov.io/gh/lbe/sfpg-go)
@@ -96,11 +95,11 @@ That's it! Open `http://localhost:8081` in your browser and log in with:
 - **Web-Based Configuration:** Update administrator credentials, session settings, and login security through the web UI.
 - **Self-Contained Deployment:** The compiled binary includes all necessary assets and migrations, requiring no external file dependencies to run.
 - **Live-Reload for Development:** Includes an `air` configuration for a smooth development workflow.
-- **Robust Testing:** Comprehensive test suite with unit, integration, e2e, and browser tests; **23** root `internal/server/*_test.go` files; optional test doubles in `internal/server/testseams.go`.
+- **Robust Testing:** Comprehensive test suite with unit, integration, e2e, and browser tests; **27** root `internal/server/*_test.go` files; optional test doubles in `internal/server/testseams.go`.
 
 ## Technology Stack
 
-- **Backend:** Go 1.26 or later
+- **Backend:** Go 1.27 or later
 - **Database:** SQLite (for thumbnail data, configuration, response caching, etc.)
 - **Frontend:**
   - Go HTML Templates (`html/template`) for server-side rendering.
@@ -113,7 +112,7 @@ That's it! Open `http://localhost:8081` in your browser and log in with:
 
 ### Prerequisites
 
-- Go 1.26 or later.
+- Go 1.27 or later.
 - (For development) `air` for live reloading.
 - (For development) `golangci-lint` for code linting.
 - (For development) Node.js & npm for Prettier (code formatting).
@@ -225,7 +224,7 @@ The project includes a Makefile with common development tasks:
 make test         # Run tests for all packages (PKG=./... by default)
 make test-all     # Run unit, integration, e2e, and e2eweb tests across all packages
 make test-race    # Run tests with race detector
-make test-browser # Run Playwright browser tests
+make test-browser # Run Playwright browser tests (set SFPG_PW_SKIP_CACHE_BATCH=1 to skip post-run cache batch load in teardown)
 
 # Code quality
 make lint                          # Run golangci-lint (required before commits)
@@ -548,24 +547,22 @@ The application is organized with a clear separation of concerns, with most of t
   - `conditional/`: Pure helper package for ETag/304 handling.
   - `config/`: Configuration service (load, save, validate, export, import, restore).
   - `database/`: Database setup, migrations, and connection-pool configuration.
-  - `files/`: File processing service (discovery, MIME detection, EXIF, thumbnail generation).
-  - `handlers/`: Domain-specific HTTP handlers (auth, gallery, config, dashboard, server, theme, menu, health).
+  - `files/`: File processing service (discovery, MIME detection, EXIF, thumbnail generation) and `file_folder_index` rebuild via `tableswap`.
+  - `handlers/`: Domain-specific HTTP handlers (auth, gallery, config, dashboard, server, theme, menu, health); theme and menu handlers live here (not separate subpackages).
   - `interfaces/`: Shared interfaces such as `HandlerQueries` to avoid circular imports.
   - `logging/`: Bootstrap logging setup.
-  - `menu/`: Session-aware hamburger-menu rendering.
   - `metrics/`: Runtime metrics collection.
-  - `middleware/`: Reusable middleware (auth, conditional, logging); COP is wired in `router.go`.
+  - `middleware/`: Reusable middleware (auth, conditional, logging, loopback); COP is wired in `router.go` via `http.CrossOriginProtection`.
   - `modulestate/`: Tracks active background modules (discovery, cache batch load).
   - `pathutil/`: Path-manipulation utilities with path-traversal checks.
   - `security/`: Per-IP login rate limiting (`IPRateLimiter`), lockout thresholds, unlock tasks, and security helpers.
   - `session/`: Session management and CSRF helpers.
-  - `subsystem/`: Background subsystem coordination helpers.
   - `template/`: Template data helpers.
-  - `theme/`: Theme selection handlers.
   - `ui/`: Template parsing and rendering logic.
   - `validation/`: Input validation rules.
 - **`internal/`**: Reusable infrastructure packages.
-  - `cachelite`: The SQLite-backed HTTP response cache middleware.
+  - `cachelite`: The SQLite-backed HTTP response cache middleware. `RotateCacheTable` uses `tableswap` (`CloneEmpty` → `CreateIndexes` → `Swap`); `Swap` drops `http_cache_to_be_dropped` before it returns.
+  - `tableswap`: Atomic SQLite table rotation (`CloneEmpty`, `CreateIndexes`, `Swap`) used by HTTP cache and `file_folder_index`.
   - `writebatcher`: Generic batched database writer (used by the unified server batcher), with optional persistent on-disk overflow queue.
   - `dque`: Generic, segment-backed persistent on-disk FIFO queue used by `writebatcher` for overflow and crash recovery.
   - `flock`: Minimal cross-platform file locking (flock on Unix, `LockFileEx` on Windows) used by `dque`.
@@ -583,6 +580,8 @@ The application is organized with a clear separation of concerns, with most of t
   - `imagemeta`: EXIF/IPTC/XMP metadata extraction.
   - `multihandler`: Multi-handler structured logging (console + file).
   - `profiler`: Optional CPU/memory/block profiling via config.
+  - `rssmonitor`: Optional Linux process RSS monitor for debug logging.
+  - `sqlite3stat`: SQLite connection memory-status helpers for pool observability.
   - `coords`: Parsing of geographic coordinates (for EXIF GPS data).
   - `humanize`: Human-readable number/byte formatting for the UI.
   - `log`: Structured logging wrappers.

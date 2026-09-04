@@ -8,8 +8,9 @@ BENCH_DIR := bench
 BENCH_OUT := $(BENCH_DIR)/server-bench-$(STAMP).txt
 
 PRETTIER := ./node_modules/.bin/prettier
-PRETTIER_CACHE := node_modules/.cache/prettier
-PRETTIER_FLAGS := --cache --cache-location $(PRETTIER_CACHE)
+# Cache file (Prettier default layout: .cache/.prettier-cache). Do not use node_modules/.cache/prettier — that path was a stray file.
+PRETTIER_CACHE_FILE := node_modules/.cache/.prettier-cache
+PRETTIER_FLAGS := --cache --cache-location $(PRETTIER_CACHE_FILE)
 
 .PHONY: help
 help:
@@ -147,7 +148,8 @@ format fmt:
 	# Format Go source files with gofmt
 	@git ls-files '*.go' | grep -Ev '^(tmp/|zarchive/)' | xargs gofmt -w
 	# Format templates, styles, scripts, markdown, yaml, etc. via Prettier
-	@./scripts/list-prettier-files.sh | xargs -0 -r $(PRETTIER) $(PRETTIER_FLAGS) --write
+	@mkdir -p node_modules/.cache
+	@set -o pipefail; ./scripts/list-prettier-files.sh | xargs -0 -r $(PRETTIER) $(PRETTIER_FLAGS) --write
 
 .PHONY: format-check fmt-check
 format-check fmt-check:
@@ -159,7 +161,8 @@ format-check fmt-check:
 		echo "Go files are properly formatted."; \
 	fi
 	# Check Prettier formatting (find includes untracked files; mirrors .prettierignore)
-	@./scripts/list-prettier-files.sh | xargs -0 -r $(PRETTIER) $(PRETTIER_FLAGS) --check
+	@mkdir -p node_modules/.cache
+	@set -o pipefail; ./scripts/list-prettier-files.sh | xargs -0 -r $(PRETTIER) $(PRETTIER_FLAGS) --check
 
 # Performance testing targets
 .PHONY: perf-test

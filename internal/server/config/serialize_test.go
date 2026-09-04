@@ -100,7 +100,7 @@ func TestJSONSerialization(t *testing.T) {
 // TestValidate_InvalidPort verifies that Validate rejects invalid port values.
 
 func TestApplyYAMLValues_EnableCachePreload(t *testing.T) {
-	raw := map[string]interface{}{"enable-cache-preload": false}
+	raw := map[string]any{"enable-cache-preload": false}
 	cfg := DefaultConfig()
 	if err := applyYAMLValues(cfg, raw); err != nil {
 		t.Fatalf("applyYAMLValues failed: %v", err)
@@ -119,6 +119,26 @@ func TestConfig_ToMap_EnableCachePreload(t *testing.T) {
 	}
 }
 
+func TestApplyYAMLValues_RestartAfterDiscovery(t *testing.T) {
+	raw := map[string]any{"restart-after-discovery": true}
+	cfg := DefaultConfig()
+	if err := applyYAMLValues(cfg, raw); err != nil {
+		t.Fatalf("applyYAMLValues failed: %v", err)
+	}
+	if !cfg.RestartAfterDiscovery {
+		t.Fatalf("expected RestartAfterDiscovery true, got false")
+	}
+}
+
+func TestConfig_ToMap_RestartAfterDiscovery(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.RestartAfterDiscovery = true
+	m := cfg.ToMap()
+	if v, ok := m["restart_after_discovery"]; !ok || v != "true" {
+		t.Errorf("ToMap() restart_after_discovery = %q (ok=%v), want \"true\"", v, ok)
+	}
+}
+
 func TestConfig_ToMap_MaxHTTPCacheEntryInsertPerTransaction(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.MaxHTTPCacheEntryInsertPerTransaction = 25
@@ -129,7 +149,7 @@ func TestConfig_ToMap_MaxHTTPCacheEntryInsertPerTransaction(t *testing.T) {
 }
 
 func TestApplyYAMLValues(t *testing.T) {
-	raw := map[string]interface{}{
+	raw := map[string]any{
 		"listener-port": 9091,
 		"log-level":     "warn",
 	}
@@ -146,7 +166,7 @@ func TestApplyYAMLValues(t *testing.T) {
 }
 
 func TestApplyYAMLValues_UnknownKey(t *testing.T) {
-	raw := map[string]interface{}{"unknown-key": "value"}
+	raw := map[string]any{"unknown-key": "value"}
 	cfg := DefaultConfig()
 	// Unknown keys are silently skipped; the config must be unchanged.
 	if err := applyYAMLValues(cfg, raw); err != nil {
@@ -280,7 +300,7 @@ func TestLoadFromYAML_InvalidConfigFile(t *testing.T) {
 }
 
 func TestApplyYAMLValues_InvalidDuration(t *testing.T) {
-	raw := map[string]interface{}{"cache-max-time": "not-a-duration"}
+	raw := map[string]any{"cache-max-time": "not-a-duration"}
 	cfg := DefaultConfig()
 	if err := applyYAMLValues(cfg, raw); err == nil {
 		t.Fatal("expected error for invalid duration, got nil")
@@ -293,7 +313,7 @@ func TestApplyYAMLValues_InvalidDuration(t *testing.T) {
 func TestInvalidYAMLCacheMaxTimeCausesApplyErrorButLoadFromYAMLLogsAndContinues(t *testing.T) {
 	// applyYAMLValues must surface an error for unparseable duration values.
 	cfg := DefaultConfig()
-	raw := map[string]interface{}{"cache-max-time": "notaduration"}
+	raw := map[string]any{"cache-max-time": "notaduration"}
 	if err := applyYAMLValues(cfg, raw); err == nil {
 		t.Fatal("applyYAMLValues should return an error for invalid cache-max-time")
 	}

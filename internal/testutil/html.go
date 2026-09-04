@@ -3,6 +3,7 @@ package testutil
 
 import (
 	"io"
+	"slices"
 	"strings"
 
 	"golang.org/x/net/html"
@@ -18,13 +19,7 @@ func FindElementByID(n *html.Node, id string) *html.Node {
 // FindElementByClass finds the first element containing the given class.
 func FindElementByClass(n *html.Node, class string) *html.Node {
 	return FindElement(n, func(n *html.Node) bool {
-		classes := strings.Fields(GetAttr(n, "class"))
-		for _, c := range classes {
-			if c == class {
-				return true
-			}
-		}
-		return false
+		return slices.Contains(strings.Fields(GetAttr(n, "class")), class)
 	})
 }
 

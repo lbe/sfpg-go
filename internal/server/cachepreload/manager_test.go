@@ -1,7 +1,10 @@
 package cachepreload
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -124,18 +127,33 @@ func TestPreloadManager_Shutdown(t *testing.T) {
 	}
 }
 
+func TestPreloadManager_Shutdown_DoesNotWarnWhileStartRunning(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	pm := NewPreloadManager([]string{"/gallery/"}, true)
+	requireScheduler(t, pm)
+	time.Sleep(20 * time.Millisecond)
+
+	pm.Shutdown()
+
+	if strings.Contains(buf.String(), "cannot shutdown scheduler while it is running") {
+		t.Fatalf("Shutdown logged ErrSchedulerRunning:\n%s", buf.String())
+	}
+}
+
 func TestPreloadManager_ConcurrentSetEnabled(t *testing.T) {
 	pm := NewPreloadManager([]string{"/gallery/"}, true)
 	defer pm.Shutdown()
 
 	var wg sync.WaitGroup
 	for range 20 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			pm.SetEnabled(true)
 			pm.SetEnabled(false)
-		}()
+		})
 	}
 	wg.Wait()
 	// No race, no panic

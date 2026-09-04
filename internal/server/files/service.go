@@ -53,7 +53,15 @@ type ImporterFactory func(conn *sql.Conn, q *gallerydb.CustomQueries) Importer
 // This avoids circular dependency (files importing server).
 type UnifiedBatcher interface {
 	SubmitFile(file *File) error
+	SubmitFolderIndex(row FolderIndexRow) error
 	PendingCount() int64
+	FolderIndexInflight() int64
+	SetFolderIndexRebuildActive(active bool)
+	BumpFolderIndexGeneration() int64
+	// SetFolderIndexRebuildScanHeld marks the RO scan cursor open/closed during a
+	// rebuild. While held, the infrastructure service skips WAL TRUNCATE
+	// checkpoints (the cursor pins the WAL write lock).
+	SetFolderIndexRebuildScanHeld(held bool)
 }
 
 type fileProcessor struct {

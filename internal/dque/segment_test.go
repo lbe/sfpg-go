@@ -292,8 +292,7 @@ func TestSegment_ErrUnableToDecode(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for undecodable object")
 	}
-	var decodeErr ErrUnableToDecode
-	if !errors.As(err, &decodeErr) {
+	if _, ok := errors.AsType[ErrUnableToDecode](err); !ok {
 		t.Fatalf("expected ErrUnableToDecode but got %T: %s", err, err)
 	}
 }
@@ -318,8 +317,7 @@ func TestSegment_ExcessDeletionRecords(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for excess deletion records")
 	}
-	var corrupted ErrCorruptedSegment
-	if !errors.As(err, &corrupted) {
+	if _, ok := errors.AsType[ErrCorruptedSegment](err); !ok {
 		t.Fatalf("expected ErrCorruptedSegment but got %T: %s", err, err)
 	}
 }

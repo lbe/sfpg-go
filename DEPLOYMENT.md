@@ -46,6 +46,25 @@ Example:
 ./sfpg-go -port 8081 -discover=true -cache-preload=true
 ```
 
+## Operations
+
+### Migration 020 (`file_folder_index`)
+
+Migration 020 adds the `file_folder_index` table for fast image folder navigation. On large galleries the initial backfill is CPU-intensive and blocks startup. Plan a maintenance window for the first deploy.
+
+#### Within-discovery staleness
+
+From walk enqueue through drain until the `file_folder_index` rebuild completes, newly discovered files are **not** in the index. During this window:
+
+- The info box may show `imageIndex = -1` / `imageCount = 0` (HTTP 200).
+- The lightbox may return 404 until the rebuild finishes.
+
+Manual discovery during peak traffic may briefly expose stale nav until the rebuild completes.
+
+#### Post-rollback cleanup
+
+If rolling back past Migration 020 (`migrate.Steps(-1)` / `Migrate(19)`), wait for the stale `file_folder_index_to_be_dropped` table to be dropped by the async cleanup goroutine, or drop it manually before running the reverse migration.
+
 ## Required Environment
 
 - `SEPG_SESSION_SECRET` (required): A strong random secret for session cookies.

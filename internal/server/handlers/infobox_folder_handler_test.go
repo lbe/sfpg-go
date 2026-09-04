@@ -62,9 +62,7 @@ func TestInfoBoxFolder_DBError(t *testing.T) {
 func TestInfoBoxFolder_LastModifiedAndCounts(t *testing.T) {
 	updatedAt := time.Date(2026, 2, 12, 10, 0, 0, 0, time.UTC).Unix()
 	qh := &infoBoxFolderQueries{
-		fakeHandlerQueries: fakeHandlerQueries{
-			folder: gallerydb.Folder{ID: 1, Name: "Test Folder", UpdatedAt: updatedAt},
-		},
+		folder: gallerydb.Folder{ID: 1, Name: "Test Folder", UpdatedAt: updatedAt},
 		infoCounts: gallerydb.GetFolderInfoCountsByIDRow{
 			DirCount:   1,
 			ImageCount: 1,

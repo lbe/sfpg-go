@@ -18,6 +18,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -29,8 +30,12 @@ import (
 	"github.com/lbe/sfpg-go/internal/scheduler"
 	"github.com/lbe/sfpg-go/internal/server/config"
 	"github.com/lbe/sfpg-go/internal/server/database"
+	"github.com/lbe/sfpg-go/internal/server/files"
+	"github.com/lbe/sfpg-go/internal/server/metrics"
 	"github.com/lbe/sfpg-go/internal/server/ui"
+	"github.com/lbe/sfpg-go/internal/testutil"
 	"github.com/lbe/sfpg-go/internal/workerpool"
+	"github.com/lbe/sfpg-go/web"
 )
 
 // createStartedApp returns a fully-started app with worker pool running.
@@ -2130,7 +2135,7 @@ func TestApp_Run_SkipsStartupDiscoveryWhenSkipEnvSet(t *testing.T) {
 	// Run launches discovery in a goroutine when skip fails, so wait on the
 	// seam instead of sampling a bool immediately after Run returns.
 	discoveryCalled := make(chan struct{})
-	app.testSeams.TriggerDiscovery = func() { close(discoveryCalled) }
+	app.testSeams.TriggerDiscovery = func(ctx context.Context) error { close(discoveryCalled); return nil }
 
 	serveHook := &recordingServeHook{}
 	app.testSeams.Serve = serveHook.Serve
@@ -2165,7 +2170,7 @@ func TestApp_Run_TriggersStartupDiscoveryWhenSkipEnvUnset(t *testing.T) {
 	app.setRootDir(&tempDir)
 
 	discoveryCalled := make(chan struct{})
-	app.testSeams.TriggerDiscovery = func() { close(discoveryCalled) }
+	app.testSeams.TriggerDiscovery = func(ctx context.Context) error { close(discoveryCalled); return nil }
 
 	serveHook := &recordingServeHook{}
 	app.testSeams.Serve = serveHook.Serve
@@ -2267,7 +2272,13 @@ func TestApp_Run_DiscoveryMonitor_CompletionLog(t *testing.T) {
 
 	// Stub out real directory walking: the completion monitor only needs
 	// the fake sender/stats below, and real discovery would race this test.
-	app.testSeams.TriggerDiscovery = func() {}
+	app.testSeams.TriggerDiscovery = func(ctx context.Context) error { return nil }
+
+	var rebuildCalls atomic.Int32
+	app.testSeams.RebuildFileFolderIndex = func(context.Context, *dbconnpool.DbSQLConnPool) error {
+		rebuildCalls.Add(1)
+		return nil
+	}
 
 	// Pretend a discovery sender is active so the monitor enters the end-loop.
 	app.SubsystemManager.qSendersActive.Store(1)
@@ -2306,6 +2317,347 @@ func TestApp_Run_DiscoveryMonitor_CompletionLog(t *testing.T) {
 	logs := readStartupLogs(t, app)
 	if !strings.Contains(logs, "File processing completed") {
 		t.Errorf("expected 'File processing completed' log, got: %s", logs)
+	}
+	if rebuildCalls.Load() != 0 {
+		t.Errorf("expected 0 rebuild calls during startup monitor, got %d", rebuildCalls.Load())
+	}
+	if app.IsRestartRequested() {
+		t.Error("IsRestartRequested should be false when restart_after_discovery is off")
+	}
+}
+
+// TestApp_Run_RestartAfterDiscovery verifies that with
+// restart_after_discovery=true, Run calls TriggerRestart only after
+// TriggerDiscovery returns (walk, drain, file_folder_index rebuild).
+// TriggerDiscovery is not stubbed. RebuildFileFolderIndex is stubbed only
+// to assert ordering. Serve is stubbed so production ListenAndServe is not
+// required; ExecRestart is stubbed so Run can complete.
+func TestApp_Run_RestartAfterDiscovery(t *testing.T) {
+	tempDir := t.TempDir()
+	imagesDir := filepath.Join(tempDir, "Images")
+	if err := os.MkdirAll(imagesDir, 0o755); err != nil {
+		t.Fatalf("mkdir Images: %v", err)
+	}
+
+	opt := getopt.Opt{
+		SessionSecret:    getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true},
+		RunFileDiscovery: getopt.OptBool{Bool: true, IsSet: true},
+	}
+	app := New(opt, "x.y.z")
+	defer app.Shutdown()
+
+	app.setRootDir(&tempDir)
+
+	app.testSeams.LoadConfig = func() (*config.Config, error) {
+		cfg := validConfigWithImageDir(tempDir)
+		cfg.RunFileDiscovery = true
+		cfg.RestartAfterDiscovery = true
+		return cfg, nil
+	}
+
+	var rebuildCalls atomic.Int32
+	var restartDuringRebuild atomic.Bool
+	app.testSeams.RebuildFileFolderIndex = func(context.Context, *dbconnpool.DbSQLConnPool) error {
+		if app.IsRestartRequested() {
+			restartDuringRebuild.Store(true)
+		}
+		rebuildCalls.Add(1)
+		// Give a wrongly-wired drain monitor time to fire TriggerRestart.
+		time.Sleep(200 * time.Millisecond)
+		if app.IsRestartRequested() {
+			restartDuringRebuild.Store(true)
+		}
+		return nil
+	}
+
+	execCalled := false
+	app.RuntimeManager.testSeams.Executable = func() (string, error) {
+		return "/tmp/test-exe", nil
+	}
+	app.RuntimeManager.testSeams.ExecCommand = func(path string, args []string, env []string) error {
+		execCalled = true
+		return nil
+	}
+	app.RuntimeManager.testSeams.Exit = func(code int) {}
+
+	app.testSeams.Serve = func(h http.Handler, addr string) error {
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			if app.IsRestartRequested() {
+				app.RuntimeManager.cancel()
+				return nil
+			}
+			if time.Now().After(deadline) {
+				app.RuntimeManager.cancel()
+				t.Fatal("startup discovery did not request restart within timeout")
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
+	app.testSeams.MemoryReclaimer = (&recordingMemoryReclaimerIntegration{}).Reclaim
+
+	if err := app.Run(1, 1); err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	if restartDuringRebuild.Load() {
+		t.Error("restart requested before file_folder_index rebuild finished")
+	}
+	if rebuildCalls.Load() != 1 {
+		t.Errorf("expected 1 file_folder_index rebuild, got %d", rebuildCalls.Load())
+	}
+	if !app.IsRestartRequested() {
+		t.Error("restart should be requested when restart_after_discovery is true")
+	}
+	if !execCalled {
+		t.Error("ExecRestart was not invoked after restart was requested")
+	}
+}
+
+// TestApp_Run_StartupDiscoveryRebuildError_ShutsDown verifies that when the
+// startup TriggerDiscovery returns a file_folder_index rebuild failure
+// (files.ErrFolderIndexRebuild), the startup goroutine calls Shutdown instead
+// of TriggerRestart, so no skip-discovery child is exec'd. RestartAfterDiscovery
+// is true to prove the rebuild-failure path wins over the restart path. Serve is
+// stubbed so production ListenAndServe is not required; ExecRestart is stubbed and
+// must NOT be called.
+func TestApp_Run_StartupDiscoveryRebuildError_ShutsDown(t *testing.T) {
+	tempDir := t.TempDir()
+	imagesDir := filepath.Join(tempDir, "Images")
+	if err := os.MkdirAll(imagesDir, 0o755); err != nil {
+		t.Fatalf("mkdir Images: %v", err)
+	}
+
+	opt := getopt.Opt{
+		SessionSecret:    getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true},
+		RunFileDiscovery: getopt.OptBool{Bool: true, IsSet: true},
+	}
+	app := New(opt, "x.y.z")
+	defer app.Shutdown()
+
+	app.setRootDir(&tempDir)
+
+	app.testSeams.LoadConfig = func() (*config.Config, error) {
+		cfg := validConfigWithImageDir(tempDir)
+		cfg.RunFileDiscovery = true
+		cfg.RestartAfterDiscovery = true
+		return cfg, nil
+	}
+
+	// Stub rebuild to fail with the sentinel error.
+	app.testSeams.RebuildFileFolderIndex = func(context.Context, *dbconnpool.DbSQLConnPool) error {
+		return files.ErrFolderIndexRebuild
+	}
+
+	var execCalled bool
+	app.RuntimeManager.testSeams.Executable = func() (string, error) {
+		return "/tmp/test-exe", nil
+	}
+	app.RuntimeManager.testSeams.ExecCommand = func(path string, args []string, env []string) error {
+		execCalled = true
+		return nil
+	}
+	app.RuntimeManager.testSeams.Exit = func(code int) {}
+
+	app.testSeams.Serve = func(h http.Handler, addr string) error {
+		// Poll for shutdown (Shutdown cancels the runtime ctx and waits for the
+		// discovery goroutine to clear discoveryRunning) before returning so Run
+		// completes. Do not wait on the restart flag — it must never be set.
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			if app.RuntimeManager.ctx.Err() != nil {
+				return nil
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("startup did not shut down after rebuild failure")
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
+	app.testSeams.MemoryReclaimer = (&recordingMemoryReclaimerIntegration{}).Reclaim
+
+	if err := app.Run(1, 1); err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	if execCalled {
+		t.Error("ExecRestart must not be invoked on startup rebuild failure")
+	}
+	if app.IsRestartRequested() {
+		t.Error("restart must not be requested on startup rebuild failure")
+	}
+}
+
+// TestApp_Run_RestartAfterDiscovery_FastDrainBeforeListen is hang-coverage:
+// App.testSeams.Serve is nil so production RuntimeManager.Serve must skip
+// ListenAndServe once startup TriggerDiscovery finishes and requests restart.
+// TriggerDiscovery is not stubbed. BeforeListen only waits for the flag.
+func TestApp_Run_RestartAfterDiscovery_FastDrainBeforeListen(t *testing.T) {
+	tempDir := t.TempDir()
+	imagesDir := filepath.Join(tempDir, "Images")
+	if err := os.MkdirAll(imagesDir, 0o755); err != nil {
+		t.Fatalf("mkdir Images: %v", err)
+	}
+
+	opt := getopt.Opt{
+		SessionSecret:    getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true},
+		RunFileDiscovery: getopt.OptBool{Bool: true, IsSet: true},
+	}
+	app := New(opt, "x.y.z")
+	defer app.Shutdown()
+
+	app.setRootDir(&tempDir)
+
+	execCalled := false
+	app.RuntimeManager.testSeams.Executable = func() (string, error) {
+		return "/tmp/test-exe", nil
+	}
+	app.RuntimeManager.testSeams.ExecCommand = func(path string, args []string, env []string) error {
+		execCalled = true
+		return nil
+	}
+	app.RuntimeManager.testSeams.Exit = func(code int) {}
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to find free port: %v", err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	ln.Close()
+
+	app.testSeams.LoadConfig = func() (*config.Config, error) {
+		cfg := validConfigWithImageDir(tempDir)
+		cfg.RunFileDiscovery = true
+		cfg.RestartAfterDiscovery = true
+		cfg.ListenerAddress = "127.0.0.1"
+		cfg.ListenerPort = port
+		return cfg, nil
+	}
+
+	var rebuildCalls atomic.Int32
+	var restartDuringRebuild atomic.Bool
+	app.testSeams.RebuildFileFolderIndex = func(context.Context, *dbconnpool.DbSQLConnPool) error {
+		if app.IsRestartRequested() {
+			restartDuringRebuild.Store(true)
+		}
+		rebuildCalls.Add(1)
+		time.Sleep(200 * time.Millisecond)
+		if app.IsRestartRequested() {
+			restartDuringRebuild.Store(true)
+		}
+		return nil
+	}
+
+	app.RuntimeManager.testSeams.BeforeListen = func() {
+		deadline := time.Now().Add(5 * time.Second)
+		for !app.IsRestartRequested() {
+			if time.Now().After(deadline) {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
+	app.testSeams.MemoryReclaimer = (&recordingMemoryReclaimerIntegration{}).Reclaim
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- app.Run(1, 1)
+	}()
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Run failed: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not complete within timeout (Serve may have failed to skip listen)")
+	}
+
+	if restartDuringRebuild.Load() {
+		t.Error("restart requested before file_folder_index rebuild finished")
+	}
+	if rebuildCalls.Load() != 1 {
+		t.Errorf("expected 1 file_folder_index rebuild, got %d", rebuildCalls.Load())
+	}
+	if !app.IsRestartRequested() {
+		t.Error("restart should be requested when restart_after_discovery is true")
+	}
+	if !execCalled {
+		t.Error("ExecRestart was not invoked after restart was requested")
+	}
+}
+
+// TestApp_Run_SkipEnv_DoesNotRestartAfterDiscovery verifies that the skip-startup
+// discovery env (SEPG_SKIP_STARTUP_DISCOVERY=1) prevents the automatic walk even
+// when restart_after_discovery=true, so no restart loop can occur. Not parallel:
+// t.Setenv mutates the process-wide environ.
+func TestApp_Run_SkipEnv_DoesNotRestartAfterDiscovery(t *testing.T) {
+	t.Setenv(skipStartupDiscoveryEnv, "1")
+
+	tempDir := t.TempDir()
+	opt := getopt.Opt{
+		SessionSecret:    getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true},
+		RunFileDiscovery: getopt.OptBool{Bool: true, IsSet: true},
+	}
+	app := New(opt, "x.y.z")
+	defer app.Shutdown()
+
+	app.setRootDir(&tempDir)
+
+	discoveryCalled := make(chan struct{})
+	app.testSeams.TriggerDiscovery = func(ctx context.Context) error {
+		close(discoveryCalled)
+		return nil
+	}
+
+	app.testSeams.LoadConfig = func() (*config.Config, error) {
+		cfg := validConfigWithImageDir(tempDir)
+		cfg.RunFileDiscovery = true
+		cfg.RestartAfterDiscovery = true
+		return cfg, nil
+	}
+
+	var serveCalled bool
+	app.testSeams.Serve = func(h http.Handler, addr string) error {
+		serveCalled = true
+		return nil
+	}
+
+	execCalled := false
+	app.RuntimeManager.testSeams.Executable = func() (string, error) {
+		return "/tmp/test-exe", nil
+	}
+	app.RuntimeManager.testSeams.ExecCommand = func(path string, args []string, env []string) error {
+		execCalled = true
+		return nil
+	}
+	app.RuntimeManager.testSeams.Exit = func(code int) {}
+
+	app.testSeams.MemoryReclaimer = (&recordingMemoryReclaimerIntegration{}).Reclaim
+
+	if err := app.Run(1, 1); err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	select {
+	case <-discoveryCalled:
+		t.Error("TriggerDiscovery should not be called when skip env is set")
+	case <-time.After(200 * time.Millisecond):
+	}
+	if app.IsRestartRequested() {
+		t.Error("restart should not be requested when skip env prevents the walk")
+	}
+	if execCalled {
+		t.Error("ExecRestart should not be invoked")
+	}
+	if !serveCalled {
+		t.Error("Serve should still be called")
+	}
+	if _, set := os.LookupEnv(skipStartupDiscoveryEnv); set {
+		t.Errorf("skip env %s should be unset after Run", skipStartupDiscoveryEnv)
 	}
 }
 
@@ -2454,4 +2806,248 @@ func readStartupLogs(t *testing.T, app *App) string {
 		t.Fatalf("failed to read startup log file: %v", err)
 	}
 	return string(data)
+}
+
+// TestApp_Run_SkipEnv_HydratesFileProcessingLastRun verifies the incident path
+// P1/P5: a process image spawned by ExecRestart (SEPG_SKIP_STARTUP_DISCOVERY=1)
+// skips the startup walk and hydrates the persisted last-run file processing
+// counters from module_state.payload into processingStats (InFlight stays 0).
+// The seed happens in testSeams.LoadConfig, after Run()'s setDB has wired
+// moduleStateService but before Start/hydrate run. Not parallel: t.Setenv
+// mutates the process-wide environ.
+func TestApp_Run_SkipEnv_HydratesFileProcessingLastRun(t *testing.T) {
+	t.Setenv(skipStartupDiscoveryEnv, "1")
+
+	tempDir := t.TempDir()
+	opt := getopt.Opt{
+		SessionSecret:    getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true},
+		RunFileDiscovery: getopt.OptBool{Bool: true, IsSet: true},
+	}
+	app := New(opt, "x.y.z")
+	defer app.Shutdown()
+
+	app.setRootDir(&tempDir)
+
+	// TriggerDiscovery must not fire: skip env means no startup walk.
+	discoveryCalled := make(chan struct{})
+	app.testSeams.TriggerDiscovery = func(ctx context.Context) error {
+		close(discoveryCalled)
+		return nil
+	}
+
+	// Seed module_state after Run()'s setDB has wired moduleStateService but
+	// before Start/hydrate run, then return the config Run() will apply.
+	app.testSeams.LoadConfig = func() (*config.Config, error) {
+		if err := app.SubsystemManager.moduleStateService.SaveFileProcessing(app.getCtx(), "discovery", metrics.FileProcessingMetrics{
+			TotalFound:      15666608,
+			AlreadyExisting: 15620677,
+			NewlyInserted:   40000,
+			SkippedInvalid:  5931,
+		}); err != nil {
+			t.Errorf("seed SaveFileProcessing: %v", err)
+		}
+		cfg := validConfigWithImageDir(tempDir)
+		cfg.RunFileDiscovery = true
+		return cfg, nil
+	}
+
+	serveHook := &recordingServeHook{}
+	app.testSeams.Serve = serveHook.Serve
+
+	if err := app.Run(1, 1); err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	select {
+	case <-discoveryCalled:
+		t.Error("TriggerDiscovery should not be called when skip env is set")
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	ps := app.SubsystemManager.processingStats
+	if ps == nil {
+		t.Fatal("Run() did not allocate processingStats")
+	}
+	if got := ps.TotalFound.Load(); got != 15666608 {
+		t.Errorf("TotalFound = %d, want 15666608 (hydrated last-run)", got)
+	}
+	if got := ps.AlreadyExisting.Load(); got != 15620677 {
+		t.Errorf("AlreadyExisting = %d, want 15620677", got)
+	}
+	if got := ps.NewlyInserted.Load(); got != 40000 {
+		t.Errorf("NewlyInserted = %d, want 40000", got)
+	}
+	if got := ps.SkippedInvalid.Load(); got != 5931 {
+		t.Errorf("SkippedInvalid = %d, want 5931", got)
+	}
+	if got := ps.InFlight.Load(); got != 0 {
+		t.Errorf("InFlight = %d, want 0 (live state is never hydrated)", got)
+	}
+}
+
+// TestApp_Run_DoesNotHydrateWhenStartupDiscoveryRuns verifies P5: hydrate must
+// run only when startup discovery will not. When runDiscovery is true, the
+// completion monitor treats processingStats.TotalFound > 0 as "discovery has
+// started" and would log "File processing completed" / schedule the pragma on
+// stale last-run counters. discoveryRunning is primed true before Run() so
+// TriggerDiscovery's CAS fails (and Task 5's ResetStats is not reached), the
+// monitor still runs, and a wrongly hydrated last-run would survive to its
+// first 100ms tick. Not parallel: t.Setenv mutates the process-wide environ.
+func TestApp_Run_DoesNotHydrateWhenStartupDiscoveryRuns(t *testing.T) {
+	tempDir := t.TempDir()
+	opt := getopt.Opt{
+		SessionSecret:    getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true},
+		RunFileDiscovery: getopt.OptBool{Bool: true, IsSet: true},
+	}
+	app := New(opt, "x.y.z")
+	defer app.Shutdown()
+
+	app.setRootDir(&tempDir)
+
+	// No-op seam: no walk, no counter increments. A completion log would have
+	// to come from the monitor seeing a hydrated last-run TotalFound.
+	app.testSeams.TriggerDiscovery = func(ctx context.Context) error { return nil }
+
+	app.testSeams.LoadConfig = func() (*config.Config, error) {
+		// setDB has run; moduleStateService is live; Start/hydrate have not.
+		if err := app.SubsystemManager.moduleStateService.SaveFileProcessing(app.getCtx(), "discovery", metrics.FileProcessingMetrics{
+			TotalFound:      15666608,
+			AlreadyExisting: 15620677,
+			NewlyInserted:   40000,
+			SkippedInvalid:  5931,
+		}); err != nil {
+			t.Errorf("seed SaveFileProcessing: %v", err)
+		}
+		cfg := validConfigWithImageDir(tempDir)
+		cfg.RunFileDiscovery = true
+		return cfg, nil
+	}
+
+	// Prime the in-flight flag before Run(): runDiscovery stays true so the
+	// completion monitor starts, but TriggerDiscovery's CAS fails before any
+	// ResetStats, so a wrongly hydrated last-run would not be wiped before the
+	// monitor's first tick.
+	app.discoveryRunning.Store(true)
+
+	app.testSeams.Serve = func(h http.Handler, addr string) error {
+		// Give the 100ms completion monitor several ticks on the counters
+		// before Run returns.
+		time.Sleep(700 * time.Millisecond)
+		return nil
+	}
+
+	if err := app.Run(1, 1); err != nil {
+		app.discoveryRunning.Store(false)
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	// The monitor must never log completion on last-run counters: no log means
+	// scheduleDiscoveryCompletePragmaOptimize was not scheduled on them either.
+	// (Same string as TestApp_Run_DiscoveryMonitor_CompletionLog.)
+	logs := readStartupLogs(t, app)
+	if strings.Contains(logs, "File processing completed") {
+		t.Error("unexpected 'File processing completed' log when startup discovery runs")
+	}
+
+	if got := app.SubsystemManager.processingStats.TotalFound.Load(); got != 0 {
+		t.Errorf("TotalFound = %d, want 0 (hydrate must not run when startup discovery runs)", got)
+	}
+	if got := app.SubsystemManager.processingStats.AlreadyExisting.Load(); got != 0 {
+		t.Errorf("AlreadyExisting = %d, want 0", got)
+	}
+	if got := app.SubsystemManager.processingStats.NewlyInserted.Load(); got != 0 {
+		t.Errorf("NewlyInserted = %d, want 0", got)
+	}
+	if got := app.SubsystemManager.processingStats.SkippedInvalid.Load(); got != 0 {
+		t.Errorf("SkippedInvalid = %d, want 0", got)
+	}
+	if got := app.SubsystemManager.processingStats.InFlight.Load(); got != 0 {
+		t.Errorf("InFlight = %d, want 0", got)
+	}
+
+	// Clear the primed flag before the deferred Shutdown runs: TriggerDiscovery
+	// failed its CAS and never ran its defer discoveryRunning.Store(false), and
+	// Shutdown polls discoveryRunning without a timeout.
+	app.discoveryRunning.Store(false)
+}
+
+// TestDashboard_FileProcessingLastRunHydrateRenders is the restart-shaped lock
+// that would have caught the :8084 zero counters: a previous process persisted
+// its last-run counters, a new process hydrates them into in-memory stats, and
+// a fresh /dashboard full page must render them comma-formatted.
+//
+// CreateApp does not Start(), so processingStats stays nil and its buildHandlers
+// runs with a nil RuntimeManager.metricsCollector — HandlerManager.Build then
+// allocates a throwaway collector that is never SetFileProcessor'd and is not
+// stored on RuntimeManager. The test therefore re-does the wiring production
+// Run() performs, in order: allocate stats before WireMetrics (WireMetrics'
+// SetFileProcessor checks for a non-nil processingStats), allocate and wire a
+// collector, then rebuild handlers so the dashboard handler holds that wired
+// collector, not the throwaway from CreateApp.
+//
+// getRouter() must be called after the rebuild: it binds
+// dashboardHandlers.DashboardGet as a method value at mux build, so a router
+// taken before buildHandlers captured the throwaway collector.
+func TestDashboard_FileProcessingLastRunHydrateRenders(t *testing.T) {
+	app := CreateApp(t)
+
+	// Production Run() wiring, mirrored here because CreateApp skipped Start().
+	app.SubsystemManager.processingStats = &files.ProcessingStats{}
+	app.RuntimeManager.metricsCollector = metrics.NewCollector()
+	app.WireMetrics(app.RuntimeManager.metricsCollector)
+
+	// Rebuild handlers: the dashboard collector must be the wired instance, not
+	// the throwaway collector CreateApp's buildHandlers allocated.
+	if err := app.buildHandlers(web.FS); err != nil {
+		t.Fatalf("rebuild handlers: %v", err)
+	}
+
+	// Seed the previous run's last-run counters into module_state (the persist
+	// side of the incident path).
+	if err := app.SubsystemManager.moduleStateService.SaveFileProcessing(app.getCtx(), "discovery", metrics.FileProcessingMetrics{
+		TotalFound:      15666608,
+		AlreadyExisting: 15620677,
+		NewlyInserted:   40000,
+		SkippedInvalid:  5931,
+	}); err != nil {
+		t.Fatalf("seed SaveFileProcessing: %v", err)
+	}
+
+	// Fresh process: zeroed in-memory stats, then hydrate the last-run payload.
+	app.ResetStats()
+	app.SubsystemManager.HydrateFileProcessingStats(app.getCtx())
+
+	// Router after the rebuild so the DashboardGet method value binds the wired
+	// collector.
+	router := app.getRouter()
+
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	req.AddCookie(MakeAuthCookie(t, app))
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /dashboard = %d, want 200: %s", rr.Code, rr.Body.String())
+	}
+
+	doc, err := testutil.ParseHTML(rr.Body)
+	if err != nil {
+		t.Fatalf("failed to parse dashboard HTML: %v", err)
+	}
+	want := map[string]string{
+		"fp-total":    "15,666,608",
+		"fp-existing": "15,620,677",
+		"fp-new":      "40,000",
+		"fp-invalid":  "5,931",
+		"fp-inflight": "0",
+	}
+	for id, wantText := range want {
+		el := testutil.FindElementByID(doc, id)
+		if el == nil {
+			t.Errorf("missing #%s in full-page dashboard render", id)
+			continue
+		}
+		if got := strings.TrimSpace(testutil.GetTextContent(el)); got != wantText {
+			t.Errorf("#%s text = %q, want %q", id, got, wantText)
+		}
+	}
 }

@@ -284,10 +284,10 @@ func TestResetUnderGC(t *testing.T) {
 		used  int
 		state int
 	}
-	var nextID int64
+	var nextID atomic.Int64
 	const initUsed, initState = 77, 88
 	pool := New(
-		func() *testObj2 { return &testObj2{id: atomic.AddInt64(&nextID, 1), used: initUsed, state: initState} },
+		func() *testObj2 { return &testObj2{id: nextID.Add(1), used: initUsed, state: initState} },
 		func(o *testObj2) { o.used = 0; o.state = 0 },
 	)
 

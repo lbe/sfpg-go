@@ -44,7 +44,7 @@ func TestClose_DoesNotDrainDQue(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	for i := 0; i < seeded; i++ {
+	for i := range seeded {
 		v := i
 		if err := wb.dq.Enqueue(&v); err != nil {
 			t.Fatalf("enqueue %d: %v", i, err)
@@ -91,7 +91,7 @@ func TestClose_CompletesWhileWorkerDrainingDQue(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		v := i
 		if err := wb.dq.Enqueue(&v); err != nil {
 			t.Fatalf("enqueue: %v", err)
@@ -140,7 +140,7 @@ func TestReconfigure_CloseOldFirst_LargeDQue(t *testing.T) {
 		t.Fatalf("first New: %v", err)
 	}
 
-	for i := 0; i < seeded; i++ {
+	for i := range seeded {
 		v := i
 		if err = wb1.dq.Enqueue(&v); err != nil {
 			t.Fatalf("enqueue: %v", err)

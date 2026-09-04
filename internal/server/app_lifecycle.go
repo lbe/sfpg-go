@@ -36,6 +36,14 @@ func (app *App) Shutdown() {
 		}
 		app.RuntimeManager.wg.Wait()
 
+		// Poll until discoveryRunning clears — TriggerDiscovery's drain/rebuild
+		// runs outside wg, so we must wait for it before closing pools.
+		discoveryTicker := time.NewTicker(100 * time.Millisecond)
+		defer discoveryTicker.Stop()
+		for app.discoveryRunning.Load() {
+			<-discoveryTicker.C
+		}
+
 		app.SubsystemManager.Shutdown()
 		if app.SubsystemManager.scheduler != nil {
 			if err := app.SubsystemManager.scheduler.Shutdown(); err != nil {

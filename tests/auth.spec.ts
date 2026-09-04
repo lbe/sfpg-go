@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, request as apiRequest } from "@playwright/test";
 import {
   goToGallery,
   loginViaUI,
@@ -185,5 +185,14 @@ test.describe("Authentication", () => {
     const body = await r.text();
     expect(body).toContain('name="username"');
     expect(body).toContain('name="password"');
+  });
+
+  test("13: Config unauthenticated returns 401", async () => {
+    const freshRequest = await apiRequest.newContext({
+      baseURL: "http://localhost:8083",
+    });
+    const response = await freshRequest.get("/config");
+    expect(response.status()).toBe(401);
+    await freshRequest.dispose();
   });
 });

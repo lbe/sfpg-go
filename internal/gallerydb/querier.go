@@ -27,7 +27,7 @@ type Querier interface {
 	GetExifByFile(ctx context.Context, fileID int64) (ExifMetadatum, error)
 	GetFileByPath(ctx context.Context, path string) (File, error)
 	GetFileCountAndTimestamps(ctx context.Context) (GetFileCountAndTimestampsRow, error)
-	GetFileFolderIndexByID(ctx context.Context, id int64) (GetFileFolderIndexByIDRow, error)
+	GetFileFolderIndexByID(ctx context.Context, fileID int64) (GetFileFolderIndexByIDRow, error)
 	GetFileSizeSum(ctx context.Context) (int64, error)
 	GetFileViewByID(ctx context.Context, id int64) (FileView, error)
 	GetFileViewsByFolderIDOrderByFileName(ctx context.Context, folderID sql.NullInt64) ([]FileView, error)
@@ -67,7 +67,8 @@ type Querier interface {
 	GetIPTCByFile(ctx context.Context, fileID int64) (IptcMetadatum, error)
 	GetIPTCKeywords(ctx context.Context, fileID int64) ([]IptcKeyword, error)
 	GetInvalidFileByPath(ctx context.Context, path string) (InvalidFile, error)
-	GetLightboxNavByFileID(ctx context.Context, id int64) (GetLightboxNavByFileIDRow, error)
+	// image_index is 1-based in the table; callers expect 0-based CurrentIndex.
+	GetLightboxNavByFileID(ctx context.Context, fileID int64) (GetLightboxNavByFileIDRow, error)
 	GetLoginAttempt(ctx context.Context, username string) (LoginAttempt, error)
 	GetModuleState(ctx context.Context, name string) (ModuleState, error)
 	GetThumbnailExistsViewByID(ctx context.Context, id int64) (bool, error)
@@ -78,6 +79,7 @@ type Querier interface {
 	InsertConfigIfNotExists(ctx context.Context, arg InsertConfigIfNotExistsParams) error
 	InsertIPTCKeyword(ctx context.Context, arg InsertIPTCKeywordParams) error
 	SetModuleState(ctx context.Context, arg SetModuleStateParams) error
+	SetModuleStatePayload(ctx context.Context, arg SetModuleStatePayloadParams) error
 	UnlockAccount(ctx context.Context, username string) error
 	UpdateFolderTileId(ctx context.Context, arg UpdateFolderTileIdParams) error
 	UpsertConfigValueOnly(ctx context.Context, arg UpsertConfigValueOnlyParams) error

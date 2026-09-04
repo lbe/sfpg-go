@@ -64,11 +64,9 @@ func TestConcurrentRoundtripZstd(t *testing.T) {
 		t.Fatal(err)
 	}
 	var wg sync.WaitGroup
-	for g := 0; g < 8; g++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for i := 0; i < 50; i++ {
+	for range 8 {
+		wg.Go(func() {
+			for range 50 {
 				stored, err := r.EncodeWith("zstd-1", data)
 				if err != nil {
 					t.Error(err)
@@ -84,7 +82,7 @@ func TestConcurrentRoundtripZstd(t *testing.T) {
 					return
 				}
 			}
-		}()
+		})
 	}
 	wg.Wait()
 }
@@ -99,11 +97,9 @@ func TestConcurrentRoundtripGzip(t *testing.T) {
 		t.Fatal(err)
 	}
 	var wg sync.WaitGroup
-	for g := 0; g < 8; g++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for i := 0; i < 50; i++ {
+	for range 8 {
+		wg.Go(func() {
+			for range 50 {
 				stored, err := r.EncodeWith("gzip-6", data)
 				if err != nil {
 					t.Error(err)
@@ -119,7 +115,7 @@ func TestConcurrentRoundtripGzip(t *testing.T) {
 					return
 				}
 			}
-		}()
+		})
 	}
 	wg.Wait()
 }

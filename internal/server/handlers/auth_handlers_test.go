@@ -554,7 +554,7 @@ func TestAuthHandlers_Login_LockoutAfterWrongUsername(t *testing.T) {
 	authHandlers := NewAuthHandlers(auth.NewService(cs), &mockSessionManagerAuth{})
 
 	// First 3 attempts with wrong username should show "Invalid credentials"
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		req := httptest.NewRequest(http.MethodPost, "/login",
 			strings.NewReader("username=nonexistent&password=anypass"))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -654,7 +654,7 @@ func TestAuthHandlers_Login_ClearsFailedAttemptsOnSuccess(t *testing.T) {
 	authHandlers := NewAuthHandlers(auth.NewService(cs), &mockSessionManagerAuth{})
 
 	// Make 2 failed attempts — should show "Invalid credentials"
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		req := httptest.NewRequest(http.MethodPost, "/login",
 			strings.NewReader("username=admin&password=wrong"))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -694,7 +694,7 @@ func TestAuthHandlers_Login_ClearsFailedAttemptsOnSuccess(t *testing.T) {
 
 	// Now make 2 more failed attempts — should NOT lock out because
 	// the successful login cleared the counter
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		req := httptest.NewRequest(http.MethodPost, "/login",
 			strings.NewReader("username=admin&password=wrong"))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -889,7 +889,7 @@ func TestAuthHandlers_Login_NoRateLimiter(t *testing.T) {
 
 	// Multiple attempts from same IP should all work (no rate limiter).
 	ip := "10.0.0.5:8080"
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		req := httptest.NewRequest(http.MethodPost, "/login",
 			strings.NewReader("username=testuser&password="+password))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")

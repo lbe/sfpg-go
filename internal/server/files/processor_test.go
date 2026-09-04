@@ -418,8 +418,7 @@ func TestRunPoolWorkerWithProcessor_Stats(t *testing.T) {
 		pool := workerpool.NewPool(context.Background(), 1, 1, 10*time.Millisecond)
 		pool.Stats.RunningWorkers.Add(1)
 
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+		ctx := t.Context()
 
 		poolFunc := NewPoolFuncWithProcessor(fp, q, "/tmp/Images", testRemovePrefix, nil, nil)
 		if err := poolFunc(ctx, pool, nil, nil, q.Len, 1); err != nil {

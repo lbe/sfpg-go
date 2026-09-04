@@ -43,7 +43,7 @@ func TestIPRateLimiter_Unlimited(t *testing.T) {
 	ip := "192.168.1.1"
 
 	// Any number of attempts should always be allowed.
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		if !rl.Allow(ip) {
 			t.Errorf("attempt %d: expected allowed (unlimited), got denied", i+1)
 		}
@@ -56,7 +56,7 @@ func TestIPRateLimiter_Allow(t *testing.T) {
 	ip := "192.168.1.1"
 
 	// First 3 attempts should be allowed.
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if !rl.Allow(ip) {
 			t.Errorf("attempt %d: expected allowed, got denied", i+1)
 		}
@@ -72,7 +72,7 @@ func TestIPRateLimiter_DifferentIPs(t *testing.T) {
 	rl := NewIPRateLimiter(2, 60)
 
 	// Allow 2 from each IP.
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		if !rl.Allow("192.168.1.1") {
 			t.Errorf("192.168.1.1 attempt %d: expected allowed", i+1)
 		}
@@ -179,7 +179,7 @@ func TestIPRateLimiter_SetMax(t *testing.T) {
 
 	// Part A — raising max (existing history kept — SetMax alone does NOT clear).
 	rl := NewIPRateLimiter(5, 60)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		if !rl.Allow(ip) {
 			t.Fatalf("attempt %d: expected allowed, got denied", i+1)
 		}

@@ -37,8 +37,13 @@ type AppTestSeams struct {
 	BatchLoadManagerRun func(ctx context.Context) error
 	// GalleryStatsStartup replaces the async startup stats goroutine in Run().
 	GalleryStatsStartup func()
-	// TriggerDiscovery replaces app.TriggerDiscovery in startup when non-nil.
-	TriggerDiscovery func()
+	// TriggerDiscovery replaces the walk/drain/rebuild body inside app.TriggerDiscovery()
+	// when non-nil. Checked after CAS guard, discoveryRunning defer, GalleryStats markRunning,
+	// and module_state SetActive — startup and ServerDiscoveryPost always dispatch
+	// go app.TriggerDiscovery(context.Background()).
+	TriggerDiscovery func(context.Context) error
+	// RebuildFileFolderIndex replaces files.RebuildFileFolderIndex at discovery completion.
+	RebuildFileFolderIndex func(context.Context, *dbconnpool.DbSQLConnPool) error
 	// FallbackConfig supplies the config used when loadConfig fails in Run.
 	FallbackConfig func() *config.Config
 	// ConfigService replaces config.NewService(...) in setDB and reconfigurePoolsFromConfig.
@@ -69,6 +74,16 @@ type InfrastructureTestSeams struct {
 	RecreatePoolsWithConfig    func(ctx context.Context, dbPaths database.DatabasePaths, cfg *config.Config, oldRw, oldRo *dbconnpool.DbSQLConnPool) (*dbconnpool.DbSQLConnPool, *dbconnpool.DbSQLConnPool, error)
 	PragmaOptimizePollInterval time.Duration
 	PragmaOptimizeMaxWait      time.Duration
+
+	// OnBeginTx is called (if non-nil) before production Get+BeginTx
+	// inside buildWriteBatcher's BeginTx closure. Observe-then-production:
+	// the hook runs first, then production Get + Conn.BeginTx always
+	// follows. The hook must not return *sql.Tx or Get a pool conn.
+	OnBeginTx func()
+	// OnPut is called (if non-nil) before production dbRwPool.Put(cpcRw)
+	// in OnSuccess/OnError. Observe-then-production: the hook runs first,
+	// then production Put always follows. The hook must not Put itself.
+	OnPut func()
 }
 
 // RuntimeManagerTestSeams holds optional test doubles for RuntimeManager.
@@ -91,4 +106,9 @@ type HandlerManagerTestSeams struct {
 // before New() creates the App. New() copies these into app.testSeams so that
 // production code only reads from app.testSeams, while tests that need to
 // influence New() can set this variable before calling New().
+//
+// MUST stay the zero value. A non-nil RebuildFileFolderIndex here is copied
+// into every production App and TriggerDiscovery will never call
+// files.RebuildFileFolderIndex. Tests that need a no-op set it on the App
+// after New(), or set this variable before New() and restore it after.
 var defaultNewTestSeams AppTestSeams

@@ -447,6 +447,22 @@ func waitForIdleAtMost(t *testing.T, pool *DbSQLConnPool, want int, timeout time
 	return pool.NumIdleConnections()
 }
 
+// waitForNumConnectionsAtMost polls until NumConnections is at most want or the
+// timeout expires. Closing an idle connection removes it from the channel
+// before numConnections is decremented; callers that require both must wait
+// for this after waitForIdleAtMost.
+func waitForNumConnectionsAtMost(t *testing.T, pool *DbSQLConnPool, want int64, timeout time.Duration) int64 {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if n := pool.NumConnections(); n <= want {
+			return n
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return pool.NumConnections()
+}
+
 // logSignalHandler forwards records to an inner handler and signals a buffered
 // channel (non-blocking) the first time a record message contains the given
 // substring. Tests use it to observe a background goroutine (e.g. the monitor)
@@ -587,9 +603,9 @@ func TestMonitor_Scaling(t *testing.T) {
 		if n := waitForIdleAtMost(t, pool, 0, 3*time.Second); n > 0 {
 			t.Errorf("pool did not shrink idle connections to 0. got %d, want 0", n)
 		}
-		// Drained connections must be closed, not merely evicted from the
-		// idle channel: the total connection count must reach 0 as well.
-		if total := pool.NumConnections(); total != 0 {
+		// Close runs after the channel receive; wait for the decrement, not
+		// the same tick that first sees idle == 0.
+		if total := waitForNumConnectionsAtMost(t, pool, 0, 3*time.Second); total != 0 {
 			t.Errorf("pool total connections after shrink = %d, want 0", total)
 		}
 	})
@@ -884,6 +900,136 @@ func TestPut(t *testing.T) {
 	})
 }
 
+func TestPut_RWRecyclesOnPutCount(t *testing.T) {
+	dbPath, thumbsDBPath, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	pool, err := NewDbSQLConnPool(ctx, dbPath, Config{
+		DriverName:         "sqlite3",
+		MaxConnections:     1,
+		MinIdleConnections: 0,
+		QueriesFunc:        gallerydb.NewCustomQueries,
+		ThumbsDBPath:       thumbsDBPath,
+	})
+	if err != nil {
+		t.Fatalf("NewDbSQLConnPool: %v", err)
+	}
+	t.Cleanup(func() { _ = pool.Close() })
+
+	cpc, err := pool.Get()
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	initial := pool.NumConnections()
+
+	for range rwRecyclePutCount {
+		pool.Put(cpc)
+		cpc, err = pool.Get()
+		if err != nil {
+			t.Fatalf("Get after put: %v", err)
+		}
+	}
+
+	if cpc.putCount != rwRecyclePutCount {
+		t.Fatalf("putCount = %d, want %d", cpc.putCount, rwRecyclePutCount)
+	}
+
+	pool.Put(cpc)
+
+	if got := pool.NumConnections(); got != initial-1 {
+		t.Fatalf("NumConnections after recycle = %d, want %d", got, initial-1)
+	}
+	if pool.NumIdleConnections() != 0 {
+		t.Fatalf("idle connections = %d, want 0", pool.NumIdleConnections())
+	}
+}
+
+func TestPut_RWRecyclesOnDBStatusMem(t *testing.T) {
+	dbPath, thumbsDBPath, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	oldMem := rwRecycleMemBytes
+	oldPut := rwRecyclePutCount
+	rwRecycleMemBytes = 1
+	rwRecyclePutCount = 1_000_000
+	t.Cleanup(func() {
+		rwRecycleMemBytes = oldMem
+		rwRecyclePutCount = oldPut
+	})
+
+	ctx := context.Background()
+	pool, err := NewDbSQLConnPool(ctx, dbPath, Config{
+		DriverName:         "sqlite3",
+		MaxConnections:     1,
+		MinIdleConnections: 0,
+		QueriesFunc:        gallerydb.NewCustomQueries,
+		ThumbsDBPath:       thumbsDBPath,
+	})
+	if err != nil {
+		t.Fatalf("NewDbSQLConnPool: %v", err)
+	}
+	t.Cleanup(func() { _ = pool.Close() })
+
+	cpc, err := pool.Get()
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	initial := pool.NumConnections()
+
+	pool.Put(cpc)
+
+	if got := pool.NumConnections(); got != initial-1 {
+		t.Fatalf("NumConnections after recycle = %d, want %d", got, initial-1)
+	}
+	if pool.NumIdleConnections() != 0 {
+		t.Fatalf("idle connections = %d, want 0", pool.NumIdleConnections())
+	}
+}
+
+func TestPut_RODoesNotRecycle(t *testing.T) {
+	dbPath, thumbsDBPath, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	oldMem := rwRecycleMemBytes
+	oldPut := rwRecyclePutCount
+	rwRecycleMemBytes = 1
+	rwRecyclePutCount = 1
+	t.Cleanup(func() {
+		rwRecycleMemBytes = oldMem
+		rwRecyclePutCount = oldPut
+	})
+
+	ctx := context.Background()
+	pool, err := NewDbSQLConnPool(ctx, dbPath, Config{
+		DriverName:         "sqlite3",
+		ReadOnly:           true,
+		MaxConnections:     1,
+		MinIdleConnections: 0,
+		QueriesFunc:        gallerydb.NewCustomQueries,
+		ThumbsDBPath:       thumbsDBPath,
+	})
+	if err != nil {
+		t.Fatalf("NewDbSQLConnPool: %v", err)
+	}
+	t.Cleanup(func() { _ = pool.Close() })
+
+	cpc, err := pool.Get()
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	initial := pool.NumConnections()
+
+	pool.Put(cpc)
+
+	if got := pool.NumConnections(); got != initial {
+		t.Fatalf("NumConnections = %d, want %d (no recycle)", got, initial)
+	}
+	if pool.NumIdleConnections() != 1 {
+		t.Fatalf("idle connections = %d, want 1", pool.NumIdleConnections())
+	}
+}
+
 func TestConcurrency(t *testing.T) {
 	dbPath, thumbsDBPath, cleanup := setupTestDB(t)
 	defer cleanup()
@@ -912,9 +1058,7 @@ func TestConcurrency(t *testing.T) {
 		errChan := make(chan error, numGoroutines)
 
 		for range numGoroutines {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				for range iterations {
 					cpc, err := pool.Get()
 					if err != nil {
@@ -932,7 +1076,7 @@ func TestConcurrency(t *testing.T) {
 
 					pool.Put(cpc)
 				}
-			}()
+			})
 		}
 
 		// Wait for all goroutines to complete; WaitGroup completion is the
@@ -1812,8 +1956,7 @@ func TestGet_BlockedWaitNewConnectionFailure(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected error from blocked Get, got nil")
 		}
-		var connErr *ConnectionError
-		if !errors.As(err, &connErr) {
+		if _, ok := errors.AsType[*ConnectionError](err); !ok {
 			t.Fatalf("expected ConnectionError, got %v", err)
 		}
 	case <-time.After(3 * time.Second):

@@ -12,6 +12,13 @@ import {
 export default async function globalTeardown(
   _config: FullConfig,
 ): Promise<void> {
+  if (process.env.SFPG_PW_SKIP_CACHE_BATCH === "1") {
+    console.log(
+      "⏭️  Skipping Playwright teardown cache batch load (SFPG_PW_SKIP_CACHE_BATCH=1)",
+    );
+    return;
+  }
+
   const ctx = await readyAPIContext();
   try {
     await ensureCacheBatchLoadComplete(ctx);

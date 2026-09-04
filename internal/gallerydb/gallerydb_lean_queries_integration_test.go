@@ -12,7 +12,7 @@ import (
 // GetLightboxNavByFileID, which are designed for InfoBoxImage and LightboxByID
 // handlers respectively.
 func TestLeanFileQueries(t *testing.T) {
-	_, q, ctx := setupTestDB(t)
+	db, q, ctx := setupTestDB(t)
 
 	// Create a folder for our test files
 	folderPathID, err := q.UpsertFolderPathReturningID(ctx, "/lean_test")
@@ -66,6 +66,26 @@ func TestLeanFileQueries(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("UpsertFileReturningFile c.jpg failed: %v", err)
+	}
+
+	// Populate file_folder_index for the 3 files (ordered alphabetically by filename, id).
+	// a.jpg(id=fileA) -> index 1, b.jpg(id=fileB) -> index 2, c.jpg(id=fileC) -> index 3.
+	for _, idx := range []struct {
+		fileID, folderID, imageIndex, imageCount int64
+		prevID, nextID                           *int64
+		firstID, lastID                          int64
+	}{
+		{fileA.ID, folder.ID, 1, 3, nil, &fileB.ID, fileA.ID, fileC.ID},
+		{fileB.ID, folder.ID, 2, 3, &fileA.ID, &fileC.ID, fileA.ID, fileC.ID},
+		{fileC.ID, folder.ID, 3, 3, &fileB.ID, nil, fileA.ID, fileC.ID},
+	} {
+		_, err := db.ExecContext(ctx,
+			`INSERT INTO file_folder_index (file_id, folder_id, image_index, image_count, prev_id, next_id, first_id, last_id)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			idx.fileID, idx.folderID, idx.imageIndex, idx.imageCount, idx.prevID, idx.nextID, idx.firstID, idx.lastID)
+		if err != nil {
+			t.Fatalf("insert file_folder_index for file %d: %v", idx.fileID, err)
+		}
 	}
 
 	// ---------------------------------------------------------------
@@ -248,6 +268,15 @@ func TestLeanFileQueries(t *testing.T) {
 		})
 		if err != nil {
 			t.Fatalf("UpsertFileReturningFile only.jpg failed: %v", err)
+		}
+
+		// Populate file_folder_index for single-file folder.
+		_, err = db.ExecContext(ctx,
+			`INSERT INTO file_folder_index (file_id, folder_id, image_index, image_count, prev_id, next_id, first_id, last_id)
+			 VALUES (?, ?, 1, 1, NULL, NULL, ?, ?)`,
+			singleFile.ID, singleFolder.ID, singleFile.ID, singleFile.ID)
+		if err != nil {
+			t.Fatalf("insert file_folder_index for single file %d: %v", singleFile.ID, err)
 		}
 
 		// GetFileFolderIndexByID for single-file folder

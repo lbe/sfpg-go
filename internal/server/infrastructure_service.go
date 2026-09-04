@@ -50,6 +50,33 @@ type InfrastructureService struct {
 
 	lastPragmaOptimizeRun atomic.Value // time.Time
 	dbOptimizeInterval    atomic.Int64 // nanoseconds; 0 means default 1h
+
+	// folderIndexRebuildActive gates flushing of FolderIndex rows to the
+	// file_folder_index_new dest. It is set true only during an in-process
+	// RebuildFileFolderIndex; a dque leftover from a prior process must not
+	// INSERT (its generation also differs).
+	folderIndexRebuildActive atomic.Bool
+	// folderIndexRebuildScanHeld is true only while RebuildFileFolderIndex holds
+	// the RO scan cursor open (between a successful SELECT start and rows.Close).
+	// It gates WAL TRUNCATE checkpoints: a checkpoint while the RO cursor is open
+	// busy-waits on the WAL write lock for up to busy_timeout, capping flush
+	// throughput. The gate is the cursor, not the whole rebuild-active window.
+	folderIndexRebuildScanHeld atomic.Bool
+	// folderIndexGeneration is the generation of the current in-process rebuild.
+	// FolderIndex rows whose Generation does not match are skipped (stale
+	// leftovers), preventing a PK wedge on file_id.
+	folderIndexGeneration atomic.Int64
+	// folderIndexInflight counts FolderIndex rows submitted but not yet flushed
+	// during a rebuild. SubmitFolderIndex increments it before Submit; OnSuccess
+	// saturating-decrements it for rows whose generation matches the current
+	// rebuild, so RebuildFileFolderIndex can wait for the queue to drain.
+	folderIndexInflight atomic.Int64
+
+	// lastFlushWroteDML is set by flushBatchedWrites: true when the flush
+	// committed at least one INSERT (File/Cache/FolderIndex); false when
+	// the flush performed no DML (skip-only BeginTx). walCheckpointAfterCommit
+	// skips post-flush size-based TRUNCATE when this is false.
+	lastFlushWroteDML atomic.Bool
 }
 
 // NewInfrastructureService constructs the infrastructure service with production defaults.

@@ -33,14 +33,12 @@ func TestTaskTracker_ConcurrentClaim(t *testing.T) {
 	var wg sync.WaitGroup
 	successes := atomic.Int64{}
 
-	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 10 {
+		wg.Go(func() {
 			if tt.TryClaimTask(cacheKey) {
 				successes.Add(1)
 			}
-		}()
+		})
 	}
 
 	wg.Wait()

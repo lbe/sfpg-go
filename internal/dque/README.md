@@ -1,6 +1,5 @@
 # dque - a fast embedded durable queue for Go
 
-[![Go Report Card](https://goreportcard.com/badge/github.com/lbe/sfpg-go)](https://goreportcard.com/report/github.com/lbe/sfpg-go)
 [![GoDoc](https://godoc.org/github.com/lbe/sfpg-go?status.svg)](https://godoc.org/github.com/lbe/sfpg-go)
 
 dque is:

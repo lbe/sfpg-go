@@ -46,6 +46,8 @@ type SubsystemManager struct {
 	batchLoadManager   *cachebatch.Manager
 	moduleStateService *modulestate.Service
 
+	unifiedBatcher files.UnifiedBatcher
+
 	infra *InfrastructureService
 }
 
@@ -100,11 +102,16 @@ func (m *SubsystemManager) Start(
 	}
 	m.q = discoveryQ
 
+	// Unified batcher adapter: always stored, even when a test injected a fake
+	// fileProcessor, so TriggerDiscovery can use the same adapter and the same
+	// InfrastructureService atomics the flush/OnSuccess path uses.
+	m.unifiedBatcher = newFileBatcher(m.infra.WriteBatcher(), &m.infra.folderIndexInflight, &m.infra.folderIndexRebuildActive, &m.infra.folderIndexRebuildScanHeld, &m.infra.folderIndexGeneration)
+
 	// File processor (tests may inject a fake via m.fileProcessor)
 	if m.fileProcessor == nil {
 		m.fileProcessor = files.NewFileProcessor(
 			m.infra.DBRoPool(), m.infra.DBRwPool(),
-			m.infra.ImporterFactory, imagesDir, newFileBatcher(m.infra.WriteBatcher()),
+			m.infra.ImporterFactory, imagesDir, m.unifiedBatcher,
 		)
 	}
 
@@ -225,6 +232,28 @@ func (m *SubsystemManager) ResetStats() {
 	if m.processingStats != nil {
 		m.processingStats.Reset()
 	}
+}
+
+// HydrateFileProcessingStats loads the persisted last-run file processing
+// counters into processingStats. Only the skip-startup-discovery incident path
+// calls this (runDiscovery is false): when a startup walk runs, the walk and
+// Run()'s completion monitor own the counters, and a hydrated TotalFound would
+// make the monitor treat the run as started on stale data. InFlight is never
+// hydrated — it is live state and is not persisted. Nil service or nil stats
+// makes this a no-op.
+func (m *SubsystemManager) HydrateFileProcessingStats(ctx context.Context) {
+	if m == nil || m.processingStats == nil || m.moduleStateService == nil {
+		return
+	}
+	fp, err := m.moduleStateService.LoadFileProcessing(ctx, "discovery")
+	if err != nil {
+		slog.Error("failed to hydrate file processing stats", "err", err)
+		return
+	}
+	m.processingStats.TotalFound.Store(fp.TotalFound)
+	m.processingStats.AlreadyExisting.Store(fp.AlreadyExisting)
+	m.processingStats.NewlyInserted.Store(fp.NewlyInserted)
+	m.processingStats.SkippedInvalid.Store(fp.SkippedInvalid)
 }
 
 // SetPreloadEnabled enables or disables cache preload scheduling.

@@ -503,6 +503,105 @@ func TestFlush_MaxBatchBytesZero_SizeFuncSet(t *testing.T) {
 	mu.Unlock()
 }
 
+func TestFlush_DropWithoutFlushSkipsBeginTx(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+
+	var beginTxCount, flushCallCount, afterCommitCount, successCount atomic.Int64
+	flushCh := make(chan struct{}, 1)
+
+	cfg := Config[int]{
+		BeginTx: func(ctx context.Context) (*sql.Tx, error) {
+			beginTxCount.Add(1)
+			return testBeginTx(db)(ctx)
+		},
+		Flush: func(ctx context.Context, tx *sql.Tx, batch []int) error {
+			flushCallCount.Add(1)
+			return nil
+		},
+		OnAfterCommit: func(ctx context.Context, lastWalCheckpoint time.Time, lastOptimize time.Time, totalCommitted int64, postFlush bool) {
+			afterCommitCount.Add(1)
+		},
+		OnSuccess: func(batch []int) {
+			successCount.Add(1)
+			flushCh <- struct{}{}
+		},
+		DropWithoutFlush: func(batch []int) bool { return true },
+		MaxBatchSize:     3,
+		FlushInterval:    10 * time.Second,
+	}
+
+	wb, err := New(ctx, cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer wb.Close()
+
+	for i := range 3 {
+		if err := wb.Submit(i); err != nil {
+			t.Fatalf("Submit(%d): %v", i, err)
+		}
+	}
+
+	waitForFlushes(t, flushCh, 1, 10*time.Second)
+
+	if beginTxCount.Load() != 0 {
+		t.Errorf("BeginTx called %d times, want 0 (DropWithoutFlush should skip BeginTx)", beginTxCount.Load())
+	}
+	if flushCallCount.Load() != 0 {
+		t.Errorf("Flush called %d times, want 0 (DropWithoutFlush should skip Flush)", flushCallCount.Load())
+	}
+	if afterCommitCount.Load() != 0 {
+		t.Errorf("OnAfterCommit called %d times, want 0 (DropWithoutFlush should skip OnAfterCommit)", afterCommitCount.Load())
+	}
+	if successCount.Load() == 0 {
+		t.Error("OnSuccess was not called (DropWithoutFlush must still call OnSuccess)")
+	}
+
+	// PendingCount must drop even on the drop path (via the existing defer).
+	waitForPendingZero(t, wb, 5*time.Second)
+}
+
+func TestFlush_DropWithoutFlushFalseStillBeginTx(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+
+	var beginTxCount atomic.Int64
+	flushCh := make(chan struct{}, 1)
+
+	cfg := Config[int]{
+		BeginTx: func(ctx context.Context) (*sql.Tx, error) {
+			beginTxCount.Add(1)
+			return testBeginTx(db)(ctx)
+		},
+		Flush: func(ctx context.Context, tx *sql.Tx, batch []int) error {
+			flushCh <- struct{}{}
+			return nil
+		},
+		DropWithoutFlush: func(batch []int) bool { return false },
+		MaxBatchSize:     3,
+		FlushInterval:    10 * time.Second,
+	}
+
+	wb, err := New(ctx, cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer wb.Close()
+
+	for i := range 3 {
+		if err := wb.Submit(i); err != nil {
+			t.Fatalf("Submit(%d): %v", i, err)
+		}
+	}
+
+	waitForFlushes(t, flushCh, 1, 10*time.Second)
+
+	if beginTxCount.Load() == 0 {
+		t.Error("BeginTx was not called (DropWithoutFlush false should proceed to BeginTx)")
+	}
+}
+
 func TestFlush_OnInterval(t *testing.T) {
 	db := testDB(t)
 	ctx := context.Background()
@@ -543,6 +642,47 @@ func TestFlush_OnInterval(t *testing.T) {
 		t.Errorf("expected item 1, got %d", flushedItems[0])
 	}
 	mu.Unlock()
+}
+
+// TestFlush_OnInterval_WithDQueDirPath verifies that an idle drain poll
+// (drained==0) does not trigger drain_end — the channel batch waits for
+// the worker-main interval flush. Fail if GREEN fires drain_end on
+// empty-dque+leftover.
+func TestFlush_OnInterval_WithDQueDirPath(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+
+	dir := t.TempDir()
+	flushCh := make(chan struct{}, 1)
+
+	cfg := Config[int]{
+		BeginTx: testBeginTx(db),
+		Flush: func(ctx context.Context, tx *sql.Tx, batch []int) error {
+			flushCh <- struct{}{}
+			return nil
+		},
+		MaxBatchSize:  10,
+		FlushInterval: 100 * time.Millisecond,
+		DQueDirPath:   dir,
+	}
+
+	wb, err := New(ctx, cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer wb.Close()
+
+	if err := wb.Submit(1); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+
+	// Idle drain (drained==0) must not steal the channel interval.
+	select {
+	case <-flushCh:
+		t.Fatal("flush happened before FlushInterval (drain_end must not fire on idle poll)")
+	case <-time.After(cfg.FlushInterval / 2):
+	}
+	waitForFlushes(t, flushCh, 1, 5*time.Second)
 }
 
 func TestClose_DrainsRemaining(t *testing.T) {
@@ -1614,6 +1754,7 @@ func TestWorker_MaintenanceTimer(t *testing.T) {
 		lastWalCheckpoint time.Time
 		lastOptimize      time.Time
 		totalCommitted    int64
+		postFlush         bool
 	}
 	maintenanceCh := make(chan struct{}, 8)
 
@@ -1622,7 +1763,7 @@ func TestWorker_MaintenanceTimer(t *testing.T) {
 		Flush: func(ctx context.Context, tx *sql.Tx, batch []int) error {
 			return nil
 		},
-		OnAfterCommit: func(ctx context.Context, lastWalCheckpoint time.Time, lastOptimize time.Time, totalCommitted int64) {
+		OnAfterCommit: func(ctx context.Context, lastWalCheckpoint time.Time, lastOptimize time.Time, totalCommitted int64, postFlush bool) {
 			mu.Lock()
 			defer mu.Unlock()
 			calls = append(calls, struct {
@@ -1630,13 +1771,14 @@ func TestWorker_MaintenanceTimer(t *testing.T) {
 				lastWalCheckpoint time.Time
 				lastOptimize      time.Time
 				totalCommitted    int64
-			}{ctxCtx: ctx, lastWalCheckpoint: lastWalCheckpoint, lastOptimize: lastOptimize, totalCommitted: totalCommitted})
+				postFlush         bool
+			}{ctxCtx: ctx, lastWalCheckpoint: lastWalCheckpoint, lastOptimize: lastOptimize, totalCommitted: totalCommitted, postFlush: postFlush})
 			select {
 			case maintenanceCh <- struct{}{}:
 			default:
 			}
 		},
-		MaxBatchSize:        10,
+		MaxBatchSize:        1,
 		FlushInterval:       10 * time.Second,
 		MaintenanceInterval: 50 * time.Millisecond,
 	}
@@ -1651,25 +1793,36 @@ func TestWorker_MaintenanceTimer(t *testing.T) {
 		t.Fatalf("Submit: %v", err)
 	}
 
-	// Wait for two OnAfterCommit maintenance calls: the first stores the
-	// timestamps, the second reports them as non-zero.
-	waitForFlushes(t, maintenanceCh, 2, 20*time.Second)
+	// Wait for 3 OnAfterCommit callbacks:
+	//   1 = flush: postFlush=true, zeros
+	//   2 = first timer tick: postFlush=false, still zeros
+	//   3 = second timer tick: postFlush=false, non-zero times
+	waitForFlushes(t, maintenanceCh, 3, 20*time.Second)
 
 	mu.Lock()
 	defer mu.Unlock()
-	if len(calls) == 0 {
-		t.Fatal("expected OnAfterCommit to be called at least once")
+	if len(calls) < 3 {
+		t.Fatalf("expected at least 3 OnAfterCommit calls, got %d", len(calls))
 	}
+	// Callback 1 (flush) must have postFlush=true.
+	if !calls[0].postFlush {
+		t.Error("callback 1 (flush): expected postFlush=true, got false")
+	}
+	// Callback 2 and 3 (maintenance timer) must have postFlush=false.
+	if calls[1].postFlush {
+		t.Error("callback 2 (timer): expected postFlush=false, got true")
+	}
+	if calls[2].postFlush {
+		t.Error("callback 3 (timer): expected postFlush=false, got true")
+	}
+
 	if calls[0].ctxCtx == nil {
 		t.Error("expected non-nil context in first OnAfterCommit call")
-	}
-	if calls[0].totalCommitted < 0 {
-		t.Errorf("expected totalCommitted >= 0, got %d", calls[0].totalCommitted)
 	}
 
 	var sawNonZeroWal bool
 	var sawNonZeroOpt bool
-	for _, c := range calls {
+	for _, c := range calls[2:] {
 		if !c.lastWalCheckpoint.IsZero() {
 			sawNonZeroWal = true
 		}
@@ -1678,10 +1831,10 @@ func TestWorker_MaintenanceTimer(t *testing.T) {
 		}
 	}
 	if !sawNonZeroWal {
-		t.Error("expected at least one OnAfterCommit call with non-zero lastWalCheckpointTime")
+		t.Error("expected at least one OnAfterCommit call (after first timer tick) with non-zero lastWalCheckpointTime")
 	}
 	if !sawNonZeroOpt {
-		t.Error("expected at least one OnAfterCommit call with non-zero lastOptimizeTime")
+		t.Error("expected at least one OnAfterCommit call (after first timer tick) with non-zero lastOptimizeTime")
 	}
 }
 

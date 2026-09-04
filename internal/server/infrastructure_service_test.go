@@ -611,9 +611,10 @@ func TestInfrastructureService_WalCheckpointAfterCommit_StatError(t *testing.T) 
 	}
 	defer os.Chmod(dir, 0o755)
 	infra.dbPaths.Main = filepath.Join(dir, "sfpg.db")
+	infra.lastFlushWroteDML.Store(true)
 
 	logs := withLogCapture(t, slog.LevelWarn, func() {
-		infra.walCheckpointAfterCommit(context.Background(), time.Time{}, time.Time{}, 0)
+		infra.walCheckpointAfterCommit(context.Background(), time.Time{}, time.Time{}, 0, true)
 	})
 	if !strings.Contains(logs, "failed to stat WAL file") {
 		t.Errorf("expected stat error log, got: %s", logs)
@@ -639,9 +640,10 @@ func TestInfrastructureService_WalCheckpointAfterCommit_WALSizeThreshold(t *test
 	infra.testSeams.PerformWALCheckpoint = func(ctx context.Context) {
 		checkpointCalled = true
 	}
+	infra.lastFlushWroteDML.Store(true)
 
 	logs := withLogCapture(t, slog.LevelInfo, func() {
-		infra.walCheckpointAfterCommit(context.Background(), time.Time{}, time.Time{}, 0)
+		infra.walCheckpointAfterCommit(context.Background(), time.Time{}, time.Time{}, 0, true)
 	})
 	if !checkpointCalled {
 		t.Error("performWALCheckpoint should be called")
@@ -661,7 +663,7 @@ func TestInfrastructureService_WalCheckpointAfterCommit_FiveMinuteElapsed(t *tes
 	}
 
 	logs := withLogCapture(t, slog.LevelInfo, func() {
-		infra.walCheckpointAfterCommit(context.Background(), time.Now().Add(-6*time.Minute), time.Now(), 0)
+		infra.walCheckpointAfterCommit(context.Background(), time.Now().Add(-6*time.Minute), time.Now(), 0, false)
 	})
 	if !checkpointCalled {
 		t.Error("performWALCheckpoint should be called")
@@ -1180,7 +1182,7 @@ func TestBatchedWrite_GobEncodeDecodeAndSize(t *testing.T) {
 	}
 
 	var decoded BatchedWrite
-	if err := decoded.GobDecode(data); err != nil {
+	if err = decoded.GobDecode(data); err != nil {
 		t.Fatalf("GobDecode: %v", err)
 	}
 	if decoded.File == nil || decoded.File.Path != original.File.Path {
@@ -1201,6 +1203,38 @@ func TestBatchedWrite_GobEncodeDecodeAndSize(t *testing.T) {
 	cacheWrite := BatchedWrite{CacheEntry: cacheEntry}
 	if cacheWrite.Size() <= 0 {
 		t.Errorf("cache Size = %d, want > 0", cacheWrite.Size())
+	}
+
+	// FolderIndex payload: gob round-trip of all fields including Generation,
+	// with File and CacheEntry nil.
+	fi := &files.FolderIndexRow{
+		FileID:     7,
+		FolderID:   3,
+		ImageIndex: 2,
+		ImageCount: 9,
+		PrevID:     sql.NullInt64{Int64: 1, Valid: true},
+		NextID:     sql.NullInt64{Int64: 4, Valid: true},
+		FirstID:    1,
+		LastID:     9,
+		Generation: 42,
+	}
+	fiWrite := BatchedWrite{FolderIndex: fi}
+	fiData, err := fiWrite.GobEncode()
+	if err != nil {
+		t.Fatalf("GobEncode FolderIndex: %v", err)
+	}
+	var fiDecoded BatchedWrite
+	if err := fiDecoded.GobDecode(fiData); err != nil {
+		t.Fatalf("GobDecode FolderIndex: %v", err)
+	}
+	if fiDecoded.FolderIndex == nil {
+		t.Fatal("decoded FolderIndex is nil")
+	}
+	if *fiDecoded.FolderIndex != *fi {
+		t.Errorf("decoded FolderIndex mismatch: got %+v want %+v", *fiDecoded.FolderIndex, *fi)
+	}
+	if fiWrite.Size() <= 0 {
+		t.Errorf("FolderIndex Size = %d, want > 0", fiWrite.Size())
 	}
 }
 

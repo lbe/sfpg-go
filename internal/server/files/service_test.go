@@ -24,9 +24,14 @@ import (
 )
 
 type mockUnifiedBatcher struct {
-	SubmitFileFunc   func(file *File) error
-	PendingCountFunc func() int64
-	rwPool           *dbconnpool.DbSQLConnPool // For integration tests that need real writes
+	SubmitFileFunc                    func(file *File) error
+	SubmitFolderIndexFunc             func(row FolderIndexRow) error
+	PendingCountFunc                  func() int64
+	FolderIndexInflightFunc           func() int64
+	SetFolderIndexRebuildActiveFunc   func(active bool)
+	SetFolderIndexRebuildScanHeldFunc func(held bool)
+	BumpFolderIndexGenerationFunc     func() int64
+	rwPool                            *dbconnpool.DbSQLConnPool // For integration tests that need real writes
 }
 
 func (m *mockUnifiedBatcher) SubmitFile(file *File) error {
@@ -57,9 +62,42 @@ func (m *mockUnifiedBatcher) SubmitFile(file *File) error {
 	return nil
 }
 
+func (m *mockUnifiedBatcher) SubmitFolderIndex(row FolderIndexRow) error {
+	if m.SubmitFolderIndexFunc != nil {
+		return m.SubmitFolderIndexFunc(row)
+	}
+	return nil
+}
+
 func (m *mockUnifiedBatcher) PendingCount() int64 {
 	if m.PendingCountFunc != nil {
 		return m.PendingCountFunc()
+	}
+	return 0
+}
+
+func (m *mockUnifiedBatcher) FolderIndexInflight() int64 {
+	if m.FolderIndexInflightFunc != nil {
+		return m.FolderIndexInflightFunc()
+	}
+	return 0
+}
+
+func (m *mockUnifiedBatcher) SetFolderIndexRebuildActive(active bool) {
+	if m.SetFolderIndexRebuildActiveFunc != nil {
+		m.SetFolderIndexRebuildActiveFunc(active)
+	}
+}
+
+func (m *mockUnifiedBatcher) SetFolderIndexRebuildScanHeld(held bool) {
+	if m.SetFolderIndexRebuildScanHeldFunc != nil {
+		m.SetFolderIndexRebuildScanHeldFunc(held)
+	}
+}
+
+func (m *mockUnifiedBatcher) BumpFolderIndexGeneration() int64 {
+	if m.BumpFolderIndexGenerationFunc != nil {
+		return m.BumpFolderIndexGenerationFunc()
 	}
 	return 0
 }
@@ -113,7 +151,7 @@ func createTestPoolsAndDir(t *testing.T) (roPool *dbconnpool.DbSQLConnPool, rwPo
 	m2.Close()
 
 	// Create RW pool first to set up WAL mode, then RO pool
-	rwDSN := "file:" + filepath.ToSlash(tempDB) + "?_txlock=immediate&mode=rwc"
+	rwDSN := "file:" + filepath.ToSlash(tempDB) + "?_txlock=immediate&mode=rwc&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
 	rwPool, err = dbconnpool.NewDbSQLConnPool(ctx, rwDSN, dbconnpool.Config{
 		DriverName:         "sqlite3",
 		MaxConnections:     10,

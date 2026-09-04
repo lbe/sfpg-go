@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 
 	"github.com/lbe/sfpg-go/internal/cachelite"
@@ -52,9 +53,31 @@ type App struct {
 	// The zero value means use production implementations.
 	testSeams AppTestSeams
 
-	// discoveryRunning is true while TriggerDiscovery is walking/enqueueing.
+	// discoveryRunning is true while TriggerDiscovery is walking, draining, or rebuilding.
 	// Used by cache size calibration quiet checks (independent of module_state DB).
 	discoveryRunning atomic.Bool
+
+	// manualDiscoveryError is the in-memory error from a manual POST /server/discovery
+	// rebuild failure. It is shown on the dashboard until acknowledged and is cleared
+	// on process restart. Guarded by manualDiscoveryErrorMu.
+	manualDiscoveryError   string
+	manualDiscoveryErrorMu sync.Mutex
+}
+
+// ManualDiscoveryError returns the current manual discovery rebuild error, or an
+// empty string if none. In-memory only; cleared on process restart.
+func (app *App) ManualDiscoveryError() string {
+	app.manualDiscoveryErrorMu.Lock()
+	defer app.manualDiscoveryErrorMu.Unlock()
+	return app.manualDiscoveryError
+}
+
+// SetManualDiscoveryError sets or clears the manual discovery rebuild error.
+// Passing an empty string clears it (e.g. when the operator acknowledges it).
+func (app *App) SetManualDiscoveryError(msg string) {
+	app.manualDiscoveryErrorMu.Lock()
+	defer app.manualDiscoveryErrorMu.Unlock()
+	app.manualDiscoveryError = msg
 }
 
 // New creates and initializes a new App instance. It sets up the application

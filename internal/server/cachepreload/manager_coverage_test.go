@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"testing"
 	"time"
 
@@ -135,16 +136,16 @@ func TestPreloadManager_GetMetrics(t *testing.T) {
 		pm.Configure(cfg)
 
 		done := make(chan struct{})
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			go func() {
-				for j := 0; j < 100; j++ {
+				for range 100 {
 					_ = pm.GetMetrics()
 				}
 				done <- struct{}{}
 			}()
 		}
 
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			<-done
 		}
 	})
@@ -338,13 +339,7 @@ func TestScheduleFolderPreload_CancelPreviousTasks(t *testing.T) {
 	pm.ScheduleFolderPreload(context.Background(), 1, sessionID)
 	pm.ScheduleFolderPreload(context.Background(), 2, sessionID)
 
-	found := false
-	for _, id := range removedIDs {
-		if id == "prev-task" {
-			found = true
-			break
-		}
-	}
+	found := slices.Contains(removedIDs, "prev-task")
 	if !found {
 		t.Errorf("expected 'prev-task' to be removed, got removed IDs: %v", removedIDs)
 	}

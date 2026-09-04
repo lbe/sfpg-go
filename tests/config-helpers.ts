@@ -8,9 +8,37 @@
  * Use in test beforeAll/afterAll to isolate config-mutating tests.
  */
 
-import { expect, type APIRequestContext, type Page } from "@playwright/test";
+import {
+  expect,
+  type APIRequestContext,
+  type Locator,
+  type Page,
+} from "@playwright/test";
+
+import { openMenu } from "./helpers";
 
 const BASE_URL = "http://localhost:8083";
+
+/**
+ * Open the config modal on the Performance tab and wait until pool-size
+ * controls are interactive (avoids flakes after prior saves in serial runs).
+ */
+export async function openConfigPerformanceTab(page: Page): Promise<Locator> {
+  await openMenu(page);
+  await page.locator('a[aria-label="Configuration"]').click();
+  await page.waitForSelector("#config-form", { timeout: 5000 });
+  await expect(page.locator("#config_modal").first()).toBeChecked({
+    timeout: 5000,
+  });
+  const perfTab = page.locator("#tab-performance-btn");
+  await perfTab.scrollIntoViewIfNeeded();
+  await expect(perfTab).toBeVisible({ timeout: 5000 });
+  await expect(perfTab).toBeEnabled();
+  await perfTab.click();
+  const poolInput = page.locator('input[name="db_max_pool_size"]');
+  await expect(poolInput).toBeVisible({ timeout: 5000 });
+  return poolInput;
+}
 
 /**
  * Assert the full restart-dialog-open contract after a restart-required save:

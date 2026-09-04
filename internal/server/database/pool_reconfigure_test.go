@@ -88,9 +88,7 @@ func TestPoolReconfiguration_NoCloseWhileActive(t *testing.T) {
 	holderDone := make(chan struct{})
 	release := make(chan struct{})
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 
 		// Get a connection and hold it
 		conn, getErr := rwPool.Get()
@@ -116,7 +114,7 @@ func TestPoolReconfiguration_NoCloseWhileActive(t *testing.T) {
 		// Cleanup
 		_ = tx.Rollback()
 		rwPool.Put(conn)
-	}()
+	})
 
 	// Wait for holder to acquire connection
 	<-holderDone

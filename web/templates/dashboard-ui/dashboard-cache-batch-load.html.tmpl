@@ -23,15 +23,19 @@
           </svg>
           Cache Batch Load
         </h3>
-        {{ if .Metrics.CacheBatchLoad.IsRunning }}
-          <span
-            id="batch-status"
-            class="badge badge-success badge-sm animate-pulse"
-            >Running</span
-          >
-        {{ else }}
-          <span id="batch-status" class="badge badge-ghost badge-sm">Idle</span>
-        {{ end }}
+        <span
+          id="batch-status"
+          class="{{ if .Metrics.CacheBatchLoad.IsRunning }}
+            badge-success animate-pulse
+          {{ else }}
+            badge-ghost
+          {{ end }} badge badge-sm"
+          >{{ if .Metrics.CacheBatchLoad.IsRunning }}
+            Running
+          {{ else }}
+            Idle
+          {{ end }}</span
+        >
       </div>
 
       <div
@@ -74,6 +78,7 @@
       </div>
 
       <progress
+        id="batch-progress-bar"
         class="progress progress-primary mt-2 w-full"
         value="{{ cacheBatchLoadDonePercent .Metrics.CacheBatchLoad .GalleryStats }}"
         max="100"

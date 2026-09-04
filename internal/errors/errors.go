@@ -78,7 +78,7 @@ func Wrap(err error, msg string) error {
 // Wrapf returns a new error that wraps the given error with a formatted message.
 // If err is nil, Wrapf returns nil.
 // The returned error captures a stack trace that is rendered with %+v.
-func Wrapf(err error, format string, args ...interface{}) error {
+func Wrapf(err error, format string, args ...any) error {
 	if err == nil {
 		return nil
 	}

@@ -185,7 +185,7 @@ func runReadWriteBenchmark(
 	defer cleanup()
 
 	writerCounter := int64(writers)
-	var opCounter uint64
+	var opCounter atomic.Uint64
 	ctx := context.Background()
 
 	b.SetParallelism(writers + readers)
@@ -213,7 +213,7 @@ func runReadWriteBenchmark(
 			defer stmt.Close()
 
 			for pb.Next() {
-				n := atomic.AddUint64(&opCounter, 1)
+				n := opCounter.Add(1)
 				path := "/bench/writer/" +
 					strconv.FormatUint(n, 10) + "/img.jpg"
 				if _, err := stmt.ExecContext(ctx, path); err != nil {

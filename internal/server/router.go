@@ -87,6 +87,7 @@ func (app *App) getRouter() http.Handler {
 		{http.MethodPost, "/server/discovery", app.HandlerManager.serverHandlers.ServerDiscoveryPost},
 		{http.MethodPost, "/server/cache-batch-load", app.HandlerManager.serverHandlers.ServerCacheBatchLoadPost},
 		{http.MethodPost, "/server/restart", app.HandlerManager.configRestartHandler.RestartHandler},
+		{http.MethodPost, "/dashboard/folder-index-error/ack", app.HandlerManager.serverHandlers.ServerDiscoveryErrorAckPost},
 	}
 	for _, rt := range authRoutes {
 		mux.Handle(rt.method+" "+rt.pattern, app.authMiddleware(http.HandlerFunc(rt.handler)))

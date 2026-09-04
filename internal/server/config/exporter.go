@@ -76,7 +76,7 @@ func (c *Config) RestoreLastKnownGood(ctx context.Context, q ConfigQueries) (*Co
 
 	restoredConfig := DefaultConfig()
 
-	var raw map[string]interface{}
+	var raw map[string]any
 	if err := yaml.Unmarshal([]byte(lastKnownGoodYAML), &raw); err != nil {
 		return nil, fmt.Errorf("invalid YAML in last known good config: %w", err)
 	}
@@ -96,7 +96,7 @@ func (c *Config) RestoreLastKnownGood(ctx context.Context, q ConfigQueries) (*Co
 // PreviewImport parses YAML content and returns a diff showing what would change
 // if the import were applied. Does not modify the current configuration.
 func (c *Config) PreviewImport(yamlContent string) (*ConfigDiff, error) {
-	var raw map[string]interface{}
+	var raw map[string]any
 	if err := yaml.Unmarshal([]byte(yamlContent), &raw); err != nil {
 		return nil, fmt.Errorf("invalid YAML syntax: %w", err)
 	}

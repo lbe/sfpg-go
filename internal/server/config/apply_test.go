@@ -41,7 +41,7 @@ func TestImportedConfigReportsStructuredDurationErrors(t *testing.T) {
 	}
 
 	t.Run("applyYAMLValues produces structured errors", func(t *testing.T) {
-		raw := map[string]interface{}{
+		raw := map[string]any{
 			"cache-max-time": "not-a-duration",
 		}
 		cfg := DefaultConfig()
@@ -162,8 +162,7 @@ func TestApplyConfig(t *testing.T) {
 		if err == nil {
 			t.Fatal("ApplyConfig expected error, got nil")
 		}
-		var applyErr *ApplyValidationError
-		if !errors.As(err, &applyErr) {
+		if _, ok := errors.AsType[*ApplyValidationError](err); !ok {
 			t.Errorf("err type = %T, want *ApplyValidationError", err)
 		}
 		if !errors.Is(err, sentinel) {
@@ -180,8 +179,7 @@ func TestApplyConfig(t *testing.T) {
 		if err == nil {
 			t.Fatal("ApplyConfig expected error, got nil")
 		}
-		var applyErr *ApplyPersistenceError
-		if !errors.As(err, &applyErr) {
+		if _, ok := errors.AsType[*ApplyPersistenceError](err); !ok {
 			t.Errorf("err type = %T, want *ApplyPersistenceError", err)
 		}
 		if !errors.Is(err, sentinel) {
