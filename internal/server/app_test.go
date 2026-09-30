@@ -94,10 +94,17 @@ func TestApp_GetCtx_ReturnsCtxOrBackground(t *testing.T) {
 	}
 }
 
+// setDefaultNewTestSeams applies package-level seams before New() and resets
+// defaultNewTestSeams after the test so parallel and sequential tests cannot leak.
+func setDefaultNewTestSeams(t *testing.T, seams AppTestSeams) {
+	defaultNewTestSeams = seams
+	t.Cleanup(func() { defaultNewTestSeams = AppTestSeams{} })
+}
+
 func TestNew_ParseTemplatesError_Exits(t *testing.T) {
 	var parseCalled bool
 	var exitCode int
-	defaultNewTestSeams = AppTestSeams{
+	setDefaultNewTestSeams(t, AppTestSeams{
 		NewParseTemplates: func(fs.FS) error {
 			parseCalled = true
 			return fmt.Errorf("parse failed")
@@ -106,9 +113,6 @@ func TestNew_ParseTemplatesError_Exits(t *testing.T) {
 			exitCode = code
 			panic("exit")
 		},
-	}
-	t.Cleanup(func() {
-		defaultNewTestSeams = AppTestSeams{}
 	})
 
 	func() {

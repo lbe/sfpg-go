@@ -51,12 +51,6 @@ func (s *ProcessingStats) GetStats() metrics.FileProcessingMetrics {
 	}
 }
 
-// getFileByPathFunc is used by checkIfFileModifiedCore to fetch a file from the DB.
-type getFileByPathFunc func(ctx context.Context, path string) (gallerydb.File, error)
-
-// getInvalidFileByPathFunc is used by checkIfFileModifiedCore to check for invalid files in the DB.
-type getInvalidFileByPathFunc func(ctx context.Context, path string) (gallerydb.InvalidFile, error)
-
 // categorizeProcessError returns a short reason string for recording in invalid_files.
 func categorizeProcessError(err error) string {
 	if err == nil {
@@ -66,6 +60,8 @@ func categorizeProcessError(err error) string {
 	switch {
 	case strings.Contains(s, "non-image"):
 		return "non-image"
+	case strings.Contains(s, "invalid JPEG markers"):
+		return "jpeg-markers"
 	case strings.Contains(s, "decode") || strings.Contains(s, "DecodeConfig"):
 		return "decode"
 	case strings.Contains(s, "thumbnail"):
@@ -86,111 +82,24 @@ func recordInvalidFileFromPath(ctx context.Context, processor FileProcessor, ful
 		return fmt.Errorf("stat %s: %w", fullPath, err)
 	}
 	reason := categorizeProcessError(processErr)
-	return processor.RecordInvalidFile(ctx, path, info.ModTime().Unix(), info.Size(), reason)
-}
-
-// checkIfFileModifiedCore implements the common logic for both CheckIfFileModified
-// and CheckIfFileModifiedWithQueries. It avoids requiring *gallerydb.CustomQueries
-// to implement QueriesForFiles (WithTx return type differs).
-func checkIfFileModifiedCore(ctx context.Context, getFile getFileByPathFunc, getInvalidFile getInvalidFileByPathFunc, f *File) (bool, error) {
-	fn := filepath.Join(f.ImagesDir, filepath.FromSlash(f.Path))
-
-	fileinfo, err := os.Stat(fn)
+	fp, ok := processor.(*fileProcessor)
+	if !ok {
+		return fmt.Errorf("record invalid file: folder_id resolution requires fileProcessor")
+	}
+	folderID, err := folderIDForInvalidGalleryPath(ctx, fp, path)
 	if err != nil {
-		slog.Error("checkIfFileModified os.Stat", "err", err)
-		return false, err
+		return err
 	}
-
-	if fileinfo.IsDir() {
-		slog.Error("checkIfFileModified is a directory, skipping", "path", fn)
-		return false, fmt.Errorf("is a directory")
-	}
-
-	f.File.Mtime = sql.NullInt64{Valid: true, Int64: fileinfo.ModTime().Unix()}
-	f.File.SizeBytes = sql.NullInt64{Valid: true, Int64: fileinfo.Size()}
-
-	// Check invalid_files before files table: skip if known invalid and mtime/size unchanged.
-	if getInvalidFile != nil {
-		inv, invErr := getInvalidFile(ctx, f.Path)
-		if invErr == nil {
-			if inv.Mtime == f.File.Mtime.Int64 && inv.Size == f.File.SizeBytes.Int64 {
-				f.Ok = true
-				f.Exists = false
-				return true, nil
-			}
-		} else if !errors.Is(invErr, sql.ErrNoRows) {
-			slog.Error("checkIfFileModified GetInvalidFileByPath", "err", invErr)
-		}
-	}
-
-	if getFile == nil {
-		return false, errors.New("getFile callback is nil")
-	}
-
-	dbFile, err := getFile(ctx, f.Path)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		slog.Error("checkIfFileModified GetFileByPath", "err", err)
-		return false, err
-	}
-	if err == nil {
-		// File exists in database - mark as existing and preserve ID
-		f.Exists = true
-		f.File.ID = dbFile.ID
-
-		if dbFile.Mtime.Valid && f.File.Mtime.Valid && dbFile.Mtime.Int64 == f.File.Mtime.Int64 &&
-			dbFile.SizeBytes.Valid && f.File.SizeBytes.Valid && dbFile.SizeBytes.Int64 == f.File.SizeBytes.Int64 &&
-			dbFile.Md5.Valid {
-			f.Ok = true
-			f.File.Md5 = sql.NullString{Valid: true, String: dbFile.Md5.String}
-			f.File.Phash = sql.NullInt64{Valid: true, Int64: dbFile.Phash.Int64}
-			f.File.MimeType = sql.NullString{Valid: true, String: dbFile.MimeType.String}
-			f.File.Width = sql.NullInt64{Valid: true, Int64: dbFile.Width.Int64}
-			f.File.Height = sql.NullInt64{Valid: true, Int64: dbFile.Height.Int64}
-			return true, nil
-		}
-		// Log if Md5 is missing - file will be re-processed to calculate it
-		if !dbFile.Md5.Valid {
-			slog.Debug("checkIfFileModified: re-processing file with missing Md5", "path", f.Path)
-		}
-	}
-	return false, nil
+	return processor.RecordInvalidFile(ctx, path, info.ModTime().Unix(), info.Size(), reason, folderID)
 }
 
-// CheckIfFileModified checks if a file on disk has been modified since it was
-// last recorded in the database by comparing its modification time and size.
-func CheckIfFileModified(ctx context.Context, cpcRo *dbconnpool.CpConn, f *File) (bool, error) {
-	return checkIfFileModifiedCore(ctx, cpcRo.Queries.GetFileByPath, cpcRo.Queries.GetInvalidFileByPath, f)
-}
-
-// CheckIfFileModifiedWithQueries is a testable variant of CheckIfFileModified that
-// uses a QueriesForFiles interface instead of a concrete database connection.
-func CheckIfFileModifiedWithQueries(ctx context.Context, q QueriesForFiles, f *File) (bool, error) {
-	return checkIfFileModifiedCore(ctx, q.GetFileByPath, q.GetInvalidFileByPath, f)
-}
-
-// ProcessFile checks if a file has been modified since its last processing,
-// then extracts metadata and generates an in-memory thumbnail if needed.
-func ProcessFile(ctx context.Context, cpcRo *dbconnpool.CpConn, file *File) error {
-	return processFileCore(ctx, cpcRo.Queries.GetFileByPath, cpcRo.Queries.GetInvalidFileByPath, file)
-}
-
-// ProcessFileWithQueries is a testable variant of ProcessFile that accepts
-// QueriesForFiles. It doesn't depend on *dbconnpool.CpConn, making it easier
-// to test with mock queries.
-func ProcessFileWithQueries(ctx context.Context, q QueriesForFiles, file *File) error {
-	return processFileCore(ctx, q.GetFileByPath, q.GetInvalidFileByPath, file)
-}
-
-// processFileCore implements the common logic for ProcessFile and ProcessFileWithQueries.
-// It checks if the file has been modified and processes it if needed.
-func processFileCore(ctx context.Context, getFile getFileByPathFunc, getInvalidFile getInvalidFileByPathFunc, file *File) error {
-	unchanged, err := checkIfFileModifiedCore(ctx, getFile, getInvalidFile, file)
-	if err != nil {
-		return fmt.Errorf("failed to check if file modified: %w", err)
+// processDiscoveryWorkerFile processes a dequeued discovery item. Walk metadata
+// must already be on file; no DB modification check or existence pre-lookup.
+func processDiscoveryWorkerFile(file *File) error {
+	if !file.File.Mtime.Valid || !file.File.SizeBytes.Valid {
+		return fmt.Errorf("file walk metadata missing: mtime and size required")
 	}
-	if unchanged {
-		return nil
-	}
+	file.Exists = false
 	return processFileContents(file)
 }
 
@@ -217,11 +126,11 @@ func processFileContents(file *File) error {
 		return fmt.Errorf("non-image file: %v", file.File.MimeType.String)
 	}
 
-	// Skip EXIF extraction for JPEG files with invalid markers (poison pill files)
+	// Reject JPEG files with invalid markers (poison pill files) so the worker
+	// records them in invalid_files instead of inserting into files.
 	if file.File.MimeType.String == "image/jpeg" && !file.HasValidJpegMarkers {
-		slog.Warn("processFile invalid JPEG markers (possible poison pill) - Skipping EXIF", "path", file.Path)
-		// Continue processing without EXIF - file will be recorded as invalid
-		return nil
+		slog.Warn("processFile invalid JPEG markers (possible poison pill)", "path", file.Path)
+		return fmt.Errorf("invalid JPEG markers: %s", file.Path)
 	}
 
 	if exifErr := ExtractExifData(file, imageFile); exifErr != nil {
@@ -254,21 +163,22 @@ func processFileContents(file *File) error {
 	return nil
 }
 
-// NewPoolFuncWithProcessor returns a worker pool function that uses FileProcessor service.
-// The returned function matches the signature expected by workerpool.StartWorkerPool.
-func NewPoolFuncWithProcessor(processor FileProcessor, q queue.Dequeuer[string], normalizedImagesDir string, removePrefix func(normalizedDir, path string) (string, error), stats *ProcessingStats, onFileInserted func(int64)) workerpool.PoolFunc {
-	return func(ctx context.Context, wc workerpool.WorkerContext, dbRoPool, dbRwPool dbconnpool.ConnectionPool, queueLength func() int, id int) error {
+// NewPoolFuncWithProcessor returns a worker pool function that uses FileProcessor.
+// runPoolWorkerWithProcessor dequeues DiscoveryPathWork, copies walk mtime/size
+// onto *File, and invokes ProcessDiscoveryFile — never path-only ProcessFile without metadata.
+func NewPoolFuncWithProcessor(processor FileProcessor, q queue.Dequeuer[DiscoveryPathWork], normalizedImagesDir string, removePrefix func(normalizedDir, path string) (string, error), stats *ProcessingStats, onFileInserted func(int64)) workerpool.PoolFunc {
+	return func(ctx context.Context, wc workerpool.WorkerContext, dbRoPool, _ dbconnpool.ConnectionPool, queueLength func() int, id int) error {
 		return runPoolWorkerWithProcessor(ctx, wc, dbRoPool, queueLength, id, processor, q, normalizedImagesDir, removePrefix, stats, onFileInserted)
 	}
 }
 
 func runPoolWorkerWithProcessor(ctx context.Context,
 	wc workerpool.WorkerContext,
-	dbRoPool dbconnpool.ConnectionPool,
+	_ dbconnpool.ConnectionPool,
 	queueLength func() int,
 	id int,
 	processor FileProcessor,
-	q queue.Dequeuer[string],
+	q queue.Dequeuer[DiscoveryPathWork],
 	normalizedImagesDir string,
 	removePrefix func(normalizedDir, path string) (string, error),
 	stats *ProcessingStats,
@@ -280,23 +190,9 @@ func runPoolWorkerWithProcessor(ctx context.Context,
 	default:
 	}
 
-	// Get database connection ONCE for this worker - reuse for all files
-	var cpcRo *dbconnpool.CpConn
-	if dbRoPool != nil {
-		var err error
-		cpcRo, err = dbRoPool.Get()
-		if err != nil {
-			if errors.Is(err, context.Canceled) || errors.Is(err, dbconnpool.ErrPoolClosed) {
-				return ctx.Err()
-			}
-			return fmt.Errorf("get RO connection: %w", err)
-		}
-		defer dbRoPool.Put(cpcRo)
-	}
-
 	var (
-		fn  string
-		err error
+		work DiscoveryPathWork
+		err  error
 	)
 
 	for {
@@ -312,7 +208,7 @@ func runPoolWorkerWithProcessor(ctx context.Context,
 
 		wc.AddSubmitted()
 
-		fn, err = q.Dequeue()
+		work, err = q.Dequeue()
 		if err != nil {
 			if errors.Is(err, queue.ErrEmptyQueue) {
 				time.Sleep(100 * time.Millisecond)
@@ -326,64 +222,53 @@ func runPoolWorkerWithProcessor(ctx context.Context,
 		}
 
 		if stats != nil {
-			stats.TotalFound.Add(1)
 			stats.InFlight.Add(1)
 		}
 
-		path, err := removePrefix(normalizedImagesDir, fn)
+		fullPath := string(work.Path)
+		path, err := removePrefix(normalizedImagesDir, fullPath)
 		if err != nil {
 			if stats != nil {
 				stats.InFlight.Add(-1)
 			}
-			slog.Error("invalid file path detected", "file", fn, "err", err)
+			slog.Error("invalid file path detected", "file", fullPath, "err", err)
 			wc.AddFailed()
 			wc.AddCompleted()
 			continue
 		}
 
-		var file *File
-		if cpcRo != nil {
-			file, err = processor.ProcessFileWithConn(ctx, path, cpcRo)
-		} else {
-			file, err = processor.ProcessFile(ctx, path)
+		file := &File{
+			Path: path,
+			File: gallerydb.File{
+				Mtime:     sql.NullInt64{Valid: true, Int64: work.MtimeUnix},
+				SizeBytes: sql.NullInt64{Valid: true, Int64: work.SizeBytes},
+			},
 		}
+
+		file, err = processor.ProcessDiscoveryFile(ctx, file)
 		if err != nil {
 			if stats != nil {
 				stats.InFlight.Add(-1)
 			}
-			slog.Error("failed to process file", "file", fn, "err", err)
+			slog.Error("failed to process file", "file", fullPath, "err", err)
 			// Record so we skip this file on future runs when mtime/size unchanged
-			if recordErr := recordInvalidFileFromPath(ctx, processor, fn, path, err); recordErr != nil {
+			if recordErr := recordInvalidFileFromPath(ctx, processor, fullPath, path, err); recordErr != nil {
 				slog.Error("record invalid file", "path", path, "err", recordErr)
+			} else if stats != nil {
+				stats.SkippedInvalid.Add(1)
 			}
 			wc.AddFailed()
 			wc.AddCompleted()
 			continue
 		}
 
-		// file.Ok/file.Exists are set by ProcessFile in this goroutine; no race.
+		// Walk-only gate: every dequeued path that reaches submit counts as newly processed.
 		if stats != nil {
-			switch {
-			case file.Ok && !file.Exists:
-				stats.SkippedInvalid.Add(1)
-			case file.Exists:
-				stats.AlreadyExisting.Add(1)
-			default:
-				stats.NewlyInserted.Add(1)
-			}
+			stats.NewlyInserted.Add(1)
 		}
 
 		// Skipped invalid file: no thumbnail to generate
 		if file.Ok && !file.Exists {
-			if stats != nil {
-				stats.InFlight.Add(-1)
-			}
-			wc.AddCompleted()
-			continue
-		}
-
-		// Already in DB and unchanged: no write needed; skip SubmitFileForWrite.
-		if file.Exists {
 			if stats != nil {
 				stats.InFlight.Add(-1)
 			}

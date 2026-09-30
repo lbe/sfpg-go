@@ -33,9 +33,7 @@ func TestConfigHandlers_ImportPreview_MissingYAML(t *testing.T) {
 
 	ch.ImportConfigPreviewHandler(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status 400, got %d", w.Code)
-	}
+	assertConfigValidationGlobal(t, w, "YAML content is required")
 }
 
 func TestConfigHandlers_ImportCommit_Success(t *testing.T) {
@@ -70,7 +68,7 @@ func TestConfigHandlers_ImportCommit_Success(t *testing.T) {
 	if got := testutil.GetAttr(success, "hx-swap-oob"); got != "" {
 		t.Errorf("expected #config-success-message to be the main swap (no hx-swap-oob), got %q", got)
 	}
-	if err := ui.ValidateHTMXResponseStructure(body, "outerHTML", "config-success-message"); err != nil {
+	if err := validateHTMXResponseStructure(body, "outerHTML", "config-success-message"); err != nil {
 		t.Errorf("ValidateHTMXResponseStructure: %v", err)
 	}
 	// UpdateConfigWithPrecedence handled by deps
@@ -104,9 +102,7 @@ func TestConfigHandlers_ImportPreview_InvalidExtension(t *testing.T) {
 
 	ch.ImportConfigPreviewHandler(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status 400, got %d", w.Code)
-	}
+	assertConfigValidationGlobal(t, w, "File must have .yaml or .yml extension")
 }
 
 func TestConfigHandlers_ImportPreview_InvalidYAML(t *testing.T) {
@@ -123,13 +119,7 @@ func TestConfigHandlers_ImportPreview_InvalidYAML(t *testing.T) {
 
 	ch.ImportConfigPreviewHandler(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status 400, got %d", w.Code)
-	}
-	body := strings.TrimSpace(w.Body.String())
-	if !strings.HasPrefix(body, "Invalid YAML content") {
-		t.Errorf("expected Invalid YAML content error, got %s", body)
-	}
+	assertConfigValidationGlobal(t, w, "Invalid YAML content")
 }
 
 func TestConfigHandlers_ImportCommit_MissingYAML(t *testing.T) {
@@ -146,9 +136,7 @@ func TestConfigHandlers_ImportCommit_MissingYAML(t *testing.T) {
 
 	ch.ImportConfigCommitHandler(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status 400, got %d", w.Code)
-	}
+	assertConfigValidationGlobal(t, w, "YAML content is required")
 }
 
 func TestConfigHandlers_ImportCommit_ImportError(t *testing.T) {
@@ -170,13 +158,7 @@ func TestConfigHandlers_ImportCommit_ImportError(t *testing.T) {
 
 	ch.ImportConfigCommitHandler(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status 400, got %d", w.Code)
-	}
-	body := strings.TrimSpace(w.Body.String())
-	if body != "Import failed" {
-		t.Errorf("expected Import failed error, got %s", body)
-	}
+	assertConfigValidationGlobal(t, w, "Import failed")
 }
 
 func TestConfigHandlers_ImportPreview_MissingFile(t *testing.T) {
@@ -199,9 +181,7 @@ func TestConfigHandlers_ImportPreview_MissingFile(t *testing.T) {
 
 	ch.ImportConfigPreviewHandler(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status 400, got %d", w.Code)
-	}
+	assertConfigValidationGlobal(t, w, "YAML file is required")
 }
 
 func TestConfigHandlers_ImportPreview_LoadError(t *testing.T) {
@@ -242,9 +222,7 @@ func TestConfigHandlers_ImportCommit_ParseFormError(t *testing.T) {
 
 	ch.ImportConfigCommitHandler(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status 400, got %d", w.Code)
-	}
+	assertConfigMalformedRequest(t, w, "Invalid form data")
 }
 
 func TestConfigHandlers_ImportPreview_MultipartParseError(t *testing.T) {
@@ -261,9 +239,7 @@ func TestConfigHandlers_ImportPreview_MultipartParseError(t *testing.T) {
 
 	ch.ImportConfigPreviewHandler(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status 400, got %d", w.Code)
-	}
+	assertConfigMalformedRequest(t, w, "Invalid form data")
 }
 
 func TestConfigHandlers_ImportPreview_MultipartSuccess(t *testing.T) {
@@ -362,13 +338,7 @@ func TestConfigHandlers_ImportCommit_ApplyValidationError(t *testing.T) {
 
 	ch.ImportConfigCommitHandler(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status 400, got %d", w.Code)
-	}
-	body := strings.TrimSpace(w.Body.String())
-	if body != "Import failed" {
-		t.Errorf("expected Import failed error, got %s", body)
-	}
+	assertConfigValidationGlobal(t, w, "invalid config")
 }
 
 func TestConfigHandlers_ImportCommit_ApplyError(t *testing.T) {
@@ -458,7 +428,7 @@ func TestConfigHandlers_ImportCommit_RestartRequired(t *testing.T) {
 	if classes := strings.Fields(testutil.GetAttr(restartBadge, "class")); slices.Contains(classes, "hidden") {
 		t.Errorf("restart badge must not contain class hidden, got %q", testutil.GetAttr(restartBadge, "class"))
 	}
-	if err := ui.ValidateHTMXResponseStructure(body, "outerHTML", "config-success-message"); err != nil {
+	if err := validateHTMXResponseStructure(body, "outerHTML", "config-success-message"); err != nil {
 		t.Errorf("ValidateHTMXResponseStructure: %v", err)
 	}
 }

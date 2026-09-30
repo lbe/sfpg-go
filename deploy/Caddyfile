@@ -14,6 +14,9 @@
 gallery.example.com {
 	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
 	encode zstd gzip
+	handle /debug/* {
+		respond 404
+	}
 	reverse_proxy 127.0.0.1:8081 {
 		header_up Host {host}
 		# Sec-Fetch-Site and Origin pass through by default; do not strip

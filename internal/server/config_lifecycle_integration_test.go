@@ -4,6 +4,8 @@ package server
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -907,6 +909,80 @@ func TestIntegration_DBConfig_ListenerPortChangeRequiresRestart(t *testing.T) {
 	// Verify restart flag is now set
 	if !app.RestartRequired() {
 		t.Errorf("expected restartRequired to be true after port change, got false")
+	}
+}
+
+// TestIntegration_ConfigPost_LogLevelUpdatesLoggerNoRestart verifies POST /config
+// with a log-level-only change hot-reloads the logger and does not require restart.
+func TestIntegration_ConfigPost_LogLevelUpdatesLoggerNoRestart(t *testing.T) {
+	setenvForTest(t, "SEPG_SESSION_SECURE", "false")
+
+	app := CreateApp(t)
+	defer app.Shutdown()
+
+	if app.logger == nil {
+		t.Fatal("expected logger after CreateApp")
+	}
+	// CreateApp loads config but does not call ApplyConfig; bootstrap level stays debug.
+	if app.logger.LogLevel() != slog.LevelDebug {
+		t.Fatalf("expected bootstrap logger level debug before config apply, got %v", app.logger.LogLevel())
+	}
+
+	ts := httptest.NewServer(app.getRouter())
+	defer ts.Close()
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("failed to create cookie jar: %v", err)
+	}
+	client := &http.Client{Jar: jar}
+
+	loginAsAdmin(t, client, ts.URL)
+
+	formData := url.Values{}
+	formData.Set("log_level", "error")
+	formData.Set("enable_http_cache", "on")
+	formData.Set("enable_cache_preload", "on")
+	formData.Set("run_file_discovery", "on")
+	formData.Set("session_http_only", "on")
+	formData.Set("session_secure", "on")
+
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/config", strings.NewReader(formData.Encode()))
+	if err != nil {
+		t.Fatalf("failed to create POST request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", ts.URL)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("POST /config failed: %v", err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 after log_level update, got %d: %s", resp.StatusCode, body)
+	}
+
+	doc, err := testutil.ParseHTML(strings.NewReader(string(body)))
+	if err != nil {
+		t.Fatalf("parse HTML: %v", err)
+	}
+	if testutil.FindElementByID(doc, "config-success-message") == nil {
+		t.Fatal("expected #config-success-message")
+	}
+	if testutil.FindElementByID(doc, "config-restart-badge") != nil {
+		t.Fatal("log_level change must not show restart badge")
+	}
+
+	if app.logger.LogLevel() != slog.LevelError {
+		t.Fatalf("expected logger level error after save, got %v", app.logger.LogLevel())
+	}
+	if app.RestartRequired() {
+		t.Fatal("expected restartRequired false after log_level-only change")
 	}
 }
 

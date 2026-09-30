@@ -1,4 +1,3 @@
-// Package tuiview provides test helpers for Bubble Tea / lipgloss rendered views.
 package tuiview
 
 import (
@@ -15,7 +14,6 @@ func StripANSI(s string) string {
 }
 
 // AssertPlainIncludes fails when want is not present in the ANSI-stripped view.
-// Prefer exact equality on full views when output is stable (e.g. quitting/loading).
 func AssertPlainIncludes(t *testing.T, view, want string) {
 	t.Helper()
 	plain := StripANSI(view)
@@ -33,8 +31,7 @@ func AssertPlainExcludes(t *testing.T, view, want string) {
 	}
 }
 
-// AssertPlainAppearsBefore fails when first or second is missing from the
-// ANSI-stripped view, or when first does not appear before second.
+// AssertPlainAppearsBefore fails when first or second is missing or out of order.
 func AssertPlainAppearsBefore(t *testing.T, view, first, second string) {
 	t.Helper()
 	plain := StripANSI(view)
@@ -51,8 +48,7 @@ func AssertPlainAppearsBefore(t *testing.T, view, first, second string) {
 	}
 }
 
-// AssertPlainSameRow fails when first and second are not both present on the same
-// \n-delimited line in the ANSI-stripped view (lipgloss JoinHorizontal pairing).
+// AssertPlainSameRow fails when first and second are not on the same line.
 func AssertPlainSameRow(t *testing.T, view, first, second string) {
 	t.Helper()
 	plain := StripANSI(view)
@@ -64,7 +60,7 @@ func AssertPlainSameRow(t *testing.T, view, first, second string) {
 	t.Fatalf("%q and %q are not on the same line (plain text below):\n%s", first, second, plain)
 }
 
-// AssertPlainNotSameRow fails when first and second appear on the same \n-delimited line.
+// AssertPlainNotSameRow fails when first and second appear on the same line.
 func AssertPlainNotSameRow(t *testing.T, view, first, second string) {
 	t.Helper()
 	plain := StripANSI(view)

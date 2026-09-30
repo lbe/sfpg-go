@@ -153,6 +153,25 @@ func TestApplyConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("log level only change no restart", func(t *testing.T) {
+		svc := &fakeService{}
+		logCurrent := DefaultConfig()
+		logCurrent.LogLevel = "info"
+		candidate := *logCurrent
+		candidate.LogLevel = "warn"
+
+		result, err := ApplyConfig(ctx, svc, logCurrent, &candidate)
+		if err != nil {
+			t.Fatalf("ApplyConfig unexpected error: %v", err)
+		}
+		if result.RestartRequired {
+			t.Error("RestartRequired = true, want false for log_level change")
+		}
+		if slices.Contains(result.RestartRequiredKeys, "log_level") {
+			t.Errorf("RestartRequiredKeys = %v, must not contain log_level", result.RestartRequiredKeys)
+		}
+	})
+
 	t.Run("validation error", func(t *testing.T) {
 		sentinel := errors.New("invalid")
 		svc := &fakeService{validateErr: sentinel}

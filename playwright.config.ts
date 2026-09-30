@@ -47,6 +47,7 @@ export default defineConfig({
     {
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
+      dependencies: ["setup"],
       // Config, server-actions, and the htmx restart-alert fixture run in
       // the serial project below (fixture depends on :8083 static assets).
       testIgnore:

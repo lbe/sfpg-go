@@ -174,7 +174,7 @@ func TestHTTPCacheMiddleware_SetOnGalleryCacheHit(t *testing.T) {
 		SkipPreloadWhenValue:  "true",
 	}
 
-	mw := NewHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
+	mw := newHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
 	mw.SetOnGalleryCacheHit(func(ctx context.Context, folderID int64, sessionID string) {
 		callbackMu.Lock()
 		callbackCalls = append(callbackCalls, struct {
@@ -250,7 +250,7 @@ func TestHTTPCacheMiddleware_UpdatePool(t *testing.T) {
 	})
 
 	cfg := defaultIntegrationConfig()
-	mw := NewHTTPCacheMiddlewareForTest(pool1, cfg, nil, createSyncSubmitFuncForIntegration(t, pool1))
+	mw := newHTTPCacheMiddlewareForTest(pool1, cfg, nil, createSyncSubmitFuncForIntegration(t, pool1))
 	router := mw.Middleware(handler)
 
 	req1 := httptest.NewRequest(http.MethodGet, "/test", nil)
@@ -284,7 +284,7 @@ func TestHTTPCacheMiddleware_UpdatePool_NilIgnored(t *testing.T) {
 	})
 
 	cfg := defaultIntegrationConfig()
-	mw := NewHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
+	mw := newHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
 	router := mw.Middleware(handler)
 
 	req1 := httptest.NewRequest(http.MethodGet, "/test", nil)
@@ -312,7 +312,7 @@ func TestHTTPCacheMiddleware_GetSizeBytes(t *testing.T) {
 			EntryCount: &atomic.Int64{},
 			// BaselineRunning left nil
 		}
-		mw := NewHTTPCacheMiddlewareForTest(db, cfg, counter, createSyncSubmitFuncForIntegration(t, db))
+		mw := newHTTPCacheMiddlewareForTest(db, cfg, counter, createSyncSubmitFuncForIntegration(t, db))
 		if got := mw.GetSizeBytes(); got != -1 {
 			t.Fatalf("uncalibrated GetSizeBytes = %d, want -1", got)
 		}
@@ -327,7 +327,7 @@ func TestHTTPCacheMiddleware_GetSizeBytes(t *testing.T) {
 			EntryCount:      &atomic.Int64{},
 			BaselineRunning: &br,
 		}
-		mw := NewHTTPCacheMiddlewareForTest(db, cfg, counter, createSyncSubmitFuncForIntegration(t, db))
+		mw := newHTTPCacheMiddlewareForTest(db, cfg, counter, createSyncSubmitFuncForIntegration(t, db))
 		// No rows inserted into DB — value comes from atomics only.
 		if got := mw.GetSizeBytes(); got != 42 {
 			t.Fatalf("calibrated GetSizeBytes = %d, want 42", got)
@@ -343,7 +343,7 @@ func TestHTTPCacheMiddleware_GetSizeBytes(t *testing.T) {
 			EntryCount:      &atomic.Int64{},
 			BaselineRunning: &br,
 		}
-		mw := NewHTTPCacheMiddlewareForTest(db, cfg, counter, createSyncSubmitFuncForIntegration(t, db))
+		mw := newHTTPCacheMiddlewareForTest(db, cfg, counter, createSyncSubmitFuncForIntegration(t, db))
 		if got := mw.GetSizeBytes(); got != -1 {
 			t.Fatalf("running baseline GetSizeBytes = %d, want -1 (N/A)", got)
 		}
@@ -359,7 +359,7 @@ func TestHTTPCacheMiddleware_GetSizeBytes(t *testing.T) {
 			EntryCount:      &atomic.Int64{},
 			BaselineRunning: &br,
 		}
-		mw := NewHTTPCacheMiddlewareForTest(db, cfg, counter, createSyncSubmitFuncForIntegration(t, db))
+		mw := newHTTPCacheMiddlewareForTest(db, cfg, counter, createSyncSubmitFuncForIntegration(t, db))
 		if got := mw.GetSizeBytes(); got != 500 {
 			t.Fatalf("running baseline GetSizeBytes = %d, want 500", got)
 		}
@@ -374,7 +374,7 @@ func TestHTTPCacheMiddleware_GetSizeBytes(t *testing.T) {
 			EntryCount:      &atomic.Int64{},
 			BaselineRunning: &br,
 		}
-		mw := NewHTTPCacheMiddlewareForTest(db, cfg, counter, createSyncSubmitFuncForIntegration(t, db))
+		mw := newHTTPCacheMiddlewareForTest(db, cfg, counter, createSyncSubmitFuncForIntegration(t, db))
 		if got := mw.GetSizeBytes(); got != 0 {
 			t.Fatalf("not running GetSizeBytes = %d, want 0", got)
 		}
@@ -389,7 +389,7 @@ func TestHTTPCacheMiddleware_GetSizeBytes(t *testing.T) {
 			EntryCount:      &atomic.Int64{},
 			BaselineRunning: &br,
 		}
-		mw := NewHTTPCacheMiddlewareForTest(db, cfg, counter, createSyncSubmitFuncForIntegration(t, db))
+		mw := newHTTPCacheMiddlewareForTest(db, cfg, counter, createSyncSubmitFuncForIntegration(t, db))
 		db.Close()
 		if got := mw.GetSizeBytes(); got != 99 {
 			t.Fatalf("closed pool GetSizeBytes = %d, want 99 (getters must not touch DB)", got)
@@ -397,7 +397,7 @@ func TestHTTPCacheMiddleware_GetSizeBytes(t *testing.T) {
 	})
 
 	t.Run("nil counters returns -1", func(t *testing.T) {
-		mw := NewHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
+		mw := newHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
 		if got := mw.GetSizeBytes(); got != -1 {
 			t.Fatalf("nil counters GetSizeBytes = %d, want -1", got)
 		}
@@ -415,7 +415,7 @@ func TestHTTPCacheMiddleware_GetEntryCount(t *testing.T) {
 			EntryCount: &entryCount,
 			// BaselineRunning left nil
 		}
-		mw := NewHTTPCacheMiddlewareForTest(db, cfg, counter, createSyncSubmitFuncForIntegration(t, db))
+		mw := newHTTPCacheMiddlewareForTest(db, cfg, counter, createSyncSubmitFuncForIntegration(t, db))
 		if got := mw.GetEntryCount(); got != -1 {
 			t.Fatalf("uncalibrated GetEntryCount = %d, want -1", got)
 		}
@@ -430,7 +430,7 @@ func TestHTTPCacheMiddleware_GetEntryCount(t *testing.T) {
 			EntryCount:      &entryCount,
 			BaselineRunning: &br,
 		}
-		mw := NewHTTPCacheMiddlewareForTest(db, cfg, counter, createSyncSubmitFuncForIntegration(t, db))
+		mw := newHTTPCacheMiddlewareForTest(db, cfg, counter, createSyncSubmitFuncForIntegration(t, db))
 		// No rows inserted into DB — value comes from atomics only.
 		if got := mw.GetEntryCount(); got != 7 {
 			t.Fatalf("calibrated GetEntryCount = %d, want 7", got)
@@ -446,7 +446,7 @@ func TestHTTPCacheMiddleware_GetEntryCount(t *testing.T) {
 			EntryCount:      &entryCount,
 			BaselineRunning: &br,
 		}
-		mw := NewHTTPCacheMiddlewareForTest(db, cfg, counter, createSyncSubmitFuncForIntegration(t, db))
+		mw := newHTTPCacheMiddlewareForTest(db, cfg, counter, createSyncSubmitFuncForIntegration(t, db))
 		if got := mw.GetEntryCount(); got != -1 {
 			t.Fatalf("running baseline GetEntryCount = %d, want -1 (N/A)", got)
 		}
@@ -462,7 +462,7 @@ func TestHTTPCacheMiddleware_GetEntryCount(t *testing.T) {
 			EntryCount:      &entryCount,
 			BaselineRunning: &br,
 		}
-		mw := NewHTTPCacheMiddlewareForTest(db, cfg, counter, createSyncSubmitFuncForIntegration(t, db))
+		mw := newHTTPCacheMiddlewareForTest(db, cfg, counter, createSyncSubmitFuncForIntegration(t, db))
 		if got := mw.GetEntryCount(); got != 25 {
 			t.Fatalf("running baseline GetEntryCount = %d, want 25", got)
 		}
@@ -477,7 +477,7 @@ func TestHTTPCacheMiddleware_GetEntryCount(t *testing.T) {
 			EntryCount:      &entryCount,
 			BaselineRunning: &br,
 		}
-		mw := NewHTTPCacheMiddlewareForTest(db, cfg, counter, createSyncSubmitFuncForIntegration(t, db))
+		mw := newHTTPCacheMiddlewareForTest(db, cfg, counter, createSyncSubmitFuncForIntegration(t, db))
 		if got := mw.GetEntryCount(); got != 0 {
 			t.Fatalf("not running GetEntryCount = %d, want 0", got)
 		}
@@ -492,7 +492,7 @@ func TestHTTPCacheMiddleware_GetEntryCount(t *testing.T) {
 			EntryCount:      &entryCount,
 			BaselineRunning: &br,
 		}
-		mw := NewHTTPCacheMiddlewareForTest(db, cfg, counter, createSyncSubmitFuncForIntegration(t, db))
+		mw := newHTTPCacheMiddlewareForTest(db, cfg, counter, createSyncSubmitFuncForIntegration(t, db))
 		db.Close()
 		if got := mw.GetEntryCount(); got != 3 {
 			t.Fatalf("closed pool GetEntryCount = %d, want 3 (getters must not touch DB)", got)
@@ -500,7 +500,7 @@ func TestHTTPCacheMiddleware_GetEntryCount(t *testing.T) {
 	})
 
 	t.Run("nil counters returns -1", func(t *testing.T) {
-		mw := NewHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
+		mw := newHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
 		if got := mw.GetEntryCount(); got != -1 {
 			t.Fatalf("nil counters GetEntryCount = %d, want -1", got)
 		}

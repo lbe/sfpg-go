@@ -32,7 +32,7 @@ func TestCacheMiss_HandlerCalledAndStored(t *testing.T) {
 		DefaultTTL:   time.Hour,
 	}
 
-	cacheMW := NewHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
+	cacheMW := newHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
 	mw := cacheMW.Middleware(handler)
 
 	req := httptest.NewRequest("GET", "/test", nil)
@@ -81,7 +81,7 @@ func TestCacheHit_HandlerNotCalled_CachedResponseReturned(t *testing.T) {
 		MaxTotalSize: 500 * 1024 * 1024,
 		DefaultTTL:   time.Hour,
 	}
-	cacheMW := NewHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
+	cacheMW := newHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
 	mw := cacheMW.Middleware(handler)
 
 	// First request - cache miss
@@ -141,7 +141,7 @@ func TestEncodingAgnostic_SameKeyForDifferentEncodings(t *testing.T) {
 		MaxTotalSize: 500 * 1024 * 1024,
 		DefaultTTL:   time.Hour,
 	}
-	cacheMW := NewHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
+	cacheMW := newHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
 	mw := cacheMW.Middleware(handler)
 
 	// Request with gzip
@@ -185,7 +185,7 @@ func TestSizeLimit_SkipOversized(t *testing.T) {
 		MaxTotalSize: 500 * 1024 * 1024,
 		DefaultTTL:   time.Hour,
 	}
-	cacheMW := NewHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
+	cacheMW := newHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
 	mw := cacheMW.Middleware(handler)
 
 	req := httptest.NewRequest("GET", "/large", nil)
@@ -232,7 +232,7 @@ func TestBudgetEviction_LRU(t *testing.T) {
 		w.WriteHeader(200)
 		_, _ = w.Write([]byte("new content that exceeds budget"))
 	})
-	cacheMW := NewHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
+	cacheMW := newHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
 	mw := cacheMW.Middleware(handler)
 
 	req := httptest.NewRequest("GET", "/new", nil)
@@ -288,7 +288,7 @@ func TestBudgetEviction_LRU_UnifiedBatcher(t *testing.T) {
 		_, _ = w.Write([]byte("<html><body>new content that exceeds budget and is long enough</body></html>"))
 	})
 
-	cacheMW := NewHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
+	cacheMW := newHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
 	mw := cacheMW.Middleware(handler)
 
 	req := httptest.NewRequest("GET", "/new", nil)
@@ -380,7 +380,7 @@ func TestSkipPOST(t *testing.T) {
 		MaxTotalSize: 500 * 1024 * 1024,
 		DefaultTTL:   time.Hour,
 	}
-	cacheMW := NewHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
+	cacheMW := newHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
 	mw := cacheMW.Middleware(handler)
 
 	req := httptest.NewRequest("POST", "/test", nil)
@@ -417,7 +417,7 @@ func TestSkipNoCacheDirective(t *testing.T) {
 		DefaultTTL:      time.Hour,
 		CacheableRoutes: []string{"/gallery/"}, // /test is not cacheable, so no-store is not stored
 	}
-	cacheMW := NewHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
+	cacheMW := newHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
 	mw := cacheMW.Middleware(handler)
 
 	req := httptest.NewRequest("GET", "/test", nil)
@@ -454,7 +454,7 @@ func TestNoStoreOnCacheableRoute_StoredInServerCache(t *testing.T) {
 		DefaultTTL:      time.Hour,
 		CacheableRoutes: []string{"/gallery/"},
 	}
-	cacheMW := NewHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
+	cacheMW := newHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
 	mw := cacheMW.Middleware(handler)
 
 	req := httptest.NewRequest("GET", "/gallery/2", nil)
@@ -510,7 +510,7 @@ func TestPreloadAndHTMXVariants_Integration(t *testing.T) {
 		SkipPreloadWhenHeader: "X-SFPG-Internal-Preload",
 		SkipPreloadWhenValue:  "true",
 	}
-	cacheMW := NewHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
+	cacheMW := newHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
 	mw := cacheMW.Middleware(handler)
 
 	makeReq := func(encoding, hxRequest, hxTarget, preload string) *httptest.ResponseRecorder {
@@ -592,7 +592,7 @@ func TestSkip404(t *testing.T) {
 		MaxTotalSize: 500 * 1024 * 1024,
 		DefaultTTL:   time.Hour,
 	}
-	cacheMW := NewHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
+	cacheMW := newHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
 	mw := cacheMW.Middleware(handler)
 
 	req := httptest.NewRequest("GET", "/test", nil)
@@ -634,7 +634,7 @@ func TestCacheKeyNormalization_LightboxTargetsShareEntry(t *testing.T) {
 		CacheableRoutes: []string{"/lightbox/"},
 	}
 
-	cacheMW := NewHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
+	cacheMW := newHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
 	mw := cacheMW.Middleware(handler)
 
 	// First request: initial lightbox open with HX-Target: lightbox_content
@@ -703,7 +703,7 @@ func TestCacheKeyNormalization_InfoImageFullAndHTMXShareEntry(t *testing.T) {
 		CacheableRoutes: []string{"/info/"},
 	}
 
-	cacheMW := NewHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
+	cacheMW := newHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
 	mw := cacheMW.Middleware(handler)
 
 	// First request: full page (no HTMX headers) to /info/image/1
@@ -762,7 +762,7 @@ func TestCacheKeyNormalization_GalleryFullAndPartialDistinct(t *testing.T) {
 		CacheableRoutes: []string{"/gallery/"},
 	}
 
-	cacheMW := NewHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
+	cacheMW := newHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
 	mw := cacheMW.Middleware(handler)
 
 	// First request: full page (no HTMX headers) to /gallery/1
@@ -842,7 +842,7 @@ func TestCompressedBodyRoundtrip(t *testing.T) {
 		CacheableRoutes: []string{"/test"},
 	}
 
-	cacheMW := NewHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
+	cacheMW := newHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
 	mw := cacheMW.Middleware(handler)
 
 	// First request: MISS → store compressed
@@ -898,5 +898,50 @@ func TestCompressedBodyRoundtrip(t *testing.T) {
 	// Verify decoded body matches original
 	if w2.Body.String() != body {
 		t.Fatalf("HIT body does not match original (len=%d, want len=%d)", w2.Body.Len(), len(body))
+	}
+}
+
+// TestGalleryExtraQueryParam_CacheHit verifies unrelated query params on gallery URLs
+// share the same cache key as v-only requests (NormalizeCacheQuery).
+func TestGalleryExtraQueryParam_CacheHit(t *testing.T) {
+	db := createTestDBPoolInternal(t)
+
+	handlerCalls := 0
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handlerCalls++
+		w.Header().Set("Content-Type", "text/html")
+		w.Header().Set("Cache-Control", "public, max-age=3600")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte("<html><body>gallery page</body></html>"))
+	})
+
+	cfg := CacheConfig{
+		Enabled:         true,
+		MaxEntrySize:    10 * 1024 * 1024,
+		MaxTotalSize:    500 * 1024 * 1024,
+		DefaultTTL:      time.Hour,
+		CacheableRoutes: []string{"/gallery/"},
+	}
+	cacheMW := newHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
+	mw := cacheMW.Middleware(handler)
+
+	req1 := httptest.NewRequest("GET", "/gallery/1?v=etag1", nil)
+	w1 := httptest.NewRecorder()
+	mw.ServeHTTP(w1, req1)
+	if w1.Header().Get("X-Cache") != "MISS" {
+		t.Fatalf("first request X-Cache = %q, want MISS", w1.Header().Get("X-Cache"))
+	}
+	if handlerCalls != 1 {
+		t.Fatalf("handler calls after first request = %d, want 1", handlerCalls)
+	}
+
+	req2 := httptest.NewRequest("GET", "/gallery/1?v=etag1&utm_source=crawler", nil)
+	w2 := httptest.NewRecorder()
+	mw.ServeHTTP(w2, req2)
+	if w2.Header().Get("X-Cache") != "HIT" {
+		t.Fatalf("second request X-Cache = %q, want HIT", w2.Header().Get("X-Cache"))
+	}
+	if handlerCalls != 1 {
+		t.Fatalf("handler calls after second request = %d, want 1 (cache hit)", handlerCalls)
 	}
 }

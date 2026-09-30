@@ -425,6 +425,66 @@ func TestConfigPrecedence_CLIOverridesDB(t *testing.T) {
 	}
 }
 
+func TestConfigPrecedence_LogLevelCLIOverridesDB(t *testing.T) {
+	tempDir := t.TempDir()
+	ss := "test-session-secret-with-at-least-32-bytes-long!!"
+	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
+
+	app := New(getopt.Opt{}, "x.y.z")
+	app.setRootDir(&tempDir)
+	app.setDB()
+
+	cpcRw, err := app.dbRwPool.Get()
+	if err != nil {
+		t.Fatalf("failed to get RW connection: %v", err)
+	}
+	defer app.dbRwPool.Put(cpcRw)
+
+	now := time.Now().Unix()
+	err = cpcRw.Queries.UpsertConfigValueOnly(context.Background(), gallerydb.UpsertConfigValueOnlyParams{
+		Key:       "log_level",
+		Value:     "debug",
+		CreatedAt: now,
+		UpdatedAt: now,
+	})
+	if err != nil {
+		t.Fatalf("failed to set DB config: %v", err)
+	}
+
+	app.ConfigManager.Config = config.DefaultConfig()
+	if err := app.ConfigManager.Config.LoadFromDatabase(context.Background(), cpcRw.Queries); err != nil {
+		t.Fatalf("failed to load config from DB: %v", err)
+	}
+	if app.ConfigManager.Config.LogLevel != "debug" {
+		t.Fatalf("expected LogLevel debug from DB, got %q", app.ConfigManager.Config.LogLevel)
+	}
+
+	app.Shutdown()
+
+	opt := getopt.Opt{
+		LogLevel: getopt.OptString{String: "warn", IsSet: true},
+	}
+	app2 := New(opt, "x.y.z")
+	app2.setRootDir(&tempDir)
+	app2.setDB()
+
+	app2.ConfigManager.Config = config.DefaultConfig()
+	cpcRw2, err := app2.dbRwPool.Get()
+	if err != nil {
+		t.Fatalf("failed to get RW connection: %v", err)
+	}
+	defer app2.dbRwPool.Put(cpcRw2)
+
+	if err := app2.ConfigManager.Config.LoadFromDatabase(context.Background(), cpcRw2.Queries); err != nil {
+		t.Fatalf("failed to load config from DB: %v", err)
+	}
+	app2.ConfigManager.Config.LoadFromOpt(opt)
+
+	if app2.ConfigManager.Config.LogLevel != "warn" {
+		t.Errorf("expected LogLevel warn from CLI override, got %q", app2.ConfigManager.Config.LogLevel)
+	}
+}
+
 func TestConfigPrecedence_EnvOverridesDB(t *testing.T) {
 	tempDir := t.TempDir()
 	ss := "test-session-secret"

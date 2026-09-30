@@ -108,7 +108,7 @@ func TestCacheBodyCompression_MissStoreHit(t *testing.T) {
 		CacheableRoutes: []string{"/test-compress"},
 	}
 
-	cacheMW := NewHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
+	cacheMW := newHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
 	mw := cacheMW.Middleware(handler)
 
 	// --- MISS ---
@@ -221,7 +221,7 @@ func TestCacheBodyCompression_LegacyPlaintextRow(t *testing.T) {
 		DefaultTTL:      time.Hour,
 		CacheableRoutes: []string{"/legacy-plain"},
 	}
-	cacheMW := NewHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
+	cacheMW := newHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
 	mw := cacheMW.Middleware(handler)
 
 	req := httptest.NewRequest("GET", "/legacy-plain", nil)
@@ -266,7 +266,7 @@ func TestCacheBodyCompression_MinCompressBytes(t *testing.T) {
 		CacheableRoutes: []string{"/small"},
 	}
 
-	cacheMW := NewHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
+	cacheMW := newHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
 	mw := cacheMW.Middleware(handler)
 
 	// MISS
@@ -333,7 +333,7 @@ func TestCacheBodyCompression_ExpandGuard(t *testing.T) {
 		CacheableRoutes: []string{"/expand-guard"},
 	}
 
-	cacheMW := NewHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
+	cacheMW := newHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
 	mw := cacheMW.Middleware(handler)
 
 	// MISS
@@ -419,7 +419,7 @@ func TestCacheBodyCompression_CorruptRow(t *testing.T) {
 		CacheableRoutes: []string{"/corrupt"},
 	}
 
-	cacheMW := NewHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
+	cacheMW := newHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
 	mw := cacheMW.Middleware(handler)
 
 	// First request: garbage blob should be unrecognized → MISS → handler runs
@@ -490,7 +490,7 @@ func TestCacheBodyCompression_IdentityCodec(t *testing.T) {
 		CacheableRoutes: []string{"/identity"},
 	}
 
-	cacheMW := NewHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
+	cacheMW := newHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
 	mw := cacheMW.Middleware(handler)
 
 	// MISS
@@ -637,7 +637,7 @@ func TestCacheBodyCompression_CodecSwitchGzip(t *testing.T) {
 		CacheableRoutes: []string{"/gzip-switch"},
 	}
 
-	cacheMW := NewHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
+	cacheMW := newHTTPCacheMiddlewareForTest(db, cfg, nil, createSyncSubmitFuncForIntegration(t, db))
 	mw := cacheMW.Middleware(handler)
 
 	// MISS
@@ -695,7 +695,7 @@ func TestCacheBodyCompression_CodecSwitchGzip(t *testing.T) {
 		DefaultTTL:      time.Hour,
 		CacheableRoutes: []string{"/zstd-after-gzip"},
 	}
-	cacheMW2 := NewHTTPCacheMiddlewareForTest(db, cfg2, nil, createSyncSubmitFuncForIntegration(t, db))
+	cacheMW2 := newHTTPCacheMiddlewareForTest(db, cfg2, nil, createSyncSubmitFuncForIntegration(t, db))
 	mw2 := cacheMW2.Middleware(handler2)
 
 	req3 := httptest.NewRequest("GET", "/zstd-after-gzip", nil)

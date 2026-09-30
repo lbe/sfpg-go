@@ -113,17 +113,16 @@ func (app *App) getRouter() http.Handler {
 	mux.Handle("GET /raw-image/{id}", http.HandlerFunc(app.HandlerManager.galleryHandlers.RawImageByID))
 	mux.Handle("GET /thumbnail/folder/{id}", http.HandlerFunc(app.HandlerManager.galleryHandlers.FolderThumbnailByID))
 
-	// Register pprof routes (loopback-only with authentication)
-	// Always registered; loopback middleware runs first (non-loopback → 404),
-	// then auth middleware enforces login (loopback → 401 unauth / 200 auth)
-	mux.Handle("GET /debug/pprof/", middleware.LoopbackOnly(app.authMiddleware(http.HandlerFunc(pprof.Index))))
-	mux.Handle("GET /debug/pprof/cmdline", middleware.LoopbackOnly(app.authMiddleware(http.HandlerFunc(pprof.Cmdline))))
-	mux.Handle("GET /debug/pprof/profile", middleware.LoopbackOnly(app.authMiddleware(http.HandlerFunc(pprof.Profile))))
-	mux.Handle("GET /debug/pprof/symbol", middleware.LoopbackOnly(app.authMiddleware(http.HandlerFunc(pprof.Symbol))))
-	mux.Handle("GET /debug/pprof/trace", middleware.LoopbackOnly(app.authMiddleware(http.HandlerFunc(pprof.Trace))))
+	// Register pprof routes (direct loopback + auth; proxied or remote → 404)
+	mux.Handle("GET /debug/pprof/", middleware.PprofAccess(app.authMiddleware(http.HandlerFunc(pprof.Index))))
+	mux.Handle("GET /debug/pprof/cmdline", middleware.PprofAccess(app.authMiddleware(http.HandlerFunc(pprof.Cmdline))))
+	mux.Handle("GET /debug/pprof/profile", middleware.PprofAccess(app.authMiddleware(http.HandlerFunc(pprof.Profile))))
+	mux.Handle("GET /debug/pprof/symbol", middleware.PprofAccess(app.authMiddleware(http.HandlerFunc(pprof.Symbol))))
+	mux.Handle("GET /debug/pprof/trace", middleware.PprofAccess(app.authMiddleware(http.HandlerFunc(pprof.Trace))))
 
 	// Build middleware chain from innermost to outermost
 	var handler http.Handler = mux
+	handler = middleware.SecurityHeaders(handler)
 
 	// Cross-Origin protection - security layer applied first
 	handler = http.NewCrossOriginProtection().Handler(handler)

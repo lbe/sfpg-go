@@ -401,7 +401,7 @@ func TestConfigHandlers_ConfigPost_SaveRestartAlert(t *testing.T) {
 	if classes := strings.Fields(testutil.GetAttr(restartBadge, "class")); slices.Contains(classes, "hidden") {
 		t.Errorf("restart badge must not contain class hidden, got %q", testutil.GetAttr(restartBadge, "class"))
 	}
-	if err := ui.ValidateHTMXResponseStructure(body, "outerHTML", "config-success-message"); err != nil {
+	if err := validateHTMXResponseStructure(body, "outerHTML", "config-success-message"); err != nil {
 		t.Errorf("ValidateHTMXResponseStructure: %v", err)
 	}
 }
@@ -460,7 +460,7 @@ func TestConfigHandlers_ConfigPost_RestartFlagAndNotificationPath(t *testing.T) 
 	if got := testutil.GetAttr(success, "hx-swap-oob"); got != "" {
 		t.Errorf("expected #config-success-message to be the main swap (no hx-swap-oob), got %q", got)
 	}
-	if err := ui.ValidateHTMXResponseStructure(body, "outerHTML", "config-success-message"); err != nil {
+	if err := validateHTMXResponseStructure(body, "outerHTML", "config-success-message"); err != nil {
 		t.Errorf("ValidateHTMXResponseStructure: %v", err)
 	}
 }
@@ -710,6 +710,48 @@ func TestConfigHandlers_ConfigPost_ThemesDoNotRequireRestart(t *testing.T) {
 	}
 }
 
+func TestConfigHandlers_ConfigPost_LogLevelDoesNotRequireRestart(t *testing.T) {
+	if err := ui.ParseTemplates(web.FS); err != nil {
+		t.Fatalf("ParseTemplates failed: %v", err)
+	}
+
+	oldCfg := config.DefaultConfig()
+	oldCfg.LogLevel = "info"
+
+	mockSvc := &mockConfigServiceForConfig{
+		loadFunc: func(ctx context.Context) (*config.Config, error) {
+			return oldCfg, nil
+		},
+		saveFunc: func(ctx context.Context, cfg *config.Config) error {
+			return nil
+		},
+	}
+	ch := setupTestConfigHandlers(t, mockSvc, &mockAuthServiceForConfig{})
+	ch.SessionManager.(*mockSessionManagerAuth).authenticated = true
+
+	req := httptest.NewRequest(http.MethodPost, "/config", strings.NewReader(
+		"log_level=warn&enable_http_cache=on&enable_cache_preload=on&run_file_discovery=on&session_http_only=on&session_secure=on",
+	))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+
+	ch.ConfigPost(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+	doc, err := testutil.ParseHTML(w.Body)
+	if err != nil {
+		t.Fatalf("parse HTML: %v", err)
+	}
+	if testutil.FindElementByID(doc, "config-success-message") == nil {
+		t.Fatal("expected #config-success-message for log_level save")
+	}
+	if testutil.FindElementByID(doc, "config-restart-badge") != nil {
+		t.Fatal("log_level change should NOT trigger restart badge")
+	}
+}
+
 func TestConfigHandlers_ConfigPost_CredentialUpdate_PassesOptions(t *testing.T) {
 	t.Parallel()
 
@@ -895,5 +937,77 @@ func TestConfigHandlers_ConfigPost_LoginSecurityFields(t *testing.T) {
 	}
 	if saved.LockoutDuration != 900 {
 		t.Errorf("expected LockoutDuration=900, got %d", saved.LockoutDuration)
+	}
+}
+
+func TestConfigHandlers_ConfigPost_PreloadEnabledOnlyAfterSuccessfulApply(t *testing.T) {
+	if err := ui.ParseTemplates(web.FS); err != nil {
+		t.Fatalf("ParseTemplates failed: %v", err)
+	}
+
+	tests := []struct {
+		name               string
+		body               string
+		saveErr            error
+		wantPreloadCalls   int
+		wantPreloadValue   bool
+		wantPreloadValueOK bool
+	}{
+		{
+			name:             "field validation failure does not toggle preload",
+			body:             "enable_cache_preload=on&listener_port=invalid",
+			wantPreloadCalls: 0,
+		},
+		{
+			name:             "image directory validation failure does not toggle preload",
+			body:             "enable_cache_preload=on&image_directory=/nonexistent/path",
+			wantPreloadCalls: 0,
+		},
+		{
+			name:             "save failure does not toggle preload",
+			body:             "enable_cache_preload=on&site_name=Saved",
+			saveErr:          errors.New("save failed"),
+			wantPreloadCalls: 0,
+		},
+		{
+			name:               "successful save applies preload from persisted config",
+			body:               "enable_cache_preload=on&site_name=Saved",
+			wantPreloadCalls:   1,
+			wantPreloadValue:   true,
+			wantPreloadValueOK: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockSvc := &mockConfigServiceForConfig{
+				loadFunc: func(ctx context.Context) (*config.Config, error) {
+					cfg := config.DefaultConfig()
+					cfg.EnableCachePreload = false
+					return cfg, nil
+				},
+				saveFunc: func(ctx context.Context, cfg *config.Config) error {
+					return tt.saveErr
+				},
+			}
+			ch := setupTestConfigHandlers(t, mockSvc, &mockAuthServiceForConfig{})
+			ch.SessionManager.(*mockSessionManagerAuth).authenticated = true
+			cfgOps := ch.cfgOps.(*mockConfigOps)
+
+			req := httptest.NewRequest(http.MethodPost, "/config", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			w := httptest.NewRecorder()
+
+			ch.ConfigPost(w, req)
+
+			if got := len(cfgOps.PreloadEnabledCalls); got != tt.wantPreloadCalls {
+				t.Fatalf("SetPreloadEnabled call count = %d, want %d (calls=%v)", got, tt.wantPreloadCalls, cfgOps.PreloadEnabledCalls)
+			}
+			if tt.wantPreloadValueOK && len(cfgOps.PreloadEnabledCalls) == 1 {
+				if cfgOps.PreloadEnabledCalls[0] != tt.wantPreloadValue {
+					t.Errorf("SetPreloadEnabled(%v), want %v", cfgOps.PreloadEnabledCalls[0], tt.wantPreloadValue)
+				}
+			}
+		})
 	}
 }

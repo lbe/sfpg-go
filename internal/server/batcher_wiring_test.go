@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -58,7 +57,7 @@ func TestFileBatcher_SubmitFile(t *testing.T) {
 			t.Fatalf("New writebatcher: %v", err)
 		}
 		t.Cleanup(func() { _ = wb.Close() })
-		fb := newFileBatcher(wb, &atomic.Int64{}, &atomic.Bool{}, &atomic.Bool{}, &atomic.Int64{})
+		fb := newFileBatcher(wb, &folderIndexProtocol{})
 
 		file := makeTestFile("/test/path.jpg", "test.jpg")
 
@@ -98,7 +97,7 @@ func TestFileBatcher_SubmitFile(t *testing.T) {
 			blockMu.Unlock()
 			wb.Close()
 		})
-		fb := newFileBatcher(wb, &atomic.Int64{}, &atomic.Bool{}, &atomic.Bool{}, &atomic.Int64{})
+		fb := newFileBatcher(wb, &folderIndexProtocol{})
 
 		err = fb.SubmitFile(makeTestFile("/test/1.jpg", "1.jpg"))
 		if err != nil {
@@ -131,7 +130,7 @@ func TestFileBatcher_PendingCount(t *testing.T) {
 			t.Fatalf("New writebatcher: %v", err)
 		}
 		t.Cleanup(func() { _ = wb.Close() })
-		fb := newFileBatcher(wb, &atomic.Int64{}, &atomic.Bool{}, &atomic.Bool{}, &atomic.Int64{})
+		fb := newFileBatcher(wb, &folderIndexProtocol{})
 
 		if count := fb.PendingCount(); count != 0 {
 			t.Errorf("expected pending count 0, got %d", count)
@@ -150,7 +149,7 @@ func TestFileBatcher_PendingCount(t *testing.T) {
 			t.Fatalf("New writebatcher: %v", err)
 		}
 		t.Cleanup(func() { _ = wb.Close() })
-		fb := newFileBatcher(wb, &atomic.Int64{}, &atomic.Bool{}, &atomic.Bool{}, &atomic.Int64{})
+		fb := newFileBatcher(wb, &folderIndexProtocol{})
 
 		file := makeTestFile("/test/1.jpg", "1.jpg")
 		for range 5 {
@@ -164,7 +163,7 @@ func TestFileBatcher_PendingCount(t *testing.T) {
 }
 
 func TestFileBatcher_NilGuard(t *testing.T) {
-	fb := newFileBatcher(nil, &atomic.Int64{}, &atomic.Bool{}, &atomic.Bool{}, &atomic.Int64{})
+	fb := newFileBatcher(nil, nil)
 
 	// SubmitFile must return ErrClosed, not panic
 	err := fb.SubmitFile(&files.File{Path: "/test/path.jpg"})
@@ -225,10 +224,8 @@ func TestFileBatcher_SubmitFolderIndex(t *testing.T) {
 			blockMu.Unlock()
 			wb.Close()
 		})
-		var inflight, generation atomic.Int64
-		var rebuildActive atomic.Bool
-		var rebuildScan atomic.Bool
-		fb := newFileBatcher(wb, &inflight, &rebuildActive, &rebuildScan, &generation)
+		var prot folderIndexProtocol
+		fb := newFileBatcher(wb, &prot)
 
 		// Before submit, inflight is 0.
 		if got := fb.FolderIndexInflight(); got != 0 {
@@ -275,10 +272,8 @@ func TestFileBatcher_SubmitFolderIndex(t *testing.T) {
 			blockMu.Unlock()
 			wb.Close()
 		})
-		var inflight, generation atomic.Int64
-		var rebuildActive atomic.Bool
-		var rebuildScan atomic.Bool
-		fb := newFileBatcher(wb, &inflight, &rebuildActive, &rebuildScan, &generation)
+		var prot folderIndexProtocol
+		fb := newFileBatcher(wb, &prot)
 
 		// First submit consumes the single channel slot (flush blocked).
 		if err := fb.SubmitFolderIndex(makeFolderIndexRow(1, 1)); err != nil {
@@ -321,10 +316,8 @@ func TestFileBatcher_SubmitFolderIndex(t *testing.T) {
 			t.Fatalf("New writebatcher: %v", err)
 		}
 		t.Cleanup(func() { wb.Close() })
-		var inflight, generation atomic.Int64
-		var rebuildActive atomic.Bool
-		var rebuildScan atomic.Bool
-		fb := newFileBatcher(wb, &inflight, &rebuildActive, &rebuildScan, &generation)
+		var prot folderIndexProtocol
+		fb := newFileBatcher(wb, &prot)
 
 		// Generation the production OnSuccess path will NOT decrement, so this
 		// test isolates the retry/inflight behavior of SubmitFolderIndex itself.
@@ -388,10 +381,9 @@ func TestFileBatcher_SubmitFolderIndex(t *testing.T) {
 			blockMu.Unlock()
 			wb.Close()
 		})
-		var inflight, generation atomic.Int64
-		var rebuildActive atomic.Bool
+		var prot folderIndexProtocol
 		// Short stall so CI does not wait 30s on the stuck-pending path.
-		fb := &fileBatcher{wb: wb, inflight: &inflight, rebuildActive: &rebuildActive, generation: &generation, submitStall: 10 * time.Millisecond}
+		fb := &fileBatcher{wb: wb, protocol: &prot, submitStall: 10 * time.Millisecond}
 
 		// Fill the slot; flush is blocked so it never drains.
 		if err := fb.SubmitFolderIndex(makeFolderIndexRow(1, 1)); err != nil {
@@ -429,17 +421,15 @@ func TestFileBatcher_SubmitFolderIndex(t *testing.T) {
 			t.Fatalf("New writebatcher: %v", err)
 		}
 		t.Cleanup(func() { wb.Close() })
-		var inflight, generation atomic.Int64
-		var rebuildActive atomic.Bool
-		var rebuildScan atomic.Bool
-		fb := newFileBatcher(wb, &inflight, &rebuildActive, &rebuildScan, &generation)
+		var prot folderIndexProtocol
+		fb := newFileBatcher(wb, &prot)
 
 		fb.SetFolderIndexRebuildActive(true)
-		if !rebuildActive.Load() {
+		if !prot.rebuildActive.Load() {
 			t.Error("expected rebuildActive true after SetFolderIndexRebuildActive(true)")
 		}
 		fb.SetFolderIndexRebuildActive(false)
-		if rebuildActive.Load() {
+		if prot.rebuildActive.Load() {
 			t.Error("expected rebuildActive false after SetFolderIndexRebuildActive(false)")
 		}
 	})
@@ -456,10 +446,8 @@ func TestFileBatcher_SubmitFolderIndex(t *testing.T) {
 			t.Fatalf("New writebatcher: %v", err)
 		}
 		t.Cleanup(func() { wb.Close() })
-		var inflight, generation atomic.Int64
-		var rebuildActive atomic.Bool
-		var rebuildScan atomic.Bool
-		fb := newFileBatcher(wb, &inflight, &rebuildActive, &rebuildScan, &generation)
+		var prot folderIndexProtocol
+		fb := newFileBatcher(wb, &prot)
 
 		a := fb.BumpFolderIndexGeneration()
 		b := fb.BumpFolderIndexGeneration()
@@ -472,7 +460,7 @@ func TestFileBatcher_SubmitFolderIndex(t *testing.T) {
 		if a == b {
 			t.Errorf("generations should differ: a=%d b=%d", a, b)
 		}
-		if got := generation.Load(); got != b {
+		if got := prot.generation.Load(); got != b {
 			t.Errorf("stored generation = %d, want second bump %d", got, b)
 		}
 	})

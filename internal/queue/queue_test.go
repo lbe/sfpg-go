@@ -1,10 +1,12 @@
 package queue
 
 import (
+	"context"
 	"errors"
 	"slices"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestQueueBasicInt(t *testing.T) {
@@ -473,6 +475,150 @@ func TestBoundedQueue_Concurrent(t *testing.T) {
 
 	if q.Len() != 20 {
 		t.Errorf("Len() = %d, want 20", q.Len())
+	}
+}
+
+func TestDequeueWait_UnblocksAfterEnqueue(t *testing.T) {
+	q := NewQueue[int](16)
+	result := make(chan int, 1)
+	errCh := make(chan error, 1)
+	started := make(chan struct{})
+	go func() {
+		close(started)
+		v, err := q.DequeueWait(context.Background())
+		if err != nil {
+			errCh <- err
+			return
+		}
+		result <- v
+	}()
+	<-started
+	time.Sleep(50 * time.Millisecond)
+
+	if err := q.Enqueue(42); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	select {
+	case v := <-result:
+		if v != 42 {
+			t.Errorf("DequeueWait = %d, want 42", v)
+		}
+	case err := <-errCh:
+		t.Fatalf("DequeueWait error: %v", err)
+	case <-time.After(time.Second):
+		t.Fatal("DequeueWait did not unblock after Enqueue")
+	}
+}
+
+func TestDequeueWait_ContextCancel(t *testing.T) {
+	q := NewQueue[int](16)
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	started := make(chan struct{})
+	go func() {
+		close(started)
+		_, err := q.DequeueWait(ctx)
+		errCh <- err
+	}()
+	<-started
+	time.Sleep(50 * time.Millisecond)
+
+	cancel()
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("DequeueWait error = %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("DequeueWait did not return after context cancel")
+	}
+}
+
+func TestDequeueWait_CloseWhileEmpty(t *testing.T) {
+	q := NewQueue[int](16)
+	errCh := make(chan error, 1)
+	started := make(chan struct{})
+	go func() {
+		close(started)
+		_, err := q.DequeueWait(context.Background())
+		errCh <- err
+	}()
+	<-started
+	time.Sleep(50 * time.Millisecond)
+
+	q.Close()
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, ErrClosedQueue) {
+			t.Errorf("DequeueWait error = %v, want ErrClosedQueue", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("DequeueWait did not return after Close")
+	}
+}
+
+func TestQueue_BroadcastWaiters_EmptyWakeReturnsErrEmptyQueue(t *testing.T) {
+	q := NewQueue[int](16)
+	errCh := make(chan error, 1)
+	started := make(chan struct{})
+	go func() {
+		close(started)
+		_, err := q.DequeueWait(context.Background())
+		errCh <- err
+	}()
+	<-started
+	time.Sleep(50 * time.Millisecond)
+
+	q.BroadcastWaiters()
+
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, ErrEmptyQueue) {
+			t.Errorf("DequeueWait error = %v, want ErrEmptyQueue", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("DequeueWait did not return after BroadcastWaiters")
+	}
+}
+
+func TestDequeueWait_ImmediateWhenNonEmpty(t *testing.T) {
+	q := NewQueue[int](16)
+	if err := q.Enqueue(7); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	v, err := q.DequeueWait(context.Background())
+	if err != nil {
+		t.Fatalf("DequeueWait: %v", err)
+	}
+	if v != 7 {
+		t.Errorf("DequeueWait = %d, want 7", v)
+	}
+}
+
+func TestDequeueWait_Concurrent(t *testing.T) {
+	q := NewQueue[int](16)
+	const n = 500
+	var wg sync.WaitGroup
+	for range n {
+		wg.Go(func() {
+			_, err := q.DequeueWait(context.Background())
+			if err != nil {
+				t.Errorf("DequeueWait: %v", err)
+			}
+		})
+	}
+	for i := range n {
+		wg.Add(1)
+		go func(val int) {
+			defer wg.Done()
+			if err := q.Enqueue(val); err != nil {
+				t.Errorf("Enqueue: %v", err)
+			}
+		}(i)
+	}
+	wg.Wait()
+	if !q.IsEmpty() {
+		t.Errorf("queue Len = %d, want empty", q.Len())
 	}
 }
 

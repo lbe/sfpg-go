@@ -117,51 +117,6 @@ func (q *Queries) GetFileViewByID(ctx context.Context, id int64) (FileView, erro
 	return i, err
 }
 
-const getFileViewsByFolderIDOrderByFileName = `-- name: GetFileViewsByFolderIDOrderByFileName :many
-SELECT id, folder_id, folder_path, path, filename, size_bytes, mtime, md5, phash, mime_type, width, height, created_at, updated_at
-  FROM file_view
- WHERE folder_id = ?
- ORDER BY filename
-`
-
-func (q *Queries) GetFileViewsByFolderIDOrderByFileName(ctx context.Context, folderID sql.NullInt64) ([]FileView, error) {
-	rows, err := q.query(ctx, q.getFileViewsByFolderIDOrderByFileNameStmt, getFileViewsByFolderIDOrderByFileName, folderID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []FileView
-	for rows.Next() {
-		var i FileView
-		if err := rows.Scan(
-			&i.ID,
-			&i.FolderID,
-			&i.FolderPath,
-			&i.Path,
-			&i.Filename,
-			&i.SizeBytes,
-			&i.Mtime,
-			&i.Md5,
-			&i.Phash,
-			&i.MimeType,
-			&i.Width,
-			&i.Height,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const getFolderCount = `-- name: GetFolderCount :one
 SELECT COUNT(*) AS ct FROM folders
 `
@@ -241,6 +196,71 @@ func (q *Queries) GetLightboxNavByFileID(ctx context.Context, fileID int64) (Get
 		&i.NextID,
 	)
 	return i, err
+}
+
+const listDiscoveryFilesByFolderID = `-- name: ListDiscoveryFilesByFolderID :many
+SELECT f.id         AS file_id
+     , f.folder_id  AS file_folder_id
+     , f.path_id    AS file_path_id
+     , f.filename   AS file_filename
+     , f.size_bytes AS file_size_bytes
+     , f.mtime      AS file_mtime
+     , f.md5        AS file_md5
+     , f.phash      AS file_phash
+     , f.mime_type  AS file_mime_type
+     , f.width      AS file_width
+     , f.height     AS file_height
+  FROM files AS f
+ WHERE f.folder_id = ?
+`
+
+type ListDiscoveryFilesByFolderIDRow struct {
+	FileID        int64
+	FileFolderID  sql.NullInt64
+	FilePathID    int64
+	FileFilename  string
+	FileSizeBytes sql.NullInt64
+	FileMtime     sql.NullInt64
+	FileMd5       sql.NullString
+	FilePhash     sql.NullInt64
+	FileMimeType  sql.NullString
+	FileWidth     sql.NullInt64
+	FileHeight    sql.NullInt64
+}
+
+func (q *Queries) ListDiscoveryFilesByFolderID(ctx context.Context, folderID sql.NullInt64) ([]ListDiscoveryFilesByFolderIDRow, error) {
+	rows, err := q.query(ctx, q.listDiscoveryFilesByFolderIDStmt, listDiscoveryFilesByFolderID, folderID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListDiscoveryFilesByFolderIDRow
+	for rows.Next() {
+		var i ListDiscoveryFilesByFolderIDRow
+		if err := rows.Scan(
+			&i.FileID,
+			&i.FileFolderID,
+			&i.FilePathID,
+			&i.FileFilename,
+			&i.FileSizeBytes,
+			&i.FileMtime,
+			&i.FileMd5,
+			&i.FilePhash,
+			&i.FileMimeType,
+			&i.FileWidth,
+			&i.FileHeight,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const upsertFileReturningFile = `-- name: UpsertFileReturningFile :one

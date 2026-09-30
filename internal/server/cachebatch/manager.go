@@ -176,12 +176,7 @@ func (m *Manager) Run(ctx context.Context) error {
 			m.isThrottled = false
 		}
 
-		params := cachelite.CacheKeyParams{
-			Method:  "GET",
-			Path:    t.Path,
-			Query:   queryStr,
-			Variant: t.Variant,
-		}
+		params := cachelite.NewCacheKeyForPreload(t.Path, queryStr, t.Variant)
 		cacheKey := cachelite.NewCacheKey(params)
 		exists, err := queries.HttpCacheExistsByKey(ctx, cacheKey)
 		if err != nil {

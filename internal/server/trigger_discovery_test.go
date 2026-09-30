@@ -10,7 +10,6 @@ import (
 	"github.com/lbe/sfpg-go/internal/dbconnpool"
 	"github.com/lbe/sfpg-go/internal/server/files"
 	"github.com/lbe/sfpg-go/internal/server/metrics"
-	"github.com/lbe/sfpg-go/internal/server/modulestate"
 )
 
 // TestTriggerDiscovery_PersistsFileProcessingAfterDrain verifies P4 and Task 5
@@ -18,9 +17,9 @@ import (
 // counters to module_state.payload["discovery"]["file_processing"] so a
 // skip-startup-discovery restart can hydrate them, and the counters are the
 // post-reset totals — a seeded last-run never leaks into the persisted payload.
-// CreateApp leaves processingStats and moduleStateService nil, so the persist
-// must first be a no-op (no panic, nothing written); the allocated stats then
-// drive the production walk/drain/persist path.
+// CreateApp skips Start, so the persist must first be a no-op (no panic,
+// nothing written); wireDiscoveryTestDeps then drives the production
+// walk/drain/persist path.
 func TestTriggerDiscovery_PersistsFileProcessingAfterDrain(t *testing.T) {
 	app := CreateApp(t)
 	defer app.Shutdown()
@@ -31,8 +30,7 @@ func TestTriggerDiscovery_PersistsFileProcessingAfterDrain(t *testing.T) {
 		t.Fatalf("nil-stats persist should be a no-op, got error: %v", err)
 	}
 
-	app.SubsystemManager.processingStats = &files.ProcessingStats{}
-	app.SubsystemManager.moduleStateService = modulestate.NewService(app.dbRwPool)
+	wireDiscoveryTestDeps(app)
 
 	// Simulate a hydrated last-run (Task 4) that a manual run then triggers:
 	// Task 5's ResetStats after the successful CAS must zero these before the
@@ -86,20 +84,16 @@ func TestTriggerDiscovery_PersistsFileProcessingAfterDrain(t *testing.T) {
 // TestTriggerDiscovery_InFlightDoesNotResetStats verifies P6: when discovery
 // is already in flight, TriggerDiscovery's failed CAS returns without calling
 // ResetStats — the live counters and the persisted payload stay unchanged.
-// CreateApp leaves processingStats nil and ResetStats() nil-guards, so this
-// test must allocate the stats pointer before Store (a Store on the nil
-// CreateApp pointer would panic before the CAS/reset behavior is exercised).
+// wireDiscoveryTestDeps must run before Store (a Store on nil would panic).
 func TestTriggerDiscovery_InFlightDoesNotResetStats(t *testing.T) {
 	app := CreateApp(t)
 	defer app.Shutdown()
 
-	app.SubsystemManager.processingStats = &files.ProcessingStats{}
+	wireDiscoveryTestDeps(app)
 	app.SubsystemManager.processingStats.TotalFound.Store(99)
-
+	seed := metrics.FileProcessingMetrics{TotalFound: 77, AlreadyExisting: 66, NewlyInserted: 11, SkippedInvalid: 2}
 	// Seed a persisted payload so "payload unchanged if present" holds: the
 	// failed CAS returns before any persist-after-drain can run.
-	app.SubsystemManager.moduleStateService = modulestate.NewService(app.dbRwPool)
-	seed := metrics.FileProcessingMetrics{TotalFound: 77, AlreadyExisting: 66, NewlyInserted: 11, SkippedInvalid: 2}
 	if err := app.SubsystemManager.moduleStateService.SaveFileProcessing(context.Background(), "discovery", seed); err != nil {
 		t.Fatalf("SaveFileProcessing: %v", err)
 	}
@@ -135,13 +129,12 @@ func TestTriggerDiscovery_InFlightDoesNotResetStats(t *testing.T) {
 // TriggerDiscovery wins the in-flight CAS, it immediately resets
 // processingStats so a starting run does not add onto hydrated last-run
 // counters. The reset must live before the testSeams.TriggerDiscovery check,
-// so this test uses the seam — the walk is not the proof. CreateApp leaves
-// processingStats nil; allocate before Store.
+// so this test uses the seam — the walk is not the proof.
 func TestTriggerDiscovery_ResetsStatsWhenStarting(t *testing.T) {
 	app := CreateApp(t)
 	defer app.Shutdown()
 
-	app.SubsystemManager.processingStats = &files.ProcessingStats{}
+	ensureProcessingStats(app.SubsystemManager)
 	app.SubsystemManager.processingStats.TotalFound.Store(5)
 
 	// No-op stub that returns nil immediately. The reset must already have run
@@ -230,9 +223,8 @@ func TestTriggerDiscovery_ShutdownDuringDrainSkipsRebuild(t *testing.T) {
 		return nil
 	}
 
-	// processingStats must be non-nil so waitForFileProcessingDrain does not
-	// short-circuit. CreateApp sets q and fileProcessor but not processingStats.
-	app.SubsystemManager.processingStats = &files.ProcessingStats{}
+	// ensureProcessingStats so waitForFileProcessingDrain does not short-circuit.
+	ensureProcessingStats(app.SubsystemManager)
 
 	// Prevent drain from completing: active sender blocks the poll loop.
 	app.SubsystemManager.qSendersActive.Store(1)

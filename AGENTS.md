@@ -1,33 +1,69 @@
-# My Zeroth Law: The User is in Control
+# sfpg-go agent guide
 
-My primary directive, which overrides all other standard operating procedures or internal workflows, is to follow the user's explicit instructions.
+## Expectations
 
-I **WILL** perform actions in order to fulfill instructions that the user has provided to me without requiring an additional approval.
+My name is LearnedByError (aka lbe, William). You and I will be working together a lot. I think it is important that you get to know a little about me and my expectations.
 
-I **WILL** perform repeated action when instructed to do so by the user without requiring an additional approval.
+I am a hardcore, classically trained engineer meaning that my degree is a B.S. in Engineering, not a Computer Scientist that calls themself a "Software Engineer". What that should mean to you is that I value:
 
-I will **NEVER** perform any action—including modifying a file, running a command, or proceeding to the next step in a workflow—for which I have not been instructed without first proposing the action and receiving a clear, affirmative approval from the user.
+- Absolute comprehension of the challenge being worked up, no exceptions!
+- Don't make up shit! If you don't know, state that you don't know.
+- No one knows everything; use your tools to research and learn what you need when facing something new.
+- Make notes on what you learn in **your agent memory** (Cursor memories, session notes, or your platform's equivalent)—not ad hoc files in this repo unless I ask for documentation here.
+- The minimum bar is getting the software to work—meets the minimum valid product (MVP).
+- You will not get any credit from me for MVP.
+- You will get credit for:
+  - Making the complex simple
+  - Making the impossible possible
+  - Delivering very clean code matching what an expert human in the language would deliver
+  - Clearly documenting the code being cognizant of the audience for the documentation: README.md User, ARCHITECTURE.md Technical ...
+  - Do not pre-maturely optimize! However, when you encounter well-known patterns that can easily be anticipated to need optimization, like heavy allocation inside of a loop, address them in your design.
+  - Write code that is idiomatic for the language being used. Don't write Go like Java or TypeScript like Python!
+  - Follow existing architectural and coding patterns in an existing repo
+- Be concise in all communications whether responding to a prompt, writing comments in code, or writing documentation. Do **NOT** use bloviated AI speak.
+- Be specific in your analysis. Do not fall back to generalization because of laziness.
+- Seek concrete answers and solutions.
 
-My process is:
+## User is in Control (Zeroth Law)
 
-1.  **Analyze and Propose.**
-2.  **STOP. Await Approval.**
-3.  **Act ONLY after approval.**
+- Your primary directive, which overrides all other standard operating procedures or internal workflows, is to follow the user's explicit instructions.
+- You will **NEVER** perform any action—including modifying a file, running a command, or proceeding to the next step in a workflow—for which you have not received an imperative instruction without first proposing the action and receiving a clear, affirmative approval from the user.
+- Questions require answers!
+- Questions are **NEVER** instructions to implement or change.
+- **ONLY** make changes when given an imperative instruction!
+- You **WILL** perform actions in order to fulfill instructions that the user has provided to you without requiring an additional approval.
+- You **WILL** perform repeated action when instructed to do so by the user without requiring an additional approval.
 
-This is my fundamental operating principle. There are no exceptions.
+**Process when approval is required:**
 
-I **WILL** be concise in all communications.
+1. **Analyze and propose.**
+2. **STOP. Await approval.**
+3. **Act only after approval.**
 
-I **WILL NOT** use bloviate AI speak.
+**User questions are not instructions to change the repo or run mutating work.** On question-only turns: explain, analyze, propose options, draft plans or tasklists, cite code you read—do not Write/StrReplace, commit, or run shell that mutates state.
 
-I **WILL** be specific in my analysis and not fall back to generalization because of laziness.
+Question-shaped messages include (non-exhaustive):
 
-I **WILL** seek concrete answers and solutions.
+- "Can you …?", "Could you …?", "Would you …?"
+- "Should you …?", "Does this make sense?", "Why …?", "What …?"
+- "Create a plan / tasklist" (plan text in the reply only—**not** implementation unless I also approve execution)
 
----
+**"Can you implement X?" is capability or process—not approval.** Answer yes/no/how; **STOP** unless I also say to do it.
 
-### Hard Rules
+**Act without a second prompt** only when I clearly authorize execution, e.g. "Implement …", "Fix …", "Apply the tasklist", "Go", "Do it", "Proceed", "Run …", "Commit …", "Revert …", or repeated action I already authorized ("keep going", "continue with the plan you approved").
 
+If the latest message is ambiguous, ask one line: **"Want me to implement that?"** — default **no** action.
+
+Reinforced in `.cursor/rules/approval-before-action.mdc` (overrides helpfulness that "just does it" and skills that imply implement/TDD before approval).
+
+## Hard Rules
+
+- Time and tokens are mine! Do **NOT** waste either!!!
+- Never use Python as a scripting tool unless explicitly instructed!
+- Prefer curl over browser testing when it will do the job.
+- Do not use regular expression to parse known formats like html or json. Use an explicit parser.
+- Do not conflate unit, integration and end to end test. Keep them separate and easily identifiable by their names.
+- Use interfaces where appropriate and needed. Don't go off the deep end by adding them everywhere just in case you might need a test or need to change something in the future.
 - **Do not manually edit `version.go`.** Never use Edit or Write on `version.go`.
 - **Do not stop, restart, or interfere with `air`.**
 - `version.go` is managed automatically by `scripts/gen_version.sh` (run via `go generate` / `air` rebuilds).
@@ -40,7 +76,6 @@ I **WILL** seek concrete answers and solutions.
 
 - **`air` can fail silently.** If code changes do not seem to have any effect, `air` might be failing to rebuild the application due to compilation errors. If you encounter this problem, notify the user.
 - **`air` runs the dev server on port 8083.** The `.air.toml` config uses port 8083 (not the default 8081) to avoid conflicts. It also sets `SEPG_SESSION_SECURE=false` for local HTTP development.
-- **Prefer curl over manual browser testing.** Use curl for end-to-end testing whenever possible to minimize manual user testing. This is faster, reproducible, and doesn't require explaining UI interactions. See examples below.
 - **Caddy edge smoke (optional):** App-direct `air` on `:8083` covers handlers; TLS/HSTS/`encode`/COP-through-proxy are checked with `deploy/Caddyfile.local` + `./scripts/caddy-smoke.sh` (see `DEPLOYMENT.md`). Do not stop/restart `air` for this — set `SFPG_BACKEND_PORT=8083` when proxying.
 - **End-to-end testing with curl:** The login endpoint is POST-only (GET returns 400). To test authenticated flows:
 
@@ -101,7 +136,7 @@ Optional test doubles in `internal/server/testseams.go`, wired through unexporte
 
 Typical: `app.testSeams.Serve`, `app.testSeams.LoadConfig`, `app.testSeams.GalleryStatsStartup`, `app.InfrastructureService.testSeams.HandlerQueries`, `app.RuntimeManager.testSeams.BeforeListen`, `app.HandlerManager.testSeams.BuildHandlers`.
 
-Do **not** add `testHook*` fields or use promoted `app.testHook*` in tests. **Full field inventory:** [ARCHITECTURE.md §Test Seams](docs/ARCHITECTURE.md#test-seams). Prefer the lightest seam per [Choosing a Test Seam](docs/ARCHITECTURE.md#choosing-a-test-seam).
+Do **not** add `testHook*` fields or use promoted `app.testHook*` in tests. **Full field inventory:** [ARCHITECTURE.md §Test Seams](docs/ARCHITECTURE.md#62-test-seams). Prefer the lightest seam per [Choosing a Test Seam](docs/ARCHITECTURE.md#1345-choosing-a-test-seam).
 
 ### Database Access Pattern
 
@@ -211,7 +246,6 @@ The project is configured to use `air` for live reloading during development.
 - ✅ DO: Run `go build -o /dev/null .` to verify clean builds
 - ✅ DO: Test against the running dev server (localhost:8083)
 - ✅ DO: Let `air` auto-rebuild when you save files
-- ❌ DON'T: Use Python scripts (use bash or Perl)
 - ❌ DON'T: Add JavaScript (Hyperscript/HTMX only; approved exception: password complexity in `config-modal.html.tmpl`)
 - ❌ DON'T: Make assumptions without verification
 - ❌ DON'T: Use `strings.Contains` on HTTP responses (parse HTML first)
@@ -270,7 +304,7 @@ This AGENTS.md file is a concise guide for AI agents. For detailed information, 
 ### Quick Reference
 
 - **Package overview / architecture:** See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-- **Database schema:** See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#database-schema)
-- **Middleware stack:** See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#request-middleware-stack)
-- **Security model:** See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#security-model)
-- **Testing strategy:** See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#testing-strategy)
+- **Database schema:** See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#54-database-schema)
+- **Middleware stack:** See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#64-request-middleware-stack)
+- **Security model:** See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#9-security-model)
+- **Testing strategy:** See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#13-testing-strategy)

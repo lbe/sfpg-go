@@ -3,7 +3,6 @@ package server
 import (
 	"errors"
 	"log/slog"
-	"sync/atomic"
 	"time"
 
 	"github.com/lbe/sfpg-go/internal/server/files"
@@ -21,28 +20,20 @@ const submitStallDefault = 30 * time.Second
 // interface and server provides the thin wiring close to where the batcher is
 // used, avoiding an import cycle.
 type fileBatcher struct {
-	wb            *writebatcher.WriteBatcher[BatchedWrite]
-	inflight      *atomic.Int64
-	rebuildActive *atomic.Bool
-	rebuildScan   *atomic.Bool
-	generation    *atomic.Int64
-	submitStall   time.Duration // 0 means submitStallDefault (30s)
+	wb          *writebatcher.WriteBatcher[BatchedWrite]
+	protocol    *folderIndexProtocol
+	submitStall time.Duration // 0 means submitStallDefault (30s)
 }
 
 // newFileBatcher wraps a WriteBatcher[BatchedWrite] as a files.UnifiedBatcher.
 // When wb is nil, the returned adapter's methods return ErrClosed instead of
-// panicking, matching the previous nil-safe behavior. inflight tracks the
-// number of FolderIndex rows submitted but not yet flushed during a rebuild;
-// rebuildActive, rebuildScan, and generation mirror InfrastructureService fields
-// so the adapter and the flush path share the same atomics. Pass nil atomics
-// only for tests that do not exercise inflight/rebuild tracking.
-func newFileBatcher(wb *writebatcher.WriteBatcher[BatchedWrite], inflight *atomic.Int64, rebuildActive *atomic.Bool, rebuildScan *atomic.Bool, generation *atomic.Int64) files.UnifiedBatcher {
+// panicking, matching the previous nil-safe behavior. protocol holds shared
+// folder-index lifecycle atomics with InfrastructureService and the flush path.
+// Pass nil protocol only for tests that do not exercise inflight/rebuild tracking.
+func newFileBatcher(wb *writebatcher.WriteBatcher[BatchedWrite], protocol *folderIndexProtocol) files.UnifiedBatcher {
 	return &fileBatcher{
-		wb:            wb,
-		inflight:      inflight,
-		rebuildActive: rebuildActive,
-		rebuildScan:   rebuildScan,
-		generation:    generation,
+		wb:       wb,
+		protocol: protocol,
 	}
 }
 
@@ -50,9 +41,7 @@ func newFileBatcher(wb *writebatcher.WriteBatcher[BatchedWrite], inflight *atomi
 // InfrastructureService so the WAL checkpoint gate and the rebuild share the
 // same atomic.
 func (fb *fileBatcher) SetFolderIndexRebuildScanHeld(held bool) {
-	if fb.rebuildScan != nil {
-		fb.rebuildScan.Store(held)
-	}
+	fb.protocol.setRebuildScanHeld(held)
 }
 
 // SubmitFile submits a File to the unified batcher.
@@ -80,18 +69,13 @@ func (fb *fileBatcher) PendingCount() int64 {
 // FolderIndexInflight returns the number of folder-index rows submitted but not
 // yet flushed, or 0 when inflight tracking is disabled.
 func (fb *fileBatcher) FolderIndexInflight() int64 {
-	if fb.inflight == nil {
-		return 0
-	}
-	return fb.inflight.Load()
+	return fb.protocol.inflightLoad()
 }
 
 // SetFolderIndexRebuildActive mirrors the flag on InfrastructureService so flush
 // gates FolderIndex INSERTs on the same atomic the rebuild controls.
 func (fb *fileBatcher) SetFolderIndexRebuildActive(active bool) {
-	if fb.rebuildActive != nil {
-		fb.rebuildActive.Store(active)
-	}
+	fb.protocol.setRebuildActive(active)
 }
 
 // BumpFolderIndexGeneration sets the rebuild generation to time.Now().UnixNano()
@@ -99,16 +83,7 @@ func (fb *fileBatcher) SetFolderIndexRebuildActive(active bool) {
 // returns the stored generation. It never Add(1)s from 0, so a fresh process
 // using generation 1 cannot collide with leftover dque rows from a prior process.
 func (fb *fileBatcher) BumpFolderIndexGeneration() int64 {
-	if fb.generation == nil {
-		return 0
-	}
-	prev := fb.generation.Load()
-	next := time.Now().UnixNano()
-	if next == 0 || next == prev {
-		next = prev + 1
-	}
-	fb.generation.Store(next)
-	return next
+	return fb.protocol.bumpGeneration()
 }
 
 // submitFolderIndexOnce increments inflight, submits one FolderIndex row, and
@@ -116,15 +91,9 @@ func (fb *fileBatcher) BumpFolderIndexGeneration() int64 {
 // takes inflight below 0) and returns the error. Callers that retry call this
 // again (which re-increments before the retry Submit).
 func (fb *fileBatcher) submitFolderIndexOnce(row files.FolderIndexRow) error {
-	if fb.inflight != nil {
-		fb.inflight.Add(1)
-	}
+	fb.protocol.inflightAdd(1)
 	if err := fb.wb.Submit(BatchedWrite{FolderIndex: &row}); err != nil {
-		if fb.inflight != nil {
-			if fb.inflight.Load() > 0 {
-				fb.inflight.Add(-1)
-			}
-		}
+		fb.protocol.inflightSaturatingDecrement()
 		return err
 	}
 	return nil

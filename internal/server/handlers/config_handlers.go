@@ -46,14 +46,12 @@ type ConfigHandlers struct {
 	Ctx                   context.Context
 	credStore             interfaces.CredentialStore
 	cfgOps                interfaces.ConfigOps
+	galleryOps            interfaces.GalleryOps
 	AddCommonTemplateData func(w http.ResponseWriter, r *http.Request, data map[string]any, fullPage bool) map[string]any
-	// getConfigQueries is a test hook that returns the ConfigQueries implementation
-	// for a connection. When nil, cpc.Queries is used directly.
-	getConfigQueries func(cpc *dbconnpool.CpConn) config.ConfigQueries
 }
 
 // NewConfigHandlers creates a new ConfigHandlers with the given dependencies.
-// It accepts narrow interfaces (CredentialStore, ConfigOps) and a function
+// It accepts narrow interfaces (CredentialStore, ConfigOps, GalleryOps) and a function
 // for adding common template data, avoiding a dependency on the full ServerDeps.
 func NewConfigHandlers(
 	configService config.ConfigService,
@@ -63,6 +61,7 @@ func NewConfigHandlers(
 	dbRwPool dbconnpool.ConnectionPool,
 	credStore interfaces.CredentialStore,
 	cfgOps interfaces.ConfigOps,
+	galleryOps interfaces.GalleryOps,
 	addCommonTemplateData func(w http.ResponseWriter, r *http.Request, data map[string]any, fullPage bool) map[string]any,
 	templates ConfigTemplates,
 	ctx context.Context,
@@ -75,6 +74,7 @@ func NewConfigHandlers(
 		DBRwPool:              dbRwPool,
 		credStore:             credStore,
 		cfgOps:                cfgOps,
+		galleryOps:            galleryOps,
 		AddCommonTemplateData: addCommonTemplateData,
 		Templates:             templates,
 		Ctx:                   ctx,
@@ -104,6 +104,32 @@ func (h *ConfigHandlers) executeConfigTemplate(w http.ResponseWriter, tmpl *temp
 		slog.Error("failed to execute config template",
 			"template", templateName,
 			"error", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+	}
+}
+
+// renderConfigValidationError returns HTTP 200 with the HTMX validation error partial
+// so the client swaps #config-error-message (via hx-swap-oob in the template).
+func (h *ConfigHandlers) renderConfigValidationError(w http.ResponseWriter, validationErrors map[string]string) {
+	w.WriteHeader(http.StatusOK)
+	if renderErr := ui.RenderTemplate(w, "config-validation-error.html.tmpl", map[string]any{
+		"Errors": validationErrors,
+	}); renderErr != nil {
+		slog.Error("failed to render validation error template", "err", renderErr)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+	}
+}
+
+// renderConfigMalformedRequest returns HTTP 400 with the generic error partial for
+// malformed HTTP bodies (parse failures), matching ConfigPost.
+func (h *ConfigHandlers) renderConfigMalformedRequest(w http.ResponseWriter, message string) {
+	w.Header().Set("HX-Retarget", "#config-error-message")
+	w.Header().Set("HX-Swap", "outerHTML")
+	w.WriteHeader(http.StatusBadRequest)
+	if renderErr := ui.RenderTemplate(w, "config-generic-error.html.tmpl", map[string]any{
+		"Message": message,
+	}); renderErr != nil {
+		slog.Error("failed to render generic error template", "err", renderErr)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 	}
 }
@@ -163,15 +189,7 @@ func (h *ConfigHandlers) ConfigGet(w http.ResponseWriter, r *http.Request) {
 func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		slog.Warn("failed to parse form in configPost", "err", err)
-		w.Header().Set("HX-Retarget", "#config-error-message")
-		w.Header().Set("HX-Swap", "outerHTML")
-		w.WriteHeader(http.StatusBadRequest)
-		if err := ui.RenderTemplate(w, "config-generic-error.html.tmpl", map[string]any{
-			"Message": "Invalid form data",
-		}); err != nil {
-			slog.Error("failed to render generic error template", "err", err)
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		}
+		h.renderConfigMalformedRequest(w, "Invalid form data")
 		return
 	}
 
@@ -223,7 +241,6 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Process config fields by iterating the single source of truth.
-	// Side effects (e.g. cache preload) are handled inline.
 	for _, f := range config.Fields() {
 		_, inForm := r.Form[f.DBKey]
 
@@ -263,11 +280,6 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 		if setErr := f.Set(&newConfig, value); setErr != nil {
 			validationErrors[f.DBKey] = setErr.Error()
 		}
-
-		// Inline the former configFieldSetter sideEffect for cache preload.
-		if f.DBKey == "enable_cache_preload" {
-			h.cfgOps.SetPreloadEnabled(value == "true")
-		}
 	}
 
 	// Reject directory-traversal paths; validate path existence and readability
@@ -285,26 +297,14 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(validationErrors) > 0 {
-		w.WriteHeader(http.StatusOK)
-		if renderErr := ui.RenderTemplate(w, "config-validation-error.html.tmpl", map[string]any{
-			"Errors": validationErrors,
-		}); renderErr != nil {
-			slog.Error("failed to render validation error template", "err", renderErr)
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		}
+		h.renderConfigValidationError(w, validationErrors)
 		return
 	}
 
 	applyResult, err := config.ApplyConfig(h.Ctx, h.ConfigService, oldConfig, &newConfig)
 	if err != nil {
 		if validationErr, ok := errors.AsType[*config.ApplyValidationError](err); ok {
-			w.WriteHeader(http.StatusOK)
-			if renderErr := ui.RenderTemplate(w, "config-validation-error.html.tmpl", map[string]any{
-				"Errors": map[string]string{"_global": validationErr.Error()},
-			}); renderErr != nil {
-				slog.Error("failed to render validation error template", "err", renderErr)
-				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-			}
+			h.renderConfigValidationError(w, map[string]string{"_global": validationErr.Error()})
 			return
 		}
 
@@ -319,6 +319,7 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 
 	h.cfgOps.UpdateConfigWithPrecedence(applyResult.Config, applyResult.RestartRequiredKeys)
 	h.cfgOps.ApplyConfig()
+	h.cfgOps.SetPreloadEnabled(applyResult.Config.EnableCachePreload)
 
 	// Invalidate HTTP cache if current theme changed — stale cached pages would
 	// have the old SSR data-theme value.
@@ -344,10 +345,9 @@ func (h *ConfigHandlers) ConfigPost(w http.ResponseWriter, r *http.Request) {
 }
 
 // getConfigQueriesFn returns the ConfigQueries implementation for a connection.
-// It checks for a test hook first, falling back to cpc.Queries.
 func (h *ConfigHandlers) getConfigQueriesFn(cpc *dbconnpool.CpConn) config.ConfigQueries {
-	if h.getConfigQueries != nil {
-		return h.getConfigQueries(cpc)
+	if h.galleryOps != nil {
+		return h.galleryOps.GetConfigQueries(cpc)
 	}
 	return cpc.Queries
 }

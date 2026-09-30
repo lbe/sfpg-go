@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/lbe/sfpg-go/internal/log"
 	"github.com/lbe/sfpg-go/internal/server/metrics"
 )
 
@@ -158,24 +159,38 @@ func (m *RuntimeManager) TriggerRestart() {
 // new instance skips the automatic startup file discovery walk.
 const skipStartupDiscoveryEnv = "SEPG_SKIP_STARTUP_DISCOVERY"
 
-// environWithSkipStartupDiscovery returns env with skipStartupDiscoveryEnv set
-// to "1", replacing an existing value (including "0") instead of appending.
-func environWithSkipStartupDiscovery(env []string) []string {
+// setEnvValue returns env with key set to value, replacing an existing entry.
+func setEnvValue(env []string, key, value string) []string {
 	out := make([]string, 0, len(env)+1)
-	prefix := skipStartupDiscoveryEnv + "="
+	prefix := key + "="
 	found := false
 	for _, kv := range env {
 		if strings.HasPrefix(kv, prefix) {
-			out = append(out, prefix+"1")
+			out = append(out, prefix+value)
 			found = true
 			continue
 		}
 		out = append(out, kv)
 	}
 	if !found {
-		out = append(out, prefix+"1")
+		out = append(out, prefix+value)
 	}
 	return out
+}
+
+// environWithSkipStartupDiscovery returns env with skipStartupDiscoveryEnv set
+// to "1", replacing an existing value (including "0") instead of appending.
+func environWithSkipStartupDiscovery(env []string) []string {
+	return setEnvValue(env, skipStartupDiscoveryEnv, "1")
+}
+
+// environForExecRestart returns env for syscall.Exec after an in-app restart.
+func environForExecRestart(env []string, logFile string) []string {
+	env = environWithSkipStartupDiscovery(env)
+	if logFile != "" {
+		env = setEnvValue(env, log.ContinueLogFileEnv, logFile)
+	}
+	return env
 }
 
 // envTruthySkipStartupDiscovery reports whether env carries skipStartupDiscoveryEnv
@@ -186,7 +201,8 @@ func envTruthySkipStartupDiscovery(env []string) bool {
 }
 
 // ExecRestart replaces the current process image with a fresh instance.
-func (m *RuntimeManager) ExecRestart() {
+// logFile is the absolute path to append after restart; empty skips SEPG_LOG_FILE.
+func (m *RuntimeManager) ExecRestart(logFile string) {
 	exe, err := os.Executable()
 	if m.testSeams.Executable != nil {
 		exe, err = m.testSeams.Executable()
@@ -204,7 +220,7 @@ func (m *RuntimeManager) ExecRestart() {
 	if execCmd == nil {
 		execCmd = syscall.Exec
 	}
-	if err := execCmd(exe, os.Args, environWithSkipStartupDiscovery(os.Environ())); err != nil {
+	if err := execCmd(exe, os.Args, environForExecRestart(os.Environ(), logFile)); err != nil {
 		slog.Error("failed to exec new process image", "err", err)
 		m.exit(1)
 		return

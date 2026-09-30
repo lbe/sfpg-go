@@ -30,7 +30,6 @@ type Querier interface {
 	GetFileFolderIndexByID(ctx context.Context, fileID int64) (GetFileFolderIndexByIDRow, error)
 	GetFileSizeSum(ctx context.Context) (int64, error)
 	GetFileViewByID(ctx context.Context, id int64) (FileView, error)
-	GetFileViewsByFolderIDOrderByFileName(ctx context.Context, folderID sql.NullInt64) ([]FileView, error)
 	// -- name: PopulateMissingTileID :exec
 	// UPDATE folders
 	//    SET tile_id = (
@@ -57,7 +56,6 @@ type Querier interface {
 	GetFolderInfoCountsByID(ctx context.Context, id int64) (GetFolderInfoCountsByIDRow, error)
 	GetFolderTileExistsViewByPath(ctx context.Context, path string) (bool, error)
 	GetFolderViewByID(ctx context.Context, id int64) (FolderView, error)
-	GetFoldersViewsByParentIDOrderByName(ctx context.Context, parentID sql.NullInt64) ([]FolderView, error)
 	GetGalleryFileThumbRowsByFolderID(ctx context.Context, folderID sql.NullInt64) ([]GetGalleryFileThumbRowsByFolderIDRow, error)
 	GetGalleryFolderThumbRowsByParentID(ctx context.Context, parentID sql.NullInt64) ([]GetGalleryFolderThumbRowsByParentIDRow, error)
 	// queries for HTTP cache table operations
@@ -78,6 +76,8 @@ type Querier interface {
 	HttpCacheExistsByKey(ctx context.Context, key string) (bool, error)
 	InsertConfigIfNotExists(ctx context.Context, arg InsertConfigIfNotExistsParams) error
 	InsertIPTCKeyword(ctx context.Context, arg InsertIPTCKeywordParams) error
+	ListDiscoveryFilesByFolderID(ctx context.Context, folderID sql.NullInt64) ([]ListDiscoveryFilesByFolderIDRow, error)
+	ListDiscoveryInvalidByFolderID(ctx context.Context, folderID int64) ([]ListDiscoveryInvalidByFolderIDRow, error)
 	SetModuleState(ctx context.Context, arg SetModuleStateParams) error
 	SetModuleStatePayload(ctx context.Context, arg SetModuleStatePayloadParams) error
 	UnlockAccount(ctx context.Context, username string) error

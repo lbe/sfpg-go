@@ -22,11 +22,7 @@
     <label class="label">
       <span class="label-text font-semibold">Log Level</span>
     </label>
-    <select
-      name="log_level"
-      data-requires-restart="true"
-      class="select select-bordered w-32"
-    >
+    <select name="log_level" class="select select-bordered w-32">
       <option
         value="debug"
         {{ if and .Config (eq .Config.LogLevel "debug") }}selected{{ end }}
@@ -54,7 +50,7 @@
     </select>
     <label class="label">
       <span class="label-text-alt"
-        >Minimum log level to record. Restart required.</span
+        >Minimum log level to record. Applied immediately after save.</span
       >
     </label>
   </div>

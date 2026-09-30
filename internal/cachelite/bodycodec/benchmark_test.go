@@ -9,9 +9,8 @@ import (
 	gziplib "compress/gzip"
 
 	zstdlib "github.com/klauspost/compress/zstd"
-	_ "github.com/lbe/sfpg-go/internal/cachelite/bodycodec"
-	"github.com/lbe/sfpg-go/internal/cachelite/bodycodec/fixtures"
 	"github.com/lbe/sfpg-go/internal/cachelite/bodycodec/gzip"
+	"github.com/lbe/sfpg-go/internal/cachelite/bodycodec/testfixture"
 	"github.com/lbe/sfpg-go/internal/cachelite/bodycodec/zstd"
 )
 
@@ -28,7 +27,7 @@ var (
 
 func loadFixture(b *testing.B, name string) []byte {
 	b.Helper()
-	data, err := fixtures.Read(name)
+	data, err := testfixture.Read(name)
 	if err != nil {
 		b.Fatalf("read fixture %s: %v", name, err)
 	}

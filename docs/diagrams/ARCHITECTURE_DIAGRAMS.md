@@ -4,21 +4,29 @@ This document contains Mermaid diagrams illustrating the SFPG application archit
 
 > **Note:** Key diagrams are embedded directly in [`ARCHITECTURE.md`](../ARCHITECTURE.md) where they're explained in context.
 > This file collects all diagrams in one place for easy reference, editing, and exporting.
+>
+> **Packages:** Each diagram illustrates a process documented in [`ARCHITECTURE.md`](../ARCHITECTURE.md). For the Go **package name** and **directory** (relative to the repo root) that implement that process, see [Process-to-package map](../ARCHITECTURE.md#2-process-to-package-map).
 
 ## Table of Contents
 
-1. [System Overview](#system-overview)
-2. [Request Flow](#request-flow)
-3. [Authentication Flow](#authentication-flow)
-4. [File Processing Pipeline](#file-processing-pipeline)
-5. [Cache Architecture](#cache-architecture)
-6. [Database Architecture](#database-architecture)
-7. [Configuration Flow](#configuration-flow)
-8. [Component Dependencies](#component-dependencies)
+1. [System Overview](#1-system-overview)
+2. [Request Flow](#2-request-flow)
+3. [Authentication Flow](#3-authentication-flow)
+4. [File Processing Pipeline](#4-file-processing-pipeline)
+5. [Unified WriteBatcher Architecture](#5-unified-writebatcher-architecture)
+6. [Cache Architecture](#6-cache-architecture)
+7. [Database Architecture](#7-database-architecture)
+8. [Configuration Flow](#8-configuration-flow)
+9. [Component Dependencies](#9-component-dependencies)
+10. [How to View These Diagrams](#10-how-to-view-these-diagrams)
+11. [Diagram Maintenance Tips](#11-diagram-maintenance-tips)
+12. [Next Steps](#12-next-steps)
 
 ---
 
-## System Overview
+## 1. System Overview
+
+**Packages:** `server`, `handlers`, `cachelite`, `files`, `workerpool`, `writebatcher`, `dbconnpool` — directories in [Process-to-package map](../ARCHITECTURE.md#2-process-to-package-map).
 
 High-level architecture showing major components and their relationships:
 
@@ -89,7 +97,9 @@ graph TB
 
 ---
 
-## Request Flow
+## 2. Request Flow
+
+**Packages:** `server` (`internal/server/router.go`), `cachelite` (`internal/cachelite`), `handlers` (`internal/server/handlers`), `gallerydb` (`internal/gallerydb`).
 
 Detailed flow of a typical HTTP request through the system:
 
@@ -127,7 +137,9 @@ sequenceDiagram
 
 ---
 
-## Authentication Flow
+## 3. Authentication Flow
+
+**Packages:** `handlers` (`internal/server/handlers`), `auth` (`internal/server/auth`), `session` (`internal/server/session`), `security` (`internal/server/security`).
 
 Login and session management flow:
 
@@ -159,39 +171,86 @@ stateDiagram-v2
 
 ---
 
-## File Processing Pipeline
+## 4. File Processing Pipeline
 
-How images are discovered, processed, and stored (updated Feb 2026 for unified WriteBatcher):
+End-to-end discovery (startup or `POST /server/discovery`) and one dequeued item. Index: [ARCHITECTURE.md §2 Process-to-package map](../ARCHITECTURE.md#2-process-to-package-map).
 
 ```mermaid
 flowchart TD
-    Start([App Start]) --> Walk{Walk Images Dir}
-    Walk -->|File Found| Enqueue[Enqueue to Queue]
-    Enqueue --> Worker{Worker Pool}
+    subgraph server["server · internal/server"]
+        TD["TriggerDiscovery( )"]
+        DRAIN["waitForFileProcessingDrain( )"]
+    end
 
-    Worker --> CheckModified{Modified Since<br/>Last Processed?}
-    CheckModified -->|No| Skip[Skip Processing]
-    CheckModified -->|Yes| MIME{Detect MIME Type}
+    subgraph files_walk["files · internal/server/files"]
+        WID["WalkImageDir( )"]
+        ENQ["enqueueWithBackpressure( )"]
+    end
 
-    MIME -->|Not Image| Skip
-    MIME -->|Image| ExtractEXIF[Extract EXIF Metadata]
+    subgraph pwd["parallelwalkdir · internal/parallelwalkdir"]
+        PW["ParallelWalk( )"]
+    end
 
-    ExtractEXIF --> GenerateThumb[Generate Thumbnail]
-    GenerateThumb --> SubmitBatcher[Submit to<br/>Unified WriteBatcher]
+    subgraph discovery_q["server · internal/server discovery_dque.go + dque · internal/dque"]
+        Q["discovery-dque<br/>DiscoveryPathWork"]
+    end
 
-    SubmitBatcher --> Done([Processing Complete])
-    Skip --> Done
+    subgraph wp["workerpool · internal/workerpool"]
+        MON["MonitorPool( )"]
+    end
 
-    Walk -->|No More Files| Drain{Drain Queue}
-    Drain --> DoneAll([All Workers Complete])
+    subgraph files_proc["files · internal/server/files"]
+        RPW["runPoolWorkerWithProcessor( )"]
+        PDF["ProcessDiscoveryFile( )"]
+        PDW["processDiscoveryWorkerFile( )"]
+        PFC["processFileContents( )"]
+        SFW["SubmitFileForWrite( )"]
+        RFI["RebuildFileFolderIndex( )"]
+    end
 
-    style Worker fill:#f9f,stroke:#333,stroke-width:2px
-    style SubmitBatcher fill:#bbf,stroke:#333,stroke-width:2px
+    subgraph batch["server · internal/server batcher_wiring + writebatcher · internal/writebatcher"]
+        BAT["UnifiedBatcher.SubmitFile( )"]
+    end
+
+    TD --> WID
+    WID --> PW
+    PW -->|ReportedFile| ENQ
+    ENQ --> Q
+    MON -.->|scale workers| RPW
+    Q --> RPW
+    WID -->|walk returns| DRAIN
+    DRAIN --> RFI
+
+    RPW --> PDF
+    PDF --> PDW
+    PDW --> PFC
+    PFC --> SFW
+    SFW --> BAT
+    BAT --> RPW
 ```
+
+| Diagram label                   | Package                   | Directory                                                    | Symbol / file                                            |
+| ------------------------------- | ------------------------- | ------------------------------------------------------------ | -------------------------------------------------------- |
+| `TriggerDiscovery( )`           | `server`                  | `internal/server`                                            | `server.go`                                              |
+| `waitForFileProcessingDrain( )` | `server`                  | `internal/server`                                            | `app_lifecycle.go`                                       |
+| `WalkImageDir( )`               | `files`                   | `internal/server/files`                                      | `walker.go`                                              |
+| `enqueueWithBackpressure( )`    | `files`                   | `internal/server/files`                                      | `walker.go`                                              |
+| `ParallelWalk( )`               | `parallelwalkdir`         | `internal/parallelwalkdir`                                   | `parallelwalkdir.go`                                     |
+| `discovery-dque`                | `server` + `dque`         | `internal/server/discovery_dque.go`, `internal/dque`         | Queue label; opened/wiped in `SubsystemManager.Start( )` |
+| `MonitorPool( )`                | `workerpool`              | `internal/workerpool`                                        | `workerpool.go`                                          |
+| `runPoolWorkerWithProcessor( )` | `files`                   | `internal/server/files`                                      | `processor.go`                                           |
+| `ProcessDiscoveryFile( )`       | `files`                   | `internal/server/files`                                      | `service.go`                                             |
+| `processDiscoveryWorkerFile( )` | `files`                   | `internal/server/files`                                      | `processor.go`; always `processFileContents` for dequeue |
+| `processFileContents( )`        | `files`                   | `internal/server/files`                                      | `processor.go`; calls `imagemeta`, `thumbnail`           |
+| `SubmitFileForWrite( )`         | `files`                   | `internal/server/files`                                      | `service.go`                                             |
+| `UnifiedBatcher.SubmitFile( )`  | `server` + `writebatcher` | `internal/server/batcher_wiring.go`, `internal/writebatcher` | Flush via `flushBatchedWrites( )`                        |
+| `RebuildFileFolderIndex( )`     | `files`                   | `internal/server/files`                                      | `folder_index.go`                                        |
 
 ---
 
-## Unified WriteBatcher Architecture
+## 5. Unified WriteBatcher Architecture
+
+**Packages:** `writebatcher` (`internal/writebatcher`), `dque` (`internal/dque`), `flock` (`internal/flock`), `server` (`internal/server` batcher wiring), `files` (`internal/server/files`), `gallerylib` (`internal/gallerylib`).
 
 The unified WriteBatcher consolidates all high-volume database writes (added Feb 2026, persistent overflow added Jun 2026):
 
@@ -205,7 +264,7 @@ graph TB
     subgraph "Unified Batcher"
         Adapter[Batcher Adapter<br/>UnifiedBatcher interface]
         Channel[In-memory Channel<br/>bounded: 4096 items, 8MB]
-        DQue["On-disk Overflow Queue<br/>dque: &lt;db&gt;-dque/<br/>segment-backed FIFO"]
+        DQue["On-disk overflow queue (FIFO)<br/>dque: &lt;db&gt;-dque/"]
         Worker[Background Worker<br/>flushes periodically + drains dque]
     end
 
@@ -236,19 +295,15 @@ graph TB
     Worker --> Cleanup
     Cleanup --> ThumbnailPool
     Cleanup --> CachePool
-
-    style Adapter fill:#e1f5e1
-    style Worker fill:#ffe1e1
-    style Tx fill:#e1e1ff
-    style DQue fill:#e1f1ff
-    style Cleanup fill:#fff4e1
 ```
 
 Invalid-file cleanup now happens inside the `File` flush path via the `HadInvalidEntry` flag (not a separate batched variant). `dque` acquires a `flock` via `internal/flock`; pending writes in `dque` survive process restarts (crash recovery) and are drained on `Close()`/context cancel.
 
 ---
 
-## Cache Architecture
+## 6. Cache Architecture
+
+**Packages:** `cachelite` (`internal/cachelite`), `cachepreload` (`internal/server/cachepreload`), `writebatcher` (`internal/writebatcher`), `tableswap` (`internal/tableswap`).
 
 HTTP cache with preload and unified batcher integration (updated Feb 2026).
 Table rotation (`RotateCacheTable`) is `CloneEmpty` → `CreateIndexes` → `Swap`;
@@ -301,17 +356,13 @@ graph TB
     PreloadWorker -->|Fetch Related| CacheDB
 
     CacheDB -.-> Index
-
-    style CacheMW fill:#bfb
-    style Batcher fill:#e1e1ff
-    style FlushWorker fill:#fbb
-    style AtomicCounter fill:#ff9
-    style EvictStep fill:#fbf
 ```
 
 ---
 
-## Database Architecture
+## 7. Database Architecture
+
+**Packages:** `dbconnpool` (`internal/dbconnpool`), `database` (`internal/server/database`), `gallerydb` (`internal/gallerydb`); schema SQL in `sqlc/queries/`, migrations in `migrations/`.
 
 Connection pooling and schema organization:
 
@@ -372,14 +423,13 @@ graph TB
     RW -->|INSERT/UPDATE| ModuleState
     RW -->|INSERT/UPDATE| Thumbnails
     RW -->|INSERT/UPDATE| ThumbnailBlobs
-
-    style RO fill:#e1f5e1
-    style RW fill:#ffe1e1
 ```
 
 ---
 
-## Configuration Flow
+## 8. Configuration Flow
+
+**Packages:** `config` (`internal/server/config`), `getopt` (`internal/getopt`), `validation` (`internal/server/validation`).
 
 How configuration is loaded, validated, and persisted:
 
@@ -430,14 +480,13 @@ flowchart LR
 
     ConfigService <--> Export
     Import --> ConfigService
-
-    style Validate fill:#ff9
-    style RuntimeConfig fill:#9cf
 ```
 
 ---
 
-## Component Dependencies
+## 9. Component Dependencies
+
+**Packages:** dependency graph centers on `server` (`internal/server`); see full list in [Process-to-package map](../ARCHITECTURE.md#2-process-to-package-map).
 
 Package dependency graph showing coupling (updated Feb 2026):
 
@@ -555,37 +604,26 @@ graph TD
     BatchFlush --> GalleryLib
     BatchFlush --> CacheMW
     CacheBatch --> CachePreload
-
-    style App fill:#f9f
-    style ConfigSvc fill:#9cf
-    style FileProc fill:#9cf
-    style SessionMgr fill:#9cf
-    style BatchWrite fill:#e1e1ff
-    style BatchFlush fill:#e1e1ff
-    style BatchWiring fill:#e1e1ff
-    style DQue fill:#e1f1ff
-    style Flock fill:#e1f1ff
-    style GalleryLib fill:#e1f5e1
 ```
 
 ---
 
-## How to View These Diagrams
+## 10. How to View These Diagrams
 
-### Option 1: GitHub/GitLab rendering
+### 10.1 Option 1: GitHub/GitLab rendering
 
 Simply view this file on GitHub or GitLab - they render Mermaid diagrams natively.
 
-### Option 2: VS Code
+### 10.2 Option 2: VS Code
 
 Install the "Markdown Preview Mermaid Support" extension and open this file.
 
-### Option 3: Online
+### 10.3 Option 3: Online
 
 - https://mermaid.live/ - Live editor
 - Copy any diagram code to preview
 
-### Option 4: CLI
+### 10.4 Option 4: CLI
 
 ```bash
 npx @mermaid-js/mermaid-cli -i docs/diagrams/ARCHITECTURE_DIAGRAMS.md -o output.png
@@ -593,17 +631,19 @@ npx @mermaid-js/mermaid-cli -i docs/diagrams/ARCHITECTURE_DIAGRAMS.md -o output.
 
 ---
 
-## Diagram Maintenance Tips
+## 11. Diagram Maintenance Tips
 
 1. **Keep diagrams simple**: Focus on the most important flows
 2. **Update with code changes**: When you refactor, update the diagrams
-3. **Use consistent styling**: Similar components should use similar colors
-4. **Add notes**: Use `note right of` to explain complex logic
-5. **Test rendering**: View in GitHub before committing
+3. **Theme defaults only**: Do not use per-node `style` / `classDef` / custom `fill` — all nodes use the renderer theme so light and dark previews stay readable and consistent
+4. **Spell out acronyms**: On first use in each section, write the full term, then the abbreviation in parentheses (e.g. time-of-check to time-of-use (TOCTOU))
+5. **Functions in diagrams**: Suffix callable symbols with `( )` in Mermaid node text and the legend; leave queue names, types, and edge labels without parentheses
+6. **Add notes**: Use `note right of` to explain complex logic
+7. **Test rendering**: View in GitHub and in the IDE markdown preview before committing
 
 ---
 
-## Next Steps
+## 12. Next Steps
 
 Consider adding:
 

@@ -21,8 +21,8 @@ type infoBoxFolderQueries struct {
 }
 
 func (i infoBoxFolderQueries) GetFolderInfoCountsByID(ctx context.Context, id int64) (gallerydb.GetFolderInfoCountsByIDRow, error) {
-	if i.getFolderInfoCountsErr != nil {
-		return gallerydb.GetFolderInfoCountsByIDRow{}, i.getFolderInfoCountsErr
+	if i.GetFolderInfoCountsErr != nil {
+		return gallerydb.GetFolderInfoCountsByIDRow{}, i.GetFolderInfoCountsErr
 	}
 	return i.infoCounts, nil
 }
@@ -30,7 +30,7 @@ func (i infoBoxFolderQueries) GetFolderInfoCountsByID(ctx context.Context, id in
 // --- InfoBoxFolder Tests ---
 
 func TestInfoBoxFolder_NotFound(t *testing.T) {
-	qh := &fakeHandlerQueries{getFolderByIDErr: sql.ErrNoRows}
+	qh := &fakeHandlerQueries{GetFolderByIDErr: sql.ErrNoRows}
 	gh := setupTestGalleryHandlers(t, qh)
 
 	req := httptest.NewRequest(http.MethodGet, "/info/folder/1", nil)
@@ -45,7 +45,7 @@ func TestInfoBoxFolder_NotFound(t *testing.T) {
 }
 
 func TestInfoBoxFolder_DBError(t *testing.T) {
-	qh := &fakeHandlerQueries{getFolderByIDErr: errors.New("db error")}
+	qh := &fakeHandlerQueries{GetFolderByIDErr: errors.New("db error")}
 	gh := setupTestGalleryHandlers(t, qh)
 
 	req := httptest.NewRequest(http.MethodGet, "/info/folder/1", nil)
@@ -62,7 +62,7 @@ func TestInfoBoxFolder_DBError(t *testing.T) {
 func TestInfoBoxFolder_LastModifiedAndCounts(t *testing.T) {
 	updatedAt := time.Date(2026, 2, 12, 10, 0, 0, 0, time.UTC).Unix()
 	qh := &infoBoxFolderQueries{
-		folder: gallerydb.Folder{ID: 1, Name: "Test Folder", UpdatedAt: updatedAt},
+		Folder: gallerydb.Folder{ID: 1, Name: "Test Folder", UpdatedAt: updatedAt},
 		infoCounts: gallerydb.GetFolderInfoCountsByIDRow{
 			DirCount:   1,
 			ImageCount: 1,
@@ -123,7 +123,7 @@ func TestInfoBoxFolder_InvalidID(t *testing.T) {
 }
 
 func TestInfoBoxFolder_CountsQueryError(t *testing.T) {
-	qh := &fakeHandlerQueries{getFolderInfoCountsErr: errors.New("db error")}
+	qh := &fakeHandlerQueries{GetFolderInfoCountsErr: errors.New("db error")}
 	gh := setupTestGalleryHandlers(t, qh)
 
 	req := httptest.NewRequest(http.MethodGet, "/info/folder/1", nil)
@@ -153,7 +153,7 @@ func TestInfoBoxFolder_DBConnectionError(t *testing.T) {
 }
 
 func TestInfoBoxFolder_UpdatedAtFallback(t *testing.T) {
-	qh := &fakeHandlerQueries{folder: gallerydb.Folder{ID: 1, Name: "Test", UpdatedAt: "not-int"}}
+	qh := &fakeHandlerQueries{Folder: gallerydb.Folder{ID: 1, Name: "Test", UpdatedAt: "not-int"}}
 	gh := setupTestGalleryHandlers(t, qh)
 
 	req := httptest.NewRequest(http.MethodGet, "/info/folder/1", nil)
@@ -175,7 +175,7 @@ func TestInfoBoxFolder_UpdatedAtFallback(t *testing.T) {
 
 func TestInfoBoxFolder_CacheBusting(t *testing.T) {
 	qh := &fakeHandlerQueries{
-		folder: gallerydb.Folder{ID: 99, Name: "CacheBust"},
+		Folder: gallerydb.Folder{ID: 99, Name: "CacheBust"},
 	}
 	gh := setupTestGalleryHandlers(t, qh)
 

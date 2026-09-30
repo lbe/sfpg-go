@@ -108,11 +108,6 @@ func ValidateJpegMarkers(buf []byte) bool {
 // tight loops on corrupted files. This value is exported for testing.
 var exifTimeout = 5 * time.Second
 
-// setExifTimeout allows tests to adjust the timeout duration.
-func setExifTimeout(d time.Duration) {
-	exifTimeout = d
-}
-
 // ExtractExifData uses the `imagemeta` library to extract EXIF and other
 // metadata from an image file. It includes a timeout to prevent tight loops
 // on corrupted files that have JPEG magic bytes but no valid markers.

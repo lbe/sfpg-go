@@ -10,6 +10,7 @@
 package queue
 
 import (
+	"context"
 	"errors"
 	"sync"
 )
@@ -31,6 +32,7 @@ var (
 // Use NewQueue or NewBoundedQueue to create a queue. All methods are safe for concurrent use.
 type Queue[T any] struct {
 	mu            sync.Mutex // Mutex to protect access to the queue's internal state.
+	cond          *sync.Cond // Wakes DequeueWait when wait-relevant state changes.
 	buf           []T        // The underlying circular buffer.
 	ctAddBack     int        // Counter for AddBack operations.
 	ctAddFront    int        // Counter for AddFront operations.
@@ -41,6 +43,7 @@ type Queue[T any] struct {
 	size          int        // Current number of elements in the queue.
 	closed        bool       // Flag indicating if the queue has been closed.
 	maxCap        int        // Maximum capacity (0 = unlimited).
+	wakeEpoch     uint64     // Bumped on empty-wake paths (BroadcastWaiters, Clear, Close); AddBack broadcasts only.
 }
 
 // QueueStats holds various statistics about the queue's current state.
@@ -84,7 +87,7 @@ func newQueue[T any](initialCap int, maxCap int) *Queue[T] {
 	for cap < initialCap {
 		cap <<= 1
 	}
-	return &Queue[T]{
+	q := &Queue[T]{
 		buf:    make([]T, cap),
 		head:   0,
 		tail:   0,
@@ -92,6 +95,8 @@ func newQueue[T any](initialCap int, maxCap int) *Queue[T] {
 		closed: false,
 		maxCap: maxCap,
 	}
+	q.cond = sync.NewCond(&q.mu)
+	return q
 }
 
 // Stats returns statistics about the queue.
@@ -149,6 +154,8 @@ func (q *Queue[T]) Clear() {
 	q.tail = 0
 	q.size = 0
 	q.buf = make([]T, minCapacity)
+	q.wakeEpoch++
+	q.cond.Broadcast()
 }
 
 // Close marks the queue as closed. Further operations will return ErrClosedQueue.
@@ -156,6 +163,17 @@ func (q *Queue[T]) Close() {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	q.closed = true
+	q.wakeEpoch++
+	q.cond.Broadcast()
+}
+
+// BroadcastWaiters wakes all goroutines blocked in DequeueWait without enqueueing.
+// Waiters that find the queue still empty return ErrEmptyQueue (see wakeEpoch).
+func (q *Queue[T]) BroadcastWaiters() {
+	q.mu.Lock()
+	q.wakeEpoch++
+	q.cond.Broadcast()
+	q.mu.Unlock()
 }
 
 // Enqueue adds an item to the back of the queue.
@@ -189,6 +207,7 @@ func (q *Queue[T]) AddBack(item T) error {
 	q.tail = (q.tail + 1) & (len(q.buf) - 1)
 	q.size++
 	q.ctAddBack++
+	q.cond.Broadcast()
 	return nil
 }
 
@@ -211,6 +230,7 @@ func (q *Queue[T]) AddFront(item T) error {
 	q.buf[q.head] = item
 	q.size++
 	q.ctAddFront++
+	q.cond.Broadcast()
 	return nil
 }
 
@@ -218,6 +238,54 @@ func (q *Queue[T]) AddFront(item T) error {
 // Returns ErrEmptyQueue if the queue is empty, or ErrClosedQueue if closed.
 func (q *Queue[T]) Dequeue() (T, error) {
 	return q.RemoveFront()
+}
+
+// DequeueWait removes and returns the front item, blocking while the queue is empty.
+// It returns ctx.Err() if the context is canceled while waiting, or ErrClosedQueue if
+// the queue is closed while empty. Non-blocking Dequeue behavior is unchanged.
+func (q *Queue[T]) DequeueWait(ctx context.Context) (T, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	var zero T
+	if q.size > 0 {
+		if q.closed {
+			return zero, ErrClosedQueue
+		}
+		return q.removeFrontLocked(), nil
+	}
+
+	for q.size == 0 {
+		if q.closed {
+			return zero, ErrClosedQueue
+		}
+		if err := ctx.Err(); err != nil {
+			return zero, err
+		}
+		epoch := q.wakeEpoch
+		stop := context.AfterFunc(ctx, func() {
+			q.mu.Lock()
+			q.cond.Broadcast()
+			q.mu.Unlock()
+		})
+		q.cond.Wait()
+		stop()
+
+		if q.size > 0 {
+			break
+		}
+		if q.size == 0 && !q.closed && ctx.Err() == nil && q.wakeEpoch != epoch {
+			return zero, ErrEmptyQueue
+		}
+	}
+	if q.closed {
+		return zero, ErrClosedQueue
+	}
+	return q.removeFrontLocked(), nil
 }
 
 // RemoveFront removes and returns the item at the front of the queue.
@@ -232,13 +300,20 @@ func (q *Queue[T]) RemoveFront() (T, error) {
 	if q.closed {
 		return zero, ErrClosedQueue
 	}
+	return q.removeFrontLocked(), nil
+}
+
+// removeFrontLocked removes the front element. Caller must hold q.mu and q.size > 0.
+func (q *Queue[T]) removeFrontLocked() T {
+	var zero T
 	item := q.buf[q.head]
 	q.buf[q.head] = zero // GC
 	q.head = (q.head + 1) & (len(q.buf) - 1)
 	q.size--
 	q.ctRemoveFront++
 	q.shrinkIfNeeded()
-	return item, nil
+	q.cond.Broadcast()
+	return item
 }
 
 // Pop removes and returns the item at the back of the queue.

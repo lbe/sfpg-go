@@ -84,9 +84,6 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getFileViewByIDStmt, err = db.PrepareContext(ctx, getFileViewByID); err != nil {
 		return nil, fmt.Errorf("error preparing query GetFileViewByID: %w", err)
 	}
-	if q.getFileViewsByFolderIDOrderByFileNameStmt, err = db.PrepareContext(ctx, getFileViewsByFolderIDOrderByFileName); err != nil {
-		return nil, fmt.Errorf("error preparing query GetFileViewsByFolderIDOrderByFileName: %w", err)
-	}
 	if q.getFolderByIDStmt, err = db.PrepareContext(ctx, getFolderByID); err != nil {
 		return nil, fmt.Errorf("error preparing query GetFolderByID: %w", err)
 	}
@@ -107,9 +104,6 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.getFolderViewByIDStmt, err = db.PrepareContext(ctx, getFolderViewByID); err != nil {
 		return nil, fmt.Errorf("error preparing query GetFolderViewByID: %w", err)
-	}
-	if q.getFoldersViewsByParentIDOrderByNameStmt, err = db.PrepareContext(ctx, getFoldersViewsByParentIDOrderByName); err != nil {
-		return nil, fmt.Errorf("error preparing query GetFoldersViewsByParentIDOrderByName: %w", err)
 	}
 	if q.getGalleryFileThumbRowsByFolderIDStmt, err = db.PrepareContext(ctx, getGalleryFileThumbRowsByFolderID); err != nil {
 		return nil, fmt.Errorf("error preparing query GetGalleryFileThumbRowsByFolderID: %w", err)
@@ -164,6 +158,12 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.insertIPTCKeywordStmt, err = db.PrepareContext(ctx, insertIPTCKeyword); err != nil {
 		return nil, fmt.Errorf("error preparing query InsertIPTCKeyword: %w", err)
+	}
+	if q.listDiscoveryFilesByFolderIDStmt, err = db.PrepareContext(ctx, listDiscoveryFilesByFolderID); err != nil {
+		return nil, fmt.Errorf("error preparing query ListDiscoveryFilesByFolderID: %w", err)
+	}
+	if q.listDiscoveryInvalidByFolderIDStmt, err = db.PrepareContext(ctx, listDiscoveryInvalidByFolderID); err != nil {
+		return nil, fmt.Errorf("error preparing query ListDiscoveryInvalidByFolderID: %w", err)
 	}
 	if q.setModuleStateStmt, err = db.PrepareContext(ctx, setModuleState); err != nil {
 		return nil, fmt.Errorf("error preparing query SetModuleState: %w", err)
@@ -321,11 +321,6 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getFileViewByIDStmt: %w", cerr)
 		}
 	}
-	if q.getFileViewsByFolderIDOrderByFileNameStmt != nil {
-		if cerr := q.getFileViewsByFolderIDOrderByFileNameStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing getFileViewsByFolderIDOrderByFileNameStmt: %w", cerr)
-		}
-	}
 	if q.getFolderByIDStmt != nil {
 		if cerr := q.getFolderByIDStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getFolderByIDStmt: %w", cerr)
@@ -359,11 +354,6 @@ func (q *Queries) Close() error {
 	if q.getFolderViewByIDStmt != nil {
 		if cerr := q.getFolderViewByIDStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getFolderViewByIDStmt: %w", cerr)
-		}
-	}
-	if q.getFoldersViewsByParentIDOrderByNameStmt != nil {
-		if cerr := q.getFoldersViewsByParentIDOrderByNameStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing getFoldersViewsByParentIDOrderByNameStmt: %w", cerr)
 		}
 	}
 	if q.getGalleryFileThumbRowsByFolderIDStmt != nil {
@@ -454,6 +444,16 @@ func (q *Queries) Close() error {
 	if q.insertIPTCKeywordStmt != nil {
 		if cerr := q.insertIPTCKeywordStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing insertIPTCKeywordStmt: %w", cerr)
+		}
+	}
+	if q.listDiscoveryFilesByFolderIDStmt != nil {
+		if cerr := q.listDiscoveryFilesByFolderIDStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listDiscoveryFilesByFolderIDStmt: %w", cerr)
+		}
+	}
+	if q.listDiscoveryInvalidByFolderIDStmt != nil {
+		if cerr := q.listDiscoveryInvalidByFolderIDStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listDiscoveryInvalidByFolderIDStmt: %w", cerr)
 		}
 	}
 	if q.setModuleStateStmt != nil {
@@ -578,141 +578,141 @@ func (q *Queries) queryRow(ctx context.Context, stmt *sql.Stmt, query string, ar
 }
 
 type Queries struct {
-	db                                        DBTX
-	tx                                        *sql.Tx
-	clearHttpCacheStmt                        *sql.Stmt
-	clearLoginAttemptsStmt                    *sql.Stmt
-	configKeyExistsStmt                       *sql.Stmt
-	countHttpCacheEntriesStmt                 *sql.Stmt
-	deleteHttpCacheByIDStmt                   *sql.Stmt
-	deleteHttpCacheByKeyStmt                  *sql.Stmt
-	deleteHttpCacheExpiredStmt                *sql.Stmt
-	deleteIPTCStmt                            *sql.Stmt
-	deleteIPTCKeywordStmt                     *sql.Stmt
-	deleteInvalidFileByPathStmt               *sql.Stmt
-	deleteXMPPropertyStmt                     *sql.Stmt
-	deleteXMPRawStmt                          *sql.Stmt
-	getConfigValueByKeyStmt                   *sql.Stmt
-	getConfigsStmt                            *sql.Stmt
-	getExifByFileStmt                         *sql.Stmt
-	getFileByPathStmt                         *sql.Stmt
-	getFileCountAndTimestampsStmt             *sql.Stmt
-	getFileFolderIndexByIDStmt                *sql.Stmt
-	getFileSizeSumStmt                        *sql.Stmt
-	getFileViewByIDStmt                       *sql.Stmt
-	getFileViewsByFolderIDOrderByFileNameStmt *sql.Stmt
-	getFolderByIDStmt                         *sql.Stmt
-	getFolderByPathStmt                       *sql.Stmt
-	getFolderCountStmt                        *sql.Stmt
-	getFolderIDByPathStmt                     *sql.Stmt
-	getFolderInfoCountsByIDStmt               *sql.Stmt
-	getFolderTileExistsViewByPathStmt         *sql.Stmt
-	getFolderViewByIDStmt                     *sql.Stmt
-	getFoldersViewsByParentIDOrderByNameStmt  *sql.Stmt
-	getGalleryFileThumbRowsByFolderIDStmt     *sql.Stmt
-	getGalleryFolderThumbRowsByParentIDStmt   *sql.Stmt
-	getHttpCacheByKeyStmt                     *sql.Stmt
-	getHttpCacheOldestCreatedStmt             *sql.Stmt
-	getHttpCacheSizeBytesStmt                 *sql.Stmt
-	getIPTCByFileStmt                         *sql.Stmt
-	getIPTCKeywordsStmt                       *sql.Stmt
-	getInvalidFileByPathStmt                  *sql.Stmt
-	getLightboxNavByFileIDStmt                *sql.Stmt
-	getLoginAttemptStmt                       *sql.Stmt
-	getModuleStateStmt                        *sql.Stmt
-	getThumbnailExistsViewByIDStmt            *sql.Stmt
-	getThumbnailsByFileIDStmt                 *sql.Stmt
-	getXMPPropertiesByFileStmt                *sql.Stmt
-	getXMPRawStmt                             *sql.Stmt
-	httpCacheExistsByKeyStmt                  *sql.Stmt
-	insertConfigIfNotExistsStmt               *sql.Stmt
-	insertIPTCKeywordStmt                     *sql.Stmt
-	setModuleStateStmt                        *sql.Stmt
-	setModuleStatePayloadStmt                 *sql.Stmt
-	unlockAccountStmt                         *sql.Stmt
-	updateFolderTileIdStmt                    *sql.Stmt
-	upsertConfigValueOnlyStmt                 *sql.Stmt
-	upsertExifStmt                            *sql.Stmt
-	upsertFilePathReturningIDStmt             *sql.Stmt
-	upsertFileReturningFileStmt               *sql.Stmt
-	upsertFolderPathReturningIDStmt           *sql.Stmt
-	upsertFolderReturningFolderStmt           *sql.Stmt
-	upsertHttpCacheStmt                       *sql.Stmt
-	upsertIPTCStmt                            *sql.Stmt
-	upsertInvalidFileStmt                     *sql.Stmt
-	upsertLoginAttemptStmt                    *sql.Stmt
-	upsertThumbnailReturningIDStmt            *sql.Stmt
-	upsertXMPPropertyStmt                     *sql.Stmt
-	upsertXMPRawStmt                          *sql.Stmt
+	db                                      DBTX
+	tx                                      *sql.Tx
+	clearHttpCacheStmt                      *sql.Stmt
+	clearLoginAttemptsStmt                  *sql.Stmt
+	configKeyExistsStmt                     *sql.Stmt
+	countHttpCacheEntriesStmt               *sql.Stmt
+	deleteHttpCacheByIDStmt                 *sql.Stmt
+	deleteHttpCacheByKeyStmt                *sql.Stmt
+	deleteHttpCacheExpiredStmt              *sql.Stmt
+	deleteIPTCStmt                          *sql.Stmt
+	deleteIPTCKeywordStmt                   *sql.Stmt
+	deleteInvalidFileByPathStmt             *sql.Stmt
+	deleteXMPPropertyStmt                   *sql.Stmt
+	deleteXMPRawStmt                        *sql.Stmt
+	getConfigValueByKeyStmt                 *sql.Stmt
+	getConfigsStmt                          *sql.Stmt
+	getExifByFileStmt                       *sql.Stmt
+	getFileByPathStmt                       *sql.Stmt
+	getFileCountAndTimestampsStmt           *sql.Stmt
+	getFileFolderIndexByIDStmt              *sql.Stmt
+	getFileSizeSumStmt                      *sql.Stmt
+	getFileViewByIDStmt                     *sql.Stmt
+	getFolderByIDStmt                       *sql.Stmt
+	getFolderByPathStmt                     *sql.Stmt
+	getFolderCountStmt                      *sql.Stmt
+	getFolderIDByPathStmt                   *sql.Stmt
+	getFolderInfoCountsByIDStmt             *sql.Stmt
+	getFolderTileExistsViewByPathStmt       *sql.Stmt
+	getFolderViewByIDStmt                   *sql.Stmt
+	getGalleryFileThumbRowsByFolderIDStmt   *sql.Stmt
+	getGalleryFolderThumbRowsByParentIDStmt *sql.Stmt
+	getHttpCacheByKeyStmt                   *sql.Stmt
+	getHttpCacheOldestCreatedStmt           *sql.Stmt
+	getHttpCacheSizeBytesStmt               *sql.Stmt
+	getIPTCByFileStmt                       *sql.Stmt
+	getIPTCKeywordsStmt                     *sql.Stmt
+	getInvalidFileByPathStmt                *sql.Stmt
+	getLightboxNavByFileIDStmt              *sql.Stmt
+	getLoginAttemptStmt                     *sql.Stmt
+	getModuleStateStmt                      *sql.Stmt
+	getThumbnailExistsViewByIDStmt          *sql.Stmt
+	getThumbnailsByFileIDStmt               *sql.Stmt
+	getXMPPropertiesByFileStmt              *sql.Stmt
+	getXMPRawStmt                           *sql.Stmt
+	httpCacheExistsByKeyStmt                *sql.Stmt
+	insertConfigIfNotExistsStmt             *sql.Stmt
+	insertIPTCKeywordStmt                   *sql.Stmt
+	listDiscoveryFilesByFolderIDStmt        *sql.Stmt
+	listDiscoveryInvalidByFolderIDStmt      *sql.Stmt
+	setModuleStateStmt                      *sql.Stmt
+	setModuleStatePayloadStmt               *sql.Stmt
+	unlockAccountStmt                       *sql.Stmt
+	updateFolderTileIdStmt                  *sql.Stmt
+	upsertConfigValueOnlyStmt               *sql.Stmt
+	upsertExifStmt                          *sql.Stmt
+	upsertFilePathReturningIDStmt           *sql.Stmt
+	upsertFileReturningFileStmt             *sql.Stmt
+	upsertFolderPathReturningIDStmt         *sql.Stmt
+	upsertFolderReturningFolderStmt         *sql.Stmt
+	upsertHttpCacheStmt                     *sql.Stmt
+	upsertIPTCStmt                          *sql.Stmt
+	upsertInvalidFileStmt                   *sql.Stmt
+	upsertLoginAttemptStmt                  *sql.Stmt
+	upsertThumbnailReturningIDStmt          *sql.Stmt
+	upsertXMPPropertyStmt                   *sql.Stmt
+	upsertXMPRawStmt                        *sql.Stmt
 }
 
 func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 	return &Queries{
-		db:                            tx,
-		tx:                            tx,
-		clearHttpCacheStmt:            q.clearHttpCacheStmt,
-		clearLoginAttemptsStmt:        q.clearLoginAttemptsStmt,
-		configKeyExistsStmt:           q.configKeyExistsStmt,
-		countHttpCacheEntriesStmt:     q.countHttpCacheEntriesStmt,
-		deleteHttpCacheByIDStmt:       q.deleteHttpCacheByIDStmt,
-		deleteHttpCacheByKeyStmt:      q.deleteHttpCacheByKeyStmt,
-		deleteHttpCacheExpiredStmt:    q.deleteHttpCacheExpiredStmt,
-		deleteIPTCStmt:                q.deleteIPTCStmt,
-		deleteIPTCKeywordStmt:         q.deleteIPTCKeywordStmt,
-		deleteInvalidFileByPathStmt:   q.deleteInvalidFileByPathStmt,
-		deleteXMPPropertyStmt:         q.deleteXMPPropertyStmt,
-		deleteXMPRawStmt:              q.deleteXMPRawStmt,
-		getConfigValueByKeyStmt:       q.getConfigValueByKeyStmt,
-		getConfigsStmt:                q.getConfigsStmt,
-		getExifByFileStmt:             q.getExifByFileStmt,
-		getFileByPathStmt:             q.getFileByPathStmt,
-		getFileCountAndTimestampsStmt: q.getFileCountAndTimestampsStmt,
-		getFileFolderIndexByIDStmt:    q.getFileFolderIndexByIDStmt,
-		getFileSizeSumStmt:            q.getFileSizeSumStmt,
-		getFileViewByIDStmt:           q.getFileViewByIDStmt,
-		getFileViewsByFolderIDOrderByFileNameStmt: q.getFileViewsByFolderIDOrderByFileNameStmt,
-		getFolderByIDStmt:                         q.getFolderByIDStmt,
-		getFolderByPathStmt:                       q.getFolderByPathStmt,
-		getFolderCountStmt:                        q.getFolderCountStmt,
-		getFolderIDByPathStmt:                     q.getFolderIDByPathStmt,
-		getFolderInfoCountsByIDStmt:               q.getFolderInfoCountsByIDStmt,
-		getFolderTileExistsViewByPathStmt:         q.getFolderTileExistsViewByPathStmt,
-		getFolderViewByIDStmt:                     q.getFolderViewByIDStmt,
-		getFoldersViewsByParentIDOrderByNameStmt:  q.getFoldersViewsByParentIDOrderByNameStmt,
-		getGalleryFileThumbRowsByFolderIDStmt:     q.getGalleryFileThumbRowsByFolderIDStmt,
-		getGalleryFolderThumbRowsByParentIDStmt:   q.getGalleryFolderThumbRowsByParentIDStmt,
-		getHttpCacheByKeyStmt:                     q.getHttpCacheByKeyStmt,
-		getHttpCacheOldestCreatedStmt:             q.getHttpCacheOldestCreatedStmt,
-		getHttpCacheSizeBytesStmt:                 q.getHttpCacheSizeBytesStmt,
-		getIPTCByFileStmt:                         q.getIPTCByFileStmt,
-		getIPTCKeywordsStmt:                       q.getIPTCKeywordsStmt,
-		getInvalidFileByPathStmt:                  q.getInvalidFileByPathStmt,
-		getLightboxNavByFileIDStmt:                q.getLightboxNavByFileIDStmt,
-		getLoginAttemptStmt:                       q.getLoginAttemptStmt,
-		getModuleStateStmt:                        q.getModuleStateStmt,
-		getThumbnailExistsViewByIDStmt:            q.getThumbnailExistsViewByIDStmt,
-		getThumbnailsByFileIDStmt:                 q.getThumbnailsByFileIDStmt,
-		getXMPPropertiesByFileStmt:                q.getXMPPropertiesByFileStmt,
-		getXMPRawStmt:                             q.getXMPRawStmt,
-		httpCacheExistsByKeyStmt:                  q.httpCacheExistsByKeyStmt,
-		insertConfigIfNotExistsStmt:               q.insertConfigIfNotExistsStmt,
-		insertIPTCKeywordStmt:                     q.insertIPTCKeywordStmt,
-		setModuleStateStmt:                        q.setModuleStateStmt,
-		setModuleStatePayloadStmt:                 q.setModuleStatePayloadStmt,
-		unlockAccountStmt:                         q.unlockAccountStmt,
-		updateFolderTileIdStmt:                    q.updateFolderTileIdStmt,
-		upsertConfigValueOnlyStmt:                 q.upsertConfigValueOnlyStmt,
-		upsertExifStmt:                            q.upsertExifStmt,
-		upsertFilePathReturningIDStmt:             q.upsertFilePathReturningIDStmt,
-		upsertFileReturningFileStmt:               q.upsertFileReturningFileStmt,
-		upsertFolderPathReturningIDStmt:           q.upsertFolderPathReturningIDStmt,
-		upsertFolderReturningFolderStmt:           q.upsertFolderReturningFolderStmt,
-		upsertHttpCacheStmt:                       q.upsertHttpCacheStmt,
-		upsertIPTCStmt:                            q.upsertIPTCStmt,
-		upsertInvalidFileStmt:                     q.upsertInvalidFileStmt,
-		upsertLoginAttemptStmt:                    q.upsertLoginAttemptStmt,
-		upsertThumbnailReturningIDStmt:            q.upsertThumbnailReturningIDStmt,
-		upsertXMPPropertyStmt:                     q.upsertXMPPropertyStmt,
-		upsertXMPRawStmt:                          q.upsertXMPRawStmt,
+		db:                                      tx,
+		tx:                                      tx,
+		clearHttpCacheStmt:                      q.clearHttpCacheStmt,
+		clearLoginAttemptsStmt:                  q.clearLoginAttemptsStmt,
+		configKeyExistsStmt:                     q.configKeyExistsStmt,
+		countHttpCacheEntriesStmt:               q.countHttpCacheEntriesStmt,
+		deleteHttpCacheByIDStmt:                 q.deleteHttpCacheByIDStmt,
+		deleteHttpCacheByKeyStmt:                q.deleteHttpCacheByKeyStmt,
+		deleteHttpCacheExpiredStmt:              q.deleteHttpCacheExpiredStmt,
+		deleteIPTCStmt:                          q.deleteIPTCStmt,
+		deleteIPTCKeywordStmt:                   q.deleteIPTCKeywordStmt,
+		deleteInvalidFileByPathStmt:             q.deleteInvalidFileByPathStmt,
+		deleteXMPPropertyStmt:                   q.deleteXMPPropertyStmt,
+		deleteXMPRawStmt:                        q.deleteXMPRawStmt,
+		getConfigValueByKeyStmt:                 q.getConfigValueByKeyStmt,
+		getConfigsStmt:                          q.getConfigsStmt,
+		getExifByFileStmt:                       q.getExifByFileStmt,
+		getFileByPathStmt:                       q.getFileByPathStmt,
+		getFileCountAndTimestampsStmt:           q.getFileCountAndTimestampsStmt,
+		getFileFolderIndexByIDStmt:              q.getFileFolderIndexByIDStmt,
+		getFileSizeSumStmt:                      q.getFileSizeSumStmt,
+		getFileViewByIDStmt:                     q.getFileViewByIDStmt,
+		getFolderByIDStmt:                       q.getFolderByIDStmt,
+		getFolderByPathStmt:                     q.getFolderByPathStmt,
+		getFolderCountStmt:                      q.getFolderCountStmt,
+		getFolderIDByPathStmt:                   q.getFolderIDByPathStmt,
+		getFolderInfoCountsByIDStmt:             q.getFolderInfoCountsByIDStmt,
+		getFolderTileExistsViewByPathStmt:       q.getFolderTileExistsViewByPathStmt,
+		getFolderViewByIDStmt:                   q.getFolderViewByIDStmt,
+		getGalleryFileThumbRowsByFolderIDStmt:   q.getGalleryFileThumbRowsByFolderIDStmt,
+		getGalleryFolderThumbRowsByParentIDStmt: q.getGalleryFolderThumbRowsByParentIDStmt,
+		getHttpCacheByKeyStmt:                   q.getHttpCacheByKeyStmt,
+		getHttpCacheOldestCreatedStmt:           q.getHttpCacheOldestCreatedStmt,
+		getHttpCacheSizeBytesStmt:               q.getHttpCacheSizeBytesStmt,
+		getIPTCByFileStmt:                       q.getIPTCByFileStmt,
+		getIPTCKeywordsStmt:                     q.getIPTCKeywordsStmt,
+		getInvalidFileByPathStmt:                q.getInvalidFileByPathStmt,
+		getLightboxNavByFileIDStmt:              q.getLightboxNavByFileIDStmt,
+		getLoginAttemptStmt:                     q.getLoginAttemptStmt,
+		getModuleStateStmt:                      q.getModuleStateStmt,
+		getThumbnailExistsViewByIDStmt:          q.getThumbnailExistsViewByIDStmt,
+		getThumbnailsByFileIDStmt:               q.getThumbnailsByFileIDStmt,
+		getXMPPropertiesByFileStmt:              q.getXMPPropertiesByFileStmt,
+		getXMPRawStmt:                           q.getXMPRawStmt,
+		httpCacheExistsByKeyStmt:                q.httpCacheExistsByKeyStmt,
+		insertConfigIfNotExistsStmt:             q.insertConfigIfNotExistsStmt,
+		insertIPTCKeywordStmt:                   q.insertIPTCKeywordStmt,
+		listDiscoveryFilesByFolderIDStmt:        q.listDiscoveryFilesByFolderIDStmt,
+		listDiscoveryInvalidByFolderIDStmt:      q.listDiscoveryInvalidByFolderIDStmt,
+		setModuleStateStmt:                      q.setModuleStateStmt,
+		setModuleStatePayloadStmt:               q.setModuleStatePayloadStmt,
+		unlockAccountStmt:                       q.unlockAccountStmt,
+		updateFolderTileIdStmt:                  q.updateFolderTileIdStmt,
+		upsertConfigValueOnlyStmt:               q.upsertConfigValueOnlyStmt,
+		upsertExifStmt:                          q.upsertExifStmt,
+		upsertFilePathReturningIDStmt:           q.upsertFilePathReturningIDStmt,
+		upsertFileReturningFileStmt:             q.upsertFileReturningFileStmt,
+		upsertFolderPathReturningIDStmt:         q.upsertFolderPathReturningIDStmt,
+		upsertFolderReturningFolderStmt:         q.upsertFolderReturningFolderStmt,
+		upsertHttpCacheStmt:                     q.upsertHttpCacheStmt,
+		upsertIPTCStmt:                          q.upsertIPTCStmt,
+		upsertInvalidFileStmt:                   q.upsertInvalidFileStmt,
+		upsertLoginAttemptStmt:                  q.upsertLoginAttemptStmt,
+		upsertThumbnailReturningIDStmt:          q.upsertThumbnailReturningIDStmt,
+		upsertXMPPropertyStmt:                   q.upsertXMPPropertyStmt,
+		upsertXMPRawStmt:                        q.upsertXMPRawStmt,
 	}
 }

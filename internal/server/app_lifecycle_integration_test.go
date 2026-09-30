@@ -946,7 +946,7 @@ func TestMemoryReclaimer(t *testing.T) {
 		app := CreateApp(t)
 		defer app.Shutdown()
 
-		app.SubsystemManager.q.Enqueue("dummy-path")
+		app.SubsystemManager.q.Enqueue(files.DiscoveryPathWork{Path: []byte("dummy-path"), MtimeUnix: 1, SizeBytes: 1})
 
 		called := make(chan struct{}, 1)
 		cfg := MemoryReclaimerConfig{
@@ -2270,41 +2270,30 @@ func TestApp_Run_DiscoveryMonitor_CompletionLog(t *testing.T) {
 
 	app.setRootDir(&tempDir)
 
-	// Stub out real directory walking: the completion monitor only needs
-	// the fake sender/stats below, and real discovery would race this test.
-	app.testSeams.TriggerDiscovery = func(ctx context.Context) error { return nil }
-
 	var rebuildCalls atomic.Int32
 	app.testSeams.RebuildFileFolderIndex = func(context.Context, *dbconnpool.DbSQLConnPool) error {
 		rebuildCalls.Add(1)
 		return nil
 	}
 
-	// Pretend a discovery sender is active so the monitor enters the end-loop.
-	app.SubsystemManager.qSendersActive.Store(1)
+	monitorLogged := make(chan struct{})
+	app.testSeams.OnDiscoveryProcessingMonitorComplete = func() { close(monitorLogged) }
+
+	// Stub discovery after TriggerDiscovery's ResetStats: prime TotalFound so the
+	// completion monitor passes its phase-1 gate without holding qSendersActive>0
+	// (which would block drain until Serve, deadlocking this test on Serve).
+	app.testSeams.TriggerDiscovery = func(ctx context.Context) error {
+		app.SubsystemManager.processingStats.TotalFound.Store(1)
+		return nil
+	}
 
 	app.testSeams.Serve = func(h http.Handler, addr string) error {
-		// processingStats is initialized by SubsystemManager.Start, which runs
-		// before Serve. Prime the found counter so the monitor's phase-1 gate
-		// is satisfied even if the sender was cleared before its first poll.
-		app.SubsystemManager.processingStats.TotalFound.Store(1)
-
-		// Clear the active sender; the monitor observes completion on its next
-		// poll and logs the summary. Wait for that log before canceling.
-		app.SubsystemManager.qSendersActive.Store(0)
-
-		deadline := time.Now().Add(5 * time.Second)
-		for {
-			data, err := os.ReadFile(app.logger.FilePath())
-			if err == nil && strings.Contains(string(data), "File processing completed") {
-				app.RuntimeManager.cancel()
-				return nil
-			}
-			if time.Now().After(deadline) {
-				app.RuntimeManager.cancel()
-				t.Fatal("monitor did not log 'File processing completed'")
-			}
-			time.Sleep(10 * time.Millisecond)
+		select {
+		case <-monitorLogged:
+			app.RuntimeManager.cancel()
+			return nil
+		case <-app.RuntimeManager.ctx.Done():
+			return app.RuntimeManager.ctx.Err()
 		}
 	}
 
@@ -2357,17 +2346,27 @@ func TestApp_Run_RestartAfterDiscovery(t *testing.T) {
 
 	var rebuildCalls atomic.Int32
 	var restartDuringRebuild atomic.Bool
+	var rebuildInProgress atomic.Bool
 	app.testSeams.RebuildFileFolderIndex = func(context.Context, *dbconnpool.DbSQLConnPool) error {
 		if app.IsRestartRequested() {
 			restartDuringRebuild.Store(true)
 		}
+		rebuildInProgress.Store(true)
+		defer rebuildInProgress.Store(false)
 		rebuildCalls.Add(1)
-		// Give a wrongly-wired drain monitor time to fire TriggerRestart.
-		time.Sleep(200 * time.Millisecond)
 		if app.IsRestartRequested() {
 			restartDuringRebuild.Store(true)
 		}
 		return nil
+	}
+
+	restartRequested := make(chan struct{})
+	var closeRestartOnce sync.Once
+	app.testSeams.OnTriggerRestart = func() {
+		if rebuildInProgress.Load() {
+			restartDuringRebuild.Store(true)
+		}
+		closeRestartOnce.Do(func() { close(restartRequested) })
 	}
 
 	execCalled := false
@@ -2381,17 +2380,12 @@ func TestApp_Run_RestartAfterDiscovery(t *testing.T) {
 	app.RuntimeManager.testSeams.Exit = func(code int) {}
 
 	app.testSeams.Serve = func(h http.Handler, addr string) error {
-		deadline := time.Now().Add(5 * time.Second)
-		for {
-			if app.IsRestartRequested() {
-				app.RuntimeManager.cancel()
-				return nil
-			}
-			if time.Now().After(deadline) {
-				app.RuntimeManager.cancel()
-				t.Fatal("startup discovery did not request restart within timeout")
-			}
-			time.Sleep(10 * time.Millisecond)
+		select {
+		case <-restartRequested:
+			app.RuntimeManager.cancel()
+			return nil
+		case <-app.RuntimeManager.ctx.Done():
+			return app.RuntimeManager.ctx.Err()
 		}
 	}
 
@@ -2460,19 +2454,15 @@ func TestApp_Run_StartupDiscoveryRebuildError_ShutsDown(t *testing.T) {
 	}
 	app.RuntimeManager.testSeams.Exit = func(code int) {}
 
+	shutdownAfterRebuildFail := make(chan struct{})
+	app.testSeams.OnStartupDiscoveryRebuildFailedShutdown = func() { close(shutdownAfterRebuildFail) }
+
 	app.testSeams.Serve = func(h http.Handler, addr string) error {
-		// Poll for shutdown (Shutdown cancels the runtime ctx and waits for the
-		// discovery goroutine to clear discoveryRunning) before returning so Run
-		// completes. Do not wait on the restart flag — it must never be set.
-		deadline := time.Now().Add(5 * time.Second)
-		for {
-			if app.RuntimeManager.ctx.Err() != nil {
-				return nil
-			}
-			if time.Now().After(deadline) {
-				t.Fatal("startup did not shut down after rebuild failure")
-			}
-			time.Sleep(10 * time.Millisecond)
+		select {
+		case <-shutdownAfterRebuildFail:
+			return nil
+		case <-app.RuntimeManager.ctx.Done():
+			return app.RuntimeManager.ctx.Err()
 		}
 	}
 
@@ -2538,42 +2528,40 @@ func TestApp_Run_RestartAfterDiscovery_FastDrainBeforeListen(t *testing.T) {
 
 	var rebuildCalls atomic.Int32
 	var restartDuringRebuild atomic.Bool
+	var rebuildInProgress atomic.Bool
 	app.testSeams.RebuildFileFolderIndex = func(context.Context, *dbconnpool.DbSQLConnPool) error {
 		if app.IsRestartRequested() {
 			restartDuringRebuild.Store(true)
 		}
+		rebuildInProgress.Store(true)
+		defer rebuildInProgress.Store(false)
 		rebuildCalls.Add(1)
-		time.Sleep(200 * time.Millisecond)
 		if app.IsRestartRequested() {
 			restartDuringRebuild.Store(true)
 		}
 		return nil
 	}
 
+	restartRequested := make(chan struct{})
+	var closeRestartOnce sync.Once
+	app.testSeams.OnTriggerRestart = func() {
+		if rebuildInProgress.Load() {
+			restartDuringRebuild.Store(true)
+		}
+		closeRestartOnce.Do(func() { close(restartRequested) })
+	}
+
 	app.RuntimeManager.testSeams.BeforeListen = func() {
-		deadline := time.Now().Add(5 * time.Second)
-		for !app.IsRestartRequested() {
-			if time.Now().After(deadline) {
-				return
-			}
-			time.Sleep(10 * time.Millisecond)
+		select {
+		case <-restartRequested:
+		case <-app.RuntimeManager.ctx.Done():
 		}
 	}
 
 	app.testSeams.MemoryReclaimer = (&recordingMemoryReclaimerIntegration{}).Reclaim
 
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- app.Run(1, 1)
-	}()
-
-	select {
-	case err := <-errCh:
-		if err != nil {
-			t.Fatalf("Run failed: %v", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("Run did not complete within timeout (Serve may have failed to skip listen)")
+	if err := app.Run(1, 1); err != nil {
+		t.Fatalf("Run failed: %v", err)
 	}
 
 	if restartDuringRebuild.Load() {
@@ -2929,11 +2917,21 @@ func TestApp_Run_DoesNotHydrateWhenStartupDiscoveryRuns(t *testing.T) {
 	// monitor's first tick.
 	app.discoveryRunning.Store(true)
 
+	monitorTicks := make(chan struct{})
+	var phase1Ticks atomic.Int32
+	app.testSeams.OnDiscoveryProcessingMonitorPhase1Tick = func() {
+		if phase1Ticks.Add(1) == 3 {
+			close(monitorTicks)
+		}
+	}
+
 	app.testSeams.Serve = func(h http.Handler, addr string) error {
-		// Give the 100ms completion monitor several ticks on the counters
-		// before Run returns.
-		time.Sleep(700 * time.Millisecond)
-		return nil
+		select {
+		case <-monitorTicks:
+			return nil
+		case <-app.RuntimeManager.ctx.Done():
+			return app.RuntimeManager.ctx.Err()
+		}
 	}
 
 	if err := app.Run(1, 1); err != nil {
@@ -2971,19 +2969,22 @@ func TestApp_Run_DoesNotHydrateWhenStartupDiscoveryRuns(t *testing.T) {
 	app.discoveryRunning.Store(false)
 }
 
+// wireDiscoveryTestDepsWithMetrics is wireDiscoveryTestDeps plus the metrics
+// collector wiring and handler rebuild Run() performs after Start.
+func wireDiscoveryTestDepsWithMetrics(app *App, templateFS fs.FS) error {
+	wireDiscoveryTestDeps(app)
+	app.RuntimeManager.metricsCollector = metrics.NewCollector()
+	app.WireMetrics(app.RuntimeManager.metricsCollector)
+	return app.buildHandlers(templateFS)
+}
+
 // TestDashboard_FileProcessingLastRunHydrateRenders is the restart-shaped lock
 // that would have caught the :8084 zero counters: a previous process persisted
 // its last-run counters, a new process hydrates them into in-memory stats, and
 // a fresh /dashboard full page must render them comma-formatted.
 //
-// CreateApp does not Start(), so processingStats stays nil and its buildHandlers
-// runs with a nil RuntimeManager.metricsCollector — HandlerManager.Build then
-// allocates a throwaway collector that is never SetFileProcessor'd and is not
-// stored on RuntimeManager. The test therefore re-does the wiring production
-// Run() performs, in order: allocate stats before WireMetrics (WireMetrics'
-// SetFileProcessor checks for a non-nil processingStats), allocate and wire a
-// collector, then rebuild handlers so the dashboard handler holds that wired
-// collector, not the throwaway from CreateApp.
+// CreateApp skips Start(), so wireDiscoveryTestDepsWithMetrics mirrors the
+// metrics collector wiring and handler rebuild Run() performs after Start.
 //
 // getRouter() must be called after the rebuild: it binds
 // dashboardHandlers.DashboardGet as a method value at mux build, so a router
@@ -2991,15 +2992,8 @@ func TestApp_Run_DoesNotHydrateWhenStartupDiscoveryRuns(t *testing.T) {
 func TestDashboard_FileProcessingLastRunHydrateRenders(t *testing.T) {
 	app := CreateApp(t)
 
-	// Production Run() wiring, mirrored here because CreateApp skipped Start().
-	app.SubsystemManager.processingStats = &files.ProcessingStats{}
-	app.RuntimeManager.metricsCollector = metrics.NewCollector()
-	app.WireMetrics(app.RuntimeManager.metricsCollector)
-
-	// Rebuild handlers: the dashboard collector must be the wired instance, not
-	// the throwaway collector CreateApp's buildHandlers allocated.
-	if err := app.buildHandlers(web.FS); err != nil {
-		t.Fatalf("rebuild handlers: %v", err)
+	if err := wireDiscoveryTestDepsWithMetrics(app, web.FS); err != nil {
+		t.Fatalf("wire discovery test deps with metrics: %v", err)
 	}
 
 	// Seed the previous run's last-run counters into module_state (the persist

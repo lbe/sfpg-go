@@ -381,21 +381,31 @@ func TestGetConfigs_QueryError(t *testing.T) {
 	}
 }
 
-func TestGetFileViewsByFolderIDOrderByFileName_QueryError(t *testing.T) {
+func TestGetGalleryFileThumbRowsByFolderID_QueryError(t *testing.T) {
 	db := openMemoryDB(t)
 	q := New(db)
 
-	_, err := q.GetFileViewsByFolderIDOrderByFileName(context.Background(), sql.NullInt64{Int64: 1, Valid: true})
+	_, err := q.GetGalleryFileThumbRowsByFolderID(context.Background(), sql.NullInt64{Int64: 1, Valid: true})
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
 }
 
-func TestGetFoldersViewsByParentIDOrderByName_QueryError(t *testing.T) {
+func TestGetGalleryFolderThumbRowsByParentID_QueryError(t *testing.T) {
 	db := openMemoryDB(t)
 	q := New(db)
 
-	_, err := q.GetFoldersViewsByParentIDOrderByName(context.Background(), sql.NullInt64{Int64: 1, Valid: true})
+	_, err := q.GetGalleryFolderThumbRowsByParentID(context.Background(), sql.NullInt64{Int64: 1, Valid: true})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
+
+func TestGetPreloadRoutesByFolderID_QueryError(t *testing.T) {
+	db := openMemoryDB(t)
+	q := NewCustomQueries(db)
+
+	_, err := q.GetPreloadRoutesByFolderID(context.Background(), sql.NullInt64{Int64: 1, Valid: true})
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}

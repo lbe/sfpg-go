@@ -75,8 +75,8 @@ func TestDefaultConfig(t *testing.T) {
 	}
 
 	// Verify log settings
-	if cfg.LogLevel != "debug" {
-		t.Errorf("expected LogLevel to be 'debug', got %q", cfg.LogLevel)
+	if cfg.LogLevel != "info" {
+		t.Errorf("expected LogLevel to be 'info', got %q", cfg.LogLevel)
 	}
 	if cfg.LogRetentionCount != 7 {
 		t.Errorf("expected LogRetentionCount to be 7, got %d", cfg.LogRetentionCount)

@@ -20,11 +20,16 @@ var (
 func TestHTTPCacheMiddleware_MetricsMethods(t *testing.T) {
 	t.Run("IsEnabled returns true when cache is enabled", func(t *testing.T) {
 		var sizeCounter atomic.Int64
-		cache := cachelite.NewHTTPCacheMiddlewareForTest(nil, cachelite.CacheConfig{
+		counters := &cachelite.HTTPCacheCounterState{
+			SizeBytes:       &sizeCounter,
+			EntryCount:      &atomic.Int64{},
+			BaselineRunning: &atomic.Int32{},
+		}
+		cache := cachelite.NewHTTPCacheMiddleware(nil, cachelite.CacheConfig{
 			MaxEntrySize: 100_000,
 			MaxTotalSize: 1_000_000,
 			Enabled:      true,
-		}, cachelite.HTTPCacheCountersForTest(&sizeCounter), nil)
+		}, counters, func(*cachelite.HTTPCacheEntry) {})
 
 		if !cache.IsEnabled() {
 			t.Error("expected IsEnabled true")
@@ -33,11 +38,16 @@ func TestHTTPCacheMiddleware_MetricsMethods(t *testing.T) {
 
 	t.Run("IsEnabled returns false when cache is disabled", func(t *testing.T) {
 		var sizeCounter atomic.Int64
-		cache := cachelite.NewHTTPCacheMiddlewareForTest(nil, cachelite.CacheConfig{
+		counters := &cachelite.HTTPCacheCounterState{
+			SizeBytes:       &sizeCounter,
+			EntryCount:      &atomic.Int64{},
+			BaselineRunning: &atomic.Int32{},
+		}
+		cache := cachelite.NewHTTPCacheMiddleware(nil, cachelite.CacheConfig{
 			MaxEntrySize: 100_000,
 			MaxTotalSize: 1_000_000,
 			Enabled:      false,
-		}, cachelite.HTTPCacheCountersForTest(&sizeCounter), nil)
+		}, counters, func(*cachelite.HTTPCacheEntry) {})
 
 		if cache.IsEnabled() {
 			t.Error("expected IsEnabled false")
@@ -46,11 +56,16 @@ func TestHTTPCacheMiddleware_MetricsMethods(t *testing.T) {
 
 	t.Run("MaxEntrySize and MaxTotalSize return cache configuration", func(t *testing.T) {
 		var sizeCounter atomic.Int64
-		cache := cachelite.NewHTTPCacheMiddlewareForTest(nil, cachelite.CacheConfig{
+		counters := &cachelite.HTTPCacheCounterState{
+			SizeBytes:       &sizeCounter,
+			EntryCount:      &atomic.Int64{},
+			BaselineRunning: &atomic.Int32{},
+		}
+		cache := cachelite.NewHTTPCacheMiddleware(nil, cachelite.CacheConfig{
 			MaxEntrySize: 100_000,
 			MaxTotalSize: 1_000_000,
 			Enabled:      true,
-		}, cachelite.HTTPCacheCountersForTest(&sizeCounter), nil)
+		}, counters, func(*cachelite.HTTPCacheEntry) {})
 
 		if cache.MaxEntrySize() != 100_000 {
 			t.Errorf("MaxEntrySize: got %d, want 100000", cache.MaxEntrySize())
@@ -149,7 +164,7 @@ func TestProcessingStats_GetStats(t *testing.T) {
 func TestSubsystemManager_WireMetrics_UsesSourceTypes(t *testing.T) {
 	app := newAppForUnlock(t)
 	m := NewSubsystemManager(app.InfrastructureService)
-	m.processingStats = &files.ProcessingStats{}
+	ensureProcessingStats(m)
 
 	collector := metrics.NewCollector()
 	m.WireMetrics(collector)

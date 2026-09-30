@@ -23,27 +23,9 @@ var (
 	// dbPoolPutFn wraps DbSQLConnPool.Put so tests can no-op release.
 	dbPoolPutFn = (*dbconnpool.DbSQLConnPool).Put
 
-	// getPreloadRoutesByFolderIDFn wraps the query and rows iteration so tests
-	// can inject routes or errors without a real SQLite database.
+	// getPreloadRoutesByFolderIDFn wraps the query so tests can inject routes or errors.
 	getPreloadRoutesByFolderIDFn = func(q interfaces.HandlerQueries, ctx context.Context, folderID int64) ([]string, error) {
-		rows, err := q.GetPreloadRoutesByFolderID(ctx, sql.NullInt64{Int64: folderID, Valid: true})
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
-
-		var paths []string
-		for rows.Next() {
-			var path string
-			if err := rows.Scan(&path); err != nil {
-				return nil, err
-			}
-			paths = append(paths, path)
-		}
-		if err := rows.Err(); err != nil {
-			return nil, err
-		}
-		return paths, nil
+		return q.GetPreloadRoutesByFolderID(ctx, sql.NullInt64{Int64: folderID, Valid: true})
 	}
 
 	// httpCacheExistsByKeyFn wraps HttpCacheExistsByKey so tests can control cache

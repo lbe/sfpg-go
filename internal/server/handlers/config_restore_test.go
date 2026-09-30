@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lbe/sfpg-go/internal/dbconnpool"
 	"github.com/lbe/sfpg-go/internal/gallerydb"
 	"github.com/lbe/sfpg-go/internal/server/config"
 	"github.com/lbe/sfpg-go/internal/server/ui"
@@ -61,9 +60,7 @@ func TestConfigHandlers_RestoreLastKnownGood_InvalidAction(t *testing.T) {
 
 	ch.RestoreLastKnownGoodHandler(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status 400, got %d", w.Code)
-	}
+	assertConfigValidationGlobal(t, w, "Invalid action")
 }
 
 func TestConfigHandlers_RestoreLastKnownGood_CommitRestoreError(t *testing.T) {
@@ -85,14 +82,7 @@ func TestConfigHandlers_RestoreLastKnownGood_CommitRestoreError(t *testing.T) {
 
 	ch.RestoreLastKnownGoodHandler(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status 400, got %d", w.Code)
-	}
-	body := strings.TrimSpace(w.Body.String())
-	expected := "Failed to restore last known good config"
-	if body != expected {
-		t.Errorf("expected %q error, got %s", expected, body)
-	}
+	assertConfigValidationGlobal(t, w, "Failed to restore last known good config")
 }
 
 func TestConfigHandlers_RestoreLastKnownGood_CommitRestartRequired(t *testing.T) {
@@ -177,14 +167,7 @@ func TestConfigHandlers_RestoreLastKnownGood_CommitValidateError(t *testing.T) {
 
 	ch.RestoreLastKnownGoodHandler(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status 400, got %d", w.Code)
-	}
-	body := strings.TrimSpace(w.Body.String())
-	expected := "Restored config is invalid"
-	if body != expected {
-		t.Errorf("expected %q error, got %s", expected, body)
-	}
+	assertConfigValidationGlobal(t, w, "Restored config is invalid")
 }
 
 func TestConfigHandlers_RestoreLastKnownGood_CommitSaveError(t *testing.T) {
@@ -283,9 +266,7 @@ func TestConfigHandlers_RestoreLastKnownGood_CommitParseFormError(t *testing.T) 
 
 	ch.RestoreLastKnownGoodHandler(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status 400, got %d", w.Code)
-	}
+	assertConfigMalformedRequest(t, w, "Bad Request")
 }
 
 func TestConfigHandlers_RestoreLastKnownGood_PreviewLoadError(t *testing.T) {
@@ -319,8 +300,8 @@ func TestConfigHandlers_RestoreLastKnownGood_PreviewDiffError(t *testing.T) {
 
 	ch := setupTestConfigHandlers(t, &mockConfigServiceForConfig{}, &mockAuthServiceForConfig{})
 	ch.DBRwPool = &testConnPool{}
-	ch.getConfigQueries = func(cpc *dbconnpool.CpConn) config.ConfigQueries {
-		return fakeConfigQueries{err: errors.New("db unavailable")}
+	ch.galleryOps = &mockGalleryOps{
+		ConfigQueries: fakeConfigQueries{err: errors.New("db unavailable")},
 	}
 	ch.SessionManager.(*mockSessionManagerAuth).authenticated = true
 
@@ -329,13 +310,7 @@ func TestConfigHandlers_RestoreLastKnownGood_PreviewDiffError(t *testing.T) {
 
 	ch.RestoreLastKnownGoodHandler(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status 400, got %d", w.Code)
-	}
-	body := strings.TrimSpace(w.Body.String())
-	if !strings.HasPrefix(body, "Failed to get last known good config") {
-		t.Errorf("expected last known good error, got %s", body)
-	}
+	assertConfigValidationGlobal(t, w, "Failed to get last known good config")
 }
 
 func TestConfigHandlers_RestoreLastKnownGood_PreviewSuccess(t *testing.T) {
@@ -350,13 +325,13 @@ func TestConfigHandlers_RestoreLastKnownGood_PreviewSuccess(t *testing.T) {
 	}
 	ch := setupTestConfigHandlers(t, mockSvc, &mockAuthServiceForConfig{})
 	ch.DBRwPool = &testConnPool{}
-	ch.getConfigQueries = func(cpc *dbconnpool.CpConn) config.ConfigQueries {
-		return fakeConfigQueries{
+	ch.galleryOps = &mockGalleryOps{
+		ConfigQueries: fakeConfigQueries{
 			configs: []gallerydb.Config{{
 				Key:   "LastKnownGoodConfig",
 				Value: "listener-port: 8081\nsite-name: Backup",
 			}},
-		}
+		},
 	}
 	ch.SessionManager.(*mockSessionManagerAuth).authenticated = true
 

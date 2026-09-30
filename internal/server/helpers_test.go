@@ -9,10 +9,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lbe/sfpg-go/internal/dbconnpool"
 	"github.com/lbe/sfpg-go/internal/getopt"
 	"github.com/lbe/sfpg-go/internal/queue"
 	"github.com/lbe/sfpg-go/internal/server/config"
 	"github.com/lbe/sfpg-go/internal/server/files"
+	"github.com/lbe/sfpg-go/internal/server/modulestate"
 	"github.com/lbe/sfpg-go/internal/workerpool"
 	"github.com/lbe/sfpg-go/web"
 )
@@ -75,9 +77,16 @@ func WithGetoptOpt(opt getopt.Opt) AppOption {
 	}
 }
 
-// CreateApp sets up a full, isolated application instance for testing.
-// It creates and wires services in order: ConfigService (setDB), FileProcessor, session/store
-// (ensureSession), Handlers (buildHandlers). All services are non-nil when CreateApp returns.
+// CreateApp sets up a fast, isolated application instance for testing.
+// It wires ConfigService (setDB), writebatcher, in-memory discovery queue,
+// fileProcessor/unifiedBatcher, session/store (ensureSession), and handlers
+// (buildHandlers). It deliberately does not call SubsystemManager.Start (no
+// disk-backed discovery dque, preload manager, moduleStateService, or
+// processingStats) so most tests stay lightweight.
+//
+// Tests that need discovery drain/persist/hydrate should call
+// wireDiscoveryTestDeps. Tests that need full production subsystem wiring
+// should use startTestManager (subsystem_manager_integration_test.go).
 //
 // Options:
 //   - WithPool() — start the background worker pool
@@ -120,7 +129,8 @@ func CreateApp(t testing.TB, opts ...AppOption) *App {
 	// Parse environment variables into opt if SessionSecret wasn't explicitly provided
 	// This allows tests to use t.Setenv() and have those values applied
 	if !opt.SessionSecret.IsSet {
-		envOpt := getopt.ParseEnvOnly()
+		envOpt := getopt.Opt{}
+		getopt.ApplyEnvVars(&envOpt)
 		// Merge env opt with provided opt, giving precedence to explicitly set values in opt
 		if !opt.Port.IsSet && envOpt.Port.IsSet {
 			opt.Port = envOpt.Port
@@ -156,6 +166,9 @@ func CreateApp(t testing.TB, opts ...AppOption) *App {
 		// applies in integration tests the same way as other SEPG_* session/security vars.
 		if !opt.LoginRateLimitPerIP.IsSet && envOpt.LoginRateLimitPerIP.IsSet {
 			opt.LoginRateLimitPerIP = envOpt.LoginRateLimitPerIP
+		}
+		if !opt.LogLevel.IsSet && envOpt.LogLevel.IsSet {
+			opt.LogLevel = envOpt.LogLevel
 		}
 	}
 
@@ -203,12 +216,12 @@ func CreateApp(t testing.TB, opts ...AppOption) *App {
 	}
 	app.normalizedImagesDir = filepath.ToSlash(app.imagesDir)
 
-	app.SubsystemManager.q = queue.NewQueue[string](10_000)
+	app.SubsystemManager.q = queue.NewQueue[files.DiscoveryPathWork](10_000)
 
 	// Initialize FileProcessor for tests with the SAME adapter and the SAME
 	// InfrastructureService atomics used by SubsystemManager.Start, so the
 	// OnSuccess inflight decrement and a rebuild wait target the live counters.
-	fb := newFileBatcher(app.writeBatcher, &app.folderIndexInflight, &app.folderIndexRebuildActive, &app.folderIndexRebuildScanHeld, &app.folderIndexGeneration)
+	fb := newFileBatcher(app.writeBatcher, &app.folderIndex)
 	app.SubsystemManager.unifiedBatcher = fb
 	app.SubsystemManager.fileProcessor = files.NewFileProcessor(app.dbRoPool, app.dbRwPool, app.ImporterFactory, app.imagesDir, fb)
 
@@ -234,6 +247,30 @@ func CreateApp(t testing.TB, opts ...AppOption) *App {
 	t.Cleanup(func() { app.Shutdown() })
 
 	return app
+}
+
+// ensureProcessingStats allocates processingStats when nil. Idempotent.
+func ensureProcessingStats(sm *SubsystemManager) {
+	if sm.processingStats == nil {
+		sm.processingStats = &files.ProcessingStats{}
+	}
+}
+
+// ensureModuleStateService allocates moduleStateService when nil. Idempotent.
+func ensureModuleStateService(sm *SubsystemManager, dbRwPool *dbconnpool.DbSQLConnPool) {
+	if sm.moduleStateService == nil {
+		sm.moduleStateService = modulestate.NewService(dbRwPool)
+	}
+}
+
+// wireDiscoveryTestDeps allocates processingStats and moduleStateService the way
+// SubsystemManager.Start does, without the heavier Start path (dque wipe/open,
+// preload manager, pool reconfiguration). Use after CreateApp when a test
+// exercises waitForFileProcessingDrain, persist/hydrate, or TriggerDiscovery
+// with real counters.
+func wireDiscoveryTestDeps(app *App) {
+	ensureProcessingStats(app.SubsystemManager)
+	ensureModuleStateService(app.SubsystemManager, app.dbRwPool)
 }
 
 // MakeAuthCookie creates an authenticated session cookie for testing.

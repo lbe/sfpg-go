@@ -136,12 +136,25 @@ func TestLoadFromDatabase_ErrorPath(t *testing.T) {
 	}
 }
 
-// TestFromMap_ErrorPath verifies FromMap returns an error for invalid known values.
-func TestFromMap_ErrorPath(t *testing.T) {
-	_, err := FromMap(map[string]string{"listener_port": "abc"})
+// TestConfigFromStringMap_ErrorPath verifies invalid known values return an error.
+func TestConfigFromStringMap_ErrorPath(t *testing.T) {
+	_, err := configFromStringMap(map[string]string{"listener_port": "abc"})
 	if err == nil {
-		t.Fatal("FromMap expected error, got nil")
+		t.Fatal("configFromStringMap expected error, got nil")
 	}
+}
+
+func configFromStringMap(m map[string]string) (*Config, error) {
+	cfg := DefaultConfig()
+	for k, v := range m {
+		if err := cfg.SetValueFromString(k, v); err != nil {
+			return nil, err
+		}
+	}
+	if cfg.ETagVersion == "" {
+		cfg.ETagVersion = DefaultConfig().ETagVersion
+	}
+	return cfg, nil
 }
 
 // contains reports whether values includes target.

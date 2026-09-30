@@ -374,7 +374,7 @@ func fields() []configField {
 			// --- String fields (9) ---
 			stringField("listener_address", "listener-address", func(c *Config) *string { return &c.ListenerAddress }, nil, true).toConfigField(),
 			stringField("log_directory", "log-directory", func(c *Config) *string { return &c.LogDirectory }, nil, true).toConfigField(),
-			stringField("log_level", "log-level", func(c *Config) *string { return &c.LogLevel }, validateOneOfNamed("log level", "debug", "info", "warn", "error"), true).toConfigField(),
+			stringField("log_level", "log-level", func(c *Config) *string { return &c.LogLevel }, validateOneOfNamed("log level", "debug", "info", "warn", "error"), false).toConfigField(),
 			stringField("log_rollover", "log-rollover", func(c *Config) *string { return &c.LogRollover }, validateOneOfNamed("log rollover", "daily", "weekly", "monthly"), true).toConfigField(),
 			stringField("site_name", "site-name", func(c *Config) *string { return &c.SiteName }, nil, false).toConfigField(),
 			stringField("current_theme", "current-theme", func(c *Config) *string { return &c.CurrentTheme }, nil, false).toConfigField(),

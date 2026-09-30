@@ -61,25 +61,6 @@ func (c *Config) LoadFromDatabase(ctx context.Context, q ConfigQueries) error {
 	return nil
 }
 
-// FromMap creates a Config from a map of string values.
-// This is used for loading from database or other key-value sources.
-func FromMap(m map[string]string) (*Config, error) {
-	cfg := DefaultConfig()
-	for k, v := range m {
-		if err := cfg.SetValueFromString(k, v); err != nil {
-			return nil, err
-		}
-	}
-
-	// Apply defaults if key is missing (already handled by DefaultConfig())
-	// but ensured for ETag specifically as per plan
-	if cfg.ETagVersion == "" {
-		cfg.ETagVersion = DefaultConfig().ETagVersion
-	}
-
-	return cfg, nil
-}
-
 // SetValueFromString sets a config field value from a string representation.
 // This is used when loading from database or parsing from YAML.
 func (c *Config) SetValueFromString(key, value string) error {
@@ -139,6 +120,7 @@ var cliRoutes = []cliRoute{
 	{"login_rate_limit_per_ip", func(o getopt.Opt) (string, bool) {
 		return strconv.Itoa(o.LoginRateLimitPerIP.Int), o.LoginRateLimitPerIP.IsSet
 	}},
+	{"log_level", func(o getopt.Opt) (string, bool) { return o.LogLevel.String, o.LogLevel.IsSet }},
 }
 
 // loadFromOpt applies explicitly set CLI/environment values to c. Fields whose

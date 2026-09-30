@@ -5,9 +5,7 @@ package files
 import (
 	"context"
 	"database/sql"
-	"os"
 	"path"
-	"path/filepath"
 	"testing"
 
 	"github.com/lbe/sfpg-go/internal/dbconnpool"
@@ -206,11 +204,17 @@ func TestWriteFileInTx_E_ClearsStaleInvalidRow(t *testing.T) {
 		if err != nil {
 			t.Fatalf("rwPool.Get: %v", err)
 		}
+		rootID, rootErr := cpcRw.Queries.GetFolderIDByPath(ctx, "")
+		if rootErr != nil {
+			rwPool.Put(cpcRw)
+			t.Fatalf("GetFolderIDByPath root: %v", rootErr)
+		}
 		if err := cpcRw.Queries.UpsertInvalidFile(ctx, gallerydb.UpsertInvalidFileParams{
-			Path:   p,
-			Mtime:  1600000000,
-			Size:   512,
-			Reason: sql.NullString{String: "prior corruption", Valid: true},
+			Path:     p,
+			Mtime:    1600000000,
+			Size:     512,
+			Reason:   sql.NullString{String: "prior corruption", Valid: true},
+			FolderID: rootID,
 		}); err != nil {
 			rwPool.Put(cpcRw)
 			t.Fatalf("seed UpsertInvalidFile: %v", err)
@@ -249,64 +253,5 @@ func TestWriteFileInTx_E_ClearsStaleInvalidRow(t *testing.T) {
 	_, err = cpcRo2.Queries.GetInvalidFileByPath(ctx, p)
 	if err != sql.ErrNoRows {
 		t.Errorf("invalid_files row should be cleared after successful WriteFileInTx; got err=%v (want sql.ErrNoRows)", err)
-	}
-}
-
-// TestCheckIfFileModified_ChangedInvalidFileProceedsToReprocessing guards the
-// E correctness trap: when an invalid_files row exists for a path but the file
-// has since changed (mtime differs), checkIfFileModifiedCore must return
-// unchanged == false so the file is reprocessed and WriteFileInTx clears the
-// stale invalid_files row. If this instead returned unchanged == true, the
-// stale row would persist and the next run would skip the now-valid file.
-func TestCheckIfFileModified_ChangedInvalidFileProceedsToReprocessing(t *testing.T) {
-	roPool, rwPool, imagesDir, ctx := createTestPoolsAndDir(t)
-	name := createTestImage(t, imagesDir, "recov.jpg")
-
-	// Read the real on-disk mtime so we can seed a DIFFERENT mtime in invalid_files.
-	info, err := os.Stat(filepath.Join(imagesDir, name))
-	if err != nil {
-		t.Fatalf("stat test image: %v", err)
-	}
-	realMtime := info.ModTime().Unix()
-	seededMtime := realMtime - 86400 // deliberately different → not unchanged
-
-	// Seed an invalid_files row with the stale mtime.
-	{
-		cpcRw, err := rwPool.Get()
-		if err != nil {
-			t.Fatalf("rwPool.Get: %v", err)
-		}
-		if err := cpcRw.Queries.UpsertInvalidFile(ctx, gallerydb.UpsertInvalidFileParams{
-			Path:   name,
-			Mtime:  seededMtime,
-			Size:   999,
-			Reason: sql.NullString{String: "prior corruption", Valid: true},
-		}); err != nil {
-			rwPool.Put(cpcRw)
-			t.Fatalf("seed UpsertInvalidFile: %v", err)
-		}
-		rwPool.Put(cpcRw)
-	}
-
-	cpcRo, err := roPool.Get()
-	if err != nil {
-		t.Fatalf("roPool.Get: %v", err)
-	}
-	defer roPool.Put(cpcRo)
-
-	f := &File{ImagesDir: imagesDir, Path: name}
-	unchanged, err := checkIfFileModifiedCore(ctx,
-		cpcRo.Queries.GetFileByPath,
-		cpcRo.Queries.GetInvalidFileByPath,
-		f)
-	if err != nil {
-		t.Fatalf("checkIfFileModifiedCore: %v", err)
-	}
-
-	// The file changed (seeded mtime != real mtime), so it must proceed to
-	// reprocessing (unchanged == false), allowing WriteFileInTx to clear the
-	// stale invalid_files row.
-	if unchanged {
-		t.Error("file with a stale invalid_files row (changed mtime) should proceed to reprocessing, not be skipped")
 	}
 }

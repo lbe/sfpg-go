@@ -96,6 +96,7 @@ func setupTestConfigHandlers(t *testing.T, mockSvc config.ConfigService, mockAut
 		nil,       // DBRwPool
 		credStore, // credStore
 		cfgOps,    // cfgOps
+		nil,       // galleryOps
 		helper.AddCommonTemplateData,
 		templates,
 		ctx,

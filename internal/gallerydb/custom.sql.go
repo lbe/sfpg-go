@@ -28,7 +28,7 @@ type CustomQuerier interface {
 	GetFileViewRowsByFolderID(ctx context.Context, folderID int64) (*sql.Rows, error)
 	GetFileViewRowsByFolderPath(ctx context.Context, folderPath string) (*sql.Rows, error)
 	GetFolderViewThumbnailBlobDataByPath(ctx context.Context, path string) ([]byte, error)
-	GetPreloadRoutesByFolderID(ctx context.Context, parent_id sql.NullInt64) (*sql.Rows, error)
+	GetPreloadRoutesByFolderID(ctx context.Context, parent_id sql.NullInt64) ([]string, error)
 	GetThumbnailBlobDataByID(ctx context.Context, thumbnailID int64) ([]byte, error)
 	UpsertThumbnailBlob(ctx context.Context, arg UpsertThumbnailBlobParams) error
 	// QueryFilesForFolderIndexRebuild streams every folder-bearing file ordered so
@@ -362,8 +362,25 @@ SELECT route
 
 // GetPreloadRoutesByFolderID retrieves all preload routes for subfolders and files
 // under the specified folder ID.
-func (cq *CustomQueries) GetPreloadRoutesByFolderID(ctx context.Context, parent_id sql.NullInt64) (*sql.Rows, error) {
-	return cq.query(ctx, cq.getPreloadRoutesByFolderIDStmt, getPreloadRoutesByFolderID, parent_id)
+func (cq *CustomQueries) GetPreloadRoutesByFolderID(ctx context.Context, parent_id sql.NullInt64) ([]string, error) {
+	rows, err := cq.query(ctx, cq.getPreloadRoutesByFolderIDStmt, getPreloadRoutesByFolderID, parent_id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var routes []string
+	for rows.Next() {
+		var route string
+		if err := rows.Scan(&route); err != nil {
+			return nil, err
+		}
+		routes = append(routes, route)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return routes, nil
 }
 
 const getThumbnailBlobDataByID = `-- name: GetThumbnailBlobDataByID :one

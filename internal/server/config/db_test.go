@@ -130,6 +130,36 @@ func TestLoadFromOpt_LoginRateLimitPerIP(t *testing.T) {
 	}
 }
 
+func TestLoadFromOpt_LogLevelOverridesDatabaseValue(t *testing.T) {
+	db, q, ctx := setupTestDB(t)
+	defer db.Close()
+
+	now := time.Now().Unix()
+	err := q.UpsertConfigValueOnly(ctx, gallerydb.UpsertConfigValueOnlyParams{
+		Key:       "log_level",
+		Value:     "debug",
+		CreatedAt: now,
+		UpdatedAt: now,
+	})
+	if err != nil {
+		t.Fatalf("failed to insert log_level: %v", err)
+	}
+
+	cfg := DefaultConfig()
+	if err := cfg.LoadFromDatabase(ctx, q); err != nil {
+		t.Fatalf("LoadFromDatabase: %v", err)
+	}
+	if cfg.LogLevel != "debug" {
+		t.Fatalf("LogLevel from DB = %q, want debug", cfg.LogLevel)
+	}
+
+	opt := getopt.Opt{LogLevel: getopt.OptString{String: "warn", IsSet: true}}
+	cfg.LoadFromOpt(opt)
+	if cfg.LogLevel != "warn" {
+		t.Fatalf("LogLevel after LoadFromOpt = %q, want warn", cfg.LogLevel)
+	}
+}
+
 // TestMergeDefaults verifies that MergeDefaults correctly applies defaults to unset values.
 
 func TestMergeDefaults(t *testing.T) {
@@ -209,8 +239,8 @@ func TestLoadFromDatabase_MissingKeys(t *testing.T) {
 	if cfg.ListenerPort != 8081 {
 		t.Errorf("expected ListenerPort to remain default 8081, got %d", cfg.ListenerPort)
 	}
-	if cfg.LogLevel != "debug" {
-		t.Errorf("expected LogLevel to remain default 'debug', got %q", cfg.LogLevel)
+	if cfg.LogLevel != "info" {
+		t.Errorf("expected LogLevel to remain default 'info', got %q", cfg.LogLevel)
 	}
 }
 

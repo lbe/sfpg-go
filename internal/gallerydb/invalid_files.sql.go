@@ -20,7 +20,7 @@ func (q *Queries) DeleteInvalidFileByPath(ctx context.Context, path string) erro
 }
 
 const getInvalidFileByPath = `-- name: GetInvalidFileByPath :one
-SELECT path, mtime, size, reason, created_at, updated_at FROM invalid_files WHERE path = ?
+SELECT path, mtime, size, reason, folder_id, created_at, updated_at FROM invalid_files WHERE path = ?
 `
 
 func (q *Queries) GetInvalidFileByPath(ctx context.Context, path string) (InvalidFile, error) {
@@ -31,27 +31,74 @@ func (q *Queries) GetInvalidFileByPath(ctx context.Context, path string) (Invali
 		&i.Mtime,
 		&i.Size,
 		&i.Reason,
+		&i.FolderID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
 	return i, err
 }
 
+const listDiscoveryInvalidByFolderID = `-- name: ListDiscoveryInvalidByFolderID :many
+SELECT inv.path   AS invalid_path
+     , inv.mtime  AS invalid_mtime
+     , inv.size   AS invalid_size
+     , inv.reason AS invalid_reason
+  FROM invalid_files AS inv
+ WHERE inv.folder_id = ?
+`
+
+type ListDiscoveryInvalidByFolderIDRow struct {
+	InvalidPath   string
+	InvalidMtime  int64
+	InvalidSize   int64
+	InvalidReason sql.NullString
+}
+
+func (q *Queries) ListDiscoveryInvalidByFolderID(ctx context.Context, folderID int64) ([]ListDiscoveryInvalidByFolderIDRow, error) {
+	rows, err := q.query(ctx, q.listDiscoveryInvalidByFolderIDStmt, listDiscoveryInvalidByFolderID, folderID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListDiscoveryInvalidByFolderIDRow
+	for rows.Next() {
+		var i ListDiscoveryInvalidByFolderIDRow
+		if err := rows.Scan(
+			&i.InvalidPath,
+			&i.InvalidMtime,
+			&i.InvalidSize,
+			&i.InvalidReason,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const upsertInvalidFile = `-- name: UpsertInvalidFile :exec
-INSERT INTO invalid_files (path, mtime, size, reason, updated_at)
-VALUES (?, ?, ?, ?, UNIXEPOCH('now'))
+INSERT INTO invalid_files (path, mtime, size, reason, folder_id, updated_at)
+VALUES (?, ?, ?, ?, ?, UNIXEPOCH('now'))
 ON CONFLICT(path) DO UPDATE SET
     mtime = excluded.mtime,
     size = excluded.size,
     reason = excluded.reason,
+    folder_id = excluded.folder_id,
     updated_at = UNIXEPOCH('now')
 `
 
 type UpsertInvalidFileParams struct {
-	Path   string
-	Mtime  int64
-	Size   int64
-	Reason sql.NullString
+	Path     string
+	Mtime    int64
+	Size     int64
+	Reason   sql.NullString
+	FolderID int64
 }
 
 func (q *Queries) UpsertInvalidFile(ctx context.Context, arg UpsertInvalidFileParams) error {
@@ -60,6 +107,7 @@ func (q *Queries) UpsertInvalidFile(ctx context.Context, arg UpsertInvalidFilePa
 		arg.Mtime,
 		arg.Size,
 		arg.Reason,
+		arg.FolderID,
 	)
 	return err
 }

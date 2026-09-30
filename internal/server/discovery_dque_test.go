@@ -1,17 +1,25 @@
 package server
 
 import (
+	"bytes"
 	"errors"
 	"path/filepath"
 	"testing"
 
 	"github.com/lbe/sfpg-go/internal/dque"
 	"github.com/lbe/sfpg-go/internal/queue"
+	"github.com/lbe/sfpg-go/internal/server/files"
 )
+
+func discoveryPathWorkEqual(a, b files.DiscoveryPathWork) bool {
+	return a.MtimeUnix == b.MtimeUnix &&
+		a.SizeBytes == b.SizeBytes &&
+		bytes.Equal(a.Path, b.Path)
+}
 
 // newTestDiscoveryDQue opens a fresh discovery dque adapter in a dedicated
 // per-test temp directory and registers its Close for cleanup.
-func newTestDiscoveryDQue(t *testing.T) queue.Queuer[string] {
+func newTestDiscoveryDQue(t *testing.T) queue.Queuer[files.DiscoveryPathWork] {
 	t.Helper()
 	q, err := newDiscoveryDQueAdapter(filepath.Join(t.TempDir(), "discovery-dque"))
 	if err != nil {
@@ -24,24 +32,24 @@ func newTestDiscoveryDQue(t *testing.T) queue.Queuer[string] {
 func TestDiscoveryDQueAdapter_RoundTripFIFO(t *testing.T) {
 	q := newTestDiscoveryDQue(t)
 
-	paths := []string{
-		"/gallery/alpha.jpg",
-		"/gallery/nested/beta.png",
-		"/gallery/nested/deeper/gamma.gif",
+	items := []files.DiscoveryPathWork{
+		{Path: []byte("/gallery/alpha.jpg"), MtimeUnix: 100, SizeBytes: 10},
+		{Path: []byte("/gallery/nested/beta.png"), MtimeUnix: 200, SizeBytes: 20},
+		{Path: []byte("/gallery/nested/deeper/gamma.gif"), MtimeUnix: 300, SizeBytes: 30},
 	}
-	for _, p := range paths {
-		if err := q.Enqueue(p); err != nil {
-			t.Fatalf("Enqueue(%q): %v", p, err)
+	for _, item := range items {
+		if err := q.Enqueue(item); err != nil {
+			t.Fatalf("Enqueue(%q): %v", string(item.Path), err)
 		}
 	}
 
-	for i, want := range paths {
+	for i, want := range items {
 		got, err := q.Dequeue()
 		if err != nil {
 			t.Fatalf("Dequeue #%d: %v", i, err)
 		}
-		if got != want {
-			t.Errorf("Dequeue #%d = %q, want %q", i, got, want)
+		if !discoveryPathWorkEqual(got, want) {
+			t.Errorf("Dequeue #%d = %+v, want %+v", i, got, want)
 		}
 	}
 
@@ -62,7 +70,7 @@ func TestDiscoveryDQueAdapter_AfterClose(t *testing.T) {
 	q := newTestDiscoveryDQue(t)
 	q.Close()
 
-	if err := q.Enqueue("x"); !errors.Is(err, queue.ErrClosedQueue) {
+	if err := q.Enqueue(files.DiscoveryPathWork{Path: []byte("x")}); !errors.Is(err, queue.ErrClosedQueue) {
 		t.Errorf("Enqueue after Close: err = %v, want %v", err, queue.ErrClosedQueue)
 	}
 	if _, err := q.Dequeue(); !errors.Is(err, queue.ErrClosedQueue) {
@@ -74,7 +82,6 @@ func TestDiscoveryDQueAdapter_CloseIdempotent(t *testing.T) {
 	q := newTestDiscoveryDQue(t)
 
 	q.Close()
-	// A second (and third) Close must not panic and must not error.
 	q.Close()
 	q.Close()
 }
@@ -89,8 +96,9 @@ func TestDiscoveryDQueAdapter_LenTracksSize(t *testing.T) {
 		t.Fatalf("IsEmpty() = false on fresh queue, want true")
 	}
 
+	item := files.DiscoveryPathWork{Path: []byte("item"), MtimeUnix: 1, SizeBytes: 2}
 	for i := 1; i <= 3; i++ {
-		if err := q.Enqueue("item"); err != nil {
+		if err := q.Enqueue(item); err != nil {
 			t.Fatalf("Enqueue #%d: %v", i, err)
 		}
 		if got := q.Len(); got != i {
@@ -114,9 +122,9 @@ func TestMapDiscoveryDequeueResult(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		ptr     *string
+		ptr     *files.DiscoveryPathWork
 		err     error
-		wantVal string
+		wantVal files.DiscoveryPathWork
 		wantErr error
 	}{
 		{
@@ -136,22 +144,22 @@ func TestMapDiscoveryDequeueResult(t *testing.T) {
 		},
 		{
 			name:    "present item with nil err returns item",
-			ptr:     new("/a.jpg"),
-			wantVal: "/a.jpg",
+			ptr:     &files.DiscoveryPathWork{Path: []byte("/a.jpg"), MtimeUnix: 1, SizeBytes: 2},
+			wantVal: files.DiscoveryPathWork{Path: []byte("/a.jpg"), MtimeUnix: 1, SizeBytes: 2},
 		},
 		{
 			name:    "present item with cleanup err keeps item (no drop)",
-			ptr:     new("/b.png"),
+			ptr:     &files.DiscoveryPathWork{Path: []byte("/b.png"), MtimeUnix: 3, SizeBytes: 4},
 			err:     cleanupErr,
-			wantVal: "/b.png",
+			wantVal: files.DiscoveryPathWork{Path: []byte("/b.png"), MtimeUnix: 3, SizeBytes: 4},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			val, err := mapDiscoveryDequeueResult(tt.ptr, tt.err)
-			if val != tt.wantVal {
-				t.Errorf("val = %q, want %q", val, tt.wantVal)
+			if !discoveryPathWorkEqual(val, tt.wantVal) {
+				t.Errorf("val = %+v, want %+v", val, tt.wantVal)
 			}
 			if tt.wantErr == nil {
 				if err != nil {

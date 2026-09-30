@@ -1320,9 +1320,13 @@ func TestThumbsDBAttach(t *testing.T) {
 	thumbsDBPath := filepath.Join(tempDir, "thumbs.db")
 
 	// Initialize main database via migration
-	mainMigrator, err := migrations.NewMigrator(mainDBPath)
+	d, err := iofs.New(migrations.FS, "migrations")
 	if err != nil {
-		t.Fatalf("NewMigrator for main DB: %v", err)
+		t.Fatalf("iofs for main DB: %v", err)
+	}
+	mainMigrator, err := migrate.NewWithSourceInstance("iofs", d, "sqlite://"+filepath.ToSlash(mainDBPath))
+	if err != nil {
+		t.Fatalf("migrate for main DB: %v", err)
 	}
 	if upErr := mainMigrator.Up(); upErr != nil && !errors.Is(upErr, migrate.ErrNoChange) {
 		mainMigrator.Close()
@@ -1379,9 +1383,13 @@ func TestThumbsDBAttachPragmas(t *testing.T) {
 	thumbsDBPath := filepath.Join(tempDir, "thumbs.db")
 
 	// Initialize main database via migration
-	mainMigrator, err := migrations.NewMigrator(mainDBPath)
+	d, err := iofs.New(migrations.FS, "migrations")
 	if err != nil {
-		t.Fatalf("NewMigrator for main DB: %v", err)
+		t.Fatalf("iofs for main DB: %v", err)
+	}
+	mainMigrator, err := migrate.NewWithSourceInstance("iofs", d, "sqlite://"+filepath.ToSlash(mainDBPath))
+	if err != nil {
+		t.Fatalf("migrate for main DB: %v", err)
 	}
 	if upErr := mainMigrator.Up(); upErr != nil && !errors.Is(upErr, migrate.ErrNoChange) {
 		mainMigrator.Close()

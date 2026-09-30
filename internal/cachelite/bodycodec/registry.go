@@ -132,13 +132,6 @@ func headMatches(head, prefix []byte) bool {
 	return true
 }
 
-// MaxMagicLen returns the length of the longest magic prefix in the registry.
-func (r *Registry) MaxMagicLen() int {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.maxMagic
-}
-
 // EncodeWith compresses src using the codec identified by writeCodecID.
 //
 // The identity string bypasses compression entirely. Inputs smaller than

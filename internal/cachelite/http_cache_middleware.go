@@ -115,23 +115,6 @@ func NewHTTPCacheMiddleware(db *dbconnpool.DbSQLConnPool, cfg CacheConfig, count
 	}
 }
 
-// NewHTTPCacheMiddlewareForTest creates middleware without production guard for testing.
-// Tests can use this to bypass the panic on nil submitFunc.
-func NewHTTPCacheMiddlewareForTest(
-	db *dbconnpool.DbSQLConnPool,
-	cfg CacheConfig,
-	counters *HTTPCacheCounterState,
-	submitFunc func(*HTTPCacheEntry), // test-only: accepts nil submitFunc
-) *HTTPCacheMiddleware {
-	return &HTTPCacheMiddleware{
-		db:         db,
-		config:     cfg,
-		counters:   counters,
-		submitFunc: submitFunc,
-		syncMode:   true,
-	}
-}
-
 // Config returns the cache configuration (e.g., CacheableRoutes).
 func (hcm *HTTPCacheMiddleware) Config() CacheConfig {
 	return hcm.config
@@ -196,16 +179,6 @@ func (hcm *HTTPCacheMiddleware) GetEntryCount() int64 {
 		return -1
 	}
 	return v
-}
-
-// HTTPCacheCountersForTest builds a counter state around an existing size
-// counter with BaselineRunning set to 0 (not running), for tests that only
-// track bytes. The signature is unchanged so callers unaffected.
-func HTTPCacheCountersForTest(size *atomic.Int64) *HTTPCacheCounterState {
-	if size == nil {
-		return nil
-	}
-	return &HTTPCacheCounterState{SizeBytes: size, EntryCount: &atomic.Int64{}, BaselineRunning: &atomic.Int32{}}
 }
 
 // parseGalleryFolderID extracts folder ID from a gallery path like /gallery/{id}.

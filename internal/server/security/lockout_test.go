@@ -173,63 +173,6 @@ func TestIncrementFailedAttempts(t *testing.T) {
 	}
 }
 
-func TestFormatLockoutDuration(t *testing.T) {
-	now := int64(1640000000)
-
-	tests := []struct {
-		name        string
-		lockedUntil int64
-		now         int64
-		want        string
-	}{
-		{
-			name:        "expired",
-			lockedUntil: now - 100,
-			now:         now,
-			want:        "0 minutes",
-		},
-		{
-			name:        "one minute",
-			lockedUntil: now + 60,
-			now:         now,
-			want:        "1 minute",
-		},
-		{
-			name:        "30 minutes",
-			lockedUntil: now + 1800,
-			now:         now,
-			want:        "30 minutes",
-		},
-		{
-			name:        "one hour",
-			lockedUntil: now + 3600,
-			now:         now,
-			want:        "1 hour",
-		},
-		{
-			name:        "two hours",
-			lockedUntil: now + 7200,
-			now:         now,
-			want:        "2 hours",
-		},
-		{
-			name:        "90 minutes (1.5 hours, rounds to hours)",
-			lockedUntil: now + 5400,
-			now:         now,
-			want:        "1 hour",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := FormatLockoutDuration(tt.lockedUntil, tt.now)
-			if got != tt.want {
-				t.Errorf("FormatLockoutDuration() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestLockoutThreshold(t *testing.T) {
 	if LockoutThreshold != 3 {
 		t.Errorf("LockoutThreshold = %v, want 3", LockoutThreshold)

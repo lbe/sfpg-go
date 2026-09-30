@@ -484,3 +484,28 @@ func TestLoginRateLimit_Returns429(t *testing.T) {
 		loginResp.Body.Close()
 	}
 }
+
+// TestPprof_ForwardProxyHeadersReturn404 verifies pprof is blocked when standard
+// reverse-proxy forward headers are present, even for an authenticated admin session.
+func TestPprof_ForwardProxyHeadersReturn404(t *testing.T) {
+	client := newClient()
+	login(t, client)
+
+	req, err := http.NewRequest(http.MethodGet, serverURL+"/debug/pprof/", nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.Header.Set("Origin", serverURL)
+	req.Header.Set("X-Forwarded-For", "203.0.113.1")
+	req.Header.Set("X-Forwarded-Proto", "https")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", resp.StatusCode)
+	}
+}

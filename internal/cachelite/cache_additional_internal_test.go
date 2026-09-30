@@ -212,7 +212,7 @@ func TestHTTPCacheMiddleware_Config(t *testing.T) {
 	db := createTestDBPoolInternal(t)
 	cfg := CacheConfig{MaxTotalSize: 123}
 	dummySubmit := func(entry *HTTPCacheEntry) {}
-	mw := NewHTTPCacheMiddlewareForTest(db, cfg, nil, dummySubmit)
+	mw := newHTTPCacheMiddlewareForTest(db, cfg, nil, dummySubmit)
 
 	got := mw.Config()
 	if got.MaxTotalSize != cfg.MaxTotalSize {
@@ -241,7 +241,7 @@ func TestGetSessionIDForPreload(t *testing.T) {
 	db := createTestDBPoolInternal(t)
 	cfg := CacheConfig{SessionCookieName: "session"}
 	dummySubmit := func(entry *HTTPCacheEntry) {}
-	mw := NewHTTPCacheMiddlewareForTest(db, cfg, nil, dummySubmit)
+	mw := newHTTPCacheMiddlewareForTest(db, cfg, nil, dummySubmit)
 
 	req := httptest.NewRequest(http.MethodGet, "/gallery/1", nil)
 	req.RemoteAddr = "10.0.0.1:1234"
@@ -270,7 +270,7 @@ func TestMaybeTriggerGalleryPreload(t *testing.T) {
 		},
 	}
 	dummySubmit := func(entry *HTTPCacheEntry) {}
-	mw := NewHTTPCacheMiddlewareForTest(db, cfg, nil, dummySubmit)
+	mw := newHTTPCacheMiddlewareForTest(db, cfg, nil, dummySubmit)
 
 	req := httptest.NewRequest(http.MethodGet, "/gallery/42", nil)
 	req.Header.Set("Accept-Encoding", "gzip")

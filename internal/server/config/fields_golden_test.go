@@ -256,13 +256,13 @@ func TestGoldenBaseline(t *testing.T) {
 	t.Run("restartRequiredKeys", func(t *testing.T) {
 		got := restartRequiredKeys(goldenConfig, otherConfig)
 		slices.Sort(got)
-		// 25 restart-required dbKeys from the design block.
+		// 24 restart-required dbKeys from the design block.
 		want := []string{
 			"cache_cleanup_interval", "cache_max_entry_size", "cache_max_size",
 			"cache_max_time", "db_max_pool_size", "db_min_idle_connections",
 			"db_optimize_interval", "db_pool_monitor_interval",
 			"enable_http_cache", "image_directory",
-			"listener_address", "listener_port", "log_directory", "log_level",
+			"listener_address", "listener_port", "log_directory",
 			"log_retention_count", "log_rollover", "queue_size",
 			"session_http_only", "session_max_age",
 			"session_same_site", "session_secure", "worker_pool_max",

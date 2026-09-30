@@ -14,7 +14,7 @@ import (
 // --- FolderThumbnailByID Tests ---
 
 func TestFolderThumbnailByID_NoTile(t *testing.T) {
-	qh := &fakeHandlerQueries{folder: gallerydb.Folder{ID: 1, TileID: sql.NullInt64{Valid: false}}}
+	qh := &fakeHandlerQueries{Folder: gallerydb.Folder{ID: 1, TileID: sql.NullInt64{Valid: false}}}
 	gh := setupTestGalleryHandlers(t, qh)
 
 	req := httptest.NewRequest(http.MethodGet, "/thumbnail/folder/1", nil)
@@ -32,7 +32,7 @@ func TestFolderThumbnailByID_NoTile(t *testing.T) {
 }
 
 func TestFolderThumbnailByID_DBError(t *testing.T) {
-	qh := &fakeHandlerQueries{getFolderByIDErr: errors.New("db error")}
+	qh := &fakeHandlerQueries{GetFolderByIDErr: errors.New("db error")}
 	gh := setupTestGalleryHandlers(t, qh)
 
 	req := httptest.NewRequest(http.MethodGet, "/thumbnail/folder/1", nil)
@@ -62,8 +62,8 @@ func TestFolderThumbnailByID_InvalidID(t *testing.T) {
 
 func TestFolderThumbnailByID_ThumbnailNotFound(t *testing.T) {
 	qh := &fakeHandlerQueries{
-		folder:         gallerydb.Folder{ID: 1, TileID: sql.NullInt64{Int64: 5, Valid: true}},
-		thumbByFileErr: sql.ErrNoRows,
+		Folder:         gallerydb.Folder{ID: 1, TileID: sql.NullInt64{Int64: 5, Valid: true}},
+		ThumbByFileErr: sql.ErrNoRows,
 	}
 	gh := setupTestGalleryHandlers(t, qh)
 
@@ -83,8 +83,8 @@ func TestFolderThumbnailByID_ThumbnailNotFound(t *testing.T) {
 
 func TestFolderThumbnailByID_BlobReadError(t *testing.T) {
 	qh := &fakeHandlerQueries{
-		folder:       gallerydb.Folder{ID: 1, TileID: sql.NullInt64{Int64: 5, Valid: true}},
-		thumbBlobErr: errors.New("blob error"),
+		Folder:       gallerydb.Folder{ID: 1, TileID: sql.NullInt64{Int64: 5, Valid: true}},
+		ThumbBlobErr: errors.New("blob error"),
 	}
 	gh := setupTestGalleryHandlers(t, qh)
 
@@ -115,7 +115,7 @@ func TestFolderThumbnailByID_DBConnectionError(t *testing.T) {
 }
 
 func TestFolderThumbnailByID_FolderNotFound(t *testing.T) {
-	qh := &fakeHandlerQueries{getFolderByIDErr: sql.ErrNoRows}
+	qh := &fakeHandlerQueries{GetFolderByIDErr: sql.ErrNoRows}
 	gh := setupTestGalleryHandlers(t, qh)
 
 	req := httptest.NewRequest(http.MethodGet, "/thumbnail/folder/1", nil)
@@ -133,7 +133,7 @@ func TestFolderThumbnailByID_FolderNotFound(t *testing.T) {
 }
 
 func TestFolderThumbnailByID_Success(t *testing.T) {
-	qh := &fakeHandlerQueries{folder: gallerydb.Folder{ID: 1, TileID: sql.NullInt64{Int64: 5, Valid: true}}}
+	qh := &fakeHandlerQueries{Folder: gallerydb.Folder{ID: 1, TileID: sql.NullInt64{Int64: 5, Valid: true}}}
 	gh := setupTestGalleryHandlers(t, qh)
 
 	req := httptest.NewRequest(http.MethodGet, "/thumbnail/folder/1", nil)

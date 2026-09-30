@@ -14,18 +14,12 @@ import (
 	"github.com/lbe/sfpg-go/internal/server/interfaces"
 )
 
-var (
-	// managerSchedulerAddTaskFn wraps Scheduler.AddTask used by PreloadManager.
-	managerSchedulerAddTaskFn = func(s *scheduler.Scheduler, task scheduler.Task, mode scheduler.ExecutionMode, start time.Time) (string, error) {
-		return s.AddTask(task, mode, start)
-	}
-
-	// managerSchedulerRemoveTaskFn wraps Scheduler.RemoveTask used by PreloadManager
-	// during session-folder-change cancellation.
-	managerSchedulerRemoveTaskFn = func(s *scheduler.Scheduler, id string) error {
-		return s.RemoveTask(id)
-	}
-)
+// preloadManagerTestSeams holds optional test doubles for PreloadManager scheduler calls.
+// Nil func fields use production Scheduler methods.
+type preloadManagerTestSeams struct {
+	SchedulerAddTask    func(sched *scheduler.Scheduler, task scheduler.Task, mode scheduler.ExecutionMode, start time.Time) (string, error)
+	SchedulerRemoveTask func(sched *scheduler.Scheduler, id string) error
+}
 
 // PreloadManager manages the cache preload scheduler lifecycle with dynamic enable/disable support.
 // It implements PreloadService and can replace the scheduler instance when toggling.
@@ -47,6 +41,7 @@ type PreloadManager struct {
 	getHandler     func() http.Handler // Lazy: handler chain built after PreloadManager init
 	getETagVersion func() string
 	metrics        *PreloadMetrics
+	testSeams      preloadManagerTestSeams
 }
 
 // NewPreloadManager creates a new PreloadManager with the given cacheable routes.
@@ -164,6 +159,7 @@ func (pm *PreloadManager) ScheduleFolderPreload(ctx context.Context, folderID in
 	getETag := pm.getETagVersion
 	metrics := pm.metrics
 	routes := copyRoutes(pm.cacheableRoutes)
+	seams := pm.testSeams
 	pm.mu.RUnlock()
 
 	if !enabled || sched == nil {
@@ -188,7 +184,13 @@ func (pm *PreloadManager) ScheduleFolderPreload(ctx context.Context, folderID in
 		if prevFolderID != 0 && taskTracker != nil {
 			taskIDs := taskTracker.CancelSessionTasks(sessionID)
 			for _, id := range taskIDs {
-				if err := managerSchedulerRemoveTaskFn(sched, id); err != nil {
+				var err error
+				if seams.SchedulerRemoveTask != nil {
+					err = seams.SchedulerRemoveTask(sched, id)
+				} else {
+					err = sched.RemoveTask(id)
+				}
+				if err != nil {
 					slog.Debug("cache preload remove task error", "id", id, "err", err)
 				}
 			}
@@ -214,7 +216,12 @@ func (pm *PreloadManager) ScheduleFolderPreload(ctx context.Context, folderID in
 	}
 
 	// Schedule FolderPreloadTask (fire-and-forget)
-	_, err := managerSchedulerAddTaskFn(sched, fpt, scheduler.OneTime, time.Now())
+	var err error
+	if seams.SchedulerAddTask != nil {
+		_, err = seams.SchedulerAddTask(sched, fpt, scheduler.OneTime, time.Now())
+	} else {
+		_, err = sched.AddTask(fpt, scheduler.OneTime, time.Now())
+	}
 	if err != nil {
 		slog.Warn("failed to schedule folder preload", "folder_id", folderID, "error", err)
 	}

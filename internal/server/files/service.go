@@ -5,30 +5,21 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"strings"
 
 	"github.com/lbe/sfpg-go/internal/dbconnpool"
 	"github.com/lbe/sfpg-go/internal/gallerydb"
 )
 
-// FileProcessor provides a high-level interface for file processing operations.
-// It abstracts away the details of processing files, checking modifications, and generating thumbnails.
+// FileProcessor provides a high-level interface for discovery file processing.
 type FileProcessor interface {
-	// ProcessFile processes a file at the given path, extracting metadata and generating
-	// an in-memory thumbnail. Returns the processed File struct for further operations.
-	ProcessFile(ctx context.Context, path string) (*File, error)
-
-	// ProcessFileWithConn processes a file using an existing database connection.
-	// This avoids per-file connection Get/Put overhead when the caller manages the connection lifecycle.
-	ProcessFileWithConn(ctx context.Context, path string, cpcRo *dbconnpool.CpConn) (*File, error)
-
-	// CheckIfModified checks if a file has been modified since it was last processed.
-	CheckIfModified(ctx context.Context, path string) (bool, error)
-
-	// GenerateThumbnail generates a thumbnail for the given file and updates the database.
-	GenerateThumbnail(ctx context.Context, file *File) error
+	// ProcessDiscoveryFile processes a dequeued discovery item. file must include
+	// walk mtime/size from DiscoveryPathWork.
+	ProcessDiscoveryFile(ctx context.Context, file *File) (*File, error)
 
 	// RecordInvalidFile records a path in the invalid_files table so it can be skipped on future runs.
-	RecordInvalidFile(ctx context.Context, path string, mtime, size int64, reason string) error
+	RecordInvalidFile(ctx context.Context, path string, mtime, size int64, reason string, folderID int64) error
 
 	// SubmitFileForWrite submits a fully-processed *File to the write batcher.
 	// The batcher handles all DB writes (UpsertPathChain, UpsertExif, UpsertThumbnail,
@@ -90,118 +81,37 @@ func NewFileProcessor(
 	}
 }
 
-func (s *fileProcessor) ProcessFile(ctx context.Context, path string) (*File, error) {
-	if path == "" {
+// ProcessDiscoveryFile runs the discovery worker pipeline on file (walk mtime/size
+// required). Does not look up DB existence; WriteFileInTx sets Exists at upsert time.
+func (s *fileProcessor) ProcessDiscoveryFile(ctx context.Context, file *File) (*File, error) {
+	if file == nil || file.Path == "" {
 		return nil, fmt.Errorf("empty path")
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	cpcRo, err := s.dbRoPool.Get()
-	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, dbconnpool.ErrPoolClosed) {
-			if ctxErr := ctx.Err(); ctxErr != nil {
-				return nil, ctxErr
-			}
-			return nil, err
-		}
-		return nil, fmt.Errorf("get RO connection: %w", err)
+	file.ImagesDir = s.imagesDir
+	if !file.File.Mtime.Valid || !file.File.SizeBytes.Valid {
+		return nil, fmt.Errorf("file walk metadata missing: mtime and size required")
 	}
-	defer s.dbRoPool.Put(cpcRo)
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	file := &File{ImagesDir: s.imagesDir, Path: path}
-	if err := ProcessFile(ctx, cpcRo, file); err != nil {
+	if err := processDiscoveryWorkerFile(file); err != nil {
 		return nil, err
 	}
 	return file, nil
 }
 
-func (s *fileProcessor) ProcessFileWithConn(ctx context.Context, path string, cpcRo *dbconnpool.CpConn) (*File, error) {
-	if path == "" {
-		return nil, fmt.Errorf("empty path")
+func galleryParentDirForFile(galleryPath string) string {
+	dir := filepath.ToSlash(filepath.Dir(galleryPath))
+	if dir == "." {
+		return ""
 	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if cpcRo == nil {
-		return nil, fmt.Errorf("nil connection")
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	file := &File{ImagesDir: s.imagesDir, Path: path}
-	if err := ProcessFile(ctx, cpcRo, file); err != nil {
-		return nil, err
-	}
-	return file, nil
+	return strings.TrimPrefix(dir, "/")
 }
 
-func (s *fileProcessor) CheckIfModified(ctx context.Context, path string) (bool, error) {
-	if path == "" {
-		return false, fmt.Errorf("empty path")
-	}
-	if err := ctx.Err(); err != nil {
-		return false, err
-	}
-	cpcRo, err := s.dbRoPool.Get()
-	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, dbconnpool.ErrPoolClosed) {
-			if e := ctx.Err(); e != nil {
-				return false, e
-			}
-			return false, err
-		}
-		return false, fmt.Errorf("get RO connection: %w", err)
-	}
-	defer s.dbRoPool.Put(cpcRo)
-	if err := ctx.Err(); err != nil {
-		return false, err
-	}
-	file := &File{ImagesDir: s.imagesDir, Path: path}
-	return CheckIfFileModified(ctx, cpcRo, file)
-}
-
-func (s *fileProcessor) GenerateThumbnail(ctx context.Context, file *File) error {
-	if file == nil {
-		return fmt.Errorf("nil file")
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	cpcRw, err := s.dbRwPool.Get()
-	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, dbconnpool.ErrPoolClosed) {
-			if e := ctx.Err(); e != nil {
-				return e
-			}
-			return err
-		}
-		return fmt.Errorf("get RW connection: %w", err)
-	}
-	defer s.dbRwPool.Put(cpcRw)
-	cpcRo, err := s.dbRoPool.Get()
-	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, dbconnpool.ErrPoolClosed) {
-			if e := ctx.Err(); e != nil {
-				return e
-			}
-			return err
-		}
-		return fmt.Errorf("get RO connection: %w", err)
-	}
-	defer s.dbRoPool.Put(cpcRo)
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return GenerateThumbnailAndUpdateDbIfNeeded(ctx, cpcRw, cpcRo, file, s.importerFactory)
-}
-
-func (s *fileProcessor) RecordInvalidFile(ctx context.Context, path string, mtime, size int64, reason string) error {
+func (s *fileProcessor) RecordInvalidFile(ctx context.Context, path string, mtime, size int64, reason string, folderID int64) error {
 	reasonVal := sql.NullString{String: reason, Valid: reason != ""}
 	params := gallerydb.UpsertInvalidFileParams{
-		Path: path, Mtime: mtime, Size: size, Reason: reasonVal,
+		Path: path, Mtime: mtime, Size: size, Reason: reasonVal, FolderID: folderID,
 	}
 
 	cpcRw, getErr := s.dbRwPool.Get()
@@ -210,6 +120,23 @@ func (s *fileProcessor) RecordInvalidFile(ctx context.Context, path string, mtim
 	}
 	defer s.dbRwPool.Put(cpcRw)
 	return cpcRw.Queries.UpsertInvalidFile(ctx, params)
+}
+
+func folderIDForInvalidGalleryPath(ctx context.Context, fp *fileProcessor, galleryPath string) (int64, error) {
+	parentDir := galleryParentDirForFile(galleryPath)
+	cpcRw, err := fp.dbRwPool.Get()
+	if err != nil {
+		return 0, fmt.Errorf("get RW connection: %w", err)
+	}
+	defer fp.dbRwPool.Put(cpcRw)
+	folderID, err := cpcRw.Queries.GetFolderIDByPath(ctx, parentDir)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, fmt.Errorf("no folder for gallery path parent %q", parentDir)
+		}
+		return 0, err
+	}
+	return folderID, nil
 }
 
 func (s *fileProcessor) SubmitFileForWrite(file *File) error {

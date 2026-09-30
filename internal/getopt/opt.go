@@ -3,8 +3,10 @@
 package getopt
 
 import (
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -49,6 +51,7 @@ type Opt struct {
 	RestoreLastKnownGood OptBool   // Restore last known good configuration from database on startup
 	IncrementETag        OptBool   // Increment application-wide ETag version on startup
 	CacheBatchLoad       OptBool   // Run cache batch load and exit (CLI one-shot)
+	LogLevel             OptString // Application log level: debug, info, warn, error
 }
 
 // defaultOpt returns an Opt with all zero values (no defaults).
@@ -71,6 +74,9 @@ func Parse() Opt {
 
 	// Apply CLI flags (higher precedence, overrides env vars)
 	if err := applyCLIFlags(&opt); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			osExit(0)
+		}
 		usageExit(err.Error())
 	}
 
@@ -79,14 +85,6 @@ func Parse() Opt {
 		usageExit(err.Error())
 	}
 
-	return opt
-}
-
-// ParseEnvOnly reads configuration from environment variables only (no CLI flags).
-// Used by tests to parse env vars set with t.Setenv() without interfering with test flags.
-func ParseEnvOnly() Opt {
-	opt := defaultOpt()
-	applyEnvVars(&opt)
 	return opt
 }
 
@@ -102,51 +100,26 @@ func parseBoolEnv(v string) (bool, error) {
 	}
 }
 
+// osExit is a hookable exit function for testing.
+var osExit = os.Exit
+
 // usageExit is a hookable exit function for testing.
 var usageExit = func(msg string) {
 	if msg != "" {
 		fmt.Fprintf(os.Stderr, "Error: %s\n\n", msg)
 	}
-	fmt.Fprintf(os.Stderr, "Usage:\n")
-	flag.PrintDefaults()
-	os.Exit(1)
-}
-
-// getUsageExit returns the current usageExit function for testing.
-func getUsageExit() func(string) {
-	return usageExit
-}
-
-// setUsageExit sets the usageExit function for testing.
-func setUsageExit(fn func(string)) {
-	usageExit = fn
+	// The flag package already printed usage for many flag.Parse errors.
+	if !strings.HasPrefix(msg, "flag ") {
+		printCLIUsage(os.Stderr)
+	}
+	osExit(1)
 }
 
 // osGOOS is a testable hook for runtime.GOOS.
 var osGOOS = func() string { return runtime.GOOS }
 
-// getOsGOOS returns the current osGOOS function for testing.
-func getOsGOOS() func() string {
-	return osGOOS
-}
-
-// setOsGOOS sets the osGOOS function for testing.
-func setOsGOOS(fn func() string) {
-	osGOOS = fn
-}
-
 // osExecutable is a testable hook for os.Executable.
 var osExecutable = os.Executable
-
-// getOsExecutable returns the current osExecutable function for testing.
-func getOsExecutable() func() (string, error) {
-	return osExecutable
-}
-
-// setOsExecutable sets the osExecutable function for testing.
-func setOsExecutable(fn func() (string, error)) {
-	osExecutable = fn
-}
 
 // Phase 1.1: getExecutableDir returns the directory of the running executable.
 func getExecutableDir() (string, error) {
@@ -172,15 +145,6 @@ func getPlatformConfigDir() (string, error) {
 		return "", fmt.Errorf("HOME environment variable not set")
 	}
 	return filepath.Join(home, ".config", "sfpg"), nil
-}
-
-// Phase 1.3: fileExists checks if a path exists and is a readable file (not a directory).
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	if err != nil {
-		return false
-	}
-	return !info.IsDir()
 }
 
 // FindConfigFiles returns a list of config.yaml paths in precedence order.
@@ -226,11 +190,31 @@ func validateOpt(opt *Opt) error {
 			return fmt.Errorf("session-secret must be at least 32 bytes long (got %d bytes); generate a strong random secret via: head -c 48 /dev/urandom | base64", len(opt.SessionSecret.String))
 		}
 	}
+	if opt.LogLevel.IsSet {
+		level := strings.ToLower(strings.TrimSpace(opt.LogLevel.String))
+		if err := validateLogLevel(level); err != nil {
+			return err
+		}
+		opt.LogLevel.String = level
+	}
 	return nil
 }
 
-// applyEnvVars applies environment variable overrides to the provided Opt.
+func validateLogLevel(level string) error {
+	switch level {
+	case "debug", "info", "warn", "error":
+		return nil
+	default:
+		return fmt.Errorf("log level must be one of: debug, info, warn, error")
+	}
+}
+
+// ApplyEnvVars applies environment variable overrides to the provided Opt.
 // Sets IsSet=true for any values that are explicitly set via environment variables.
+func ApplyEnvVars(opt *Opt) {
+	applyEnvVars(opt)
+}
+
 func applyEnvVars(opt *Opt) {
 	if v := strings.TrimSpace(os.Getenv("SFG_PORT")); v != "" {
 		if p, err := strconv.Atoi(v); err == nil {
@@ -328,66 +312,114 @@ func applyEnvVars(opt *Opt) {
 			usageExit(fmt.Sprintf("invalid SFG_RESTORE_LAST_KNOWN_GOOD: %v", err))
 		}
 	}
+	if v := strings.TrimSpace(os.Getenv("SFG_LOG_LEVEL")); v != "" {
+		level := strings.ToLower(v)
+		if err := validateLogLevel(level); err != nil {
+			usageExit(fmt.Sprintf("invalid SFG_LOG_LEVEL: %v", err))
+		}
+		opt.LogLevel.String = level
+		opt.LogLevel.IsSet = true
+	}
+}
+
+type cliFlagBindings struct {
+	port                 *int
+	discover             *bool
+	restoreLastKnownGood *bool
+	debugDelay           *int
+	profile              *string
+	httpCache            *bool
+	cachePreload         *bool
+	unlockAccount        *string
+	incrementETag        *bool
+	cacheBatchLoad       *bool
+	logLevel             *string
+}
+
+func registerCLIFlags(fs *flag.FlagSet) cliFlagBindings {
+	return cliFlagBindings{
+		port:                 fs.Int("port", 0, "TCP port for the HTTP server"),
+		discover:             fs.Bool("discover", false, "Run discovery on startup"),
+		restoreLastKnownGood: fs.Bool("restore-last-known-good", false, "Restore last known good configuration from database on startup"),
+		debugDelay:           fs.Int("debug-delay-ms", 0, "Artificial debug delay in milliseconds"),
+		profile:              fs.String("profile", "", "Profiling mode: '', 'cpu', 'mem', 'block', etc."),
+		httpCache:            fs.Bool("http-cache", false, "Enable SQLite HTTP response caching"),
+		cachePreload:         fs.Bool("cache-preload", false, "Enable cache preloading when folders are opened"),
+		unlockAccount:        fs.String("unlock-account", "", "Unlock a locked account by username"),
+		incrementETag:        fs.Bool("increment-etag", false, "Increment application-wide ETag version on startup"),
+		cacheBatchLoad:       fs.Bool("cache-batch-load", false, "Run cache batch load (warm HTTP cache) and exit"),
+		logLevel:             fs.String("log-level", "", "Application log level: debug, info, warn, error"),
+	}
+}
+
+func newCLIFlagSet(output io.Writer) (*flag.FlagSet, cliFlagBindings) {
+	if output == nil {
+		output = os.Stderr
+	}
+	fs := flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
+	fs.SetOutput(output)
+	b := registerCLIFlags(fs)
+	fs.Usage = func() {
+		fmt.Fprintf(fs.Output(), "Usage of %s:\n", fs.Name())
+		fs.PrintDefaults()
+	}
+	return fs, b
+}
+
+func printCLIUsage(w io.Writer) {
+	fs, _ := newCLIFlagSet(w)
+	fs.Usage()
+}
+
+func applyCLIFlagVisit(fs *flag.FlagSet, b cliFlagBindings, opt *Opt) {
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "port":
+			opt.Port.Int = *b.port
+			opt.Port.IsSet = true
+		case "discover":
+			opt.RunFileDiscovery.Bool = *b.discover
+			opt.RunFileDiscovery.IsSet = true
+		case "restore-last-known-good":
+			opt.RestoreLastKnownGood.Bool = *b.restoreLastKnownGood
+			opt.RestoreLastKnownGood.IsSet = true
+		case "debug-delay-ms":
+			opt.DebugDelayMS.Int = *b.debugDelay
+			opt.DebugDelayMS.IsSet = true
+		case "profile":
+			opt.Profile.String = *b.profile
+			opt.Profile.IsSet = true
+		case "http-cache":
+			opt.EnableHTTPCache.Bool = *b.httpCache
+			opt.EnableHTTPCache.IsSet = true
+		case "cache-preload":
+			opt.EnableCachePreload.Bool = *b.cachePreload
+			opt.EnableCachePreload.IsSet = true
+		case "unlock-account":
+			opt.UnlockAccount.String = *b.unlockAccount
+			opt.UnlockAccount.IsSet = true
+		case "increment-etag":
+			opt.IncrementETag.Bool = *b.incrementETag
+			opt.IncrementETag.IsSet = true
+		case "cache-batch-load":
+			opt.CacheBatchLoad.Bool = *b.cacheBatchLoad
+			opt.CacheBatchLoad.IsSet = true
+		case "log-level":
+			opt.LogLevel.String = *b.logLevel
+			opt.LogLevel.IsSet = true
+		}
+	})
 }
 
 // applyCLIFlags parses CLI flags and sets IsSet=true for any flags that are provided.
 // CLI flags override environment variables (higher precedence).
 func applyCLIFlags(opt *Opt) error {
-	fs := flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-
-	// Use zero values as defaults for flag parsing (not opt values)
-	port := fs.Int("port", 0, "TCP port for the HTTP server")
-	discover := fs.Bool("discover", false, "Run discovery on startup")
-	restoreLastKnownGood := fs.Bool("restore-last-known-good", false, "Restore last known good configuration from database on startup")
-	debugDelay := fs.Int("debug-delay-ms", 0, "Artificial debug delay in milliseconds")
-	profile := fs.String("profile", "", "Profiling mode: '', 'cpu', 'mem', 'block', etc.")
-	httpCache := fs.Bool("http-cache", false, "Enable SQLite HTTP response caching")
-	cachePreload := fs.Bool("cache-preload", false, "Enable cache preloading when folders are opened")
-	unlockAccount := fs.String("unlock-account", "", "Unlock a locked account by username")
-	incrementETag := fs.Bool("increment-etag", false, "Increment application-wide ETag version on startup")
-	cacheBatchLoad := fs.Bool("cache-batch-load", false, "Run cache batch load (warm HTTP cache) and exit")
+	fs, b := newCLIFlagSet(os.Stderr)
 
 	if err := fs.Parse(os.Args[1:]); err != nil {
 		return err
 	}
 
-	// Check if flags were provided by checking if they differ from zero values
-	// or by using flag.Visit to see which flags were set
-	fs.Visit(func(f *flag.Flag) {
-		switch f.Name {
-		case "port":
-			opt.Port.Int = *port
-			opt.Port.IsSet = true
-		case "discover":
-			opt.RunFileDiscovery.Bool = *discover
-			opt.RunFileDiscovery.IsSet = true
-		case "restore-last-known-good":
-			opt.RestoreLastKnownGood.Bool = *restoreLastKnownGood
-			opt.RestoreLastKnownGood.IsSet = true
-		case "debug-delay-ms":
-			opt.DebugDelayMS.Int = *debugDelay
-			opt.DebugDelayMS.IsSet = true
-		case "profile":
-			opt.Profile.String = *profile
-			opt.Profile.IsSet = true
-		case "http-cache":
-			opt.EnableHTTPCache.Bool = *httpCache
-			opt.EnableHTTPCache.IsSet = true
-		case "cache-preload":
-			opt.EnableCachePreload.Bool = *cachePreload
-			opt.EnableCachePreload.IsSet = true
-		case "unlock-account":
-			opt.UnlockAccount.String = *unlockAccount
-			opt.UnlockAccount.IsSet = true
-		case "increment-etag":
-			opt.IncrementETag.Bool = *incrementETag
-			opt.IncrementETag.IsSet = true
-		case "cache-batch-load":
-			opt.CacheBatchLoad.Bool = *cacheBatchLoad
-			opt.CacheBatchLoad.IsSet = true
-		}
-	})
-
+	applyCLIFlagVisit(fs, b, opt)
 	return nil
 }

@@ -4,9 +4,7 @@ The application exposes standard Go `pprof` profiling endpoints, which are prote
 the same authentication system as the administrative interface. This guide explains how
 to authenticate via `curl` and capture profiling data.
 
-> **Important:** Pprof is available on **loopback only** (`127.0.0.1` / `::1`). The
-> public hostname will **not** work — you will receive a `404` regardless of your
-> session cookie.
+> **Important:** Pprof is for **direct loopback** access to the app process (`127.0.0.1` / `::1`) with **no** `X-Forwarded-*` / `Forwarded` headers. The public hostname (or any proxied request) returns **404** even with a valid session cookie. Stock Caddy configs respond **404** for `/debug/*` at the edge.
 
 ## 1. Authentication
 

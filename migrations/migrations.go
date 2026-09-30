@@ -31,31 +31,6 @@ var (
 	migrateNewWithSourceInstanceFn = migrate.NewWithSourceInstance
 )
 
-// NewMigrator creates a new migrator instance from the embedded migration files.
-// It initializes the migration engine using the embedded FS and connects it to the provided database path.
-// dbPath should be the SQLite database file path (e.g., "/tmp/test.db") or ":memory:" for in-memory.
-func NewMigrator(dbPath string) (*migrate.Migrate, error) {
-	d, err := iofsNewFn(FS, "migrations")
-	if err != nil {
-		return nil, fmt.Errorf("create migrations source: %w", err)
-	}
-
-	var dsn string
-	if dbPath == ":memory:" {
-		// Opaque URL form parses on Go 1.26.0+; sqlite://:memory: fails url.Parse there.
-		dsn = "sqlite::memory:"
-	} else {
-		dsn = "sqlite://" + filepath.ToSlash(dbPath)
-	}
-
-	m, err := migrateNewWithSourceInstanceFn("iofs", d, dsn)
-	if err != nil {
-		return nil, fmt.Errorf("initialize migrator: %w", err)
-	}
-
-	return m, nil
-}
-
 // NewThumbsMigrator creates a migrator for the thumbnail blob database (thumbs.db).
 func NewThumbsMigrator(dbPath string) (*migrate.Migrate, error) {
 	d, err := iofsNewFn(ThumbsFS, "thumbs")

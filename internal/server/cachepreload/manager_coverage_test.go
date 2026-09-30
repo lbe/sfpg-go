@@ -199,11 +199,8 @@ func TestTruncateSessionID(t *testing.T) {
 }
 
 func TestScheduleFolderPreload_MissingDeps(t *testing.T) {
-	origAdd := managerSchedulerAddTaskFn
-	defer func() { managerSchedulerAddTaskFn = origAdd }()
-
 	var addedTasks []scheduler.Task
-	managerSchedulerAddTaskFn = func(_ *scheduler.Scheduler, task scheduler.Task, _ scheduler.ExecutionMode, _ time.Time) (string, error) {
+	trackAdd := func(_ *scheduler.Scheduler, task scheduler.Task, _ scheduler.ExecutionMode, _ time.Time) (string, error) {
 		addedTasks = append(addedTasks, task)
 		return "task-id", nil
 	}
@@ -249,6 +246,7 @@ func TestScheduleFolderPreload_MissingDeps(t *testing.T) {
 			pm := NewPreloadManager([]string{"/gallery/"}, true)
 			defer pm.Shutdown()
 			requireScheduler(t, pm)
+			pm.testSeams.SchedulerAddTask = trackAdd
 
 			cfg := PreloadConfig{
 				TaskTracker:    &TaskTracker{},
@@ -271,18 +269,15 @@ func TestScheduleFolderPreload_MissingDeps(t *testing.T) {
 }
 
 func TestScheduleFolderPreload_NilHandler(t *testing.T) {
-	origAdd := managerSchedulerAddTaskFn
-	defer func() { managerSchedulerAddTaskFn = origAdd }()
-
 	var addedTasks []scheduler.Task
-	managerSchedulerAddTaskFn = func(_ *scheduler.Scheduler, task scheduler.Task, _ scheduler.ExecutionMode, _ time.Time) (string, error) {
-		addedTasks = append(addedTasks, task)
-		return "task-id", nil
-	}
 
 	pm := NewPreloadManager([]string{"/gallery/"}, true)
 	defer pm.Shutdown()
 	requireScheduler(t, pm)
+	pm.testSeams.SchedulerAddTask = func(_ *scheduler.Scheduler, task scheduler.Task, _ scheduler.ExecutionMode, _ time.Time) (string, error) {
+		addedTasks = append(addedTasks, task)
+		return "task-id", nil
+	}
 
 	cfg := PreloadConfig{
 		TaskTracker:    &TaskTracker{},
@@ -302,25 +297,18 @@ func TestScheduleFolderPreload_NilHandler(t *testing.T) {
 }
 
 func TestScheduleFolderPreload_CancelPreviousTasks(t *testing.T) {
-	origAdd := managerSchedulerAddTaskFn
-	origRemove := managerSchedulerRemoveTaskFn
-	defer func() {
-		managerSchedulerAddTaskFn = origAdd
-		managerSchedulerRemoveTaskFn = origRemove
-	}()
-
 	var removedIDs []string
-	managerSchedulerRemoveTaskFn = func(_ *scheduler.Scheduler, id string) error {
-		removedIDs = append(removedIDs, id)
-		return nil
-	}
-	managerSchedulerAddTaskFn = func(_ *scheduler.Scheduler, _ scheduler.Task, _ scheduler.ExecutionMode, _ time.Time) (string, error) {
-		return "new-task-id", nil
-	}
 
 	pm := NewPreloadManager([]string{"/gallery/"}, true)
 	defer pm.Shutdown()
 	requireScheduler(t, pm)
+	pm.testSeams.SchedulerRemoveTask = func(_ *scheduler.Scheduler, id string) error {
+		removedIDs = append(removedIDs, id)
+		return nil
+	}
+	pm.testSeams.SchedulerAddTask = func(_ *scheduler.Scheduler, _ scheduler.Task, _ scheduler.ExecutionMode, _ time.Time) (string, error) {
+		return "new-task-id", nil
+	}
 
 	sessionID := "session-cancel"
 	tt := &TaskTracker{}
@@ -346,23 +334,15 @@ func TestScheduleFolderPreload_CancelPreviousTasks(t *testing.T) {
 }
 
 func TestScheduleFolderPreload_CancelRemoveTaskError(t *testing.T) {
-	origAdd := managerSchedulerAddTaskFn
-	origRemove := managerSchedulerRemoveTaskFn
-	defer func() {
-		managerSchedulerAddTaskFn = origAdd
-		managerSchedulerRemoveTaskFn = origRemove
-	}()
-
-	managerSchedulerRemoveTaskFn = func(_ *scheduler.Scheduler, _ string) error {
-		return errors.New("remove failed")
-	}
-	managerSchedulerAddTaskFn = func(_ *scheduler.Scheduler, _ scheduler.Task, _ scheduler.ExecutionMode, _ time.Time) (string, error) {
-		return "new-task-id", nil
-	}
-
 	pm := NewPreloadManager([]string{"/gallery/"}, true)
 	defer pm.Shutdown()
 	requireScheduler(t, pm)
+	pm.testSeams.SchedulerRemoveTask = func(_ *scheduler.Scheduler, _ string) error {
+		return errors.New("remove failed")
+	}
+	pm.testSeams.SchedulerAddTask = func(_ *scheduler.Scheduler, _ scheduler.Task, _ scheduler.ExecutionMode, _ time.Time) (string, error) {
+		return "new-task-id", nil
+	}
 
 	sessionID := "session-cancel-err"
 	tt := &TaskTracker{}
@@ -384,16 +364,12 @@ func TestScheduleFolderPreload_CancelRemoveTaskError(t *testing.T) {
 }
 
 func TestScheduleFolderPreload_AddTaskError(t *testing.T) {
-	origAdd := managerSchedulerAddTaskFn
-	defer func() { managerSchedulerAddTaskFn = origAdd }()
-
-	managerSchedulerAddTaskFn = func(_ *scheduler.Scheduler, _ scheduler.Task, _ scheduler.ExecutionMode, _ time.Time) (string, error) {
-		return "", errors.New("scheduler full")
-	}
-
 	pm := NewPreloadManager([]string{"/gallery/"}, true)
 	defer pm.Shutdown()
 	requireScheduler(t, pm)
+	pm.testSeams.SchedulerAddTask = func(_ *scheduler.Scheduler, _ scheduler.Task, _ scheduler.ExecutionMode, _ time.Time) (string, error) {
+		return "", errors.New("scheduler full")
+	}
 
 	pm.Configure(PreloadConfig{
 		TaskTracker:    &TaskTracker{},

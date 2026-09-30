@@ -157,7 +157,7 @@ func DefaultConfig() *Config {
 
 		// Logging
 		LogDirectory:      "", // Will be set to {rootDir}/logs
-		LogLevel:          "debug",
+		LogLevel:          "info",
 		LogRollover:       "weekly",
 		LogRetentionCount: 7,
 

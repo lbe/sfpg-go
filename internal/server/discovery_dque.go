@@ -8,33 +8,37 @@ import (
 
 	"github.com/lbe/sfpg-go/internal/dque"
 	"github.com/lbe/sfpg-go/internal/queue"
+	"github.com/lbe/sfpg-go/internal/server/files"
 )
 
 // discoveryDQueItemsPerSegment is the number of items stored in each dque
 // segment file for the dedicated discovery backlog queue.
 const discoveryDQueItemsPerSegment = 1000
 
-// discoveryDQueAdapter adapts a *dque.DQue[string] to the queue.Queuer[string]
-// contract used by the discovery walker and its file workers.
+// discoveryDQueAdapter adapts a *dque.DQue[files.DiscoveryPathWork] to the
+// queue.Queuer[files.DiscoveryPathWork] contract used by the discovery walker
+// and its file workers.
 //
 // The adapter lives in the server package (not internal/queue) so that
 // internal/queue never depends on internal/dque.
 type discoveryDQueAdapter struct {
-	dq *dque.DQue[string]
+	dq *dque.DQue[files.DiscoveryPathWork]
 }
 
 // Compile-time assertion that the adapter satisfies the discovery queue contract.
-var _ queue.Queuer[string] = (*discoveryDQueAdapter)(nil)
+var _ queue.Queuer[files.DiscoveryPathWork] = (*discoveryDQueAdapter)(nil)
+
+var _ queue.Dequeuer[files.DiscoveryPathWork] = (*discoveryDQueAdapter)(nil)
 
 // newDiscoveryDQueAdapter opens (or creates) a dedicated discovery dque at
-// parentDir and returns it as a queue.Queuer[string]. The parent directory is
+// parentDir and returns it as a queue.Queuer[files.DiscoveryPathWork]. The parent directory is
 // created first (WriteBatcher pattern) and turbo mode is enabled. parentDir
 // must be a dedicated directory, not a wipe root shared with other state.
-func newDiscoveryDQueAdapter(parentDir string) (queue.Queuer[string], error) {
+func newDiscoveryDQueAdapter(parentDir string) (queue.Queuer[files.DiscoveryPathWork], error) {
 	if err := os.MkdirAll(parentDir, 0o755); err != nil {
 		return nil, fmt.Errorf("discovery dque: create parent dir %s: %w", parentDir, err)
 	}
-	dq, err := dque.New[string]("discovery", parentDir, discoveryDQueItemsPerSegment)
+	dq, err := dque.New[files.DiscoveryPathWork]("discovery", parentDir, discoveryDQueItemsPerSegment)
 	if err != nil {
 		return nil, fmt.Errorf("discovery dque: open queue in %s: %w", parentDir, err)
 	}
@@ -48,7 +52,7 @@ func newDiscoveryDQueAdapter(parentDir string) (queue.Queuer[string], error) {
 }
 
 // Enqueue appends an item to the discovery backlog.
-func (d *discoveryDQueAdapter) Enqueue(item string) error {
+func (d *discoveryDQueAdapter) Enqueue(item files.DiscoveryPathWork) error {
 	if err := d.dq.Enqueue(&item); err != nil {
 		if errors.Is(err, dque.ErrQueueClosed) {
 			return queue.ErrClosedQueue
@@ -64,7 +68,7 @@ func (d *discoveryDQueAdapter) Enqueue(item string) error {
 // error (the item was removed but segment cleanup failed). The adapter logs
 // that cleanup error but keeps the item: workers must keep processing it
 // rather than drop it. The mapping itself lives in mapDiscoveryDequeueResult.
-func (d *discoveryDQueAdapter) Dequeue() (string, error) {
+func (d *discoveryDQueAdapter) Dequeue() (files.DiscoveryPathWork, error) {
 	ptr, err := d.dq.Dequeue()
 	if ptr != nil && err != nil &&
 		!errors.Is(err, dque.ErrEmpty) && !errors.Is(err, dque.ErrQueueClosed) {
@@ -99,16 +103,16 @@ func (d *discoveryDQueAdapter) Close() {
 // removed). Such items are not dropped: the value is returned with a nil error
 // so workers keep processing it. The adapter's Dequeue is responsible for
 // logging that cleanup error.
-func mapDiscoveryDequeueResult(ptr *string, err error) (string, error) {
+func mapDiscoveryDequeueResult(ptr *files.DiscoveryPathWork, err error) (files.DiscoveryPathWork, error) {
 	if ptr != nil {
 		return *ptr, nil
 	}
 	switch {
 	case errors.Is(err, dque.ErrEmpty):
-		return "", queue.ErrEmptyQueue
+		return files.DiscoveryPathWork{}, queue.ErrEmptyQueue
 	case errors.Is(err, dque.ErrQueueClosed):
-		return "", queue.ErrClosedQueue
+		return files.DiscoveryPathWork{}, queue.ErrClosedQueue
 	default:
-		return "", err
+		return files.DiscoveryPathWork{}, err
 	}
 }

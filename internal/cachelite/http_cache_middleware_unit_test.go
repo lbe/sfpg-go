@@ -25,7 +25,7 @@ func TestHTTPCacheMiddleware_SetOnGalleryCacheHit(t *testing.T) {
 	db := createTestDBPool(t)
 	defer db.Close()
 
-	hcm := cachelite.NewHTTPCacheMiddlewareForTest(db, defaultUnitConfig(), nil, nil)
+	hcm := cachelite.NewHTTPCacheMiddleware(db, defaultUnitConfig(), nil, func(*cachelite.HTTPCacheEntry) {})
 
 	var called bool
 	var gotFolderID int64
@@ -68,7 +68,7 @@ func TestHTTPCacheMiddleware_UpdatePool(t *testing.T) {
 		BaselineRunning: &br,
 	}
 
-	hcm := cachelite.NewHTTPCacheMiddlewareForTest(db1, defaultUnitConfig(), counter, nil)
+	hcm := cachelite.NewHTTPCacheMiddleware(db1, defaultUnitConfig(), counter, func(*cachelite.HTTPCacheEntry) {})
 
 	// Initial pool (db1) — counters are 0.
 	if count := hcm.GetEntryCount(); count != 0 {
@@ -107,7 +107,7 @@ func TestHTTPCacheMiddleware_GetSizeBytesAndEntryCount(t *testing.T) {
 			EntryCount: &entryCount,
 			// BaselineRunning left nil
 		}
-		hcm := cachelite.NewHTTPCacheMiddlewareForTest(db, defaultUnitConfig(), counter, nil)
+		hcm := cachelite.NewHTTPCacheMiddleware(db, defaultUnitConfig(), counter, func(*cachelite.HTTPCacheEntry) {})
 		if got := hcm.GetEntryCount(); got != -1 {
 			t.Errorf("uncalibrated GetEntryCount = %d, want -1", got)
 		}
@@ -126,7 +126,7 @@ func TestHTTPCacheMiddleware_GetSizeBytesAndEntryCount(t *testing.T) {
 			EntryCount:      &entryCount,
 			BaselineRunning: &br,
 		}
-		hcm := cachelite.NewHTTPCacheMiddlewareForTest(db, defaultUnitConfig(), counter, nil)
+		hcm := cachelite.NewHTTPCacheMiddleware(db, defaultUnitConfig(), counter, func(*cachelite.HTTPCacheEntry) {})
 		// No rows inserted — values come from atomics only.
 		if got := hcm.GetEntryCount(); got != 5 {
 			t.Errorf("calibrated GetEntryCount = %d, want 5", got)
@@ -146,7 +146,7 @@ func TestHTTPCacheMiddleware_GetSizeBytesAndEntryCount(t *testing.T) {
 			EntryCount:      &entryCount,
 			BaselineRunning: &br,
 		}
-		hcm := cachelite.NewHTTPCacheMiddlewareForTest(db, defaultUnitConfig(), counter, nil)
+		hcm := cachelite.NewHTTPCacheMiddleware(db, defaultUnitConfig(), counter, func(*cachelite.HTTPCacheEntry) {})
 		db.Close()
 		if got := hcm.GetEntryCount(); got != 3 {
 			t.Errorf("closed pool GetEntryCount = %d, want 3 (getters must not touch DB)", got)
@@ -165,7 +165,7 @@ func TestHTTPCacheMiddleware_GetSizeBytesAndEntryCount(t *testing.T) {
 			EntryCount:      &entryCount,
 			BaselineRunning: &br,
 		}
-		hcm := cachelite.NewHTTPCacheMiddlewareForTest(db, defaultUnitConfig(), counter, nil)
+		hcm := cachelite.NewHTTPCacheMiddleware(db, defaultUnitConfig(), counter, func(*cachelite.HTTPCacheEntry) {})
 		if got := hcm.GetEntryCount(); got != -1 {
 			t.Errorf("running baseline GetEntryCount = %d, want -1 (N/A)", got)
 		}
@@ -185,7 +185,7 @@ func TestHTTPCacheMiddleware_GetSizeBytesAndEntryCount(t *testing.T) {
 			EntryCount:      &entryCount,
 			BaselineRunning: &br,
 		}
-		hcm := cachelite.NewHTTPCacheMiddlewareForTest(db, defaultUnitConfig(), counter, nil)
+		hcm := cachelite.NewHTTPCacheMiddleware(db, defaultUnitConfig(), counter, func(*cachelite.HTTPCacheEntry) {})
 		if got := hcm.GetEntryCount(); got != 10 {
 			t.Errorf("running baseline GetEntryCount = %d, want 10", got)
 		}
@@ -203,7 +203,7 @@ func TestHTTPCacheMiddleware_GetSizeBytesAndEntryCount(t *testing.T) {
 			EntryCount:      &entryCount,
 			BaselineRunning: &br,
 		}
-		hcm := cachelite.NewHTTPCacheMiddlewareForTest(db, defaultUnitConfig(), counter, nil)
+		hcm := cachelite.NewHTTPCacheMiddleware(db, defaultUnitConfig(), counter, func(*cachelite.HTTPCacheEntry) {})
 		if got := hcm.GetEntryCount(); got != 0 {
 			t.Errorf("not running GetEntryCount = %d, want 0", got)
 		}
@@ -213,7 +213,7 @@ func TestHTTPCacheMiddleware_GetSizeBytesAndEntryCount(t *testing.T) {
 	})
 
 	t.Run("nil counters returns -1", func(t *testing.T) {
-		hcm := cachelite.NewHTTPCacheMiddlewareForTest(db, defaultUnitConfig(), nil, nil)
+		hcm := cachelite.NewHTTPCacheMiddleware(db, defaultUnitConfig(), nil, func(*cachelite.HTTPCacheEntry) {})
 		if got := hcm.GetEntryCount(); got != -1 {
 			t.Errorf("nil counters GetEntryCount = %d, want -1", got)
 		}

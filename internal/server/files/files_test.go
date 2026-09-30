@@ -11,15 +11,12 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/lbe/sfpg-go/internal/coords"
-	"github.com/lbe/sfpg-go/internal/dbconnpool"
 	"github.com/lbe/sfpg-go/internal/gallerydb"
 	"github.com/lbe/sfpg-go/internal/gallerylib"
 	"github.com/lbe/sfpg-go/internal/queue"
@@ -30,58 +27,6 @@ import (
 )
 
 // --- Fakes ---
-
-type fakeQueries struct{}
-
-func (f *fakeQueries) GetFileByPath(ctx context.Context, path string) (gallerydb.File, error) {
-	return gallerydb.File{}, sql.ErrNoRows
-}
-func (f *fakeQueries) GetInvalidFileByPath(ctx context.Context, path string) (gallerydb.InvalidFile, error) {
-	return gallerydb.InvalidFile{}, sql.ErrNoRows
-}
-func (f *fakeQueries) UpsertExif(ctx context.Context, p gallerydb.UpsertExifParams) error {
-	return nil
-}
-func (f *fakeQueries) GetThumbnailExistsViewByID(ctx context.Context, id int64) (bool, error) {
-	return false, sql.ErrNoRows
-}
-func (f *fakeQueries) GetFolderTileExistsViewByPath(ctx context.Context, path string) (bool, error) {
-	return false, sql.ErrNoRows
-}
-func (f *fakeQueries) WithTx(tx *sql.Tx) ThumbnailTx { return nil }
-
-type fakeQueriesForCheck struct {
-	ret gallerydb.File
-	err error
-}
-
-func (f *fakeQueriesForCheck) GetFileByPath(ctx context.Context, path string) (gallerydb.File, error) {
-	return f.ret, f.err
-}
-func (f *fakeQueriesForCheck) GetInvalidFileByPath(ctx context.Context, path string) (gallerydb.InvalidFile, error) {
-	return gallerydb.InvalidFile{}, sql.ErrNoRows
-}
-
-// fakeQueriesForInvalid extends fakeQueriesForCheck to implement invalid file queries
-type fakeQueriesForInvalid struct {
-	fakeQueriesForCheck
-	invalidRet gallerydb.InvalidFile
-	invalidErr error
-}
-
-func (f *fakeQueriesForInvalid) GetInvalidFileByPath(ctx context.Context, path string) (gallerydb.InvalidFile, error) {
-	return f.invalidRet, f.invalidErr
-}
-func (f *fakeQueriesForCheck) UpsertExif(ctx context.Context, p gallerydb.UpsertExifParams) error {
-	return nil
-}
-func (f *fakeQueriesForCheck) GetThumbnailExistsViewByID(ctx context.Context, id int64) (bool, error) {
-	return false, sql.ErrNoRows
-}
-func (f *fakeQueriesForCheck) GetFolderTileExistsViewByPath(ctx context.Context, path string) (bool, error) {
-	return false, sql.ErrNoRows
-}
-func (f *fakeQueriesForCheck) WithTx(tx *sql.Tx) ThumbnailTx { return nil }
 
 type fakeThumbnailTxSuccess struct {
 	calledReturnID bool
@@ -114,423 +59,6 @@ func (f *fakeThumbnailTxFailReturnID) UpsertThumbnailReturningID(ctx context.Con
 }
 func (f *fakeThumbnailTxFailReturnID) UpsertThumbnailBlob(ctx context.Context, p gallerydb.UpsertThumbnailBlobParams) error {
 	return nil
-}
-
-// TestIsImageFile tests the files.IsImageFile helper with various extensions.
-func TestIsImageFile(t *testing.T) {
-	tests := []struct {
-		path string
-		want bool
-	}{
-		{"photo.jpg", true},
-		{"photo.jpeg", true},
-		{"photo.png", true},
-		{"photo.gif", true},
-		{"photo.webp", true},
-		{"photo.avif", true},
-		{"photo.heic", true},
-		{"photo.heif", true},
-		{"photo.tif", true},
-		{"photo.tiff", true},
-		{"photo.JPG", true},
-		{"photo.PNG", true},
-		{"document.txt", false},
-		{"archive.zip", false},
-		{"no_extension", false},
-		{".bashrc", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.path, func(t *testing.T) {
-			if got := IsImageFile(tt.path); got != tt.want {
-				t.Errorf("IsImageFile() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestNeedsThumbnail(t *testing.T) {
-	t.Run("thumbnail does not exist", func(t *testing.T) {
-		_, roPool, rwPool, _ := createTestProcessor(t, nil)
-		ctx := context.Background()
-		cpcRw, err := rwPool.Get()
-		if err != nil {
-			t.Fatalf("get db connection: %v", err)
-		}
-		defer rwPool.Put(cpcRw)
-		imp := gallerylib.Importer{Q: cpcRw.Queries}
-		file, err := imp.UpsertPathChain(ctx, "test.jpg", 0, 0, "", 0, 0, 0, "image/jpeg")
-		if err != nil {
-			t.Fatalf("UpsertPathChain: %v", err)
-		}
-		cpcRwRo, err := roPool.Get()
-		if err != nil {
-			t.Fatalf("get ro: %v", err)
-		}
-		defer roPool.Put(cpcRwRo)
-		needs, err := NeedsThumbnail(ctx, cpcRwRo, file.ID)
-		if err != nil {
-			t.Fatalf("NeedsThumbnail: %v", err)
-		}
-		if !needs {
-			t.Errorf("NeedsThumbnail() = %v, want true", needs)
-		}
-	})
-	t.Run("thumbnail exists", func(t *testing.T) {
-		_, roPool, rwPool, _ := createTestProcessor(t, nil)
-		ctx := context.Background()
-		cpcRw, err := rwPool.Get()
-		if err != nil {
-			t.Fatalf("get db connection: %v", err)
-		}
-		defer rwPool.Put(cpcRw)
-		imp := gallerylib.Importer{Q: cpcRw.Queries}
-		file, err := imp.UpsertPathChain(ctx, "test2.jpg", 0, 0, "", 0, 0, 0, "image/jpeg")
-		if err != nil {
-			t.Fatalf("UpsertPathChain: %v", err)
-		}
-		_, err = cpcRw.Queries.UpsertThumbnailReturningID(ctx, gallerydb.UpsertThumbnailReturningIDParams{
-			FileID: file.ID, SizeLabel: "m", Width: 200, Height: 200, Format: "jpg",
-			CreatedAt: time.Now().Unix(), UpdatedAt: time.Now().Unix(),
-		})
-		if err != nil {
-			t.Fatalf("UpsertThumbnailReturningID: %v", err)
-		}
-		cpcRwRo, err := roPool.Get()
-		if err != nil {
-			t.Fatalf("get ro: %v", err)
-		}
-		defer roPool.Put(cpcRwRo)
-		needs, err := NeedsThumbnail(ctx, cpcRwRo, file.ID)
-		if err != nil {
-			t.Fatalf("NeedsThumbnail: %v", err)
-		}
-		if needs {
-			t.Errorf("NeedsThumbnail() = %v, want false", needs)
-		}
-	})
-
-	t.Run("query error", func(t *testing.T) {
-		_, roPool, _, _ := createTestProcessor(t, nil)
-		ctx := context.Background()
-		cpcRo, err := roPool.Get()
-		if err != nil {
-			t.Fatalf("get ro: %v", err)
-		}
-		defer roPool.Put(cpcRo)
-		// Close the prepared statements so the view query fails with a real error.
-		if closeErr := cpcRo.Queries.Close(); closeErr != nil {
-			t.Fatalf("close queries: %v", closeErr)
-		}
-		_, err = NeedsThumbnail(ctx, cpcRo, 1)
-		if err == nil {
-			t.Fatal("expected error when query fails")
-		}
-	})
-}
-
-func TestNeedsFolderTileUpdate(t *testing.T) {
-	t.Run("folder tile does not exist", func(t *testing.T) {
-		_, roPool, rwPool, _ := createTestProcessor(t, nil)
-		ctx := context.Background()
-		cpcRw, err := rwPool.Get()
-		if err != nil {
-			t.Fatalf("get db connection: %v", err)
-		}
-		defer rwPool.Put(cpcRw)
-		imp := gallerylib.Importer{Q: cpcRw.Queries}
-		_, err = imp.UpsertPathChain(ctx, "test-folder/test.jpg", 0, 0, "", 0, 0, 0, "image/jpeg")
-		if err != nil {
-			t.Fatalf("UpsertPathChain: %v", err)
-		}
-		cpcRwRo, err := roPool.Get()
-		if err != nil {
-			t.Fatalf("get ro: %v", err)
-		}
-		defer roPool.Put(cpcRwRo)
-		needs, err := NeedsFolderTileUpdate(ctx, cpcRwRo, "test-folder")
-		if err != nil {
-			t.Fatalf("NeedsFolderTileUpdate: %v", err)
-		}
-		if !needs {
-			t.Errorf("NeedsFolderTileUpdate() = %v, want true", needs)
-		}
-	})
-	t.Run("folder tile exists", func(t *testing.T) {
-		_, roPool, rwPool, _ := createTestProcessor(t, nil)
-		ctx := context.Background()
-		cpcRw, err := rwPool.Get()
-		if err != nil {
-			t.Fatalf("get db connection: %v", err)
-		}
-		defer rwPool.Put(cpcRw)
-		imp := gallerylib.Importer{Q: cpcRw.Queries}
-		file, err := imp.UpsertPathChain(ctx, "test-folder/test.jpg", 0, 0, "", 0, 0, 0, "image/jpeg")
-		if err != nil {
-			t.Fatalf("UpsertPathChain: %v", err)
-		}
-		thumbID, err := cpcRw.Queries.UpsertThumbnailReturningID(ctx, gallerydb.UpsertThumbnailReturningIDParams{
-			FileID: file.ID, SizeLabel: "m", Width: 200, Height: 200, Format: "jpg",
-			CreatedAt: time.Now().Unix(), UpdatedAt: time.Now().Unix(),
-		})
-		if err != nil {
-			t.Fatalf("UpsertThumbnailReturningID: %v", err)
-		}
-		err = cpcRw.Queries.UpdateFolderTileId(ctx, gallerydb.UpdateFolderTileIdParams{
-			ID: file.FolderID.Int64, TileID: sql.NullInt64{Int64: thumbID, Valid: true},
-		})
-		if err != nil {
-			t.Fatalf("UpdateFolderTileId: %v", err)
-		}
-		cpcRwRo, err := roPool.Get()
-		if err != nil {
-			t.Fatalf("get ro: %v", err)
-		}
-		defer roPool.Put(cpcRwRo)
-		needs, err := NeedsFolderTileUpdate(ctx, cpcRwRo, "test-folder")
-		if err != nil {
-			t.Fatalf("NeedsFolderTileUpdate: %v", err)
-		}
-		if needs {
-			t.Errorf("NeedsFolderTileUpdate() = %v, want false", needs)
-		}
-	})
-
-	t.Run("query error", func(t *testing.T) {
-		_, roPool, _, _ := createTestProcessor(t, nil)
-		ctx := context.Background()
-		cpcRo, err := roPool.Get()
-		if err != nil {
-			t.Fatalf("get ro: %v", err)
-		}
-		defer roPool.Put(cpcRo)
-		// Close the prepared statements so the view query fails with a real error.
-		if closeErr := cpcRo.Queries.Close(); closeErr != nil {
-			t.Fatalf("close queries: %v", closeErr)
-		}
-		_, err = NeedsFolderTileUpdate(ctx, cpcRo, "test-folder")
-		if err == nil {
-			t.Fatal("expected error when query fails")
-		}
-	})
-}
-
-func TestUpsertThumbnail(t *testing.T) {
-	t.Run("success", func(t *testing.T) {
-		_, roPool, rwPool, _ := createTestProcessor(t, nil)
-		ctx := context.Background()
-		cpcRw, err := rwPool.Get()
-		if err != nil {
-			t.Fatalf("get db connection: %v", err)
-		}
-		defer rwPool.Put(cpcRw)
-		imp := gallerylib.Importer{Q: cpcRw.Queries}
-		file, err := imp.UpsertPathChain(ctx, "test-file.jpg", 0, 0, "", 0, 0, 0, "image/jpeg")
-		if err != nil {
-			t.Fatalf("UpsertPathChain: %v", err)
-		}
-		thumbData := []byte{0xDE, 0xAD, 0xBE, 0xEF}
-		thumbnailID, err := UpsertThumbnail(ctx, cpcRw, file.ID, thumbData)
-		if err != nil {
-			t.Fatalf("UpsertThumbnail: %v", err)
-		}
-		if thumbnailID <= 0 {
-			t.Errorf("expected positive thumbnailID, got %d", thumbnailID)
-		}
-		cpcRwRo, err := roPool.Get()
-		if err != nil {
-			t.Fatalf("get ro: %v", err)
-		}
-		defer roPool.Put(cpcRwRo)
-		_, err = cpcRwRo.Queries.GetThumbnailsByFileID(ctx, file.ID)
-		if err != nil {
-			t.Errorf("GetThumbnailsByFileID: %v", err)
-		}
-		blobData, err := cpcRwRo.Queries.GetThumbnailBlobDataByID(ctx, thumbnailID)
-		if err != nil {
-			t.Errorf("GetThumbnailBlobDataByID: %v", err)
-		}
-		if !reflect.DeepEqual(blobData, thumbData) {
-			t.Errorf("blob mismatch: got %v, want %v", blobData, thumbData)
-		}
-	})
-
-	t.Run("tx-only error", func(t *testing.T) {
-		_, _, rwPool, _ := createTestProcessor(t, nil)
-		ctx := context.Background()
-		cpcRw, err := rwPool.Get()
-		if err != nil {
-			t.Fatalf("get db connection: %v", err)
-		}
-		defer rwPool.Put(cpcRw)
-
-		orig := UpsertThumbnailTxOnly
-		UpsertThumbnailTxOnly = func(qtx ThumbnailTx, ctx context.Context, fileID int64, thumb []byte) (int64, error) {
-			return 0, sql.ErrConnDone
-		}
-		defer func() { UpsertThumbnailTxOnly = orig }()
-
-		_, err = UpsertThumbnail(ctx, cpcRw, 1, []byte("thumb"))
-		if !errors.Is(err, sql.ErrConnDone) {
-			t.Fatalf("expected sql.ErrConnDone, got %v", err)
-		}
-	})
-}
-
-// --- CheckIfFileModified ---
-
-func TestCheckIfFileModified_Unchanged(t *testing.T) {
-	td := t.TempDir()
-	fn := filepath.Join(td, "img.dat")
-	if err := os.WriteFile(fn, []byte("abc"), 0o644); err != nil {
-		t.Fatalf("write temp file: %v", err)
-	}
-	info, err := os.Stat(fn)
-	if err != nil {
-		t.Fatalf("stat temp file: %v", err)
-	}
-	file := &File{ImagesDir: td, Path: "img.dat", File: gallerydb.File{Filename: "img.dat"}}
-	dbf := gallerydb.File{
-		ID:        7,
-		Mtime:     sql.NullInt64{Int64: info.ModTime().Unix(), Valid: true},
-		SizeBytes: sql.NullInt64{Int64: info.Size(), Valid: true},
-		Md5:       sql.NullString{String: "md5", Valid: true},
-		Phash:     sql.NullInt64{Int64: 123, Valid: true},
-		MimeType:  sql.NullString{String: "image/dat", Valid: true},
-		Width:     sql.NullInt64{Int64: 1, Valid: true},
-		Height:    sql.NullInt64{Int64: 1, Valid: true},
-	}
-	fq := &fakeQueriesForCheck{ret: dbf, err: nil}
-	unchanged, err := CheckIfFileModifiedWithQueries(context.Background(), fq, file)
-	if err != nil {
-		t.Fatalf("CheckIfFileModifiedWithQueries: %v", err)
-	}
-	if !unchanged {
-		t.Fatal("expected unchanged true, got false")
-	}
-	if !file.Ok || !file.Exists {
-		t.Fatal("expected file.Ok and file.Exists true")
-	}
-	if file.File.ID != 7 {
-		t.Fatalf("expected file.ID 7, got %v", file.File.ID)
-	}
-}
-
-func TestCheckIfFileModified_Changed(t *testing.T) {
-	td := t.TempDir()
-	fn := filepath.Join(td, "img2.dat")
-	if err := os.WriteFile(fn, []byte("abcd"), 0o644); err != nil {
-		t.Fatalf("write temp file: %v", err)
-	}
-	info, err := os.Stat(fn)
-	if err != nil {
-		t.Fatalf("stat temp file: %v", err)
-	}
-	file := &File{ImagesDir: td, Path: "img2.dat", File: gallerydb.File{Filename: "img2.dat"}}
-	dbf := gallerydb.File{
-		ID:        9,
-		Mtime:     sql.NullInt64{Int64: info.ModTime().Unix() - 1000, Valid: true},
-		SizeBytes: sql.NullInt64{Int64: info.Size() - 1, Valid: true},
-	}
-	fq := &fakeQueriesForCheck{ret: dbf, err: nil}
-	unchanged, err := CheckIfFileModifiedWithQueries(context.Background(), fq, file)
-	if err != nil {
-		t.Fatalf("CheckIfFileModifiedWithQueries: %v", err)
-	}
-	if unchanged {
-		t.Fatal("expected unchanged false, got true")
-	}
-}
-
-func TestCheckIfFileModified_FileMissing(t *testing.T) {
-	td := t.TempDir()
-	file := &File{ImagesDir: td, Path: "missing.jpg", File: gallerydb.File{Filename: "missing.jpg"}}
-	fq := &fakeQueriesForCheck{}
-	_, err := CheckIfFileModifiedWithQueries(context.Background(), fq, file)
-	if err == nil {
-		t.Fatal("expected error for missing file")
-	}
-}
-
-func TestCheckIfFileModified_PathIsDir(t *testing.T) {
-	td := t.TempDir()
-	dir := filepath.Join(td, "dir")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	file := &File{ImagesDir: td, Path: "dir", File: gallerydb.File{Filename: "dir"}}
-	fq := &fakeQueriesForCheck{}
-	_, err := CheckIfFileModifiedWithQueries(context.Background(), fq, file)
-	if err == nil {
-		t.Fatal("expected error for directory path")
-	}
-}
-
-// --- ProcessFile ---
-
-func TestProcessFile_NonImage(t *testing.T) {
-	td := t.TempDir()
-	fn := filepath.Join(td, "not-image.txt")
-	if err := os.WriteFile(fn, []byte("hello world"), 0o644); err != nil {
-		t.Fatalf("write temp file: %v", err)
-	}
-	file := &File{
-		ImagesDir: td,
-		Path:      "not-image.txt",
-		File:      gallerydb.File{Filename: "not-image.txt"},
-	}
-	fq := &fakeQueries{}
-	err := ProcessFileWithQueries(context.Background(), fq, file)
-	if err == nil {
-		t.Fatal("expected non-image error, got nil")
-	}
-	if !strings.Contains(err.Error(), "non-image") {
-		t.Fatalf("expected non-image error, got: %v", err)
-	}
-}
-
-func TestProcessFileWithQueries_CheckError(t *testing.T) {
-	td := t.TempDir()
-	fn := filepath.Join(td, "img.dat")
-	if err := os.WriteFile(fn, []byte("abc"), 0o644); err != nil {
-		t.Fatalf("write temp file: %v", err)
-	}
-	file := &File{ImagesDir: td, Path: "img.dat", File: gallerydb.File{Filename: "img.dat"}}
-	fq := &fakeQueriesForCheck{err: sql.ErrConnDone}
-	err := ProcessFileWithQueries(context.Background(), fq, file)
-	if err == nil {
-		t.Fatal("expected error from CheckIfFileModified")
-	}
-}
-
-func TestProcessFileWithQueries_Unchanged(t *testing.T) {
-	td := t.TempDir()
-	fn := filepath.Join(td, "img.dat")
-	if err := os.WriteFile(fn, []byte("abc"), 0o644); err != nil {
-		t.Fatalf("write temp file: %v", err)
-	}
-	info, err := os.Stat(fn)
-	if err != nil {
-		t.Fatalf("stat temp file: %v", err)
-	}
-	file := &File{ImagesDir: td, Path: "img.dat", File: gallerydb.File{Filename: "img.dat"}}
-	dbf := gallerydb.File{
-		ID:        11,
-		Mtime:     sql.NullInt64{Int64: info.ModTime().Unix(), Valid: true},
-		SizeBytes: sql.NullInt64{Int64: info.Size(), Valid: true},
-		Md5:       sql.NullString{String: "md5", Valid: true},
-		Phash:     sql.NullInt64{Int64: 123, Valid: true},
-		MimeType:  sql.NullString{String: "image/dat", Valid: true},
-		Width:     sql.NullInt64{Int64: 1, Valid: true},
-		Height:    sql.NullInt64{Int64: 1, Valid: true},
-	}
-	fq := &fakeQueriesForCheck{ret: dbf, err: nil}
-	if err := ProcessFileWithQueries(context.Background(), fq, file); err != nil {
-		t.Fatalf("ProcessFileWithQueries: %v", err)
-	}
-	if !file.Ok || !file.Exists {
-		t.Fatalf("expected file.Ok and file.Exists true")
-	}
 }
 
 // --- UpsertThumbnailTxOnly ---
@@ -925,8 +453,8 @@ func TestExtractExifData_XMPGPSFallback(t *testing.T) {
 func TestExtractExifData_Timeout(t *testing.T) {
 	// Use a shorter timeout for this test
 	origTimeout := exifTimeout
-	setExifTimeout(1 * time.Second)
-	defer setExifTimeout(origTimeout)
+	exifTimeout = 1 * time.Second
+	defer func() { exifTimeout = origTimeout }()
 
 	td := t.TempDir()
 	fn := filepath.Join(td, "poison.jpg")
@@ -1092,7 +620,7 @@ type fakeProcessor struct {
 	generated           int
 }
 
-func (f *fakeProcessor) ProcessFile(ctx context.Context, path string) (*File, error) {
+func (f *fakeProcessor) processPath(path string) (*File, error) {
 	if err := f.processErrByPath[path]; err != nil {
 		return nil, err
 	}
@@ -1115,16 +643,11 @@ func (f *fakeProcessor) ProcessFile(ctx context.Context, path string) (*File, er
 	}, nil
 }
 
-func (f *fakeProcessor) ProcessFileWithConn(ctx context.Context, path string, cpcRwRo *dbconnpool.CpConn) (*File, error) {
-	// Delegate to ProcessFile since fakeProcessor doesn't need DB connection
-	return f.ProcessFile(ctx, path)
+func (f *fakeProcessor) ProcessDiscoveryFile(ctx context.Context, file *File) (*File, error) {
+	return f.processPath(file.Path)
 }
 
-func (f *fakeProcessor) CheckIfModified(ctx context.Context, path string) (bool, error) {
-	return false, nil
-}
-
-func (f *fakeProcessor) RecordInvalidFile(ctx context.Context, path string, mtime, size int64, reason string) error {
+func (f *fakeProcessor) RecordInvalidFile(ctx context.Context, path string, mtime, size int64, reason string, folderID int64) error {
 	f.mu.Lock()
 	f.recordInvalidCalls = append(f.recordInvalidCalls, recordInvalidCall{path, mtime, size, reason})
 	f.mu.Unlock()
@@ -1132,16 +655,6 @@ func (f *fakeProcessor) RecordInvalidFile(ctx context.Context, path string, mtim
 }
 
 func (f *fakeProcessor) Close() error {
-	return nil
-}
-
-func (f *fakeProcessor) GenerateThumbnail(ctx context.Context, file *File) error {
-	if err := f.thumbErrByPath[file.Path]; err != nil {
-		return err
-	}
-	f.mu.Lock()
-	f.generated++
-	f.mu.Unlock()
 	return nil
 }
 
@@ -1186,7 +699,7 @@ func testRemovePrefix(normalizedDir, p string) (string, error) {
 
 // --- WalkImageDir ---
 
-func drainQueue(t *testing.T, q *queue.Queue[string]) []string {
+func drainQueue(t *testing.T, q *queue.Queue[DiscoveryPathWork]) []string {
 	t.Helper()
 	items := []string{}
 	for {
@@ -1197,13 +710,13 @@ func drainQueue(t *testing.T, q *queue.Queue[string]) []string {
 		if err != nil {
 			t.Fatalf("dequeue: %v", err)
 		}
-		items = append(items, item)
+		items = append(items, string(item.Path))
 	}
 	return items
 }
 
 func TestWalkImageDir_EnqueuesImages(t *testing.T) {
-	root := t.TempDir()
+	roPool, _, root, _ := createTestPoolsAndDir(t)
 	sub := filepath.Join(root, "sub")
 	if err := os.MkdirAll(sub, 0o755); err != nil {
 		t.Fatalf("mkdir sub: %v", err)
@@ -1225,23 +738,14 @@ func TestWalkImageDir_EnqueuesImages(t *testing.T) {
 	writeFile(root, "note.txt", []byte("x"))
 	writeFile(root, "zero.png", []byte{})
 
-	q := queue.NewQueue[string](16)
-	var wg sync.WaitGroup
-	var active atomic.Int64
-
-	deps := &WalkDeps{
-		Wg:             &wg,
-		QSendersActive: &active,
-		Ctx:            context.Background(),
-		ImagesDir:      root,
-		Q:              q,
-	}
+	q := queue.NewQueue[DiscoveryPathWork](16)
+	deps := walkDepsWithCatalog(t, root, roPool, q)
 
 	WalkImageDir(deps)
-	wg.Wait()
+	deps.Wg.Wait()
 
-	if active.Load() != 0 {
-		t.Fatalf("expected QSendersActive to be 0, got %d", active.Load())
+	if deps.QSendersActive.Load() != 0 {
+		t.Fatalf("expected QSendersActive to be 0, got %d", deps.QSendersActive.Load())
 	}
 
 	items := drainQueue(t, q)
@@ -1270,29 +774,20 @@ func TestWalkImageDir_EnqueuesImages(t *testing.T) {
 }
 
 func TestWalkImageDir_ClosedQueue(t *testing.T) {
-	root := t.TempDir()
+	roPool, _, root, _ := createTestPoolsAndDir(t)
 	if err := os.WriteFile(filepath.Join(root, "a.jpg"), []byte("a"), 0o644); err != nil {
 		t.Fatalf("write image: %v", err)
 	}
 
-	q := queue.NewQueue[string](4)
+	q := queue.NewQueue[DiscoveryPathWork](4)
 	q.Close()
-	var wg sync.WaitGroup
-	var active atomic.Int64
-
-	deps := &WalkDeps{
-		Wg:             &wg,
-		QSendersActive: &active,
-		Ctx:            context.Background(),
-		ImagesDir:      root,
-		Q:              q,
-	}
+	deps := walkDepsWithCatalog(t, root, roPool, q)
 
 	WalkImageDir(deps)
-	wg.Wait()
+	deps.Wg.Wait()
 
-	if active.Load() != 0 {
-		t.Fatalf("expected QSendersActive to be 0, got %d", active.Load())
+	if deps.QSendersActive.Load() != 0 {
+		t.Fatalf("expected QSendersActive to be 0, got %d", deps.QSendersActive.Load())
 	}
 
 	items := drainQueue(t, q)
@@ -1345,6 +840,7 @@ func TestCategorizeProcessError(t *testing.T) {
 	}{
 		{"nil", nil, "unknown"},
 		{"non-image", errors.New("non-image file: text/plain"), "non-image"},
+		{"jpeg-markers", errors.New("invalid JPEG markers: poison.jpg"), "jpeg-markers"},
 		{"decode", errors.New("failed to decode image config: invalid"), "decode"},
 		{"DecodeConfig", errors.New("DecodeConfig failed"), "decode"},
 		{"thumbnail", errors.New("failed to generate thumbnail"), "thumbnail"},
@@ -1364,77 +860,6 @@ func TestCategorizeProcessError(t *testing.T) {
 	}
 }
 
-func TestCheckIfFileModified_SkipsInvalidFile(t *testing.T) {
-	td := t.TempDir()
-	fn := filepath.Join(td, "img.dat")
-	if err := os.WriteFile(fn, []byte("test data"), 0o644); err != nil {
-		t.Fatalf("write temp file: %v", err)
-	}
-	info, err := os.Stat(fn)
-	if err != nil {
-		t.Fatalf("stat temp file: %v", err)
-	}
-	file := &File{ImagesDir: td, Path: "img.dat", File: gallerydb.File{Filename: "img.dat"}}
-
-	// Create invalid file entry that matches current mtime/size
-	invalidFile := gallerydb.InvalidFile{
-		Path:   "img.dat",
-		Mtime:  info.ModTime().Unix(),
-		Size:   info.Size(),
-		Reason: sql.NullString{String: "non-image file", Valid: true},
-	}
-
-	fq := &fakeQueriesForInvalid{
-		ret:        gallerydb.File{}, // No matching file in DB
-		err:        sql.ErrNoRows,
-		invalidRet: invalidFile,
-		invalidErr: nil,
-	}
-
-	unchanged, err := CheckIfFileModifiedWithQueries(context.Background(), fq, file)
-	if err != nil {
-		t.Fatalf("CheckIfFileModifiedWithQueries: %v", err)
-	}
-	if !unchanged {
-		t.Fatal("should skip processing when invalid file matches mtime/size")
-	}
-	if !file.Ok || file.Exists {
-		t.Fatal("expected file.Ok = true and file.Exists = false for invalid file skip")
-	}
-}
-
-func TestCheckIfFileModified_ReprocessesChangedInvalidFile(t *testing.T) {
-	td := t.TempDir()
-	fn := filepath.Join(td, "img.dat")
-	if err := os.WriteFile(fn, []byte("new content"), 0o644); err != nil {
-		t.Fatalf("write temp file: %v", err)
-	}
-	info, err := os.Stat(fn)
-	if err != nil {
-		t.Fatalf("stat temp file: %v", err)
-	}
-	file := &File{ImagesDir: td, Path: "img.dat", File: gallerydb.File{Filename: "img.dat"}}
-	// Invalid file entry with different mtime/size so we should reprocess
-	invalidFile := gallerydb.InvalidFile{
-		Path:   "img.dat",
-		Mtime:  info.ModTime().Unix() - 100,
-		Size:   info.Size() - 1,
-		Reason: sql.NullString{String: "non-image", Valid: true},
-	}
-	fq := &fakeQueriesForInvalid{
-		ret: gallerydb.File{}, err: sql.ErrNoRows,
-		invalidRet: invalidFile,
-		invalidErr: nil,
-	}
-	unchanged, err := CheckIfFileModifiedWithQueries(context.Background(), fq, file)
-	if err != nil {
-		t.Fatalf("CheckIfFileModifiedWithQueries: %v", err)
-	}
-	if unchanged {
-		t.Fatal("expected unchanged false when invalid file mtime/size differ from disk")
-	}
-}
-
 func TestRecordInvalidFile(t *testing.T) {
 	// Test expects synchronous DB write behavior (no batching)
 	processor, _, rwPool, _ := createTestProcessor(t, nil)
@@ -1443,17 +868,26 @@ func TestRecordInvalidFile(t *testing.T) {
 	mtime := int64(12345)
 	size := int64(99)
 	reason := "non-image file"
-	if err := processor.RecordInvalidFile(ctx, path, mtime, size, reason); err != nil {
-		t.Fatalf("RecordInvalidFile: %v", err)
+	cpcRw, err := rwPool.Get()
+	if err != nil {
+		t.Fatalf("get rw conn: %v", err)
+	}
+	rootID, err := cpcRw.Queries.GetFolderIDByPath(ctx, "")
+	rwPool.Put(cpcRw)
+	if err != nil {
+		t.Fatalf("GetFolderIDByPath root: %v", err)
+	}
+	if recErr := processor.RecordInvalidFile(ctx, path, mtime, size, reason, rootID); recErr != nil {
+		t.Fatalf("RecordInvalidFile: %v", recErr)
 	}
 
 	// Close processor (no batch flush needed with synchronous writes)
-	if err := processor.Close(); err != nil {
-		t.Fatalf("processor Close: %v", err)
+	if closeErr := processor.Close(); closeErr != nil {
+		t.Fatalf("processor Close: %v", closeErr)
 	}
 
 	// Verify the record was written directly to DB
-	cpcRw, err := rwPool.Get()
+	cpcRw, err = rwPool.Get()
 	if err != nil {
 		t.Fatalf("get rw conn: %v", err)
 	}
@@ -1468,5 +902,8 @@ func TestRecordInvalidFile(t *testing.T) {
 	}
 	if !inv.Reason.Valid || inv.Reason.String != reason {
 		t.Errorf("invalid_files reason: %v, want %q", inv.Reason, reason)
+	}
+	if inv.FolderID != rootID {
+		t.Errorf("invalid_files folder_id = %d, want %d", inv.FolderID, rootID)
 	}
 }

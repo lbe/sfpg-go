@@ -143,6 +143,7 @@ type InvalidFile struct {
 	Mtime     int64
 	Size      int64
 	Reason    sql.NullString
+	FolderID  int64
 	CreatedAt int64
 	UpdatedAt int64
 }

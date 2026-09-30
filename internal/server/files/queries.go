@@ -3,7 +3,6 @@ package files
 import (
 	"bytes"
 	"context"
-	"database/sql"
 
 	"github.com/lbe/sfpg-go/internal/gallerydb"
 )
@@ -21,17 +20,6 @@ type File struct {
 	XmpProps            []gallerydb.UpsertXMPPropertyParams
 	XmpRaw              gallerydb.UpsertXMPRawParams
 	HasValidJpegMarkers bool // Set by DetectMimeType for JPEG files
-}
-
-// QueriesForFiles is an interface containing the database methods needed by
-// the file processing logic. This abstraction allows for test fakes.
-type QueriesForFiles interface {
-	GetFileByPath(ctx context.Context, path string) (gallerydb.File, error)
-	GetInvalidFileByPath(ctx context.Context, path string) (gallerydb.InvalidFile, error)
-	UpsertExif(ctx context.Context, p gallerydb.UpsertExifParams) error
-	GetThumbnailExistsViewByID(ctx context.Context, id int64) (bool, error)
-	GetFolderTileExistsViewByPath(ctx context.Context, path string) (bool, error)
-	WithTx(tx *sql.Tx) ThumbnailTx
 }
 
 // ThumbnailTx contains the minimal transaction-scoped methods used by

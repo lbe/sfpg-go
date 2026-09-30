@@ -2,52 +2,35 @@ package server
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
 	"sync"
 	"testing"
 
-	"github.com/lbe/sfpg-go/internal/dbconnpool"
 	"github.com/lbe/sfpg-go/internal/scheduler"
 	"github.com/lbe/sfpg-go/internal/server/cachepreload"
 	"github.com/lbe/sfpg-go/internal/server/config"
 	"github.com/lbe/sfpg-go/internal/server/files"
 	"github.com/lbe/sfpg-go/internal/server/metrics"
-	"github.com/lbe/sfpg-go/internal/server/modulestate"
 )
 
-// recordingFileProcessor is a test fake that records ProcessFileWithConn calls.
+// recordingFileProcessor is a test fake that records ProcessDiscoveryFile calls.
 type recordingFileProcessor struct {
 	mu             sync.Mutex
 	processedPaths []string
-	connUsed       *dbconnpool.CpConn
 	closed         bool
 	events         *[]string
 }
 
-func (f *recordingFileProcessor) ProcessFile(ctx context.Context, path string) (*files.File, error) {
-	return nil, errors.New("ProcessFile should not be called by the pool")
-}
-
-func (f *recordingFileProcessor) ProcessFileWithConn(ctx context.Context, path string, cpcRo *dbconnpool.CpConn) (*files.File, error) {
+func (f *recordingFileProcessor) ProcessDiscoveryFile(ctx context.Context, file *files.File) (*files.File, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.processedPaths = append(f.processedPaths, path)
-	f.connUsed = cpcRo
-	return &files.File{Path: path, Ok: true, Exists: false}, nil
+	f.processedPaths = append(f.processedPaths, file.Path)
+	return &files.File{Path: file.Path, Ok: true, Exists: false}, nil
 }
 
-func (f *recordingFileProcessor) CheckIfModified(ctx context.Context, path string) (bool, error) {
-	return false, nil
-}
-
-func (f *recordingFileProcessor) GenerateThumbnail(ctx context.Context, file *files.File) error {
-	return nil
-}
-
-func (f *recordingFileProcessor) RecordInvalidFile(ctx context.Context, path string, mtime, size int64, reason string) error {
+func (f *recordingFileProcessor) RecordInvalidFile(ctx context.Context, path string, mtime, size int64, reason string, folderID int64) error {
 	return nil
 }
 
@@ -75,12 +58,6 @@ func (f *recordingFileProcessor) ProcessedPaths() []string {
 	out := make([]string, len(f.processedPaths))
 	copy(out, f.processedPaths)
 	return out
-}
-
-func (f *recordingFileProcessor) ConnUsed() *dbconnpool.CpConn {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.connUsed
 }
 
 // recordingPreloadManager is a test fake that records shutdown calls.
@@ -213,7 +190,7 @@ func TestSubsystemManager_Start_WipesPreviousDiscoveryBacklog(t *testing.T) {
 	if seedErr != nil {
 		t.Fatalf("seed adapter: %v", seedErr)
 	}
-	if err := seed.Enqueue("stale-path.jpg"); err != nil {
+	if err := seed.Enqueue(files.DiscoveryPathWork{Path: []byte("stale-path.jpg"), MtimeUnix: 1, SizeBytes: 1}); err != nil {
 		t.Fatalf("seed enqueue: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "leftover.txt"), []byte("junk"), 0o644); err != nil {
@@ -239,15 +216,15 @@ func TestSubsystemManager_Start_WipesPreviousDiscoveryBacklog(t *testing.T) {
 	}
 
 	// The fresh queue is usable for new discovery.
-	if err := mgr.q.Enqueue("fresh.jpg"); err != nil {
+	if err := mgr.q.Enqueue(files.DiscoveryPathWork{Path: []byte("fresh.jpg"), MtimeUnix: 1, SizeBytes: 1}); err != nil {
 		t.Fatalf("enqueue after wipe: %v", err)
 	}
 	got, err := mgr.q.Dequeue()
 	if err != nil {
 		t.Fatalf("dequeue after wipe: %v", err)
 	}
-	if got != "fresh.jpg" {
-		t.Errorf("dequeued %q, want %q", got, "fresh.jpg")
+	if string(got.Path) != "fresh.jpg" {
+		t.Errorf("dequeued %q, want %q", string(got.Path), "fresh.jpg")
 	}
 }
 
@@ -263,7 +240,7 @@ func TestSubsystemManager_Start_DoubleStart(t *testing.T) {
 	if mgr.q == nil {
 		t.Fatal("queue should be initialized after first Start")
 	}
-	if err := mgr.q.Enqueue("first.jpg"); err != nil {
+	if err := mgr.q.Enqueue(files.DiscoveryPathWork{Path: []byte("first.jpg"), MtimeUnix: 1, SizeBytes: 1}); err != nil {
 		t.Fatalf("enqueue after first Start: %v", err)
 	}
 
@@ -276,7 +253,7 @@ func TestSubsystemManager_Start_DoubleStart(t *testing.T) {
 	if got := mgr.q.Len(); got != 0 {
 		t.Errorf("queue Len after second Start = %d, want 0", got)
 	}
-	if err := mgr.q.Enqueue("second.jpg"); err != nil {
+	if err := mgr.q.Enqueue(files.DiscoveryPathWork{Path: []byte("second.jpg"), MtimeUnix: 1, SizeBytes: 1}); err != nil {
 		t.Fatalf("enqueue after second Start: %v", err)
 	}
 }
@@ -310,7 +287,7 @@ func TestSubsystemManager_ResetStats(t *testing.T) {
 	mgr := newUnitSubsystemManager(t)
 
 	// Wire processing stats directly (no Start needed).
-	mgr.processingStats = &files.ProcessingStats{}
+	ensureProcessingStats(mgr)
 	mgr.processingStats.TotalFound.Store(5)
 	mgr.processingStats.AlreadyExisting.Store(4)
 	mgr.processingStats.NewlyInserted.Store(3)
@@ -383,7 +360,7 @@ func TestSubsystemManager_WireMetrics_SkipsNilFields(t *testing.T) {
 func TestSubsystemManager_StartCacheBatchLoad_NotAvailable(t *testing.T) {
 	app := newAppForUnlock(t)
 	mgr := NewSubsystemManager(app.InfrastructureService)
-	mgr.moduleStateService = modulestate.NewService(app.dbRwPool)
+	ensureModuleStateService(mgr, app.dbRwPool)
 
 	res, err := mgr.StartCacheBatchLoad(context.Background())
 	if err != nil {

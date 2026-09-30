@@ -6,7 +6,7 @@ Use this to generate curl commands and SQL expectations for testing gallery and 
 
 ## 1. Folder entries expected for a gallery (subfolders)
 
-For **gallery/1** the app uses `GetFoldersViewsByParentIDOrderByName` with `parent_id = 1`. Equivalent SQL:
+For **gallery/1** the app uses `GetGalleryFolderThumbRowsByParentID` with `parent_id = 1` (id and name only). Equivalent SQL for all folder_view columns:
 
 ```sql
 -- Replace 1 with the gallery folder id (e.g. 1 for gallery/1)
@@ -29,7 +29,7 @@ Expected: one row per direct subfolder of folder 1; columns match `folder_view` 
 
 ## 2. File entries expected for a gallery (images in folder)
 
-For **gallery/1** the app uses `GetFileViewsByFolderIDOrderByFileName` with `folder_id = 1`. Equivalent SQL:
+For **gallery/1** the app uses `GetGalleryFileThumbRowsByFolderID` with `folder_id = 1` (id and filename only). Equivalent SQL for all file_view columns:
 
 ```sql
 -- Replace 1 with the gallery folder id (e.g. 1 for gallery/1)

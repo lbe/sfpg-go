@@ -1135,7 +1135,7 @@ func TestIntegration_CacheKeyFormatUpgrade_InvalidatesLegacyRows(t *testing.T) {
 		t.Fatal("expected v2 cache entry before hook call")
 	}
 
-	// Call the format check hook — stored version 2 < current 3, so it invalidates.
+	// Call the format check hook — stored version 2 < current, so it invalidates.
 	app.ensureHTTPCacheKeyFormatCurrent()
 
 	// Verify the v2 entry is gone (cache was rotated and v2 key not re-created).
@@ -1169,7 +1169,7 @@ func TestIntegration_CacheKeyFormat_CurrentVersionPreservesCache(t *testing.T) {
 	app, ctx := createAppWithContext(t)
 	defer app.Shutdown()
 
-	// Pre-seed the config so the hook sees the current version (3).
+	// Pre-seed the config so the hook sees the current version.
 	now := time.Now().Unix()
 	cpcRw, err := app.dbRwPool.Get()
 	if err != nil {
@@ -1201,7 +1201,7 @@ func TestIntegration_CacheKeyFormat_CurrentVersionPreservesCache(t *testing.T) {
 		t.Fatalf("StoreCacheEntry (v3): %v", err)
 	}
 
-	// Call the hook — with current version (3 >= 3), should NOT invalidate.
+	// Call the hook — with current version, should NOT invalidate.
 	app.ensureHTTPCacheKeyFormatCurrent()
 
 	// Verify the entry is still there.
@@ -1273,9 +1273,8 @@ func TestIntegration_TriggerDiscovery_RebuildsFileFolderIndex(t *testing.T) {
 	app := CreateApp(t)
 	defer app.Shutdown()
 
-	// processingStats must be non-nil so waitForFileProcessingDrain does not
-	// short-circuit. CreateApp sets q and fileProcessor but not processingStats.
-	app.SubsystemManager.processingStats = &files.ProcessingStats{}
+	// ensureProcessingStats so waitForFileProcessingDrain does not short-circuit.
+	ensureProcessingStats(app.SubsystemManager)
 
 	// Start pool with processingStats wired in so drain polls real counters.
 	app.SubsystemManager.pool.MinWorkers = 1
@@ -1424,20 +1423,30 @@ func TestIntegration_PprofLoopbackAndAuth(t *testing.T) {
 		remoteAddr string
 		useAuth    bool
 		want       int
+		setHeader  func(*http.Request)
 	}{
-		{"loopback_v4_unauth", "127.0.0.1:12345", false, http.StatusUnauthorized},
-		{"loopback_v4_auth", "127.0.0.1:12345", true, http.StatusOK},
-		{"loopback_v6_unauth", "[::1]:12345", false, http.StatusUnauthorized},
-		{"loopback_v6_auth", "[::1]:12345", true, http.StatusOK},
-		{"remote_unauth", "198.51.100.1:12345", false, http.StatusNotFound},
-		{"remote_auth", "198.51.100.1:12345", true, http.StatusNotFound},
-		{"mapped_v4_unauth", "[::ffff:127.0.0.1]:12345", false, http.StatusNotFound},
-		{"mapped_v4_auth", "[::ffff:127.0.0.1]:12345", true, http.StatusNotFound},
+		{"loopback_v4_unauth", "127.0.0.1:12345", false, http.StatusUnauthorized, nil},
+		{"loopback_v4_auth", "127.0.0.1:12345", true, http.StatusOK, nil},
+		{"loopback_v6_unauth", "[::1]:12345", false, http.StatusUnauthorized, nil},
+		{"loopback_v6_auth", "[::1]:12345", true, http.StatusOK, nil},
+		{"remote_unauth", "198.51.100.1:12345", false, http.StatusNotFound, nil},
+		{"remote_auth", "198.51.100.1:12345", true, http.StatusNotFound, nil},
+		{"mapped_v4_unauth", "[::ffff:127.0.0.1]:12345", false, http.StatusNotFound, nil},
+		{"mapped_v4_auth", "[::ffff:127.0.0.1]:12345", true, http.StatusNotFound, nil},
+		{"proxied_loopback_unauth", "127.0.0.1:12345", false, http.StatusNotFound, func(r *http.Request) {
+			r.Header.Set("X-Forwarded-For", "203.0.113.1")
+		}},
+		{"proxied_loopback_auth", "127.0.0.1:12345", true, http.StatusNotFound, func(r *http.Request) {
+			r.Header.Set("X-Forwarded-For", "203.0.113.1")
+		}},
 	}
 	for _, st := range subtests {
 		t.Run(st.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil)
 			req.RemoteAddr = st.remoteAddr
+			if st.setHeader != nil {
+				st.setHeader(req)
+			}
 			if st.useAuth {
 				req.AddCookie(authCookie)
 			}

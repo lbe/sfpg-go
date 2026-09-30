@@ -2,9 +2,7 @@
 package conditional
 
 import (
-	"database/sql"
 	"strings"
-	"time"
 )
 
 // MatchesETag checks if If-None-Match matches ETag (supports weak comparison).
@@ -36,25 +34,4 @@ func MatchesETag(ifNoneMatch, etag string) bool {
 	}
 
 	return false
-}
-
-// MatchesLastModified checks if If-Modified-Since matches Last-Modified.
-// Returns true if Last-Modified <= If-Modified-Since (not modified).
-func MatchesLastModified(ifModifiedSince string, lastModified sql.NullString) bool {
-	if !lastModified.Valid || ifModifiedSince == "" {
-		return false
-	}
-
-	lastMod, err := time.Parse(time.RFC1123, lastModified.String)
-	if err != nil {
-		return false
-	}
-
-	ifMod, err := time.Parse(time.RFC1123, ifModifiedSince)
-	if err != nil {
-		return false
-	}
-
-	// Truncate to seconds for comparison (HTTP times don't include nanoseconds)
-	return lastMod.Truncate(time.Second).Before(ifMod.Add(time.Second))
 }

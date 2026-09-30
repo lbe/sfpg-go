@@ -95,7 +95,7 @@ func TestCheckCache_ReturnsStoredEntry_Internal(t *testing.T) {
 
 	// Dummy submit function for internal tests (not used since we test internal methods directly)
 	dummySubmit := func(entry *HTTPCacheEntry) {}
-	mw := NewHTTPCacheMiddlewareForTest(db, CacheConfig{MaxTotalSize: 1}, nil, dummySubmit)
+	mw := newHTTPCacheMiddlewareForTest(db, CacheConfig{MaxTotalSize: 1}, nil, dummySubmit)
 	got, err := mw.checkCache(ctx, "check-key")
 	if err != nil {
 		t.Fatalf("checkCache returned error: %v", err)

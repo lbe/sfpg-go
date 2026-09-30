@@ -4,8 +4,7 @@ import (
 	"testing"
 
 	"github.com/lbe/sfpg-go/internal/cachelite/bodycodec"
-	"github.com/lbe/sfpg-go/internal/cachelite/bodycodec/fixtures"
-	"github.com/lbe/sfpg-go/internal/cachelite/bodycodec/htmlsniff"
+	"github.com/lbe/sfpg-go/internal/cachelite/bodycodec/testfixture"
 )
 
 func profileRegistry(b *testing.B) *bodycodec.Registry {
@@ -19,7 +18,7 @@ func profileRegistry(b *testing.B) *bodycodec.Registry {
 
 func loadProfileFixture(b *testing.B, name string) []byte {
 	b.Helper()
-	data, err := fixtures.Read(name)
+	data, err := testfixture.Read(name)
 	if err != nil {
 		b.Fatalf("read %s: %v", name, err)
 	}
@@ -83,10 +82,10 @@ func BenchmarkProfileMatchZstd(b *testing.B) {
 
 func BenchmarkProfileHTMLSniffLarge(b *testing.B) {
 	plain := loadProfileFixture(b, "gallery_large_1.html")
-	// LooksLikeHTML scans at most htmlsniff.HTMLScanLimit (4 KiB) — do not SetBytes(len(plain)).
+	// LooksLikeHTML scans at most htmlScanLimit (4 KiB) — do not SetBytes(len(plain)).
 	b.ReportAllocs()
 	for b.Loop() {
-		if !htmlsniff.LooksLikeHTML(plain) {
+		if !testfixture.LooksLikeHTML(plain) {
 			b.Fatal("expected html")
 		}
 	}

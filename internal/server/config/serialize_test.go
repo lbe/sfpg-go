@@ -36,16 +36,15 @@ func TestConfig_FromMap_LoadsETagVersion(t *testing.T) {
 		"listener_address": "0.0.0.0",
 		"listener_port":    "8080",
 		"etag_version":     "20260129-05",
-		// Add other required fields based on existing FromMap requirements
 	}
 
-	cfg, err := FromMap(m)
+	cfg, err := configFromStringMap(m)
 	if err != nil {
-		t.Fatalf("FromMap() error = %v", err)
+		t.Fatalf("configFromStringMap() error = %v", err)
 	}
 
 	if cfg.ETagVersion != "20260129-05" {
-		t.Errorf("FromMap() ETagVersion = %q, want %q", cfg.ETagVersion, "20260129-05")
+		t.Errorf("configFromStringMap() ETagVersion = %q, want %q", cfg.ETagVersion, "20260129-05")
 	}
 }
 
@@ -54,9 +53,9 @@ func TestConfig_RoundTrip_PreservesETagVersion(t *testing.T) {
 	original.ETagVersion = "20260129-42"
 
 	m := original.ToMap()
-	restored, err := FromMap(m)
+	restored, err := configFromStringMap(m)
 	if err != nil {
-		t.Fatalf("FromMap() error = %v", err)
+		t.Fatalf("configFromStringMap() error = %v", err)
 	}
 
 	if restored.ETagVersion != original.ETagVersion {

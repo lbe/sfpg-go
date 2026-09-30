@@ -3,6 +3,7 @@ package getopt
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -22,6 +23,7 @@ func resetEnv() {
 	os.Unsetenv("SEPG_SESSION_HTTPONLY")
 	os.Unsetenv("SEPG_SESSION_MAX_AGE")
 	os.Unsetenv("SEPG_SESSION_SAMESITE")
+	os.Unsetenv("SFG_LOG_LEVEL")
 }
 
 func resetFlags() {
@@ -121,6 +123,184 @@ func TestParse_CacheBatchLoadFlag(t *testing.T) {
 	}
 }
 
+func TestParse_LogLevelFlag(t *testing.T) {
+	resetEnv()
+	resetFlags()
+	os.Setenv("SEPG_SESSION_SECRET", validTestSecret)
+	os.Args = []string{"cmd", "-log-level=warn"}
+	opt := Parse()
+	if !opt.LogLevel.IsSet {
+		t.Fatal("expected LogLevel.IsSet=true")
+	}
+	if opt.LogLevel.String != "warn" {
+		t.Fatalf("expected log level warn, got %q", opt.LogLevel.String)
+	}
+}
+
+func TestParse_LogLevelEnvVar(t *testing.T) {
+	resetEnv()
+	resetFlags()
+	os.Setenv("SEPG_SESSION_SECRET", validTestSecret)
+	os.Setenv("SFG_LOG_LEVEL", "error")
+	opt := Parse()
+	if !opt.LogLevel.IsSet {
+		t.Fatal("expected LogLevel.IsSet=true from env")
+	}
+	if opt.LogLevel.String != "error" {
+		t.Fatalf("expected log level error, got %q", opt.LogLevel.String)
+	}
+}
+
+func TestParse_LogLevel_CLIOverridesEnv(t *testing.T) {
+	resetEnv()
+	resetFlags()
+	t.Setenv("SEPG_SESSION_SECRET", validTestSecret)
+	t.Setenv("SFG_LOG_LEVEL", "debug")
+	os.Args = []string{"cmd", "-log-level=info"}
+	opt := Parse()
+	if opt.LogLevel.String != "info" {
+		t.Fatalf("expected log level info from CLI, got %q", opt.LogLevel.String)
+	}
+}
+
+func TestParse_LogLevel_InvalidExits(t *testing.T) {
+	resetEnv()
+	resetFlags()
+	os.Setenv("SEPG_SESSION_SECRET", validTestSecret)
+	os.Args = []string{"cmd", "-log-level=verbose"}
+
+	oldExit := getUsageExit()
+	defer func() { setUsageExit(oldExit) }()
+
+	var exitMsg string
+	setUsageExit(func(msg string) {
+		exitMsg = msg
+		panic(msg)
+	})
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected usageExit panic for invalid log level")
+		}
+	}()
+
+	_ = Parse()
+	if exitMsg == "" || !strings.Contains(exitMsg, "log level") {
+		t.Fatalf("expected log level error in exit message, got %q", exitMsg)
+	}
+}
+
+func TestParse_LogLevel_InvalidEnvExits(t *testing.T) {
+	resetEnv()
+	resetFlags()
+	os.Setenv("SEPG_SESSION_SECRET", validTestSecret)
+	os.Setenv("SFG_LOG_LEVEL", "verbose")
+
+	oldExit := getUsageExit()
+	defer func() { setUsageExit(oldExit) }()
+
+	var exitMsg string
+	setUsageExit(func(msg string) {
+		exitMsg = msg
+		panic(msg)
+	})
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected usageExit panic for invalid SFG_LOG_LEVEL")
+		}
+	}()
+
+	_ = Parse()
+	if exitMsg == "" || !strings.Contains(exitMsg, "SFG_LOG_LEVEL") {
+		t.Fatalf("expected SFG_LOG_LEVEL error in exit message, got %q", exitMsg)
+	}
+}
+
+func TestParse_HelpFlagExitsZero(t *testing.T) {
+	resetEnv()
+	resetFlags()
+	os.Setenv("SEPG_SESSION_SECRET", validTestSecret)
+	os.Args = []string{"tmp/main", "-h"}
+
+	oldOsExit := getOsExit()
+	defer func() { setOsExit(oldOsExit) }()
+
+	exitCode := -1
+	setOsExit(func(code int) {
+		exitCode = code
+		panic("exit")
+	})
+
+	stderr := captureStderr(t, func() {
+		defer func() { _ = recover() }()
+		_ = Parse()
+	})
+
+	if exitCode != 0 {
+		t.Fatalf("expected exit code 0 for -h, got %d", exitCode)
+	}
+	if strings.Contains(stderr, "Error:") {
+		t.Fatalf("help must not print Error line, got stderr:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, "-log-level") {
+		t.Fatalf("expected flag list in help output, got stderr:\n%s", stderr)
+	}
+	if strings.Count(stderr, "Usage of") != 1 {
+		t.Fatalf("expected exactly one Usage header, got %d in:\n%s", strings.Count(stderr, "Usage of"), stderr)
+	}
+}
+
+func TestParse_HelpLongFlagExitsZero(t *testing.T) {
+	resetEnv()
+	resetFlags()
+	os.Setenv("SEPG_SESSION_SECRET", validTestSecret)
+	os.Args = []string{"tmp/main", "-help"}
+
+	oldOsExit := getOsExit()
+	defer func() { setOsExit(oldOsExit) }()
+
+	exitCode := -1
+	setOsExit(func(code int) {
+		exitCode = code
+		panic("exit")
+	})
+
+	stderr := captureStderr(t, func() {
+		defer func() { _ = recover() }()
+		_ = Parse()
+	})
+
+	if exitCode != 0 {
+		t.Fatalf("expected exit code 0 for -help, got %d", exitCode)
+	}
+	if strings.Contains(stderr, "Error:") {
+		t.Fatalf("help must not print Error line, got stderr:\n%s", stderr)
+	}
+}
+
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	oldStderr := os.Stderr
+	os.Stderr = w
+	defer func() {
+		os.Stderr = oldStderr
+		_ = w.Close()
+	}()
+
+	fn()
+
+	_ = w.Close()
+	var buf strings.Builder
+	_, _ = io.Copy(&buf, r)
+	_ = r.Close()
+	return buf.String()
+}
+
 func TestParse_UnlockAccountFlag(t *testing.T) {
 	resetEnv()
 	resetFlags()
@@ -196,44 +376,6 @@ func TestGetPlatformConfigDir_NoHome(t *testing.T) {
 	}
 	if dir != "" {
 		t.Errorf("expected empty string on error, got %q", dir)
-	}
-}
-
-// Phase 1.3: fileExists tests
-func TestFileExists_FilePresent(t *testing.T) {
-	t.Parallel()
-
-	tmpFile, err := os.CreateTemp("", "test_*.yaml")
-	if err != nil {
-		t.Fatalf("failed to create temp file: %v", err)
-	}
-	defer os.Remove(tmpFile.Name())
-	tmpFile.Close()
-
-	if !fileExists(tmpFile.Name()) {
-		t.Error("fileExists returned false for existing file")
-	}
-}
-
-func TestFileExists_FileAbsent(t *testing.T) {
-	t.Parallel()
-
-	if fileExists("/nonexistent/path/to/file.yaml") {
-		t.Error("fileExists returned true for non-existent file")
-	}
-}
-
-func TestFileExists_IsDirectory(t *testing.T) {
-	t.Parallel()
-
-	tmpDir, err := os.MkdirTemp("", "test_dir")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	if fileExists(tmpDir) {
-		t.Error("fileExists returned true for directory")
 	}
 }
 
@@ -713,13 +855,14 @@ func TestParse_SessionSameSiteEnvVar(t *testing.T) {
 	}
 }
 
-// TestParseEnvOnly verifies ParseEnvOnly reads environment variables without CLI flags.
-func TestParseEnvOnly(t *testing.T) {
+// TestApplyEnvVars verifies ApplyEnvVars reads environment variables without CLI flags.
+func TestApplyEnvVars(t *testing.T) {
 	resetEnv()
 	t.Setenv("SFG_PORT", "7777")
 	t.Setenv("SEPG_SESSION_SECRET", "env-secret-with-at-least-32-bytes-long!!")
 
-	opt := ParseEnvOnly()
+	opt := Opt{}
+	ApplyEnvVars(&opt)
 
 	if !opt.Port.IsSet || opt.Port.Int != 7777 {
 		t.Errorf("expected Port.IsSet=true and Port.Int=7777, got IsSet=%v Int=%d", opt.Port.IsSet, opt.Port.Int)

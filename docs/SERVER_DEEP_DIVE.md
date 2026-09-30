@@ -2,7 +2,7 @@
 
 **Package**: `github.com/lbe/sfpg-go/internal/server`
 
-> **Note:** This document is an archived entry point to the server package. For the full, up-to-date architectural coverage — including the middleware stack, route table, handler design, session management, caching strategy, background processing, security model, configuration, and testing approach — see **[docs/ARCHITECTURE.md](ARCHITECTURE.md)** (the authoritative architecture reference).
+> **Note:** This document is an archived entry point to the server package. For the full, up-to-date architectural coverage — including the middleware stack, route table, handler design, session management, caching strategy, background processing, security model, configuration, and testing approach — see **[docs/ARCHITECTURE.md](ARCHITECTURE.md)** (the authoritative architecture reference). For which **package** and **directory** (relative to the repo root) implement each process end-to-end, see **[Process-to-package map](ARCHITECTURE.md#2-process-to-package-map)** in that document.
 
 ---
 
@@ -53,7 +53,7 @@ The `internal/server` package implements the entire web server layer of SFPG. It
 3. **Minimal Orchestrator**: The `App` struct embeds focused managers rather than holding fields directly — each manager owns a clear domain.
 4. **Idempotency**: File processing is idempotent; re-running produces the same database state.
 5. **Security First**: Multiple layers of protection (auth, cross-origin protection, path validation, session security).
-6. **Explicit Test Seams**: Optional doubles in `testseams.go` wired through unexported `testSeams` fields; no `testHook*` pollution on production structs. See [ARCHITECTURE.md §Test Seams](ARCHITECTURE.md#test-seams).
+6. **Explicit Test Seams**: Optional doubles in `testseams.go` wired through unexported `testSeams` fields; no `testHook*` pollution on production structs. See [ARCHITECTURE.md §Test Seams](ARCHITECTURE.md#62-test-seams).
 
 ---
 
@@ -87,4 +87,4 @@ Route handlers are organized by domain (auth, gallery, config, dashboard, server
 ## References
 
 - **[docs/ARCHITECTURE.md](ARCHITECTURE.md)** — Full application architecture, middleware stack, route table, database schema, caching strategy, security model, configuration, and testing approach.
-- **External Dependencies**: See [ARCHITECTURE.md §Appendix](ARCHITECTURE.md#external-dependencies).
+- **External Dependencies**: See [ARCHITECTURE.md §Appendix](ARCHITECTURE.md#152-external-dependencies).

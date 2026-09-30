@@ -6,33 +6,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lbe/sfpg-go/internal/dbconnpool"
 	"github.com/lbe/sfpg-go/internal/queue"
 	"github.com/lbe/sfpg-go/internal/workerpool"
 )
 
-type statsFakeProcessor struct {
-	existsMap map[string]bool
-	mu        sync.Mutex
-}
+type statsFakeProcessor struct{}
 
-func (f *statsFakeProcessor) ProcessFile(ctx context.Context, path string) (*File, error) {
-	f.mu.Lock()
-	exists := f.existsMap[path]
-	f.mu.Unlock()
-	return &File{Path: path, Exists: exists}, nil
-}
-
-func (f *statsFakeProcessor) ProcessFileWithConn(ctx context.Context, path string, cpcRo *dbconnpool.CpConn) (*File, error) {
-	return f.ProcessFile(ctx, path)
-}
-
-func (f *statsFakeProcessor) CheckIfModified(ctx context.Context, path string) (bool, error) {
-	return false, nil
-}
-
-func (f *statsFakeProcessor) GenerateThumbnail(ctx context.Context, file *File) error {
-	return nil
+func (f *statsFakeProcessor) ProcessDiscoveryFile(ctx context.Context, file *File) (*File, error) {
+	return &File{Path: file.Path}, nil
 }
 
 func (f *statsFakeProcessor) SubmitFileForWrite(file *File) error {
@@ -43,7 +24,7 @@ func (f *statsFakeProcessor) PendingWriteCount() int64 {
 	return 0
 }
 
-func (f *statsFakeProcessor) RecordInvalidFile(ctx context.Context, path string, mtime, size int64, reason string) error {
+func (f *statsFakeProcessor) RecordInvalidFile(ctx context.Context, path string, mtime, size int64, reason string, folderID int64) error {
 	return nil
 }
 
@@ -54,7 +35,6 @@ func (f *statsFakeProcessor) Close() error {
 // submitRecordingProcessor records every SubmitFileForWrite call (path and Exists)
 // so tests can assert that already-existing files are not submitted for write.
 type submitRecordingProcessor struct {
-	existsMap   map[string]bool
 	submitCalls []struct {
 		Path   string
 		Exists bool
@@ -62,23 +42,8 @@ type submitRecordingProcessor struct {
 	mu sync.Mutex
 }
 
-func (f *submitRecordingProcessor) ProcessFile(ctx context.Context, path string) (*File, error) {
-	f.mu.Lock()
-	exists := f.existsMap[path]
-	f.mu.Unlock()
-	return &File{Path: path, Exists: exists}, nil
-}
-
-func (f *submitRecordingProcessor) ProcessFileWithConn(ctx context.Context, path string, cpcRo *dbconnpool.CpConn) (*File, error) {
-	return f.ProcessFile(ctx, path)
-}
-
-func (f *submitRecordingProcessor) CheckIfModified(ctx context.Context, path string) (bool, error) {
-	return false, nil
-}
-
-func (f *submitRecordingProcessor) GenerateThumbnail(ctx context.Context, file *File) error {
-	return nil
+func (f *submitRecordingProcessor) ProcessDiscoveryFile(ctx context.Context, file *File) (*File, error) {
+	return &File{Path: file.Path}, nil
 }
 
 func (f *submitRecordingProcessor) SubmitFileForWrite(file *File) error {
@@ -95,7 +60,7 @@ func (f *submitRecordingProcessor) PendingWriteCount() int64 {
 	return 0
 }
 
-func (f *submitRecordingProcessor) RecordInvalidFile(ctx context.Context, path string, mtime, size int64, reason string) error {
+func (f *submitRecordingProcessor) RecordInvalidFile(ctx context.Context, path string, mtime, size int64, reason string, folderID int64) error {
 	return nil
 }
 
@@ -103,20 +68,15 @@ func (f *submitRecordingProcessor) Close() error {
 	return nil
 }
 
-// TestRunPoolWorkerWithProcessor_DoesNotSubmitExistingFiles verifies that when
-// ProcessFile returns a file with Exists=true (already in DB, unchanged), the
-// worker does NOT call SubmitFileForWrite. Only new or modified files are submitted.
-func TestRunPoolWorkerWithProcessor_DoesNotSubmitExistingFiles(t *testing.T) {
-	q := queue.NewQueue[string](2)
-	q.Enqueue("/tmp/Images/existing.jpg")
-	q.Enqueue("/tmp/Images/new.jpg")
+// TestRunPoolWorkerWithProcessor_SubmitsAllDequeuedIncludingExisting verifies
+// dequeued items always reach SubmitFileForWrite after successful processing,
+// including paths that already exist in the DB (walk is the only skip gate).
+func TestRunPoolWorkerWithProcessor_SubmitsAllDequeuedIncludingExisting(t *testing.T) {
+	q := queue.NewQueue[DiscoveryPathWork](2)
+	q.Enqueue(testDiscoveryPath("/tmp/Images/existing.jpg"))
+	q.Enqueue(testDiscoveryPath("/tmp/Images/new.jpg"))
 
-	fp := &submitRecordingProcessor{
-		existsMap: map[string]bool{
-			"existing.jpg": true,
-			"new.jpg":      false,
-		},
-	}
+	fp := &submitRecordingProcessor{}
 
 	stats := &ProcessingStats{}
 	pool := workerpool.NewPool(context.Background(), 1, 1, 10*time.Millisecond)
@@ -145,33 +105,22 @@ func TestRunPoolWorkerWithProcessor_DoesNotSubmitExistingFiles(t *testing.T) {
 	}{}, fp.submitCalls...)
 	fp.mu.Unlock()
 
-	// Should submit only the "new" file. Already-existing file must not be submitted.
-	if len(calls) != 1 {
-		t.Errorf("SubmitFileForWrite call count: got %d, want 1 (existing file must not be submitted)", len(calls))
+	if len(calls) != 2 {
+		t.Errorf("SubmitFileForWrite call count: got %d, want 2 (all dequeued paths submit)", len(calls))
 		for i, c := range calls {
 			t.Logf("  call %d: path=%q Exists=%v", i, c.Path, c.Exists)
-		}
-	}
-	for i, c := range calls {
-		if c.Exists {
-			t.Errorf("SubmitFileForWrite call %d: path=%q has Exists=true (already in DB must not be submitted)", i, c.Path)
 		}
 	}
 }
 
 func TestNewPoolFuncWithProcessor_Stats(t *testing.T) {
 	// Setup
-	q := queue.NewQueue[string](2)
+	q := queue.NewQueue[DiscoveryPathWork](2)
 	// Add 2 files
-	q.Enqueue("/tmp/Images/existing.jpg")
-	q.Enqueue("/tmp/Images/new.jpg")
+	q.Enqueue(testDiscoveryPath("/tmp/Images/existing.jpg"))
+	q.Enqueue(testDiscoveryPath("/tmp/Images/new.jpg"))
 
-	fp := &statsFakeProcessor{
-		existsMap: map[string]bool{
-			"existing.jpg": true,
-			"new.jpg":      false,
-		},
-	}
+	fp := &statsFakeProcessor{}
 
 	stats := &ProcessingStats{}
 
@@ -200,15 +149,15 @@ func TestNewPoolFuncWithProcessor_Stats(t *testing.T) {
 		t.Fatalf("runPoolWorkerWithProcessor returned error: %v", err)
 	}
 
-	// Verify Stats
-	if val := stats.TotalFound.Load(); val != 2 {
-		t.Errorf("TotalFound: got %d, want 2", val)
+	// Verify Stats (TotalFound is walk-time only; worker path does not increment it)
+	if val := stats.TotalFound.Load(); val != 0 {
+		t.Errorf("TotalFound: got %d, want 0", val)
 	}
-	if val := stats.AlreadyExisting.Load(); val != 1 {
-		t.Errorf("AlreadyExisting: got %d, want 1", val)
+	if val := stats.AlreadyExisting.Load(); val != 0 {
+		t.Errorf("AlreadyExisting: got %d, want 0", val)
 	}
-	if val := stats.NewlyInserted.Load(); val != 1 {
-		t.Errorf("NewlyInserted: got %d, want 1", val)
+	if val := stats.NewlyInserted.Load(); val != 2 {
+		t.Errorf("NewlyInserted: got %d, want 2 (both dequeued paths reach submit)", val)
 	}
 	if val := stats.InFlight.Load(); val != 0 {
 		t.Errorf("InFlight: got %d, want 0", val)

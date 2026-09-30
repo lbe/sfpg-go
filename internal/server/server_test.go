@@ -15,7 +15,6 @@ import (
 	"github.com/lbe/sfpg-go/internal/dbconnpool"
 	"github.com/lbe/sfpg-go/internal/getopt"
 	"github.com/lbe/sfpg-go/internal/server/config"
-	"github.com/lbe/sfpg-go/internal/server/files"
 	"github.com/lbe/sfpg-go/internal/server/handlers"
 	"github.com/lbe/sfpg-go/internal/server/interfaces"
 	"github.com/lbe/sfpg-go/internal/server/metrics"
@@ -201,7 +200,7 @@ func TestGalleryStats_DisplayZero(t *testing.T) {
 func TestGalleryStats_DisplayFormatted(t *testing.T) {
 	gs := &GalleryStats{}
 	gs.setFolders(1234567)
-	gs.setFileStats(98765, 0, 0, 0)
+	gs.setFileCountAndTimestamps(98765, 0, 0)
 	if got := gs.Folders(); got != "1,234,567" {
 		t.Errorf("Folders() = %q, want 1,234,567", got)
 	}
@@ -603,25 +602,6 @@ func BenchmarkFileOpen(b *testing.B) {
 		buf := make([]byte, 512)
 		_, _ = ff.Read(buf)
 		ff.Close()
-	}
-}
-
-func BenchmarkIsImageFile(b *testing.B) {
-	paths := []string{
-		"/path/to/image.jpg",
-		"/path/to/image.png",
-		"/path/to/image.gif",
-		"/path/to/image.webp",
-		"/path/to/document.pdf",
-		"/path/to/video.mp4",
-		"/path/to/archive.zip",
-	}
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		for _, path := range paths {
-			_ = files.IsImageFile(path)
-		}
 	}
 }
 

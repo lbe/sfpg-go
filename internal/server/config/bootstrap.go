@@ -37,7 +37,7 @@ func EnsureBootstrapDefaults(ctx context.Context, rootDir string, queries galler
 			"user":                "admin",
 			"password":            string(hashed),
 			"log_directory":       filepath.Join(rootDir, bootstrapLogDir),
-			"log_level":           "debug",
+			"log_level":           "info",
 			"log_rollover":        "weekly",
 			"log_retention_count": "7",
 		}

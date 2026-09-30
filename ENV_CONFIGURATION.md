@@ -20,6 +20,14 @@ General application settings.
 **Default**: `8081`
 **Description**: TCP port for the HTTP server.
 
+### `SFG_LOG_LEVEL`
+
+**Default**: `info` (from `config.DefaultConfig()`; bootstrap logger stays at debug until config reload)
+
+**Description**: Application log level. Valid values: `debug`, `info`, `warn`, `error`.
+
+**CLI**: `-log-level` overrides this environment variable when both are set.
+
 ### `SFG_DISCOVER`
 
 **Default**: `true`
@@ -69,6 +77,15 @@ Existing entries decode automatically via magic-prefix detection.
 - Set **only** by the in-app restart path (`ExecRestart`), which backs both `POST /config/restart` and `POST /server/restart`. A config restart therefore does not start a gallery walk.
 - Operators should **not** set this for a cold start if they want the startup walk to run — `run_file_discovery` (default `true`) still gates it on a normal start.
 - The running process clears the variable after consuming it; it is not persisted to configuration.
+
+### `SEPG_LOG_FILE`
+
+**Type**: Absolute path to an existing log file
+**Default**: unset
+**Description**: When set, bootstrap logging appends to this file instead of creating a new timestamped `sfpg-*.log`.
+
+- Set **only** by `ExecRestart`, with the parent process’s active log path, so config and discovery restarts keep one log file across `syscall.Exec`.
+- The child clears the variable after opening the file. Operators should not set this for a normal cold start unless they intentionally want to append to a specific file.
 
 ### `restart_after_discovery` (config, not `SEPG_*`)
 

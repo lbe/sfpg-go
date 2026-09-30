@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/lbe/sfpg-go/internal/log"
 )
 
 func TestRuntimeManager_SetRestartRequired(t *testing.T) {
@@ -98,7 +100,7 @@ func TestRuntimeManager_ExecRestart_Success(t *testing.T) {
 		return nil
 	}
 
-	m.ExecRestart()
+	m.ExecRestart("")
 
 	if !execCalled {
 		t.Fatal("execCommand should have been called")
@@ -133,10 +135,32 @@ func TestRuntimeManager_ExecRestart_InjectsSkipEnv(t *testing.T) {
 		return nil
 	}
 
-	m.ExecRestart()
+	m.ExecRestart("")
 
 	if envHasValue(gotEnv, skipStartupDiscoveryEnv, "0") {
 		t.Errorf("exec env must not contain %s=0, got %v", skipStartupDiscoveryEnv, gotEnv)
+	}
+	if !envHasValue(gotEnv, skipStartupDiscoveryEnv, "1") {
+		t.Errorf("exec env should contain %s=1, got %v", skipStartupDiscoveryEnv, gotEnv)
+	}
+}
+
+func TestRuntimeManager_ExecRestart_InjectsLogFile(t *testing.T) {
+	t.Parallel()
+	m := NewRuntimeManager(context.Background())
+
+	const wantLog = "/var/log/sfpg/sfpg-2026-01-01_00-00-00.log"
+	var gotEnv []string
+	m.testSeams.Executable = func() (string, error) { return "/test/exe", nil }
+	m.testSeams.ExecCommand = func(path string, args []string, env []string) error {
+		gotEnv = append([]string(nil), env...)
+		return nil
+	}
+
+	m.ExecRestart(wantLog)
+
+	if !envHasValue(gotEnv, log.ContinueLogFileEnv, wantLog) {
+		t.Errorf("exec env should contain %s=%s, got %v", log.ContinueLogFileEnv, wantLog, gotEnv)
 	}
 	if !envHasValue(gotEnv, skipStartupDiscoveryEnv, "1") {
 		t.Errorf("exec env should contain %s=1, got %v", skipStartupDiscoveryEnv, gotEnv)
@@ -221,7 +245,7 @@ func TestRuntimeManager_ExecRestart_ExecutableError(t *testing.T) {
 		exitCode = code
 	}
 
-	m.ExecRestart()
+	m.ExecRestart("")
 
 	if !exitCalled {
 		t.Fatal("exit should have been called")
@@ -245,7 +269,7 @@ func TestRuntimeManager_ExecRestart_ExecError(t *testing.T) {
 		exitCode = code
 	}
 
-	m.ExecRestart()
+	m.ExecRestart("")
 
 	if !exitCalled {
 		t.Fatal("exit should have been called")

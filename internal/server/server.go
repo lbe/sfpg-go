@@ -16,6 +16,7 @@ import (
 	"github.com/lbe/sfpg-go/internal/dbconnpool"
 	"github.com/lbe/sfpg-go/internal/gallerydb"
 	"github.com/lbe/sfpg-go/internal/humanize"
+	"github.com/lbe/sfpg-go/internal/parallelwalkdir"
 	"github.com/lbe/sfpg-go/internal/server/config"
 	"github.com/lbe/sfpg-go/internal/server/files"
 	"github.com/lbe/sfpg-go/internal/server/interfaces"
@@ -336,12 +337,6 @@ func (gs *GalleryStats) addFile(size int64) {
 	gs.firstDisc.CompareAndSwap(0, time.Now().Unix())
 	gs.lastDisc.Store(time.Now().Unix())
 }
-func (gs *GalleryStats) setFileStats(countCt, sizeBytes, minCreated, maxUpdated int64) {
-	gs.images.Add(countCt)
-	gs.imagesSize.Add(sizeBytes)
-	gs.firstDisc.CompareAndSwap(0, minCreated)
-	gs.lastDisc.Store(maxUpdated)
-}
 func (gs *GalleryStats) setFileCountAndTimestamps(countCt, minCreated, maxUpdated int64) {
 	gs.images.Add(countCt)
 	gs.firstDisc.CompareAndSwap(0, minCreated)
@@ -430,18 +425,31 @@ func (app *App) TriggerDiscovery(ctx context.Context) error {
 
 	lifecycleCtx := app.getCtx()
 
-	files.WalkImageDir(&files.WalkDeps{
-		Wg:             &app.RuntimeManager.wg,
-		QSendersActive: &app.SubsystemManager.qSendersActive,
-		Ctx:            lifecycleCtx,
-		ImagesDir:      app.imagesDir,
-		Q:              app.SubsystemManager.q,
-	})
+	sm := app.SubsystemManager
+	if sm.q != nil && (sm.qSendersActive.Load() != 0 || sm.q.Len() != 0) {
+		return fmt.Errorf("discovery walk refused: queue backlog or active senders must be empty before walk")
+	}
+
+	walkPathStore := parallelwalkdir.NewWalkPathStore()
+	walkDeps := &files.WalkDeps{
+		Wg:                  &app.RuntimeManager.wg,
+		QSendersActive:      &sm.qSendersActive,
+		Ctx:                 lifecycleCtx,
+		ImagesDir:           app.imagesDir,
+		Q:                   sm.q,
+		WalkPathStore:       walkPathStore,
+		NormalizedImagesDir: app.normalizedImagesDir,
+		RemoveImagesPrefix:  removeImagesDirPrefix,
+		CatalogROPool:       app.dbRoPool,
+		Stats:               sm.processingStats,
+	}
+	files.WalkImageDir(walkDeps)
 
 	if err := app.waitForFileProcessingDrain(lifecycleCtx); err != nil {
 		slog.Error("discovery drain cancelled during shutdown", "err", err)
 		return lifecycleCtx.Err()
 	}
+	walkDeps.WalkPathStore.Reset()
 
 	// Persist the completed run's counters so a skip-startup-discovery restart
 	// can hydrate them. Skipped on drain cancel above; a persist failure is

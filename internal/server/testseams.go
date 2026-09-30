@@ -44,6 +44,17 @@ type AppTestSeams struct {
 	TriggerDiscovery func(context.Context) error
 	// RebuildFileFolderIndex replaces files.RebuildFileFolderIndex at discovery completion.
 	RebuildFileFolderIndex func(context.Context, *dbconnpool.DbSQLConnPool) error
+	// OnDiscoveryProcessingMonitorComplete runs after the startup completion monitor
+	// logs "File processing completed" (tests only; nil in production).
+	OnDiscoveryProcessingMonitorComplete func()
+	// OnDiscoveryProcessingMonitorPhase1Tick runs on each 100ms phase-1 poll of the
+	// startup completion monitor (tests only; nil in production).
+	OnDiscoveryProcessingMonitorPhase1Tick func()
+	// OnTriggerRestart runs after restart is requested via App.TriggerRestart (tests only).
+	OnTriggerRestart func()
+	// OnStartupDiscoveryRebuildFailedShutdown runs before Shutdown when startup
+	// TriggerDiscovery returns files.ErrFolderIndexRebuild (tests only).
+	OnStartupDiscoveryRebuildFailedShutdown func()
 	// FallbackConfig supplies the config used when loadConfig fails in Run.
 	FallbackConfig func() *config.Config
 	// ConfigService replaces config.NewService(...) in setDB and reconfigurePoolsFromConfig.
@@ -107,8 +118,12 @@ type HandlerManagerTestSeams struct {
 // production code only reads from app.testSeams, while tests that need to
 // influence New() can set this variable before calling New().
 //
-// MUST stay the zero value. A non-nil RebuildFileFolderIndex here is copied
-// into every production App and TriggerDiscovery will never call
-// files.RebuildFileFolderIndex. Tests that need a no-op set it on the App
-// after New(), or set this variable before New() and restore it after.
+// MUST stay the zero value in committed code. Tests that set this before New()
+// must use t.Cleanup(func() { defaultNewTestSeams = AppTestSeams{} }) (or
+// setDefaultNewTestSeams) so the package global cannot leak across tests.
+//
+// Do not put a non-nil RebuildFileFolderIndex (or other discovery seams) here;
+// New() copies this into app.testSeams and TriggerDiscovery would skip
+// files.RebuildFileFolderIndex. Set app.testSeams.RebuildFileFolderIndex after
+// New() instead.
 var defaultNewTestSeams AppTestSeams

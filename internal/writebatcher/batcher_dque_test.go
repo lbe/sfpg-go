@@ -2195,9 +2195,9 @@ func TestFlushChannelExit_DQueDequeueError(t *testing.T) {
 // the drainDQueAll method must not contain case <-flushTimer.C. It extracts
 // drainDQueAll from its signature to the next top-level method.
 func TestDrainDQueAll_DoesNotFlushOnInterval(t *testing.T) {
-	src, err := os.ReadFile("batcher.go")
+	src, err := os.ReadFile("dque.go")
 	if err != nil {
-		t.Fatalf("read batcher.go: %v", err)
+		t.Fatalf("read dque.go: %v", err)
 	}
 	text := string(src)
 
@@ -2239,14 +2239,14 @@ func TestDrainDQueAll_DoesNotFlushOnInterval(t *testing.T) {
 }
 
 // TestDrainDQueAll_DoesNotDebugLogEveryDequeue verifies D5: the per-dequeue
-// slog.Debug line is absent from batcher.go. Whole-file absence of the
+// slog.Debug line is absent from dque.go. Whole-file absence of the
 // unique literal locks the guard.
 func TestDrainDQueAll_DoesNotDebugLogEveryDequeue(t *testing.T) {
-	src, err := os.ReadFile("batcher.go")
+	src, err := os.ReadFile("dque.go")
 	if err != nil {
-		t.Fatalf("read batcher.go: %v", err)
+		t.Fatalf("read dque.go: %v", err)
 	}
 	if strings.Contains(string(src), `slog.Debug("writebatcher: dque dequeue"`) {
-		t.Fatal("batcher.go still contains per-dequeue slog.Debug(\"writebatcher: dque dequeue\") — D5")
+		t.Fatal("dque.go still contains per-dequeue slog.Debug(\"writebatcher: dque dequeue\") — D5")
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"io/fs"
 	"path/filepath"
 	"regexp"
@@ -15,6 +16,24 @@ import (
 
 	_ "github.com/ncruces/go-sqlite3/driver"
 )
+
+func newTestMainMigrator(dbPath string) (*migrate.Migrate, error) {
+	d, err := iofsNewFn(FS, "migrations")
+	if err != nil {
+		return nil, fmt.Errorf("create migrations source: %w", err)
+	}
+	var dsn string
+	if dbPath == ":memory:" {
+		dsn = "sqlite::memory:"
+	} else {
+		dsn = "sqlite://" + filepath.ToSlash(dbPath)
+	}
+	m, err := migrateNewWithSourceInstanceFn("iofs", d, dsn)
+	if err != nil {
+		return nil, fmt.Errorf("initialize migrator: %w", err)
+	}
+	return m, nil
+}
 
 func TestMigrationsEmbed(t *testing.T) {
 	files, err := FS.ReadDir("migrations")
@@ -38,7 +57,7 @@ func TestMigration_AddETagConfig(t *testing.T) {
 	ctx := context.Background()
 
 	// Apply all migrations
-	migrator, err := NewMigrator(dbfile)
+	migrator, err := newTestMainMigrator(dbfile)
 	if err != nil {
 		t.Fatalf("Create migrator: %v", err)
 	}
@@ -121,7 +140,7 @@ func TestThumbsMigration(t *testing.T) {
 	}
 }
 
-func TestNewMigrator_Errors(t *testing.T) {
+func TestNewTestMainMigrator_Errors(t *testing.T) {
 	cases := []struct {
 		name    string
 		setup   func() (cleanup func())
@@ -156,7 +175,7 @@ func TestNewMigrator_Errors(t *testing.T) {
 			cleanup := tc.setup()
 			defer cleanup()
 
-			_, err := NewMigrator(filepath.Join(t.TempDir(), "test.db"))
+			_, err := newTestMainMigrator(filepath.Join(t.TempDir(), "test.db"))
 			if err == nil {
 				t.Fatal("expected error, got nil")
 			}
@@ -167,10 +186,10 @@ func TestNewMigrator_Errors(t *testing.T) {
 	}
 }
 
-func TestNewMigrator_MemoryDSN(t *testing.T) {
-	m, err := NewMigrator(":memory:")
+func TestNewTestMainMigrator_MemoryDSN(t *testing.T) {
+	m, err := newTestMainMigrator(":memory:")
 	if err != nil {
-		t.Fatalf("NewMigrator(:memory:) error = %v", err)
+		t.Fatalf("newTestMainMigrator(:memory:) error = %v", err)
 	}
 	if m == nil {
 		t.Fatal("expected non-nil migrator")
@@ -226,7 +245,7 @@ func TestNewThumbsMigrator_Errors(t *testing.T) {
 
 func TestMigration_FileFolderIndex_ColumnsAndIndex(t *testing.T) {
 	dbfile := filepath.Join(t.TempDir(), "test_020.db")
-	migrator, err := NewMigrator(dbfile)
+	migrator, err := newTestMainMigrator(dbfile)
 	if err != nil {
 		t.Fatalf("Create migrator: %v", err)
 	}
@@ -290,7 +309,7 @@ func TestMigration_FileFolderIndex_ColumnsAndIndex(t *testing.T) {
 
 func TestMigration_FileFolderIndex_Backfill(t *testing.T) {
 	dbfile := filepath.Join(t.TempDir(), "test_020_backfill.db")
-	migrator, err := NewMigrator(dbfile)
+	migrator, err := newTestMainMigrator(dbfile)
 	if err != nil {
 		t.Fatalf("Create migrator: %v", err)
 	}
@@ -470,4 +489,179 @@ func TestNewThumbsMigrator_MemoryDSN(t *testing.T) {
 		t.Fatal("expected non-nil migrator")
 	}
 	m.Close()
+}
+
+func TestMigration_022_InvalidFilesFolderID_Registered(t *testing.T) {
+	const want = "022_invalid_files_folder_id.up.sql"
+	data, err := FS.ReadFile(filepath.Join("migrations", want))
+	if err != nil {
+		t.Fatalf("embedded migration %s: %v", want, err)
+	}
+	if len(data) == 0 {
+		t.Fatalf("embedded migration %s is empty", want)
+	}
+}
+
+func TestMigration_022_InvalidFilesFolderID_BackfillNotNullAndFK(t *testing.T) {
+	dbfile := filepath.Join(t.TempDir(), "test_022_backfill.db")
+	migrator, err := newTestMainMigrator(dbfile)
+	if err != nil {
+		t.Fatalf("Create migrator: %v", err)
+	}
+	defer migrator.Close()
+
+	if migErr := migrator.Migrate(21); migErr != nil {
+		t.Fatalf("Migrate to v21: %v", migErr)
+	}
+
+	db, err := sql.Open("sqlite3", dbfile)
+	if err != nil {
+		t.Fatalf("Open database: %v", err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+
+	_, err = db.ExecContext(ctx, "INSERT INTO folder_paths (id, path) VALUES (1, '/albums/Vacation')")
+	if err != nil {
+		t.Fatalf("insert folder_paths: %v", err)
+	}
+	_, err = db.ExecContext(ctx, "INSERT INTO folders (id, path_id, name) VALUES (1, 1, 'Vacation')")
+	if err != nil {
+		t.Fatalf("insert folders: %v", err)
+	}
+	_, err = db.ExecContext(ctx,
+		"INSERT INTO file_paths (id, path) VALUES (1, '/albums/Vacation/corrupt.jpg')")
+	if err != nil {
+		t.Fatalf("insert file_paths: %v", err)
+	}
+	folderID := 1
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO files (id, folder_id, path_id, filename) VALUES (1, ?, 1, 'corrupt.jpg')`,
+		folderID)
+	if err != nil {
+		t.Fatalf("insert files: %v", err)
+	}
+
+	now := 1
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO invalid_files (path, mtime, size, reason) VALUES (?, ?, 0, 'bad')`,
+		"/albums/Vacation/corrupt.jpg", now)
+	if err != nil {
+		t.Fatalf("insert invalid_files (via file_paths): %v", err)
+	}
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO invalid_files (path, mtime, size, reason) VALUES (?, ?, 0, 'bad')`,
+		"/albums/Vacation/orphan-only.raw", now)
+	if err != nil {
+		t.Fatalf("insert invalid_files (via folder_paths): %v", err)
+	}
+
+	if migErr := migrator.Migrate(22); migErr != nil {
+		t.Fatalf("Migrate to v22: %v", migErr)
+	}
+
+	var idxName string
+	err = db.QueryRowContext(ctx,
+		`SELECT name FROM sqlite_master WHERE type='index' AND name='idx_invalid_files_folder_id'`).Scan(&idxName)
+	if err != nil {
+		t.Fatalf("idx_invalid_files_folder_id not found: %v", err)
+	}
+
+	rows, err := db.QueryContext(ctx, "PRAGMA table_info(invalid_files)")
+	if err != nil {
+		t.Fatalf("PRAGMA table_info: %v", err)
+	}
+	defer rows.Close()
+
+	var folderColNotNull int
+	foundFolderID := false
+	for rows.Next() {
+		var cid int
+		var colName, colType string
+		var notNull, pk int
+		var defaultVal *string
+		if scanErr := rows.Scan(&cid, &colName, &colType, &notNull, &defaultVal, &pk); scanErr != nil {
+			t.Fatalf("scan column: %v", scanErr)
+		}
+		if colName == "folder_id" {
+			foundFolderID = true
+			folderColNotNull = notNull
+		}
+	}
+	if !foundFolderID {
+		t.Fatal("folder_id column missing on invalid_files")
+	}
+	if folderColNotNull != 1 {
+		t.Errorf("folder_id NOT NULL = %d, want 1", folderColNotNull)
+	}
+
+	var fkCount int
+	err = db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM pragma_foreign_key_list('invalid_files') WHERE "table" = 'folders'`).Scan(&fkCount)
+	if err != nil {
+		t.Fatalf("pragma_foreign_key_list: %v", err)
+	}
+	if fkCount < 1 {
+		t.Errorf("expected FK to folders on invalid_files.folder_id, fk rows = %d", fkCount)
+	}
+
+	var gotFileMatch, gotFolderMatch int
+	err = db.QueryRowContext(ctx,
+		`SELECT folder_id FROM invalid_files WHERE path = '/albums/Vacation/corrupt.jpg'`).Scan(&gotFileMatch)
+	if err != nil {
+		t.Fatalf("query invalid via file_paths: %v", err)
+	}
+	if gotFileMatch != folderID {
+		t.Errorf("corrupt.jpg folder_id = %d, want %d", gotFileMatch, folderID)
+	}
+	err = db.QueryRowContext(ctx,
+		`SELECT folder_id FROM invalid_files WHERE path = '/albums/Vacation/orphan-only.raw'`).Scan(&gotFolderMatch)
+	if err != nil {
+		t.Fatalf("query invalid via folder_paths: %v", err)
+	}
+	if gotFolderMatch != folderID {
+		t.Errorf("orphan-only.raw folder_id = %d, want %d", gotFolderMatch, folderID)
+	}
+}
+
+func TestMigration_022_InvalidFilesFolderID_UnresolvableRowsDeleted(t *testing.T) {
+	dbfile := filepath.Join(t.TempDir(), "test_022_orphan_delete.db")
+	migrator, err := newTestMainMigrator(dbfile)
+	if err != nil {
+		t.Fatalf("Create migrator: %v", err)
+	}
+	defer migrator.Close()
+
+	if migErr := migrator.Migrate(21); migErr != nil {
+		t.Fatalf("Migrate to v21: %v", migErr)
+	}
+
+	db, err := sql.Open("sqlite3", dbfile)
+	if err != nil {
+		t.Fatalf("Open database: %v", err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+
+	const orphanPath = "/no/such/gallery/bad.jpg"
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO invalid_files (path, mtime, size, reason) VALUES (?, 1, 0, 'orphan')`, orphanPath)
+	if err != nil {
+		t.Fatalf("insert orphan invalid_files: %v", err)
+	}
+
+	if migErr := migrator.Migrate(22); migErr != nil {
+		t.Fatalf("Migrate to v22: %v", migErr)
+	}
+
+	var n int
+	err = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM invalid_files WHERE path = ?`, orphanPath).Scan(&n)
+	if err != nil {
+		t.Fatalf("count orphan path: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("unresolvable invalid_files row still present after migration, count = %d", n)
+	}
 }

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -24,6 +25,10 @@ const (
 	bootstrapLogDir   = "logs"
 	bootstrapLogLevel = slog.LevelDebug
 )
+
+// ContinueLogFileEnv is set by ExecRestart so the child process appends to the
+// parent's active log file instead of creating a new timestamped file.
+const ContinueLogFileEnv = "SEPG_LOG_FILE"
 
 // Logger encapsulates all logging state and functionality.
 // It manages log file creation, handler setup, and scheduler task management.
@@ -50,20 +55,40 @@ type Logger struct {
 // It creates the logs directory and log file, but does NOT schedule rollover tasks.
 // Rollover is only scheduled after config is loaded in ReloadFromConfig().
 func NewBootstrapLogger(rootDir string, sched *scheduler.Scheduler, version string) (*Logger, error) {
-	// Create the logs directory if it doesn't exist
-	logsDir := filepath.Clean(filepath.Join(rootDir, bootstrapLogDir))
-	if _, err := os.Stat(logsDir); os.IsNotExist(err) {
-		if err := os.Mkdir(logsDir, 0o755); err != nil {
-			return nil, fmt.Errorf("failed to create logs directory: %w", err)
+	var logsDir, logFileName, logFilePath string
+	var logFile *os.File
+
+	if inherited := strings.TrimSpace(os.Getenv(ContinueLogFileEnv)); inherited != "" {
+		inherited = filepath.Clean(inherited)
+		f, err := os.OpenFile(inherited, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o666)
+		if err != nil {
+			slog.Warn("failed to continue inherited log file, creating new log file", "path", inherited, "err", err)
+		} else {
+			_ = os.Unsetenv(ContinueLogFileEnv)
+			logFile = f
+			logFilePath = inherited
+			logFileName = filepath.Base(inherited)
+			logsDir = filepath.Dir(inherited)
 		}
 	}
 
-	// Create the log file with timestamp
-	logFileName := fmt.Sprintf("sfpg-%s.log", time.Now().Format("2006-01-02_15-04-05"))
-	logFilePath := filepath.Join(logsDir, logFileName)
-	logFile, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o666)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open log file: %w", err)
+	if logFile == nil {
+		// Create the logs directory if it doesn't exist
+		logsDir = filepath.Clean(filepath.Join(rootDir, bootstrapLogDir))
+		if _, err := os.Stat(logsDir); os.IsNotExist(err) {
+			if err := os.Mkdir(logsDir, 0o755); err != nil {
+				return nil, fmt.Errorf("failed to create logs directory: %w", err)
+			}
+		}
+
+		// Create the log file with timestamp
+		logFileName = fmt.Sprintf("sfpg-%s.log", time.Now().Format("2006-01-02_15-04-05"))
+		logFilePath = filepath.Join(logsDir, logFileName)
+		f, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o666)
+		if err != nil {
+			return nil, fmt.Errorf("failed to open log file: %w", err)
+		}
+		logFile = f
 	}
 
 	// Create the slog handler with bootstrap log level

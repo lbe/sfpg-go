@@ -16,6 +16,7 @@ import (
 	"github.com/lbe/sfpg-go/internal/gallerydb"
 	"github.com/lbe/sfpg-go/internal/server/cachebatch"
 	"github.com/lbe/sfpg-go/internal/server/config"
+	"github.com/lbe/sfpg-go/internal/server/files"
 	"github.com/lbe/sfpg-go/internal/server/metrics"
 	"github.com/lbe/sfpg-go/internal/workerpool"
 )
@@ -345,7 +346,7 @@ func TestSubsystemManager_StartPool_ProcessesFile(t *testing.T) {
 	mgr.StartPool(context.Background(), done, app.normalizedImagesDir, removeImagesDirPrefix, fp, nil)
 
 	relPath := filepath.Join(app.normalizedImagesDir, "test.jpg")
-	mgr.q.Enqueue(relPath)
+	mgr.q.Enqueue(files.DiscoveryPathWork{Path: []byte(relPath), MtimeUnix: 1, SizeBytes: 1})
 
 	// Wait until the pool worker has processed the file. The queue can drain
 	// before processing completes, so wait on the recorded result instead of
@@ -378,18 +379,16 @@ func TestSubsystemManager_StartPool_UsesProvidedPools(t *testing.T) {
 	done := make(chan struct{})
 	mgr.StartPool(context.Background(), done, app.normalizedImagesDir, removeImagesDirPrefix, fp, nil)
 
-	mgr.q.Enqueue(filepath.Join(app.normalizedImagesDir, "test.jpg"))
+	mgr.q.Enqueue(files.DiscoveryPathWork{
+		Path: []byte(filepath.Join(app.normalizedImagesDir, "test.jpg")), MtimeUnix: 1, SizeBytes: 1,
+	})
 
-	// Wait until the file has been processed; this also guarantees the RO
-	// connection was passed to ProcessFileWithConn.
+	// Pool workers call ProcessDiscoveryFile only (no worker-held RO checkout).
 	waitForProcessedPaths(t, fp, 1)
 
-	if fp.ConnUsed() == nil {
-		t.Fatal("expected a RO connection to be passed to ProcessFileWithConn")
-	}
-	var n int
-	if err := fp.ConnUsed().Conn.QueryRowContext(context.Background(), "SELECT 1").Scan(&n); err != nil {
-		t.Errorf("query on provided connection failed: %v", err)
+	processed := fp.ProcessedPaths()
+	if len(processed) != 1 || processed[0] != "test.jpg" {
+		t.Errorf("processed paths = %v, want [test.jpg]", processed)
 	}
 
 	app.RuntimeManager.cancel()
@@ -512,8 +511,9 @@ func TestSubsystemManager_WireMetrics_WiresAllSources(t *testing.T) {
 // TestSubsystemManager_HydrateFileProcessingStats verifies the incident path:
 // after SaveFileProcessing on "discovery", a zeroed processingStats hydrates
 // the four last-run counters and leaves InFlight at 0 (live state is never
-// persisted or hydrated). CreateApp leaves processingStats and
-// moduleStateService nil, so hydrate must first no-op without panicking.
+// persisted or hydrated). CreateApp skips Start, so hydrate must first no-op
+// without panicking; startTestManager supplies full Start wiring for the
+// positive path below.
 func TestSubsystemManager_HydrateFileProcessingStats(t *testing.T) {
 	ctx := context.Background()
 

@@ -5,28 +5,17 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"path/filepath"
 	"regexp"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/lbe/sfpg-go/internal/dbconnpool"
 	"github.com/lbe/sfpg-go/internal/parallelwalkdir"
 	"github.com/lbe/sfpg-go/internal/queue"
 )
-
-// IsImageFile checks if a file has a common image file extension and is case-insensitive.
-func IsImageFile(path string) bool {
-	ext := strings.ToLower(filepath.Ext(path))
-	switch ext {
-	case ".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif", ".heic", ".heif", ".tif", ".tiff":
-		return true
-	}
-	return false
-}
 
 // WalkDeps holds dependencies for WalkImageDir. Passed by the caller (e.g. App).
 type WalkDeps struct {
@@ -34,36 +23,72 @@ type WalkDeps struct {
 	QSendersActive *atomic.Int64
 	Ctx            context.Context
 	ImagesDir      string
-	Q              queue.Enqueuer[string]
+	Q              queue.Enqueuer[DiscoveryPathWork]
+	// WalkPathStore pins reported path arena bytes until discovery drain completes.
+	WalkPathStore       *parallelwalkdir.WalkPathStore
+	NormalizedImagesDir string
+	RemoveImagesPrefix  func(normalizedImagesDir, path string) (string, error)
+	// CatalogROPool is required for walk-time DirEnt catalog. Nil logs Error and returns without walking.
+	CatalogROPool *dbconnpool.DbSQLConnPool
+	// Stats receives walk-time TotalFound / AlreadyExisting / SkippedInvalid updates.
+	Stats *ProcessingStats
 }
 
-// WalkImageDir recursively scans the images directory and enqueues image file
-// paths for processing. It runs as a background goroutine; the caller should
-// invoke it via `go files.WalkImageDir(deps)`.
+// WalkImageDir scans the images directory using parallelwalkdir's bounded worker
+// pool (default parallelism runtime.GOMAXPROCS(0); no WithMaxWorkers or
+// WithDirChCapacity in production). Directory workers submit subdirs to an
+// unbounded schedule queue; a feeder goroutine alone sends dirWork to dirCh.
+// Each ReportedFile on results is mapped to DiscoveryPathWork (path, mtime, size
+// from the walk) and enqueued on deps.Q for discovery file workers; workers
+// copy walk metadata only; workers do not re-Stat for modification checks. TriggerDiscovery sets
+// WalkPathStore on deps, keeps walkDeps alive through waitForFileProcessingDrain,
+// then resets the store; ParallelWalk resets the store at walk start only when
+// the backlog is empty. Tests may leave WalkPathStore nil to allocate one here.
 func WalkImageDir(deps *WalkDeps) {
 	slog.Info("walkImageDir for all images Started", "dir", deps.ImagesDir)
 	deps.Wg.Add(1)
 	defer deps.Wg.Done()
 
+	if deps.CatalogROPool == nil {
+		slog.Error("WalkImageDir requires CatalogROPool", "dir", deps.ImagesDir)
+		return
+	}
+
 	imageRegex := regexp.MustCompile(`(?i)(?:jpe?g|gif|png)$`)
 
 	deps.QSendersActive.Add(1)
 
+	if deps.WalkPathStore == nil {
+		deps.WalkPathStore = parallelwalkdir.NewWalkPathStore()
+	}
+
 	eg, ctx := errgroup.WithContext(deps.Ctx)
 
-	walker := parallelwalkdir.NewWalker(
+	walkerOpts := []parallelwalkdir.Option{
 		parallelwalkdir.WithContext(ctx),
-		parallelwalkdir.WithRegexpInclude(imageRegex),
+		parallelwalkdir.WithBasenameInclude(imageRegex),
 		parallelwalkdir.WithSizeNotZero(),
-	)
+		parallelwalkdir.WithWalkPathStore(deps.WalkPathStore),
+		parallelwalkdir.WithDirEntCatalog(
+			NewDiscoveryDirEntMapFunc(deps.CatalogROPool, deps.NormalizedImagesDir, deps.RemoveImagesPrefix),
+			DiscoveryDirEntModifiedWithStats(deps.Stats),
+		),
+	}
+	walker := parallelwalkdir.NewWalker(walkerOpts...)
 
 	resultsChan, errChan := walker.ParallelWalk(deps.ImagesDir)
 
 	eg.Go(func() error {
-		for file := range resultsChan {
-			if err := enqueueWithBackpressure(ctx, deps.Q, file); err != nil {
-				slog.Error("failed to enqueue file", "file", file, "err", err)
-				return fmt.Errorf("failed to enqueue file %q: %w", file, err)
+		for reported := range resultsChan {
+			work := DiscoveryPathWork{
+				Path:      reported.Path,
+				MtimeUnix: reported.ModTimeUnix,
+				SizeBytes: reported.SizeBytes,
+			}
+			if err := enqueueWithBackpressure(ctx, deps.Q, work); err != nil {
+				slog.Error("failed to enqueue file", "file", string(reported.Path), "err", err)
+				drainReportedFiles(resultsChan)
+				return fmt.Errorf("failed to enqueue file %q: %w", string(reported.Path), err)
 			}
 		}
 		return nil
@@ -89,12 +114,17 @@ func WalkImageDir(deps *WalkDeps) {
 	slog.Info("walkImageDir for all images Ended")
 }
 
-// enqueueWithBackpressure enqueues a file path into the discovery queue with
+func drainReportedFiles(results <-chan parallelwalkdir.ReportedFile) {
+	for range results {
+	}
+}
+
+// enqueueWithBackpressure enqueues discovery work into the backlog with
 // backpressure. If the queue is full (ErrQueueFull), it polls with a short
 // delay until space becomes available or the context is cancelled.
-func enqueueWithBackpressure(ctx context.Context, q queue.Enqueuer[string], file string) error {
+func enqueueWithBackpressure(ctx context.Context, q queue.Enqueuer[DiscoveryPathWork], work DiscoveryPathWork) error {
 	for {
-		err := q.Enqueue(file)
+		err := q.Enqueue(work)
 		if err == nil {
 			return nil
 		}

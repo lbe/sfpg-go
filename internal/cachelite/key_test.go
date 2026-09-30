@@ -70,6 +70,53 @@ func TestNewCacheKeyForRequest(t *testing.T) {
 	// Encoding is no longer part of CacheKeyParams.
 }
 
+func TestNormalizeCacheQuery(t *testing.T) {
+	tests := []struct {
+		path     string
+		rawQuery string
+		want     string
+	}{
+		{"/gallery/1", "v=1&foo=bar", "v=1"},
+		{"/gallery/1", "", ""},
+		{"/gallery/1", "foo=bar", ""},
+		{"/lightbox/1", "v=2&junk=x", "v=2"},
+		{"/info/folder/1", "v=3&foo=bar", "v=3"},
+		{"/dashboard", "foo=bar", "foo=bar"},
+		{"/other", "a=1&b=2", "a=1&b=2"},
+	}
+	for _, tt := range tests {
+		got := NormalizeCacheQuery(tt.path, tt.rawQuery)
+		if got != tt.want {
+			t.Errorf("NormalizeCacheQuery(%q, %q) = %q, want %q", tt.path, tt.rawQuery, got, tt.want)
+		}
+	}
+}
+
+func TestNewCacheKeyForRequest_StripsJunkQueryOnGallery(t *testing.T) {
+	reqJunk, err := http.NewRequest("GET", "/gallery/123?v=1&utm=campaign", nil)
+	if err != nil {
+		t.Fatalf("http.NewRequest: %v", err)
+	}
+	reqClean, err := http.NewRequest("GET", "/gallery/123?v=1", nil)
+	if err != nil {
+		t.Fatalf("http.NewRequest: %v", err)
+	}
+
+	keyJunk := NewCacheKey(NewCacheKeyForRequest(reqJunk))
+	keyClean := NewCacheKey(NewCacheKeyForRequest(reqClean))
+	if keyJunk != keyClean {
+		t.Errorf("junk and clean gallery queries produced different keys:\n  %s\n  %s", keyJunk, keyClean)
+	}
+}
+
+func TestNewCacheKeyForPreload_StripsJunkQueryOnInfo(t *testing.T) {
+	keyJunk := NewCacheKey(NewCacheKeyForPreload("/info/folder/5", "v=2&foo=bar", "box_info"))
+	keyClean := NewCacheKey(NewCacheKeyForPreload("/info/folder/5", "v=2", "box_info"))
+	if keyJunk != keyClean {
+		t.Errorf("junk and clean info queries produced different keys:\n  %s\n  %s", keyJunk, keyClean)
+	}
+}
+
 func TestNewCacheKeyForPreload(t *testing.T) {
 	params := NewCacheKeyForPreload("/gallery/123", "v=1", "gallery-content")
 

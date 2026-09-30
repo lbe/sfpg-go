@@ -172,7 +172,7 @@ func (s *InfrastructureService) walCheckpointAfterCommit(ctx context.Context, la
 	// G4: the RO rebuild scan cursor pins the WAL write lock; a TRUNCATE checkpoint
 	// while it is open busy-waits up to busy_timeout and caps flush throughput.
 	// Skip only while the cursor is held, not for the whole rebuild-active window.
-	if s.folderIndexRebuildScanHeld.Load() {
+	if s.folderIndex.RebuildScanHeld() {
 		return
 	}
 	// D4: post-flush with no DML must not TRUNCATE a leftover multi-GB WAL.

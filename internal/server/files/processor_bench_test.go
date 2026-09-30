@@ -18,9 +18,9 @@ func BenchmarkWorkerPoolProcessing(b *testing.B) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 
-			q := queue.NewQueue[string](numFiles)
+			q := queue.NewQueue[DiscoveryPathWork](numFiles)
 			for i := range numFiles {
-				_ = q.Enqueue(fmt.Sprintf("/images/file_%d.jpg", i))
+				_ = q.Enqueue(testDiscoveryPath(fmt.Sprintf("/images/file_%d.jpg", i)))
 			}
 
 			fp := &fakeProcessor{}

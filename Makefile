@@ -52,7 +52,7 @@ test-all:
 .PHONY: test-browser
 test-browser:
 	# Run browser-based menu/auth tests via Playwright (requires air on :8083)
-	# chromium run first (parallel specs), then chromium-serial (config + restart, workers=1)
+	# setup auth, then chromium (parallel) and chromium-serial (config + restart, workers=1)
 	time npx playwright test --project=chromium --project=chromium-serial --reporter=list
 
 .PHONY: test-race

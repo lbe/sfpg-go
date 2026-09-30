@@ -229,8 +229,8 @@ func TestEnsureBootstrapDefaults_SetsListenerPortAndLogLevel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("log_level should exist after initialization: %v", err)
 	}
-	if logLevelValue != "debug" {
-		t.Errorf("expected log_level to be 'debug', got %q", logLevelValue)
+	if logLevelValue != "info" {
+		t.Errorf("expected log_level to be 'info', got %q", logLevelValue)
 	}
 }
 

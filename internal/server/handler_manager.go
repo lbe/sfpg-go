@@ -67,7 +67,7 @@ func (m *HandlerManager) Build(
 	m.authHandlers.SyncLoginRateLimitMax(max)
 
 	m.configHandlers = handlers.NewConfigHandlers(
-		configService, authSvc, sm, dbRoPool, dbRwPool, app, app, app.AddCommonTemplateData, tmpl, ctx,
+		configService, authSvc, sm, dbRoPool, dbRwPool, app, app, app, app.AddCommonTemplateData, tmpl, ctx,
 	)
 	m.configThemesHandler = handlers.NewConfigThemesHandler(m.configHandlers)
 	m.configRestartHandler = handlers.NewConfigRestartHandler(m.configHandlers)

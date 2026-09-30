@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/lbe/sfpg-go/internal/cachelite/bodycodec"
-	"github.com/lbe/sfpg-go/internal/cachelite/bodycodec/fixtures"
+	"github.com/lbe/sfpg-go/internal/cachelite/bodycodec/testfixture"
 )
 
 func TestRegisterDefaults_roundtripZstd(t *testing.T) {
@@ -55,7 +55,7 @@ func TestRegisterDefaults_roundtripGzip(t *testing.T) {
 }
 
 func TestConcurrentRoundtripZstd(t *testing.T) {
-	data, err := fixtures.Read("gallery_med_1.html")
+	data, err := testfixture.Read("gallery_med_1.html")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestConcurrentRoundtripZstd(t *testing.T) {
 }
 
 func TestConcurrentRoundtripGzip(t *testing.T) {
-	data, err := fixtures.Read("gallery_med_1.html")
+	data, err := testfixture.Read("gallery_med_1.html")
 	if err != nil {
 		t.Fatal(err)
 	}

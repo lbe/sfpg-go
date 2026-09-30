@@ -70,8 +70,8 @@ func TestWalCheckpointAfterCommit_SkippedWhenRebuildScanHeld(t *testing.T) {
 	}
 
 	// Simulate the open rebuild scan cursor.
-	infra.folderIndexRebuildScanHeld.Store(true)
-	defer infra.folderIndexRebuildScanHeld.Store(false)
+	infra.folderIndex.setRebuildScanHeld(true)
+	defer infra.folderIndex.setRebuildScanHeld(false)
 
 	// D4 wrote-nothing skip must not false-green this: postFlush=true with
 	// lastFlushWroteDML true still must not checkpoint while scan-held.
@@ -102,7 +102,7 @@ func TestWalCheckpointAfterCommit_RunsWhenScanNotHeld(t *testing.T) {
 	}
 
 	// Flag false (default): normal operation.
-	if infra.folderIndexRebuildScanHeld.Load() {
+	if infra.folderIndex.RebuildScanHeld() {
 		t.Fatal("scan-held flag should default false")
 	}
 

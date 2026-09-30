@@ -150,11 +150,18 @@ func (app *App) IsRestartRequested() bool {
 // TriggerRestart gracefully shuts down the server so Serve returns.
 func (app *App) TriggerRestart() {
 	app.RuntimeManager.TriggerRestart()
+	if app.testSeams.OnTriggerRestart != nil {
+		app.testSeams.OnTriggerRestart()
+	}
 }
 
 // ExecRestart replaces the current process image.
 func (app *App) ExecRestart() {
-	app.RuntimeManager.ExecRestart()
+	var logFile string
+	if app.logger != nil {
+		logFile = app.logger.FilePath()
+	}
+	app.RuntimeManager.ExecRestart(logFile)
 }
 
 // MemoryReclaimerConfig holds the configuration for the memory reclaimer.

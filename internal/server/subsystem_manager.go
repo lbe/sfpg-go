@@ -37,7 +37,7 @@ type preloadManager interface {
 // SubsystemManager owns background processing subsystems.
 type SubsystemManager struct {
 	pool               *workerpool.Pool
-	q                  queue.Queuer[string]
+	q                  queue.Queuer[files.DiscoveryPathWork]
 	qSendersActive     atomic.Int64
 	fileProcessor      files.FileProcessor
 	processingStats    *files.ProcessingStats
@@ -105,7 +105,7 @@ func (m *SubsystemManager) Start(
 	// Unified batcher adapter: always stored, even when a test injected a fake
 	// fileProcessor, so TriggerDiscovery can use the same adapter and the same
 	// InfrastructureService atomics the flush/OnSuccess path uses.
-	m.unifiedBatcher = newFileBatcher(m.infra.WriteBatcher(), &m.infra.folderIndexInflight, &m.infra.folderIndexRebuildActive, &m.infra.folderIndexRebuildScanHeld, &m.infra.folderIndexGeneration)
+	m.unifiedBatcher = newFileBatcher(m.infra.WriteBatcher(), &m.infra.folderIndex)
 
 	// File processor (tests may inject a fake via m.fileProcessor)
 	if m.fileProcessor == nil {

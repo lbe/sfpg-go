@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lbe/sfpg-go/internal/cachelite/bodycodec/fixtures"
+	"github.com/lbe/sfpg-go/internal/cachelite/bodycodec/testfixture"
 )
 
 func TestRoundtrip(t *testing.T) {
@@ -29,7 +29,7 @@ func TestRoundtrip(t *testing.T) {
 	})
 
 	t.Run("gallery_med_1", func(t *testing.T) {
-		src, err := fixtures.Read("gallery_med_1.html")
+		src, err := testfixture.Read("gallery_med_1.html")
 		if err != nil {
 			t.Fatalf("read gallery_med_1.html: %v", err)
 		}

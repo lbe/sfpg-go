@@ -3,7 +3,6 @@ package security
 
 import (
 	"database/sql"
-	"fmt"
 )
 
 // LockoutThreshold is the number of failed attempts before account lockout.
@@ -48,26 +47,4 @@ func ShouldClearLockout(lockedUntil sql.NullInt64, now int64) bool {
 // IncrementFailedAttempts increments the failed attempt counter.
 func IncrementFailedAttempts(current int64) int64 {
 	return current + 1
-}
-
-// FormatLockoutDuration converts the lockout duration to a human-readable string.
-func FormatLockoutDuration(lockedUntil int64, now int64) string {
-	duration := lockedUntil - now
-	if duration <= 0 {
-		return "0 minutes"
-	}
-
-	minutes := duration / 60
-	if minutes < 60 {
-		if minutes == 1 {
-			return "1 minute"
-		}
-		return fmt.Sprintf("%d minutes", minutes)
-	}
-
-	hours := minutes / 60
-	if hours == 1 {
-		return "1 hour"
-	}
-	return fmt.Sprintf("%d hours", hours)
 }

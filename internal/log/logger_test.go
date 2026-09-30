@@ -85,6 +85,61 @@ func TestNewBootstrapLogger_CreatesLogsDirectory(t *testing.T) {
 	}
 }
 
+// TestNewBootstrapLogger_ContinuesInheritedLogFile verifies bootstrap appends
+// to SEPG_LOG_FILE instead of creating a new timestamped file.
+func TestNewBootstrapLogger_ContinuesInheritedLogFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	sched := testScheduler(t)
+
+	existingPath := filepath.Join(tmpDir, "sfpg-2026-01-01_00-00-00.log")
+	existing, err := os.Create(existingPath)
+	if err != nil {
+		t.Fatalf("create existing log: %v", err)
+	}
+	if _, writeErr := existing.WriteString("prior\n"); writeErr != nil {
+		t.Fatalf("write existing log: %v", writeErr)
+	}
+	existing.Close()
+
+	t.Setenv(ContinueLogFileEnv, existingPath)
+
+	logger, err := NewBootstrapLogger(tmpDir, sched, "x.y.z")
+	if err != nil {
+		t.Fatalf("NewBootstrapLogger should not fail: %v", err)
+	}
+	defer func() {
+		if sErr := logger.Shutdown(); sErr != nil {
+			t.Fatal(sErr)
+		}
+	}()
+
+	if logger.FilePath() != existingPath {
+		t.Fatalf("expected continued log path %q, got %q", existingPath, logger.FilePath())
+	}
+	if _, set := os.LookupEnv(ContinueLogFileEnv); set {
+		t.Fatal("ContinueLogFileEnv should be unset after bootstrap")
+	}
+
+	files, err := os.ReadDir(tmpDir)
+	if err != nil {
+		t.Fatalf("read dir: %v", err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("expected one log file, got %d", len(files))
+	}
+
+	data, err := os.ReadFile(existingPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	if !strings.Contains(string(data), "prior") {
+		t.Fatal("expected prior log content to remain")
+	}
+	if !strings.Contains(string(data), "Application starting") {
+		t.Fatal("expected bootstrap to append Application starting")
+	}
+}
+
 // TestNewBootstrapLogger_CreatesLogFile verifies that NewBootstrapLogger
 // creates a log file with timestamp in the logs directory.
 func TestNewBootstrapLogger_CreatesLogFile(t *testing.T) {

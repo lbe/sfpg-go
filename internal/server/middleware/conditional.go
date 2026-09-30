@@ -16,9 +16,8 @@ func matchesETag(etag string, ifNoneMatch string) bool {
 	return conditional.MatchesETag(ifNoneMatch, etag)
 }
 
-// matchesLastModified checks if the resource was modified before the given time
-// Returns true if Last-Modified <= If-Modified-Since (not modified)
-// Delegates to conditional.MatchesLastModified
+// matchesLastModified checks if the resource was modified before the given time.
+// Returns true if Last-Modified <= If-Modified-Since (not modified).
 func matchesLastModified(lastModified time.Time, ifModifiedSince time.Time) bool {
 	// Truncate to seconds for comparison (HTTP times don't include nanoseconds)
 	return lastModified.Truncate(time.Second).Before(ifModifiedSince.Add(time.Second))

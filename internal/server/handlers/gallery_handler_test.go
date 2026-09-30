@@ -51,7 +51,7 @@ func TestGalleryByID_InvalidID(t *testing.T) {
 }
 
 func TestGalleryByID_FolderNotFound(t *testing.T) {
-	qh := &fakeHandlerQueries{getFolderViewByIDErr: sql.ErrNoRows}
+	qh := &fakeHandlerQueries{GetFolderViewByIDErr: sql.ErrNoRows}
 	gh := setupTestGalleryHandlers(t, qh)
 
 	req := httptest.NewRequest(http.MethodGet, "/gallery/1", nil)
@@ -66,7 +66,7 @@ func TestGalleryByID_FolderNotFound(t *testing.T) {
 }
 
 func TestGalleryByID_FolderThumbsQueryError(t *testing.T) {
-	qh := &fakeHandlerQueries{getGalleryFolderThumbsErr: errors.New("db error")}
+	qh := &fakeHandlerQueries{GetGalleryFolderThumbsErr: errors.New("db error")}
 	gh := setupTestGalleryHandlers(t, qh)
 
 	req := httptest.NewRequest(http.MethodGet, "/gallery/1", nil)
@@ -81,7 +81,7 @@ func TestGalleryByID_FolderThumbsQueryError(t *testing.T) {
 }
 
 func TestGalleryByID_FileThumbsQueryError(t *testing.T) {
-	qh := &fakeHandlerQueries{getGalleryFileThumbsErr: errors.New("db error")}
+	qh := &fakeHandlerQueries{GetGalleryFileThumbsErr: errors.New("db error")}
 	gh := setupTestGalleryHandlers(t, qh)
 
 	req := httptest.NewRequest(http.MethodGet, "/gallery/1", nil)

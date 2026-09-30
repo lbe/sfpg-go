@@ -587,7 +587,7 @@ WantedBy=multi-user.target
   - [ ] Back up `DB/sfpg.db-dque/` (auto-created persistent write overflow queue) alongside the DB to preserve in-flight pending writes across restarts
 - Operations
   - [ ] Configure systemd (or equivalent) with restart policy
-  - [ ] Set `log_level` to **`info`** or **`warn`** in production (default is `debug` for troubleshooting; verbose on busy galleries)
+  - [ ] Production default log level is **`info`**; use `-log-level debug` or the config modal for troubleshooting (verbose on busy galleries)
   - [ ] Monitor logs in `logs/` and rotate as needed (log files are timestamped per startup)
   - [ ] Health checks: probe a static asset under `/static/` for liveness
 - Application
@@ -599,8 +599,7 @@ WantedBy=multi-user.target
 - Security Hardening
   - [ ] Review the [Symlink Trust Model](#symlink-trust-model) and apply filesystem hardening if needed
   - [ ] Review [public gallery browsing](#public-gallery-browsing-no-authentication-on-media-routes): sequential IDs are not secret; if content is private, restrict the network or add [edge viewer authentication](#protecting-a-private-gallery-at-the-reverse-proxy)
-  - [ ] Pprof is always available on loopback only (127.0.0.1 / ::1); access via SSH tunnel or local curl. Requires admin auth even on loopback. Public hostname returns 404
-  - [ ] Consider restricting pprof access further via reverse-proxy rules (e.g., allow only localhost or internal IP ranges; the application's loopback check already blocks remote access)
+  - [ ] Pprof: deny `/debug/*` at the reverse proxy (stock `deploy/Caddyfile`); app blocks forward-header and non-loopback requests (**404**). Direct loopback `curl` with admin session only — see [Profiling Endpoints](#profiling-endpoints-pprof)
 
 ## Local Development vs Production
 
@@ -689,7 +688,7 @@ curl -f -H "Host: gallery.example.com" \
 
 The application exposes Go's standard `net/http/pprof` debugging endpoints under `/debug/pprof/`.
 
-**Availability:** Always available on loopback only (`127.0.0.1` / `::1`). Access requires admin authentication even on loopback. The public hostname returns **404** even with a valid session cookie — you must access via SSH tunnel or local `curl` to `http://127.0.0.1:<port>/debug/pprof/...`.
+**Availability:** Routes are always registered. **Direct** access to the app on loopback (`127.0.0.1` / `::1`) with **no** reverse-proxy forward headers requires admin authentication (**401** without session, **200** with session). Requests that carry `X-Forwarded-For`, `X-Forwarded-Proto`, `X-Forwarded-Host`, or `Forwarded` — including when Caddy connects from `127.0.0.1` — receive **404** before auth. Non-loopback direct access also returns **404**. Stock `deploy/Caddyfile` denies `/debug/*` at the edge (**404** on the public hostname). Use SSH tunnel or local `curl` to `http://127.0.0.1:<port>/debug/pprof/...` without forward headers.
 
 **Available endpoints:**
 

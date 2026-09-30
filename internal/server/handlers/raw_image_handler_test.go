@@ -16,7 +16,7 @@ import (
 // --- RawImageByID Tests ---
 
 func TestRawImageByID_NotFound(t *testing.T) {
-	qh := &fakeHandlerQueries{getFileViewByIDErr: sql.ErrNoRows}
+	qh := &fakeHandlerQueries{GetFileViewByIDErr: sql.ErrNoRows}
 	gh := setupTestGalleryHandlers(t, qh)
 
 	req := httptest.NewRequest(http.MethodGet, "/raw-image/1", nil)
@@ -31,7 +31,7 @@ func TestRawImageByID_NotFound(t *testing.T) {
 }
 
 func TestRawImageByID_DBError(t *testing.T) {
-	qh := &fakeHandlerQueries{getFileViewByIDErr: errors.New("db error")}
+	qh := &fakeHandlerQueries{GetFileViewByIDErr: errors.New("db error")}
 	gh := setupTestGalleryHandlers(t, qh)
 
 	req := httptest.NewRequest(http.MethodGet, "/raw-image/1", nil)
@@ -76,7 +76,7 @@ func TestRawImageByID_InvalidID(t *testing.T) {
 }
 
 func TestRawImageByID_PathTraversal(t *testing.T) {
-	qh := &fakeHandlerQueries{fileView: gallerydb.FileView{ID: 1, Path: "../evil.jpg", FolderID: sql.NullInt64{Int64: 1, Valid: true}}}
+	qh := &fakeHandlerQueries{FileView: gallerydb.FileView{ID: 1, Path: "../evil.jpg", FolderID: sql.NullInt64{Int64: 1, Valid: true}}}
 	gh := setupTestGalleryHandlers(t, qh)
 
 	req := httptest.NewRequest(http.MethodGet, "/raw-image/1", nil)
@@ -97,7 +97,7 @@ func TestRawImageByID_AllowsValidPath(t *testing.T) {
 		t.Fatalf("failed to write test file: %v", err)
 	}
 
-	qh := &fakeHandlerQueries{fileView: gallerydb.FileView{ID: 1, Path: "ok.jpg", FolderID: sql.NullInt64{Int64: 1, Valid: true}}}
+	qh := &fakeHandlerQueries{FileView: gallerydb.FileView{ID: 1, Path: "ok.jpg", FolderID: sql.NullInt64{Int64: 1, Valid: true}}}
 	gh := setupTestGalleryHandlers(t, qh)
 	gh.galleryOps.(*mockGalleryOps).ImgDir = imagesDir
 

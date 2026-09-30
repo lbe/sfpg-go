@@ -3,97 +3,28 @@
 package files
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"image"
 	"image/jpeg"
 	"os"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/lbe/sfpg-go/internal/dbconnpool"
 	"github.com/lbe/sfpg-go/internal/gallerydb"
 	"github.com/lbe/sfpg-go/internal/gallerylib"
+	"github.com/lbe/sfpg-go/internal/parallelwalkdir"
 	"github.com/lbe/sfpg-go/internal/queue"
+	"github.com/lbe/sfpg-go/internal/server/pathutil"
 	"github.com/lbe/sfpg-go/internal/workerpool"
 )
 
-func TestGenerateThumbnailAndUpdateDbIfNeeded_Integration(t *testing.T) {
+func TestProcessDiscoveryWorkerFile_Integration(t *testing.T) {
 	roPool, rwPool, imagesDir, ctx := createTestPoolsAndDir(t)
-	importerFactory := func(conn *sql.Conn, q *gallerydb.CustomQueries) Importer {
-		return &gallerylib.Importer{Conn: conn, Q: q}
-	}
-
-	destImgName := "test-image.jpg"
-	destImgPath := filepath.Join(imagesDir, destImgName)
-
-	// Create a simple 1x1 red JPEG image
-	img := image.NewRGBA(image.Rect(0, 0, 1, 1))
-	file, err := os.Create(destImgPath)
-	if err != nil {
-		t.Fatalf("create dummy image: %v", err)
-	}
-	if err := jpeg.Encode(file, img, nil); err != nil {
-		file.Close()
-		t.Fatalf("encode JPEG: %v", err)
-	}
-	file.Close()
-
-	cpcRw, err := rwPool.Get()
-	if err != nil {
-		t.Fatalf("get rw: %v", err)
-	}
-	defer rwPool.Put(cpcRw)
-
-	cpcRo, err := roPool.Get()
-	if err != nil {
-		t.Fatalf("get ro: %v", err)
-	}
-	defer roPool.Put(cpcRo)
-
-	f := File{
-		ImagesDir: imagesDir,
-		Path:      destImgName,
-	}
-	if err := ProcessFile(ctx, cpcRo, &f); err != nil {
-		// We expect a non-image error here, but we continue to test the thumbnail generation part
-		if len(err.Error()) < 10 || err.Error()[:10] != "non-image " {
-			t.Logf("processFile failed with unexpected error: %v", err)
-		}
-	}
-
-	if err := GenerateThumbnailAndUpdateDbIfNeeded(ctx, cpcRw, cpcRo, &f, importerFactory); err != nil {
-		t.Fatalf("GenerateThumbnailAndUpdateDbIfNeeded: %v", err)
-	}
-
-	dbFile, err := cpcRo.Queries.GetFileByPath(ctx, destImgName)
-	if err != nil {
-		t.Fatalf("GetFileByPath: %v", err)
-	}
-
-	thumbExists, err := cpcRo.Queries.GetThumbnailExistsViewByID(ctx, dbFile.ID)
-	if err != nil {
-		t.Fatalf("GetThumbnailExistsViewByID: %v", err)
-	}
-	if !thumbExists {
-		t.Error("expected thumbnail to exist")
-	}
-
-	folder, err := cpcRo.Queries.GetFolderByID(ctx, dbFile.FolderID.Int64)
-	if err != nil {
-		t.Fatalf("GetFolderByID: %v", err)
-	}
-	if !folder.TileID.Valid || folder.TileID.Int64 == 0 {
-		t.Error("expected folder tile to be updated")
-	}
-}
-
-func TestProcessFile_Integration(t *testing.T) {
-	roPool, rwPool, imagesDir, ctx := createTestPoolsAndDir(t)
-	importerFactory := func(conn *sql.Conn, q *gallerydb.CustomQueries) Importer {
-		return &gallerylib.Importer{Conn: conn, Q: q}
-	}
 
 	sourceImgPath := filepath.Join("..", "..", "..", "testdata", "Metadata_test_file_-_includes_data_in_IIM,_XMP,_and_Exif.jpg")
 	destImgName := "test-image.jpg"
@@ -120,13 +51,21 @@ func TestProcessFile_Integration(t *testing.T) {
 	}
 	defer rwPool.Put(cpcRw)
 
+	destInfo, err := os.Stat(destImgPath)
+	if err != nil {
+		t.Fatalf("stat destination: %v", err)
+	}
 	f := &File{
 		ImagesDir: imagesDir,
 		Path:      destImgName,
+		File: gallerydb.File{
+			Mtime:     sql.NullInt64{Int64: destInfo.ModTime().Unix(), Valid: true},
+			SizeBytes: sql.NullInt64{Int64: destInfo.Size(), Valid: true},
+		},
 	}
 
-	if err := ProcessFile(ctx, cpcRo, f); err != nil {
-		t.Fatalf("ProcessFile: %v", err)
+	if err := processDiscoveryWorkerFile(f); err != nil {
+		t.Fatalf("processDiscoveryWorkerFile: %v", err)
 	}
 
 	t.Logf("CameraMake from test: %+v", f.Exif.CameraMake)
@@ -150,8 +89,18 @@ func TestProcessFile_Integration(t *testing.T) {
 		t.Error("expected ThumbnailData to be populated")
 	}
 
-	if err := GenerateThumbnailAndUpdateDbIfNeeded(ctx, cpcRw, cpcRo, f, importerFactory); err != nil {
-		t.Fatalf("GenerateThumbnailAndUpdateDbIfNeeded: %v", err)
+	tx, err := cpcRw.Conn.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("BeginTx: %v", err)
+	}
+	qtx := cpcRw.Queries.WithTx(tx)
+	imp := &gallerylib.Importer{Q: qtx}
+	if err := WriteFileInTx(ctx, imp, f); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("WriteFileInTx: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: %v", err)
 	}
 
 	dbFile, err := cpcRo.Queries.GetFileByPath(ctx, destImgName)
@@ -170,265 +119,6 @@ func TestProcessFile_Integration(t *testing.T) {
 	}
 }
 
-func TestUpsertThumbnail_FullFlow_SuccessAndRollback(t *testing.T) {
-	_, rwPool, _, ctx := createTestPoolsAndDir(t)
-
-	cpcRw, err := rwPool.Get()
-	if err != nil {
-		t.Fatalf("get RW: %v", err)
-	}
-	defer rwPool.Put(cpcRw)
-
-	// Create a file path and file so thumbnails can reference a real file_id
-	fpID, err := cpcRw.Queries.UpsertFilePathReturningID(ctx, "/test/path/img.jpg")
-	if err != nil {
-		t.Fatalf("UpsertFilePathReturningID: %v", err)
-	}
-	file, err := cpcRw.Queries.UpsertFileReturningFile(ctx, gallerydb.UpsertFileReturningFileParams{
-		FolderID:  sql.NullInt64{Valid: false},
-		PathID:    fpID,
-		Filename:  "img.jpg",
-		CreatedAt: time.Now().Unix(),
-		UpdatedAt: time.Now().Unix(),
-	})
-	if err != nil {
-		t.Fatalf("UpsertFileReturningFile: %v", err)
-	}
-
-	// Success path: call upsertThumbnail and assert the blob is present
-	thumb := []byte("thumb-bytes")
-	thumbnailID, err := UpsertThumbnail(ctx, cpcRw, file.ID, thumb)
-	if err != nil {
-		t.Fatalf("UpsertThumbnail: %v", err)
-	}
-	// Verify blob exists
-	data, err := cpcRw.Queries.GetThumbnailBlobDataByID(ctx, thumbnailID)
-	if err != nil {
-		t.Fatalf("GetThumbnailBlobDataByID: %v", err)
-	}
-	if string(data) != string(thumb) {
-		t.Fatalf("thumbnail blob mismatch: got %v", data)
-	}
-
-	// Rollback path: create a new file so we can verify rollback cleaned up its rows,
-	// then temporarily replace upsertThumbnailTxOnly to force an error
-	fpID2, err := cpcRw.Queries.UpsertFilePathReturningID(ctx, "/test/path/img2.jpg")
-	if err != nil {
-		t.Fatalf("UpsertFilePathReturningID: %v", err)
-	}
-	file2, err := cpcRw.Queries.UpsertFileReturningFile(ctx, gallerydb.UpsertFileReturningFileParams{
-		FolderID:  sql.NullInt64{Valid: false},
-		PathID:    fpID2,
-		Filename:  "img2.jpg",
-		CreatedAt: time.Now().Unix(),
-		UpdatedAt: time.Now().Unix(),
-	})
-	if err != nil {
-		t.Fatalf("UpsertFileReturningFile: %v", err)
-	}
-
-	orig := UpsertThumbnailTxOnly
-	UpsertThumbnailTxOnly = func(qtx ThumbnailTx, ctx context.Context, fileID int64, thumb []byte) (int64, error) {
-		// Insert a thumbnail row inside the tx, then return an error to force rollback
-		id, err2 := qtx.UpsertThumbnailReturningID(ctx, gallerydb.UpsertThumbnailReturningIDParams{
-			FileID:    fileID,
-			SizeLabel: "m",
-			Width:     0,
-			Height:    0,
-			Format:    "jpg",
-			CreatedAt: time.Now().Unix(),
-			UpdatedAt: time.Now().Unix(),
-		})
-		if err2 != nil {
-			return 0, err2
-		}
-		// don't insert blob, return error to cause outer rollback
-		return id, sql.ErrConnDone
-	}
-	defer func() { UpsertThumbnailTxOnly = orig }()
-
-	_, err = UpsertThumbnail(ctx, cpcRw, file2.ID, []byte("other"))
-	if err == nil {
-		t.Fatal("expected error from UpsertThumbnail (forced), got nil")
-	}
-	// Ensure any thumbnail inserted in the inner tx was rolled back: try to get thumbnails for fileID2
-	_, err = cpcRw.Queries.GetThumbnailsByFileID(ctx, file2.ID)
-	if err == nil {
-		t.Fatal("expected no thumbnails after rollback, but some exist")
-	}
-}
-
-func TestInvalidFileSkipping_Integration(t *testing.T) {
-	processor, _, _, imagesDir := createTestProcessor(t, nil)
-	ctx := context.Background()
-
-	// Create a non-image file
-	path := "invalid.txt"
-	fullPath := filepath.Join(imagesDir, path)
-	if err := os.WriteFile(fullPath, []byte("not an image"), 0o644); err != nil {
-		t.Fatalf("write file: %v", err)
-	}
-	info, err := os.Stat(fullPath)
-	if err != nil {
-		t.Fatalf("stat: %v", err)
-	}
-
-	// First attempt fails (non-image)
-	_, err = processor.ProcessFile(ctx, path)
-	if err == nil {
-		t.Fatal("expected ProcessFile to fail for non-image")
-	}
-	// Record as invalid (simulating what the worker does)
-	if err := processor.RecordInvalidFile(ctx, path, info.ModTime().Unix(), info.Size(), "non-image"); err != nil {
-		t.Fatalf("RecordInvalidFile: %v", err)
-	}
-
-	// Second attempt should skip (unchanged, no error)
-	file, err := processor.ProcessFile(ctx, path)
-	if err != nil {
-		t.Fatalf("second ProcessFile: %v", err)
-	}
-	if !file.Ok || file.Exists {
-		t.Errorf("expected skip (Ok=true, Exists=false), got Ok=%v Exists=%v", file.Ok, file.Exists)
-	}
-}
-
-func TestInvalidFileReprocessing_Integration(t *testing.T) {
-	processor, roPool, _, imagesDir := createTestProcessor(t, nil)
-	ctx := context.Background()
-
-	// Create non-image, process (fails), record invalid
-	path := "reprocess.txt"
-	fullPath := filepath.Join(imagesDir, path)
-	if err := os.WriteFile(fullPath, []byte("x"), 0o644); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	_, err := processor.ProcessFile(ctx, path)
-	if err == nil {
-		t.Fatal("expected ProcessFile to fail")
-	}
-	info, _ := os.Stat(fullPath)
-	_ = processor.RecordInvalidFile(ctx, path, info.ModTime().Unix(), info.Size(), "non-image")
-
-	// Replace with valid image (different mtime/size)
-	srcPath := filepath.Join("..", "..", "..", "testdata", "Metadata_test_file_-_includes_data_in_IIM,_XMP,_and_Exif.jpg")
-	src, err := os.ReadFile(srcPath)
-	if err != nil {
-		t.Skipf("read source image: %v", err)
-	}
-	if err := os.WriteFile(fullPath, src, 0o644); err != nil {
-		t.Fatalf("overwrite: %v", err)
-	}
-
-	// Should reprocess and succeed (no longer in invalid_files after success)
-	file, err := processor.ProcessFile(ctx, path)
-	if err != nil {
-		t.Fatalf("ProcessFile after replace: %v", err)
-	}
-	if file.Ok && !file.Exists {
-		t.Error("expected file to be processed (not skipped as invalid)")
-	}
-	// GenerateThumbnail should clear invalid_files and succeed
-	if err := processor.GenerateThumbnail(ctx, file); err != nil {
-		t.Fatalf("GenerateThumbnail: %v", err)
-	}
-	// Verify invalid_files entry was cleared
-	cpcRo, err := roPool.Get()
-	if err != nil {
-		t.Fatalf("roPool.Get: %v", err)
-	}
-	defer roPool.Put(cpcRo)
-	_, err = cpcRo.Queries.GetInvalidFileByPath(ctx, path)
-	if err != sql.ErrNoRows {
-		t.Errorf("expected invalid_files entry cleared after success, got err %v", err)
-	}
-}
-
-// TestGenerateThumbnail_CallsImporterMethods verifies importer methods are called correctly.
-func TestGenerateThumbnail_CallsImporterMethods(t *testing.T) {
-	roPool, rwPool, imagesDir, ctx := createTestPoolsAndDir(t)
-	cpcRw, err := rwPool.Get()
-	if err != nil {
-		t.Fatalf("get rw: %v", err)
-	}
-	defer rwPool.Put(cpcRw)
-	cpcRo, err := roPool.Get()
-	if err != nil {
-		t.Fatalf("get ro: %v", err)
-	}
-	defer roPool.Put(cpcRo)
-	var wrapped *wrappedImporter
-	importerFactory := func(conn *sql.Conn, q *gallerydb.CustomQueries) Importer {
-		if wrapped == nil {
-			gi := &gallerylib.Importer{Conn: conn, Q: q}
-			wrapped = &wrappedImporter{inner: gi}
-			return wrapped
-		}
-		if wrapped.inner == nil {
-			wrapped.inner = &gallerylib.Importer{Conn: conn, Q: q}
-		} else {
-			wrapped.inner.Conn = conn
-			wrapped.inner.Q = q
-		}
-		return wrapped
-	}
-	f := &File{
-		ImagesDir: imagesDir,
-		Path:      "test-dir/testfile.jpg",
-		Thumbnail: bytes.NewBuffer([]byte{1, 2, 3}),
-		File:      gallerydb.File{Mtime: sql.NullInt64{Int64: time.Now().Unix(), Valid: true}, SizeBytes: sql.NullInt64{Int64: 123, Valid: true}},
-	}
-	if genErr := GenerateThumbnailAndUpdateDbIfNeeded(ctx, cpcRw, cpcRo, f, importerFactory); genErr != nil {
-		t.Fatalf("GenerateThumbnailAndUpdateDbIfNeeded: %v", genErr)
-	}
-	if wrapped == nil {
-		t.Fatal("wrapped importer not created")
-	}
-	if wrapped.upsertCalls == 0 {
-		t.Error("expected UpsertPathChain called at least once")
-	}
-	if wrapped.updateCalls == 0 {
-		t.Error("expected UpdateFolderTileChain called at least once")
-	}
-}
-
-// TestGenerateThumbnail_ClearsInvalidFileOnSuccess verifies invalid_files entry is cleared on success.
-func TestGenerateThumbnail_ClearsInvalidFileOnSuccess(t *testing.T) {
-	roPool, rwPool, imagesDir, ctx := createTestPoolsAndDir(t)
-	cpcRw, err := rwPool.Get()
-	if err != nil {
-		t.Fatalf("get rw: %v", err)
-	}
-	defer rwPool.Put(cpcRw)
-	cpcRo, err := roPool.Get()
-	if err != nil {
-		t.Fatalf("get ro: %v", err)
-	}
-	defer roPool.Put(cpcRo)
-	path := "test-dir/cleared.jpg"
-	if upsertErr := cpcRw.Queries.UpsertInvalidFile(ctx, gallerydb.UpsertInvalidFileParams{
-		Path: path, Mtime: 1, Size: 2, Reason: sql.NullString{String: "non-image", Valid: true},
-	}); upsertErr != nil {
-		t.Fatalf("UpsertInvalidFile: %v", upsertErr)
-	}
-	importerFactory := func(conn *sql.Conn, q *gallerydb.CustomQueries) Importer {
-		return &gallerylib.Importer{Conn: conn, Q: q}
-	}
-	f := &File{
-		ImagesDir: imagesDir,
-		Path:      path,
-		Thumbnail: bytes.NewBuffer([]byte{1, 2, 3}),
-		File:      gallerydb.File{Mtime: sql.NullInt64{Int64: time.Now().Unix(), Valid: true}, SizeBytes: sql.NullInt64{Int64: 3, Valid: true}},
-	}
-	if genErr := GenerateThumbnailAndUpdateDbIfNeeded(ctx, cpcRw, cpcRo, f, importerFactory); genErr != nil {
-		t.Fatalf("GenerateThumbnailAndUpdateDbIfNeeded: %v", err)
-	}
-	_, err = cpcRo.Queries.GetInvalidFileByPath(ctx, path)
-	if err != sql.ErrNoRows {
-		t.Errorf("expected invalid_files entry to be cleared, got err %v", err)
-	}
-}
-
 // TestNewPoolFunc_RunPoolWorkerSuccess verifies pool worker successfully processes a file.
 func TestNewPoolFunc_RunPoolWorkerSuccess(t *testing.T) {
 	roPool, rwPool, imagesDir, _ := createTestPoolsAndDir(t)
@@ -439,8 +129,8 @@ func TestNewPoolFunc_RunPoolWorkerSuccess(t *testing.T) {
 	rel := createTestImage(t, imagesDir, "worker-test.jpg")
 	full := filepath.ToSlash(filepath.Join(imagesDir, rel))
 
-	q := queue.NewQueue[string](1)
-	if err := q.Enqueue(full); err != nil {
+	q := queue.NewQueue[DiscoveryPathWork](1)
+	if err := q.Enqueue(testDiscoveryPath(full)); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
 
@@ -473,48 +163,6 @@ func TestNewPoolFunc_RunPoolWorkerSuccess(t *testing.T) {
 	}
 }
 
-// TestFileProcessor_ProcessFile_Integration verifies FileProcessor.ProcessFile works with real database.
-func TestFileProcessor_ProcessFile_Integration(t *testing.T) {
-	processor, _, _, imagesDir := createTestProcessor(t, nil)
-
-	file, err := processor.ProcessFile(context.Background(), createTestImage(t, imagesDir, "test.jpg"))
-	if err != nil {
-		t.Fatalf("ProcessFile() error = %v", err)
-	}
-	if file == nil {
-		t.Fatal("ProcessFile() returned nil file on success")
-	}
-}
-
-// TestFileProcessor_CheckIfModified_Integration verifies FileProcessor.CheckIfModified with real database.
-func TestFileProcessor_CheckIfModified_Integration(t *testing.T) {
-	processor, _, _, imagesDir := createTestProcessor(t, nil)
-	createTestImage(t, imagesDir, "test.jpg")
-
-	unchanged, err := processor.CheckIfModified(context.Background(), "test.jpg")
-	if err != nil {
-		t.Fatalf("CheckIfModified() error = %v", err)
-	}
-	if unchanged {
-		t.Errorf("CheckIfModified() unchanged = %v, want false", unchanged)
-	}
-}
-
-// TestFileProcessor_GenerateThumbnail_Integration verifies FileProcessor.GenerateThumbnail with real database.
-func TestFileProcessor_GenerateThumbnail_Integration(t *testing.T) {
-	processor, _, _, imagesDir := createTestProcessor(t, nil)
-	path := createTestImage(t, imagesDir, "test.jpg")
-
-	f, err := processor.ProcessFile(context.Background(), path)
-	if err != nil {
-		t.Fatalf("pre-process file: %v", err)
-	}
-
-	if err := processor.GenerateThumbnail(context.Background(), f); err != nil {
-		t.Fatalf("GenerateThumbnail() error = %v", err)
-	}
-}
-
 // TestWriteFileInTx_Integration verifies WriteFileInTx writes file data within a transaction.
 func TestWriteFileInTx_Integration(t *testing.T) {
 	roPool, rwPool, imagesDir, ctx := createTestPoolsAndDir(t)
@@ -526,12 +174,12 @@ func TestWriteFileInTx_Integration(t *testing.T) {
 	}, imagesDir, nil)
 	t.Cleanup(func() { _ = processor.Close() })
 
-	file, err := processor.ProcessFile(ctx, path)
+	file, err := processor.ProcessDiscoveryFile(ctx, fileWithWalkMetadata(t, imagesDir, path))
 	if err != nil {
-		t.Fatalf("ProcessFile: %v", err)
+		t.Fatalf("ProcessDiscoveryFile: %v", err)
 	}
 	if file.Thumbnail == nil {
-		t.Fatal("ProcessFile did not generate thumbnail")
+		t.Fatal("ProcessDiscoveryFile did not generate thumbnail")
 	}
 
 	// Begin transaction and call WriteFileInTx
@@ -611,9 +259,9 @@ func TestSubmitFileForWrite_Integration(t *testing.T) {
 
 	// Create test image and process it
 	path := createTestImage(t, imagesDir, "test_submit_async.jpg")
-	file, err := processor.ProcessFile(ctx, path)
+	file, err := processor.ProcessDiscoveryFile(ctx, fileWithWalkMetadata(t, imagesDir, path))
 	if err != nil {
-		t.Fatalf("ProcessFile: %v", err)
+		t.Fatalf("ProcessDiscoveryFile: %v", err)
 	}
 
 	// Submit for async write
@@ -713,4 +361,367 @@ func TestWriteFileInTx_PersistsXMP(t *testing.T) {
 	if !foundLat || !foundLon {
 		t.Errorf("missing GPS properties: lat=%v lon=%v", foundLat, foundLon)
 	}
+}
+
+// discoveryContentsSpy wraps a FileProcessor and counts worker paths that ran
+// processFileContents (thumbnail buffer populated).
+type discoveryContentsSpy struct {
+	inner              FileProcessor
+	contentsExtractedN atomic.Int64
+}
+
+func (s *discoveryContentsSpy) ProcessDiscoveryFile(ctx context.Context, file *File) (*File, error) {
+	out, err := s.inner.ProcessDiscoveryFile(ctx, file)
+	if out != nil && out.Thumbnail != nil && out.Thumbnail.Len() > 0 {
+		s.contentsExtractedN.Add(1)
+	}
+	return out, err
+}
+
+func (s *discoveryContentsSpy) RecordInvalidFile(ctx context.Context, path string, mtime, size int64, reason string, folderID int64) error {
+	return s.inner.RecordInvalidFile(ctx, path, mtime, size, reason, folderID)
+}
+
+func (s *discoveryContentsSpy) SubmitFileForWrite(file *File) error {
+	return s.inner.SubmitFileForWrite(file)
+}
+
+func (s *discoveryContentsSpy) PendingWriteCount() int64 {
+	return s.inner.PendingWriteCount()
+}
+
+func (s *discoveryContentsSpy) Close() error {
+	return s.inner.Close()
+}
+
+// TestDiscoveryWalk_DirEntCatalog_skipsUnchangedWorkerSQL runs production walk
+// wiring with catalog plus discovery workers; unchanged seeded files must not
+// enqueue and must not run processFileContents in workers.
+func TestDiscoveryWalk_DirEntCatalog_skipsUnchangedWorkerSQL(t *testing.T) {
+	const mtimeUnix = int64(1_700_000_450)
+	const sizeBytes = int64(96)
+
+	roPool, rwPool, imagesDir, ctx := createTestPoolsAndDir(t)
+	if err := os.MkdirAll(filepath.Join(imagesDir, "album"), 0o755); err != nil {
+		t.Fatalf("mkdir album: %v", err)
+	}
+	unchangedPaths := []string{"album/catalog-skip-1.jpg", "album/catalog-skip-2.jpg", "album/catalog-skip-3.jpg"}
+	for _, rel := range unchangedPaths {
+		writeWalkTestImage(t, imagesDir, rel, int(sizeBytes), mtimeUnix)
+		seedGalleryFileRow(t, ctx, rwPool, rel, mtimeUnix, sizeBytes)
+	}
+
+	q := queue.NewQueue[DiscoveryPathWork](32)
+	stats := &ProcessingStats{}
+	deps := walkDepsWithCatalog(t, imagesDir, roPool, q)
+	deps.Stats = stats
+	normalized := filepath.ToSlash(imagesDir)
+
+	importerFactory := func(conn *sql.Conn, q *gallerydb.CustomQueries) Importer {
+		return &gallerylib.Importer{Conn: conn, Q: q}
+	}
+	inner := NewFileProcessor(roPool, rwPool, importerFactory, imagesDir, &mockUnifiedBatcher{})
+	spy := &discoveryContentsSpy{inner: inner}
+	t.Cleanup(func() { _ = spy.Close() })
+
+	pool := workerpool.NewPool(context.Background(), 2, 1, 10*time.Millisecond)
+	pool.Stats.RunningWorkers.Add(2)
+
+	workerCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	poolFunc := NewPoolFuncWithProcessor(spy, q, normalized, pathutil.RemoveImagesDirPrefix, stats, nil)
+
+	var workerWg sync.WaitGroup
+	for id := 1; id <= 2; id++ {
+		workerWg.Add(1)
+		go func(workerID int) {
+			defer workerWg.Done()
+			_ = poolFunc(workerCtx, pool, roPool, rwPool, q.Len, workerID)
+		}(id)
+	}
+
+	WalkImageDir(deps)
+
+	if got := q.Len(); got != 0 {
+		t.Fatalf("expected empty discovery queue after catalog walk, got len=%d items=%v", got, q.Slice())
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for stats.InFlight.Load() > 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out with InFlight=%d", stats.InFlight.Load())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	cancel()
+	workerWg.Wait()
+
+	wantFiles := uint64(len(unchangedPaths))
+	if got := stats.TotalFound.Load(); got != wantFiles {
+		t.Errorf("TotalFound: got %d, want %d", got, wantFiles)
+	}
+	if got := stats.AlreadyExisting.Load(); got != wantFiles {
+		t.Errorf("AlreadyExisting: got %d, want %d", got, wantFiles)
+	}
+	assertDiscoveryStatsConservation(t, stats)
+	if got := stats.NewlyInserted.Load(); got != 0 {
+		t.Errorf("NewlyInserted: got %d, want 0", got)
+	}
+	if got := spy.contentsExtractedN.Load(); got != 0 {
+		t.Errorf("processFileContents invocations: got %d, want 0", got)
+	}
+	if got := q.Len(); got != 0 {
+		t.Errorf("queue len after worker drain: got %d, want 0", got)
+	}
+}
+
+func TestDiscoveryCatalog_mergeFileAndInvalidRows_integration(t *testing.T) {
+	roPool, rwPool, _, ctx := createTestPoolsAndDir(t)
+	cpcRw, err := rwPool.Get()
+	if err != nil {
+		t.Fatalf("get rw: %v", err)
+	}
+	defer rwPool.Put(cpcRw)
+
+	const galleryPath = "album/photo.jpg"
+	folderID := ensureGalleryFolderChain(t, ctx, cpcRw.Queries, galleryPath)
+	now := time.Now().Unix()
+	pathID, err := cpcRw.Queries.UpsertFilePathReturningID(ctx, galleryPath)
+	if err != nil {
+		t.Fatalf("UpsertFilePathReturningID: %v", err)
+	}
+	if _, err := cpcRw.Queries.UpsertFileReturningFile(ctx, gallerydb.UpsertFileReturningFileParams{
+		FolderID:  sql.NullInt64{Int64: folderID, Valid: true},
+		PathID:    pathID,
+		Filename:  "photo.jpg",
+		SizeBytes: sql.NullInt64{Int64: 100, Valid: true},
+		Md5:       sql.NullString{String: "md5", Valid: true},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("UpsertFileReturningFile: %v", err)
+	}
+	if err := cpcRw.Queries.UpsertInvalidFile(ctx, gallerydb.UpsertInvalidFileParams{
+		Path: galleryPath, Mtime: now, Size: 200, FolderID: folderID,
+		Reason: sql.NullString{String: "decode", Valid: true},
+	}); err != nil {
+		t.Fatalf("UpsertInvalidFile: %v", err)
+	}
+
+	cpcRo, err := roPool.Get()
+	if err != nil {
+		t.Fatalf("get ro: %v", err)
+	}
+	defer roPool.Put(cpcRo)
+	folderIDParam := sql.NullInt64{Int64: folderID, Valid: true}
+	fileRows, err := cpcRo.Queries.ListDiscoveryFilesByFolderID(ctx, folderIDParam)
+	if err != nil {
+		t.Fatalf("ListDiscoveryFilesByFolderID: %v", err)
+	}
+	invalidRows, err := cpcRo.Queries.ListDiscoveryInvalidByFolderID(ctx, folderID)
+	if err != nil {
+		t.Fatalf("ListDiscoveryInvalidByFolderID: %v", err)
+	}
+	m := buildDirEntMapFromRows(fileRows, invalidRows)
+	key := parallelwalkdir.HashPathBytes([]byte("photo.jpg"))
+	st, ok := m[key]
+	if !ok {
+		t.Fatal("missing merged catalog entry")
+	}
+	if !st.FileIDValid || !st.FileMD5Valid || !st.InvalidPathValid || st.InvalidSize != 200 {
+		t.Fatalf("merged state: %+v", st)
+	}
+}
+
+func writeMinimalJPEG(path string) error {
+	img := image.NewRGBA(image.Rect(0, 0, 1, 1))
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return jpeg.Encode(f, img, nil)
+}
+
+func seedInvalidFileRow(t *testing.T, ctx context.Context, rwPool *dbconnpool.DbSQLConnPool, galleryPath string, mtimeUnix, sizeBytes int64) {
+	t.Helper()
+	cpcRw, err := rwPool.Get()
+	if err != nil {
+		t.Fatalf("get RW conn: %v", err)
+	}
+	defer rwPool.Put(cpcRw)
+	folderID := ensureGalleryFolderChain(t, ctx, cpcRw.Queries, galleryPath)
+	if err := cpcRw.Queries.UpsertInvalidFile(ctx, gallerydb.UpsertInvalidFileParams{
+		Path: galleryPath, Mtime: mtimeUnix, Size: sizeBytes, FolderID: folderID,
+		Reason: sql.NullString{String: "decode", Valid: true},
+	}); err != nil {
+		t.Fatalf("UpsertInvalidFile: %v", err)
+	}
+}
+
+// TestDiscoveryWalk_DirEntCatalog_skipsUnchangedInvalid_stats counts walk-time SkippedInvalid.
+func TestDiscoveryWalk_DirEntCatalog_skipsUnchangedInvalid_stats(t *testing.T) {
+	const mtimeUnix = int64(1_700_000_500)
+	const sizeBytes = int64(88)
+	rel := "album/invalid-skip.jpg"
+
+	roPool, rwPool, imagesDir, ctx := createTestPoolsAndDir(t)
+	if err := os.MkdirAll(filepath.Join(imagesDir, "album"), 0o755); err != nil {
+		t.Fatalf("mkdir album: %v", err)
+	}
+	writeWalkTestImage(t, imagesDir, rel, int(sizeBytes), mtimeUnix)
+	seedInvalidFileRow(t, ctx, rwPool, rel, mtimeUnix, sizeBytes)
+
+	q := queue.NewQueue[DiscoveryPathWork](4)
+	stats := &ProcessingStats{}
+	deps := walkDepsWithCatalog(t, imagesDir, roPool, q)
+	deps.Stats = stats
+	WalkImageDir(deps)
+
+	if got := q.Len(); got != 0 {
+		t.Fatalf("expected empty queue, got len=%d", got)
+	}
+	if stats.TotalFound.Load() != 1 {
+		t.Errorf("TotalFound: got %d, want 1", stats.TotalFound.Load())
+	}
+	if stats.SkippedInvalid.Load() != 1 {
+		t.Errorf("SkippedInvalid: got %d, want 1", stats.SkippedInvalid.Load())
+	}
+	assertDiscoveryStatsConservation(t, stats)
+}
+
+// TestDiscoveryWalk_mixedFixture_conservationIdentity exercises Process, AlreadyExisting, and SkippedInvalid paths.
+func TestDiscoveryWalk_mixedFixture_conservationIdentity(t *testing.T) {
+	const mtimeUnix = int64(1_700_000_600)
+	const sizeBytes = int64(120)
+
+	roPool, rwPool, imagesDir, ctx := createTestPoolsAndDir(t)
+	if err := os.MkdirAll(filepath.Join(imagesDir, "mix"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	writeWalkTestImage(t, imagesDir, "mix/existing.jpg", int(sizeBytes), mtimeUnix)
+	seedGalleryFileRow(t, ctx, rwPool, "mix/existing.jpg", mtimeUnix, sizeBytes)
+
+	writeWalkTestImage(t, imagesDir, "mix/invalid.jpg", int(sizeBytes), mtimeUnix)
+	seedInvalidFileRow(t, ctx, rwPool, "mix/invalid.jpg", mtimeUnix, sizeBytes)
+
+	dest := writeWalkTestImage(t, imagesDir, "mix/new.jpg", int(sizeBytes), mtimeUnix)
+	if err := writeMinimalJPEG(dest); err != nil {
+		t.Fatalf("write jpeg: %v", err)
+	}
+
+	q := queue.NewQueue[DiscoveryPathWork](8)
+	stats := &ProcessingStats{}
+	deps := walkDepsWithCatalog(t, imagesDir, roPool, q)
+	deps.Stats = stats
+	WalkImageDir(deps)
+
+	if stats.TotalFound.Load() != 3 {
+		t.Errorf("TotalFound: got %d, want 3", stats.TotalFound.Load())
+	}
+	if stats.AlreadyExisting.Load() != 1 {
+		t.Errorf("AlreadyExisting: got %d, want 1", stats.AlreadyExisting.Load())
+	}
+	if stats.SkippedInvalid.Load() != 1 {
+		t.Errorf("SkippedInvalid: got %d, want 1", stats.SkippedInvalid.Load())
+	}
+	if got := q.Len(); got != 1 {
+		t.Fatalf("expected 1 enqueued new file, got %d", got)
+	}
+
+	importerFactory := func(conn *sql.Conn, q *gallerydb.CustomQueries) Importer {
+		return &gallerylib.Importer{Conn: conn, Q: q}
+	}
+	inner := NewFileProcessor(roPool, rwPool, importerFactory, imagesDir, &mockUnifiedBatcher{})
+	t.Cleanup(func() { _ = inner.Close() })
+	normalized := filepath.ToSlash(imagesDir)
+	pool := workerpool.NewPool(context.Background(), 1, 1, 10*time.Millisecond)
+	pool.Stats.RunningWorkers.Add(1)
+	workerCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	poolFunc := NewPoolFuncWithProcessor(inner, q, normalized, pathutil.RemoveImagesDirPrefix, stats, nil)
+	var workerWg sync.WaitGroup
+	workerWg.Add(1)
+	go func() {
+		defer workerWg.Done()
+		_ = poolFunc(workerCtx, pool, roPool, rwPool, q.Len, 1)
+	}()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for q.Len() > 0 || stats.InFlight.Load() > 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out draining new file: q=%d inFlight=%d", q.Len(), stats.InFlight.Load())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	workerWg.Wait()
+
+	if stats.NewlyInserted.Load() != 1 {
+		t.Errorf("NewlyInserted: got %d, want 1", stats.NewlyInserted.Load())
+	}
+	assertDiscoveryStatsConservation(t, stats)
+}
+
+// TestDiscoveryWalk_processingFailure_workerSkippedInvalid counts worker SkippedInvalid after recordInvalidFileFromPath.
+func TestDiscoveryWalk_processingFailure_workerSkippedInvalid(t *testing.T) {
+	roPool, rwPool, imagesDir, _ := createTestPoolsAndDir(t)
+	const mtimeUnix = int64(1_700_000_700)
+	rel := "poison-walk.jpg"
+	data := []byte{0xFF, 0xD8, 0xFF, 0x00}
+	full := writeWalkTestImage(t, imagesDir, rel, len(data), mtimeUnix)
+	if err := os.WriteFile(full, data, 0o644); err != nil {
+		t.Fatalf("write poison: %v", err)
+	}
+
+	q := queue.NewQueue[DiscoveryPathWork](4)
+	stats := &ProcessingStats{}
+	deps := walkDepsWithCatalog(t, imagesDir, roPool, q)
+	deps.Stats = stats
+
+	importerFactory := func(conn *sql.Conn, q *gallerydb.CustomQueries) Importer {
+		return &gallerylib.Importer{Conn: conn, Q: q}
+	}
+	inner := NewFileProcessor(roPool, rwPool, importerFactory, imagesDir, &mockUnifiedBatcher{})
+	t.Cleanup(func() { _ = inner.Close() })
+
+	normalized := filepath.ToSlash(imagesDir)
+	pool := workerpool.NewPool(context.Background(), 1, 1, 10*time.Millisecond)
+	pool.Stats.RunningWorkers.Add(1)
+	workerCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	poolFunc := NewPoolFuncWithProcessor(inner, q, normalized, pathutil.RemoveImagesDirPrefix, stats, nil)
+
+	var workerWg sync.WaitGroup
+	workerWg.Add(1)
+	go func() {
+		defer workerWg.Done()
+		_ = poolFunc(workerCtx, pool, roPool, rwPool, q.Len, 1)
+	}()
+
+	WalkImageDir(deps)
+
+	deadline := time.Now().Add(3 * time.Second)
+	for stats.InFlight.Load() > 0 || q.Len() > 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out InFlight=%d q.Len=%d", stats.InFlight.Load(), q.Len())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	workerWg.Wait()
+
+	if stats.TotalFound.Load() != 1 {
+		t.Errorf("TotalFound: got %d, want 1", stats.TotalFound.Load())
+	}
+	if stats.SkippedInvalid.Load() != 1 {
+		t.Errorf("SkippedInvalid: got %d, want 1", stats.SkippedInvalid.Load())
+	}
+	if stats.NewlyInserted.Load() != 0 {
+		t.Errorf("NewlyInserted: got %d, want 0", stats.NewlyInserted.Load())
+	}
+	assertDiscoveryStatsConservation(t, stats)
 }

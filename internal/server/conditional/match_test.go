@@ -1,10 +1,8 @@
 package conditional
 
 import (
-	"database/sql"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestMatchesETag(t *testing.T) {
@@ -104,79 +102,6 @@ func TestMatchesETag(t *testing.T) {
 	}
 }
 
-func TestMatchesLastModified(t *testing.T) {
-	tests := []struct {
-		name            string
-		ifModifiedSince string
-		lastModified    sql.NullString
-		want            bool
-	}{
-		{
-			name:            "modified before If-Modified-Since",
-			ifModifiedSince: "Mon, 02 Jan 2024 12:00:00 GMT",
-			lastModified:    sql.NullString{String: "Mon, 01 Jan 2024 12:00:00 GMT", Valid: true},
-			want:            true,
-		},
-		{
-			name:            "modified after If-Modified-Since",
-			ifModifiedSince: "Mon, 01 Jan 2024 12:00:00 GMT",
-			lastModified:    sql.NullString{String: "Mon, 02 Jan 2024 12:00:00 GMT", Valid: true},
-			want:            false,
-		},
-		{
-			name:            "same time (not modified)",
-			ifModifiedSince: "Mon, 01 Jan 2024 12:00:00 GMT",
-			lastModified:    sql.NullString{String: "Mon, 01 Jan 2024 12:00:00 GMT", Valid: true},
-			want:            true,
-		},
-		{
-			name:            "empty If-Modified-Since",
-			ifModifiedSince: "",
-			lastModified:    sql.NullString{String: "Mon, 01 Jan 2024 12:00:00 GMT", Valid: true},
-			want:            false,
-		},
-		{
-			name:            "invalid Last-Modified",
-			ifModifiedSince: "Mon, 01 Jan 2024 12:00:00 GMT",
-			lastModified:    sql.NullString{String: "invalid-date", Valid: true},
-			want:            false,
-		},
-		{
-			name:            "invalid If-Modified-Since",
-			ifModifiedSince: "invalid-date",
-			lastModified:    sql.NullString{String: "Mon, 01 Jan 2024 12:00:00 GMT", Valid: true},
-			want:            false,
-		},
-		{
-			name:            "null Last-Modified",
-			ifModifiedSince: "Mon, 01 Jan 2024 12:00:00 GMT",
-			lastModified:    sql.NullString{Valid: false},
-			want:            false,
-		},
-		{
-			name:            "one second difference (matches)",
-			ifModifiedSince: "Mon, 01 Jan 2024 12:00:01 GMT",
-			lastModified:    sql.NullString{String: "Mon, 01 Jan 2024 12:00:00 GMT", Valid: true},
-			want:            true,
-		},
-		{
-			name:            "nanoseconds ignored",
-			ifModifiedSince: "Mon, 01 Jan 2024 12:00:00 GMT",
-			lastModified:    sql.NullString{String: "Mon, 01 Jan 2024 12:00:00.500 GMT", Valid: true},
-			want:            true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := MatchesLastModified(tt.ifModifiedSince, tt.lastModified)
-			if got != tt.want {
-				t.Errorf("MatchesLastModified(%q, %v) = %v, want %v", tt.ifModifiedSince, tt.lastModified, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestMatchesETag_ExactMatch(t *testing.T) {
 	etag := `"abc123"`
 	ifNoneMatch := `"abc123"`
@@ -214,33 +139,6 @@ func TestMatchesETag_WeakMatch(t *testing.T) {
 	ifNoneMatch := `"abc123"`
 	if !MatchesETag(ifNoneMatch, etag) {
 		t.Error("Expected weak ETag to match strong validator")
-	}
-}
-
-func TestMatchesLastModified_Before(t *testing.T) {
-	lastModified := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
-	ifModifiedSince := time.Date(2024, 1, 2, 12, 0, 0, 0, time.UTC)
-
-	if !MatchesLastModified(ifModifiedSince.Format(time.RFC1123), sql.NullString{String: lastModified.Format(time.RFC1123), Valid: true}) {
-		t.Error("Expected Before to return true (not modified)")
-	}
-}
-
-func TestMatchesLastModified_After(t *testing.T) {
-	lastModified := time.Date(2024, 1, 3, 12, 0, 0, 0, time.UTC)
-	ifModifiedSince := time.Date(2024, 1, 2, 12, 0, 0, 0, time.UTC)
-
-	if MatchesLastModified(ifModifiedSince.Format(time.RFC1123), sql.NullString{String: lastModified.Format(time.RFC1123), Valid: true}) {
-		t.Error("Expected After to return false (modified)")
-	}
-}
-
-func TestMatchesLastModified_Exact(t *testing.T) {
-	lastModified := time.Date(2024, 1, 2, 12, 0, 0, 0, time.UTC)
-	ifModifiedSince := time.Date(2024, 1, 2, 12, 0, 0, 0, time.UTC)
-
-	if !MatchesLastModified(ifModifiedSince.Format(time.RFC1123), sql.NullString{String: lastModified.Format(time.RFC1123), Valid: true}) {
-		t.Error("Expected Exact to return true (not modified)")
 	}
 }
 
@@ -377,27 +275,6 @@ func TestMatchesETag_WhitespaceVariants(t *testing.T) {
 			got := MatchesETag(tt.ifNoneMatch, tt.etag)
 			if got != tt.want {
 				t.Errorf("MatchesETag(%q, %q) = %v, want %v", tt.ifNoneMatch, tt.etag, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestMatchesLastModified_RFC1123Formats(t *testing.T) {
-	// Test various valid RFC1123 formats
-	formats := []string{
-		"Mon, 01 Jan 2024 12:00:00 GMT",
-		"Mon, 01 Jan 2024 12:00:00 UTC",
-		time.RFC1123,
-	}
-
-	lastModified := sql.NullString{String: "Mon, 01 Jan 2024 12:00:00 GMT", Valid: true}
-	ifModifiedSince := "Mon, 02 Jan 2024 12:00:00 GMT"
-
-	for _, format := range formats {
-		t.Run("format_"+format, func(t *testing.T) {
-			got := MatchesLastModified(ifModifiedSince, lastModified)
-			if !got {
-				t.Errorf("MatchesLastModified with format %q should return true", format)
 			}
 		})
 	}

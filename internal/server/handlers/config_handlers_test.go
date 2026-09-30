@@ -154,7 +154,7 @@ func (w *flushTrackingResponseWriter) Flush() {
 // asynchronous process-restart callback.
 
 func TestConfigHandlers_disableConfigCaching(t *testing.T) {
-	h := NewConfigHandlers(nil, nil, nil, nil, nil, nil, nil, nil, ConfigTemplates{}, context.Background())
+	h := NewConfigHandlers(nil, nil, nil, nil, nil, nil, nil, nil, nil, ConfigTemplates{}, context.Background())
 
 	rr := httptest.NewRecorder()
 
@@ -172,7 +172,7 @@ func TestConfigHandlers_disableConfigCaching(t *testing.T) {
 }
 
 func TestConfigHandlers_ConfigAuthMiddleware(t *testing.T) {
-	h := NewConfigHandlers(nil, nil, nil, nil, nil, nil, nil, nil, ConfigTemplates{}, context.Background())
+	h := NewConfigHandlers(nil, nil, nil, nil, nil, nil, nil, nil, nil, ConfigTemplates{}, context.Background())
 
 	called := false
 	next := func(w http.ResponseWriter, r *http.Request) {
@@ -209,7 +209,7 @@ func TestConfigHandlers_executeConfigTemplate_ExecuteError(t *testing.T) {
 		t.Fatalf("failed to parse error template: %v", err)
 	}
 
-	h := NewConfigHandlers(nil, nil, nil, nil, nil, nil, nil, nil, ConfigTemplates{SaveSuccessAlert: tmpl}, context.Background())
+	h := NewConfigHandlers(nil, nil, nil, nil, nil, nil, nil, nil, nil, ConfigTemplates{SaveSuccessAlert: tmpl}, context.Background())
 
 	rr := httptest.NewRecorder()
 	h.executeConfigTemplate(rr, h.Templates.SaveSuccessAlert, "error-template", nil)

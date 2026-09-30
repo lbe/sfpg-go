@@ -720,9 +720,9 @@ func TestFlushBatchedWrites_FolderIndexInsertsRow(t *testing.T) {
 	cloneEmptyFileFolderIndex(t, infra, ctx)
 	seedFolderIndexRefs(t, infra, ctx, []int64{10, 11, 12}, 2)
 
-	infra.folderIndexRebuildActive.Store(true)
+	infra.folderIndex.setRebuildActive(true)
 	const gen = int64(77)
-	infra.folderIndexGeneration.Store(gen)
+	infra.folderIndex.generation.Store(gen)
 
 	row := &files.FolderIndexRow{
 		FileID:     10,
@@ -778,7 +778,7 @@ func TestFlushBatchedWrites_FolderIndexSkippedWhenDestMissing(t *testing.T) {
 	defer infra.Shutdown()
 
 	// No file_folder_index_new exists. Flag state is irrelevant for this case.
-	infra.folderIndexRebuildActive.Store(true)
+	infra.folderIndex.setRebuildActive(true)
 
 	entry := &cachelite.HTTPCacheEntry{
 		Key:           "key",
@@ -830,7 +830,7 @@ func TestFlushBatchedWrites_FolderIndexSkippedWhenRebuildInactive(t *testing.T) 
 
 	cloneEmptyFileFolderIndex(t, infra, ctx)
 	seedFolderIndexRefs(t, infra, ctx, []int64{1}, 1)
-	infra.folderIndexRebuildActive.Store(false)
+	infra.folderIndex.setRebuildActive(false)
 
 	entry := &cachelite.HTTPCacheEntry{
 		Key:           "key",
@@ -868,8 +868,8 @@ func TestFlushBatchedWrites_FolderIndexSkippedWhenGenerationMismatch(t *testing.
 
 	cloneEmptyFileFolderIndex(t, infra, ctx)
 	seedFolderIndexRefs(t, infra, ctx, []int64{1, 2}, 1)
-	infra.folderIndexRebuildActive.Store(true)
-	infra.folderIndexGeneration.Store(99) // current generation
+	infra.folderIndex.setRebuildActive(true)
+	infra.folderIndex.generation.Store(99) // current generation
 
 	entry := &cachelite.HTTPCacheEntry{
 		Key:           "key",
@@ -984,7 +984,7 @@ func TestFlushBatchedWrites_LastFlushWroteDMLFalseOnSkipOnlyBeginTx(t *testing.T
 	defer infra.Shutdown()
 
 	// Rebuild active but no dest table — index-only skip inside flushBatchedWrites.
-	infra.folderIndexRebuildActive.Store(true)
+	infra.folderIndex.setRebuildActive(true)
 	infra.lastFlushWroteDML.Store(true)
 
 	if err := infra.writeBatcher.Submit(BatchedWrite{

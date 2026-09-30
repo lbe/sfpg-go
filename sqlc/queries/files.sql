@@ -36,6 +36,21 @@ SELECT f.*
           ON fp.id = f.path_id 
   WHERE fp.path = ?; 
 
+-- name: ListDiscoveryFilesByFolderID :many
+SELECT f.id         AS file_id
+     , f.folder_id  AS file_folder_id
+     , f.path_id    AS file_path_id
+     , f.filename   AS file_filename
+     , f.size_bytes AS file_size_bytes
+     , f.mtime      AS file_mtime
+     , f.md5        AS file_md5
+     , f.phash      AS file_phash
+     , f.mime_type  AS file_mime_type
+     , f.width      AS file_width
+     , f.height     AS file_height
+  FROM files AS f
+ WHERE f.folder_id = ?;
+
 -- name: GetFileViewByID :one
 SELECT *
   FROM file_view
@@ -46,12 +61,6 @@ SELECT fv.id AS id, fv.filename AS filename
   FROM file_view fv
  WHERE fv.folder_id = ?
  ORDER BY fv.filename;
-
--- name: GetFileViewsByFolderIDOrderByFileName :many
-SELECT *
-  FROM file_view
- WHERE folder_id = ?
- ORDER BY filename;
 
 -- name: GetFolderCount :one
 SELECT COUNT(*) AS ct FROM folders;

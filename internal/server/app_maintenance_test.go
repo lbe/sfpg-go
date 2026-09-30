@@ -11,7 +11,7 @@ import (
 
 func TestApp_fileProcessingQuiet_DiscoveryRunning(t *testing.T) {
 	app := New(getopt.Opt{}, "test")
-	app.SubsystemManager.processingStats = &files.ProcessingStats{}
+	ensureProcessingStats(app.SubsystemManager)
 
 	app.discoveryRunning.Store(true)
 	if app.fileProcessingQuiet() {
@@ -26,7 +26,7 @@ func TestApp_fileProcessingQuiet_DiscoveryRunning(t *testing.T) {
 
 func TestApp_fileProcessingQuiet_QSendersActive(t *testing.T) {
 	app := New(getopt.Opt{}, "test")
-	app.SubsystemManager.processingStats = &files.ProcessingStats{}
+	ensureProcessingStats(app.SubsystemManager)
 
 	app.SubsystemManager.qSendersActive.Store(1)
 	if app.fileProcessingQuiet() {
@@ -41,10 +41,10 @@ func TestApp_fileProcessingQuiet_QSendersActive(t *testing.T) {
 
 func TestApp_fileProcessingQuiet_QueueLen(t *testing.T) {
 	app := New(getopt.Opt{}, "test")
-	app.SubsystemManager.processingStats = &files.ProcessingStats{}
-	app.SubsystemManager.q = queue.NewQueue[string](10)
+	ensureProcessingStats(app.SubsystemManager)
+	app.SubsystemManager.q = queue.NewQueue[files.DiscoveryPathWork](10)
 
-	if err := app.SubsystemManager.q.Enqueue("a.jpg"); err != nil {
+	if err := app.SubsystemManager.q.Enqueue(files.DiscoveryPathWork{Path: []byte("a.jpg"), MtimeUnix: 1, SizeBytes: 1}); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
 	if app.fileProcessingQuiet() {
@@ -54,7 +54,7 @@ func TestApp_fileProcessingQuiet_QueueLen(t *testing.T) {
 
 func TestApp_fileProcessingQuiet_InFlight(t *testing.T) {
 	app := New(getopt.Opt{}, "test")
-	app.SubsystemManager.processingStats = &files.ProcessingStats{}
+	ensureProcessingStats(app.SubsystemManager)
 	app.SubsystemManager.processingStats.InFlight.Store(1)
 
 	if app.fileProcessingQuiet() {
@@ -64,7 +64,7 @@ func TestApp_fileProcessingQuiet_InFlight(t *testing.T) {
 
 func TestApp_cacheSizeQuietCheck_BlocksDuringDiscoveryWalk(t *testing.T) {
 	app := New(getopt.Opt{}, "test")
-	app.SubsystemManager.processingStats = &files.ProcessingStats{}
+	ensureProcessingStats(app.SubsystemManager)
 	app.SubsystemManager.qSendersActive.Store(1)
 
 	if app.cacheSizeQuietCheck(context.Background()) {

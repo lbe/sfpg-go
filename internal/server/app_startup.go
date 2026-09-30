@@ -310,9 +310,13 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 
 	if runDiscovery {
 		go func() {
+			discoveryStart := time.Now()
 			err := app.TriggerDiscovery(context.Background())
 			if errors.Is(err, files.ErrFolderIndexRebuild) {
 				slog.Error("startup folder-index rebuild failed; shutting down", "err", err)
+				if app.testSeams.OnStartupDiscoveryRebuildFailedShutdown != nil {
+					app.testSeams.OnStartupDiscoveryRebuildFailedShutdown()
+				}
 				app.Shutdown()
 				return
 			}
@@ -323,7 +327,9 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 			restartAfter := app.ConfigManager.Config != nil && app.ConfigManager.Config.RestartAfterDiscovery
 			app.ConfigManager.ConfigMu.RUnlock()
 			if restartAfter {
-				slog.Info("discovery complete; requesting process restart", "reason", "discovery-complete")
+				slog.Info("discovery complete; requesting process restart",
+					"reason", "discovery-complete",
+					"elapsed", time.Since(discoveryStart))
 				app.TriggerRestart()
 			}
 		}()
@@ -351,6 +357,9 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 					// If nothing happened in 30s, just exit monitor
 					return
 				case <-ticker.C:
+					if app.testSeams.OnDiscoveryProcessingMonitorPhase1Tick != nil {
+						app.testSeams.OnDiscoveryProcessingMonitorPhase1Tick()
+					}
 					if app.SubsystemManager.qSendersActive.Load() > 0 || app.SubsystemManager.processingStats.TotalFound.Load() > 0 {
 						goto wait_for_end
 					}
@@ -368,6 +377,9 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 				"inserted", app.SubsystemManager.processingStats.NewlyInserted.Load(),
 				"skipped_invalid", app.SubsystemManager.processingStats.SkippedInvalid.Load(),
 			)
+			if app.testSeams.OnDiscoveryProcessingMonitorComplete != nil {
+				app.testSeams.OnDiscoveryProcessingMonitorComplete()
+			}
 			app.scheduleDiscoveryCompletePragmaOptimize()
 		}()
 	}

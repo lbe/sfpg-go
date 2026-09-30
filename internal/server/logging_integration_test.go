@@ -1040,8 +1040,8 @@ func TestBootstrapConfig_SavedToDatabaseOnInit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LogLevel should be in database: %v", err)
 	}
-	if logLevelValue != "debug" {
-		t.Fatalf("LogLevel should be debug (from bootstrap config), got %s", logLevelValue)
+	if logLevelValue != "info" {
+		t.Fatalf("LogLevel should be info (from bootstrap config), got %s", logLevelValue)
 	}
 
 	// Assert: Check that LogRollover was saved
@@ -1179,8 +1179,8 @@ func TestBootstrapConfig_UsedInLoadConfig(t *testing.T) {
 		t.Fatalf("LogDirectory should be %s from database, got %s", savedLogDir, logDir)
 	}
 
-	if logLevel != "debug" {
-		t.Fatalf("LogLevel should be debug, got %s", logLevel)
+	if logLevel != "info" {
+		t.Fatalf("LogLevel should be info, got %s", logLevel)
 	}
 }
 
@@ -1195,8 +1195,8 @@ func TestBootstrapConfig_IncludedInDefaults(t *testing.T) {
 		t.Logf("LogDirectory default is: %s", defaults.LogDirectory)
 	}
 
-	if defaults.LogLevel != "debug" {
-		t.Fatalf("Default LogLevel should be debug, got %s", defaults.LogLevel)
+	if defaults.LogLevel != "info" {
+		t.Fatalf("Default LogLevel should be info, got %s", defaults.LogLevel)
 	}
 
 	if defaults.LogRollover != "weekly" {

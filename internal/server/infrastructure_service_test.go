@@ -411,12 +411,12 @@ func TestInfrastructureService_ReconfigurePools_UpdatesCacheMW(t *testing.T) {
 	}
 	infra.dbRwPool = newFakePool(10, 2)
 	infra.dbRoPool = newFakePool(10, 2)
-	infra.cacheMW = cachelite.NewHTTPCacheMiddlewareForTest(infra.dbRwPool, cachelite.CacheConfig{},
+	infra.cacheMW = cachelite.NewHTTPCacheMiddleware(infra.dbRwPool, cachelite.CacheConfig{},
 		&cachelite.HTTPCacheCounterState{
 			SizeBytes:       &infra.cacheSizeBytes,
 			EntryCount:      &infra.cacheEntryCount,
 			BaselineRunning: &infra.cacheBaselineRunning,
-		}, nil)
+		}, func(*cachelite.HTTPCacheEntry) {})
 
 	cfg := config.DefaultConfig()
 	cfg.DBMaxPoolSize = 20
@@ -582,7 +582,7 @@ func TestInfrastructureService_CacheMetrics_GettersDoNotQueryDB(t *testing.T) {
 	}
 
 	// Create a minimal cache middleware wired to the infra's counters.
-	infra.cacheMW = cachelite.NewHTTPCacheMiddlewareForTest(nil, cachelite.CacheConfig{
+	infra.cacheMW = cachelite.NewHTTPCacheMiddleware(nil, cachelite.CacheConfig{
 		Enabled:      true,
 		MaxEntrySize: 100000,
 		MaxTotalSize: 1000000,
@@ -591,7 +591,7 @@ func TestInfrastructureService_CacheMetrics_GettersDoNotQueryDB(t *testing.T) {
 		SizeBytes:       &infra.cacheSizeBytes,
 		EntryCount:      &infra.cacheEntryCount,
 		BaselineRunning: &infra.cacheBaselineRunning,
-	}, nil)
+	}, func(*cachelite.HTTPCacheEntry) {})
 	infra.cacheMWForEvict = infra.cacheMW
 
 	if got := infra.cacheMW.GetSizeBytes(); got != 42 {

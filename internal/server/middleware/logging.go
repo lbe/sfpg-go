@@ -1,4 +1,4 @@
-// Package middleware provides HTTP middleware for the server (auth, COP, logging).
+// Package middleware provides HTTP middleware for the server (auth, COP, security headers, logging).
 package middleware
 
 import (
