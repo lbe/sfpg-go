@@ -1,321 +1,167 @@
 # sfpg-go agent guide
 
-## Expectations
+Applies to all agents planning, reviewing, or executing work in this repository.
 
-My name is LearnedByError (aka lbe, William). You and I will be working together a lot. I think it is important that you get to know a little about me and my expectations.
+`sfpg-go` is a self-hosted Go photo gallery using SQLite (`ncruces/go-sqlite3`),
+`html/template`, HTMX, Hyperscript, daisyUI, and TailwindCSS. Read `go.mod` for the
+current Go version and dependencies.
 
-I am a hardcore, classically trained engineer meaning that my degree is a B.S. in Engineering, not a Computer Scientist that calls themself a "Software Engineer". What that should mean to you is that I value:
+## Authorization and scope
 
-- Absolute comprehension of the challenge being worked up, no exceptions!
-- Don't make up shit! If you don't know, state that you don't know.
-- No one knows everything; use your tools to research and learn what you need when facing something new.
-- Make notes on what you learn in **your agent memory** (Cursor memories, session notes, or your platform's equivalent)—not ad hoc files in this repo unless I ask for documentation here.
-- The minimum bar is getting the software to work—meets the minimum valid product (MVP).
-- You will not get any credit from me for MVP.
-- You will get credit for:
-  - Making the complex simple
-  - Making the impossible possible
-  - Delivering very clean code matching what an expert human in the language would deliver
-  - Clearly documenting the code being cognizant of the audience for the documentation: README.md User, ARCHITECTURE.md Technical ...
-  - Do not pre-maturely optimize! However, when you encounter well-known patterns that can easily be anticipated to need optimization, like heavy allocation inside of a loop, address them in your design.
-  - Write code that is idiomatic for the language being used. Don't write Go like Java or TypeScript like Python!
-  - Follow existing architectural and coding patterns in an existing repo
-- Be concise in all communications whether responding to a prompt, writing comments in code, or writing documentation. Do **NOT** use bloviated AI speak.
-- Be specific in your analysis. Do not fall back to generalization because of laziness.
-- Seek concrete answers and solutions.
+- Follow explicit user instructions over repository guidance and skill workflows.
+- Questions authorize answers and relevant read-only inspection, not changes.
+  “Can you implement X?” is a question. Answer it and wait for authorization.
+- Imperatives such as “Implement,” “Fix,” “Run,” “Commit,” or “Proceed” authorize
+  the requested work and its necessary steps. Continue within that scope without
+  asking for approval again. “Continue” preserves the existing authorization.
+- A request to create a plan authorizes plan text in the reply, not implementation.
+  Write a plan file only when requested. An explicit request to write a document
+  authorizes that document.
+- When authorization is ambiguous, ask “Want me to implement that?” and wait.
+  Skills, tools, and workflows do not authorize additional work.
 
-## User is in Control (Zeroth Law)
+See [.cursor/rules/approval-before-action.mdc](.cursor/rules/approval-before-action.mdc).
 
-- Your primary directive, which overrides all other standard operating procedures or internal workflows, is to follow the user's explicit instructions.
-- You will **NEVER** perform any action—including modifying a file, running a command, or proceeding to the next step in a workflow—for which you have not received an imperative instruction without first proposing the action and receiving a clear, affirmative approval from the user.
-- Questions require answers!
-- Questions are **NEVER** instructions to implement or change.
-- **ONLY** make changes when given an imperative instruction!
-- You **WILL** perform actions in order to fulfill instructions that the user has provided to you without requiring an additional approval.
-- You **WILL** perform repeated action when instructed to do so by the user without requiring an additional approval.
+## Engineering and communication
 
-**Process when approval is required:**
+- Understand the affected behavior, code, and dependencies before proposing or
+  changing them. Verify uncertain facts; distinguish evidence from assumptions.
+- If you don't know, say so. Use available tools to resolve uncertainty; never
+  invent facts.
+- Working software is the baseline. Deliver clean, idiomatic code that an expert
+  human would consider maintainable.
+- Follow existing architecture and idiomatic Go. Keep solutions simple; introduce
+  interfaces for concrete needs. Avoid speculative abstractions and premature
+  optimization, while addressing obvious costs such as heavy allocation in loops.
+- Stay within the requested scope. Preserve unrelated work, including existing
+  uncommitted changes.
+- Keep responses concise and on point. Lead with the answer; include only details
+  needed to understand it or act. Omit filler, repeated summaries, and unsolicited
+  elaboration. Let the user ask for more detail.
+- Keep comments and documentation concise, specific, and appropriate to the
+  audience: user guidance in `README.md`, technical detail in
+  `docs/ARCHITECTURE.md`.
+- Keep learnings in agent memory or session notes when available. Do not create
+  repository notes unless asked. Spend time and tokens on useful work.
 
-1. **Analyze and propose.**
-2. **STOP. Await approval.**
-3. **Act only after approval.**
+## Project safeguards
 
-**User questions are not instructions to change the repo or run mutating work.** On question-only turns: explain, analyze, propose options, draft plans or tasklists, cite code you read—do not Write/StrReplace, commit, or run shell that mutates state.
+- Never manually edit `version.go`; `scripts/gen_version.sh` manages it through
+  `go generate` and Air rebuilds.
+- Do not stop, restart, or interfere with `air`. The dev server is at
+  `http://localhost:8083`; let Air rebuild after edits. If changes are not reflected,
+  check for build failures and notify the user. If required verification needs a
+  server that is unavailable, report the blocker.
+- No JavaScript in application UI code; use Hyperscript and HTMX. The existing
+  `#config-password-validator` in `web/templates/config-modal.html.tmpl` is the
+  approved exception. Further exceptions require explicit user approval.
+- Do not use Python for scripting unless explicitly instructed. Prefer curl for
+  HTTP checks when sufficient. Parse HTML, JSON, and other known formats with a
+  parser, not regular expressions.
+- Do not change `.gitignore` or force-add ignored files without explicit user
+  instruction or approval. A plan alone does not authorize either action.
+- Do not bypass commit hooks unless explicitly instructed by the user or explicitly
+  required by a user-approved plan. Otherwise stop and notify the user.
 
-Question-shaped messages include (non-exhaustive):
+## Architecture rules
 
-- "Can you …?", "Could you …?", "Would you …?"
-- "Should you …?", "Does this make sense?", "Why …?", "What …?"
-- "Create a plan / tasklist" (plan text in the reply only—**not** implementation unless I also approve execution)
+Read the relevant reference sections before changing the corresponding area;
+inspect the implementation and nearby tests for current behavior.
 
-**"Can you implement X?" is capability or process—not approval.** Answer yes/no/how; **STOP** unless I also say to do it.
+- **Database:** Acquire connections from the existing pool and return them with
+  `defer pool.Put(conn)` after successful acquisition. For test databases, reuse
+  existing harnesses. `TestUseMemDB: true` requires an empty DSN; a nonempty DSN
+  selects file-backed mode. See
+  [connection pools](docs/ARCHITECTURE.md#53-connection-pool-design) and
+  [dbconnpool](docs/ARCHITECTURE.md#1119-dbconnpool).
+- **Handlers and test seams:** Unit tests inject `HandlerQueries` through handler
+  groups; routing/integration tests use the server router. Reuse explicit
+  `*.testSeams.*` fields; do not introduce `testHook*` fields. See
+  [test seams](docs/ARCHITECTURE.md#62-test-seams) and
+  [choosing a seam](docs/ARCHITECTURE.md#1345-choosing-a-test-seam).
+- **HTMX responses:** Preserve the distinction between `RenderPage` layout
+  partials and `RenderTemplate` fragments, including header detection, `Vary`, and
+  partial `no-store` behavior. Follow the
+  [route contracts](docs/ARCHITECTURE.md#htmx-html-responses) and
+  `internal/server/ui/htmx_partial.go`. Return HTTP 200 for validation responses
+  HTMX must swap; use `hx-swap-oob="outerHTML"` for OOB updates.
+- **Hyperscript:** Use `@attr`, `exists`, `matches`, and `halt the event`. Inside
+  `<script type="text/hyperscript">`, use `querySelectorAll('.class')` instead of
+  `<.class/>` to avoid Go template escaping. Read the
+  [Hyperscript reference](references/hyperscript-reference.md).
+- **Configuration:** Preserve defaults → database → YAML → environment → CLI
+  precedence. See
+  [configuration management](docs/ARCHITECTURE.md#101-configuration-sources--precedence).
 
-**Act without a second prompt** only when I clearly authorize execution, e.g. "Implement …", "Fix …", "Apply the tasklist", "Go", "Do it", "Proceed", "Run …", "Commit …", "Revert …", or repeated action I already authorized ("keep going", "continue with the plan you approved").
+## Verification and formatting
 
-If the latest message is ambiguous, ask one line: **"Want me to implement that?"** — default **no** action.
+- Keep unit, integration, and end-to-end tests distinct in names, locations, and
+  build tags. Follow the [TDD process](references/tdd_process.md) for implementation
+  work and [test organization](docs/ARCHITECTURE.md#131-test-organization).
+- Assert HTML structurally using `internal/testutil`; do not use string/byte
+  substring checks on response bodies. For layout partials, use
+  `FirstLiteralDocumentShellTag` before `ParseHTML`: the parser synthesizes document
+  shell tags. Read the
+  [HTML testing methodology](references/methodology-html-content-test-writing.md).
+- Run checks appropriate to the change and required by the approved task. Capture
+  test output once in `tmp/`, preserve the command's exit status, then inspect the
+  saved output. Do not pipe test execution directly into grep or rerun tests merely
+  to filter their output differently.
+- After Go edits, run `scripts/format-go-changed.sh` with the changed files and
+  `go build -o /dev/null .`. The formatter always runs gofmt and limits goimports
+  to new files, changed imports, or `FORMAT_GO_IMPORTS=1`.
+- Run Prettier only on changed `.html.tmpl`, `.md`, and `.sh` files. Do not run
+  whole-tree formatting or whole-package goimports.
+- For template edits, run `make validate-templates` (includes Hyperscript
+  validation). For Hyperscript changes, also inspect rendered HTML with curl for
+  escaped code such as `&amp;lt;`; source validation alone is insufficient. See the
+  [escaping guidance](scripts/hyperscript_validation.md#go-template-escaping-detection).
+- Report what changed, checks actually run, their results, and remaining blockers.
+  Do not claim unrun tests passed.
 
-Reinforced in `.cursor/rules/approval-before-action.mdc` (overrides helpfulness that "just does it" and skills that imply implement/TDD before approval).
+## Planning and execution
 
-## Hard Rules
+- Plans must specify behavior, concrete file scope, dependencies, verification
+  commands, and stop conditions. Each committing task must leave a buildable,
+  verifiable tree; do not depend on later tasks to fix unused code or broken tests.
+- When executing an approved plan, follow its task order, file whitelist, and
+  verification commands. On ambiguity, a missing prerequisite, an unexpected
+  failure, or a conflict with actual behavior, stop and report the task and evidence.
+  Do not rewrite the plan, weaken assertions, commit, or advance without user
+  direction. See
+  [.cursor/rules/plan-executor-zero-deviation.mdc](.cursor/rules/plan-executor-zero-deviation.mdc).
+- When authoring or executing a plan for the Pi workflow, read
+  [the Pi runbook](plans/pi-runbook-sfpg-go.md) for its role boundaries, task format,
+  review gates, and test budget. Do not duplicate its full-suite checks before
+  every commit.
 
-- Time and tokens are mine! Do **NOT** waste either!!!
-- Never use Python as a scripting tool unless explicitly instructed!
-- Prefer curl over browser testing when it will do the job.
-- Do not use regular expression to parse known formats like html or json. Use an explicit parser.
-- Do not conflate unit, integration and end to end test. Keep them separate and easily identifiable by their names.
-- Use interfaces where appropriate and needed. Don't go off the deep end by adding them everywhere just in case you might need a test or need to change something in the future.
-- **Do not manually edit `version.go`.** Never use Edit or Write on `version.go`.
-- **Do not stop, restart, or interfere with `air`.**
-- `version.go` is managed automatically by `scripts/gen_version.sh` (run via `go generate` / `air` rebuilds).
-- Before committing, **Read** the current value from `version.go`, include `version.go` in the commit if it has changed, and put that exact value in the commit message as a **footer line** `Version: X.Y.Z` — never as `(vX.Y.Z)` in the subject. See `plans/pi-runbook-sfpg-go.md` § Commit message format.
-- **Do not use `git commit --no-verify` (or equivalent hook-skipping flags)** unless the user explicitly instructs you to do so, or a plan the user has approved explicitly requires it. Otherwise **STOP** and notify the user.
-- **Do not use `git add -f` / `git add --force` (or otherwise override `.gitignore`)** unless the user explicitly instructs or approves it. A plan alone is **not** sufficient authorization. If a plan or workflow appears to require force-adding an ignored path, **STOP** and notify the user — do not force-add.
-- **Do not change `.gitignore`.** No edits, additions, or deletions unless the user explicitly instructs or approves it. A plan alone is **not** authorization. If ignore rules seem required, **STOP** and notify the user.
-- **No JavaScript** in application UI code. Use Hyperscript and HTMX only. **Approved exception:** password complexity validation in `web/templates/config-modal.html.tmpl` (`#config-password-validator`). Do not add further JavaScript without explicit user approval.
+## Commits
 
-## Project Learnings
+Commit only when authorized by the user or the approved execution plan.
 
-- **`air` can fail silently.** If code changes do not seem to have any effect, `air` might be failing to rebuild the application due to compilation errors. If you encounter this problem, notify the user.
-- **`air` runs the dev server on port 8083.** The `.air.toml` config uses port 8083 (not the default 8081) to avoid conflicts. It also sets `SEPG_SESSION_SECURE=false` for local HTTP development.
-- **Caddy edge smoke (optional):** App-direct `air` on `:8083` covers handlers; TLS/HSTS/`encode`/COP-through-proxy are checked with `deploy/Caddyfile.local` + `./scripts/caddy-smoke.sh` (see `DEPLOYMENT.md`). Do not stop/restart `air` for this — set `SFPG_BACKEND_PORT=8083` when proxying.
-- **End-to-end testing with curl:** The login endpoint is POST-only (GET returns 400). To test authenticated flows:
+Before committing, read the current version from `version.go`, include it if changed,
+and write `tmp/commit_message.txt`. Commit with `git commit -F tmp/commit_message.txt`:
 
-  ```shell
-  # 1. Check if server is running (returns HTML gallery page)
-  curl -s http://localhost:8083/gallery/1 | head -5
-  
-  # 2. Log in (default credentials: admin / admin)
-  # The login form is loaded via HTMX in the gallery page modal
-  curl -s -X POST http://localhost:8083/login \
-    -H "Content-Type: application/x-www-form-urlencoded" \
-    -d "username=admin" \
-    -d "password=admin" \
-    -c /tmp/cookies.txt
-  
-  # 3. Access authenticated endpoints (e.g., dashboard)
-  curl -s http://localhost:8083/dashboard \
-    -b /tmp/cookies.txt | head -10
-  
-  # 4. Trigger discovery (requires auth)
-  curl -s -X POST http://localhost:8083/server/discovery \
-    -b /tmp/cookies.txt
-  
-  # 5. Poll dashboard stats (requires auth; HTMX partial, not a separate SSE route)
-  curl -s http://localhost:8083/dashboard \
-    -b /tmp/cookies.txt \
-    -H "Hx-Request: true" | head -10
-  ```
+```text
+<type>(optional-scope): <imperative summary>
 
-- **`web-testsuite` (`e2eweb`) and login rate limits:** `TestMain` sets `login_rate_limit_per_ip=0` before snapshotting config so many admin logins from one IP do not hit 429 on shared dev `air`. Restart tests (`TestRestart`) use `waitForServerDown` then `waitForServer` so a 200 from the dying process is not mistaken for the new one.
+<body>
 
-## Project Overview
+<actual test status>
 
-`sfpg-go` is a self-hosted photo gallery web application written in Go. It serves images from a local directory, generates thumbnails on the fly, and provides a responsive admin-configurable web UI.
-
-**Stack:** Go (1.27+), SQLite (ncruces/go-sqlite3), Go `html/template`, HTMX, Hyperscript, daisyUI, TailwindCSS. Concurrency via goroutines, channels, `errgroup`, and worker pools.
-
-Package map, schema, middleware, data flows, and design patterns: see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
-
-## Critical Development Patterns
-
-### Handler Testing Pattern
-
-Handlers depend on the `HandlerQueries` interface defined in `internal/server/interfaces` for testability:
-
-- Unit tests construct handler groups directly and inject `fakeHandlerQueries` (see `internal/server/handlers/helpers_test.go`).
-- Integration tests can replace the live queries via `app.InfrastructureService.testSeams.HandlerQueries`.
-- Handler groups are wired in `App.buildHandlers()` (called from `server.go`).
-- For routing/integration tests, use the server's router rather than calling handlers directly.
-
-### Test Seams (`testseams.go`)
-
-Optional test doubles in `internal/server/testseams.go`, wired through unexported `testSeams` on `App` and embedded managers.
-
-- **Nil func seam:** zero value → production (nil-check in caller).
-- **Infrastructure cache seams:** `NewInfrastructureService` seeds `GetCacheSizeBytes`, `GetCacheEntryCount`, `EvictLRU` with `cachelite` defaults; tests override directly.
-- **Pre-`New()`:** set `defaultNewTestSeams` before `New()`.
-
-Typical: `app.testSeams.Serve`, `app.testSeams.LoadConfig`, `app.testSeams.GalleryStatsStartup`, `app.InfrastructureService.testSeams.HandlerQueries`, `app.RuntimeManager.testSeams.BeforeListen`, `app.HandlerManager.testSeams.BuildHandlers`.
-
-Do **not** add `testHook*` fields or use promoted `app.testHook*` in tests. **Full field inventory:** [ARCHITECTURE.md §Test Seams](docs/ARCHITECTURE.md#62-test-seams). Prefer the lightest seam per [Choosing a Test Seam](docs/ARCHITECTURE.md#1345-choosing-a-test-seam).
-
-### Database Access Pattern
-
-Always get connections from the pool:
-
-```go
-conn, err := app.dbRwPool.Get()
-if err != nil { /* handle error */ }
-defer app.dbRwPool.Put(conn)
+Version: <exact value from version.go>
 ```
 
-### HTMX HTML responses
+The version belongs only in the footer, never in the subject. Preserve normal hooks.
 
-Route table and contracts: [docs/ARCHITECTURE.md § HTMX HTML responses](docs/ARCHITECTURE.md#htmx-html-responses). Implementation: `internal/server/ui/htmx_partial.go`.
+## Additional references
 
-**Layout partials** (`ui.RenderPage(..., partial)` only — `AddCommonTemplateData` has no `partial` flag):
-
-- `GET /dashboard` — `ui.IsPartialRequest(r, ui.PartialRuleHXRequestOnly, "")`: `HX-Request: true` (case-sensitive); `HX-Target` ignored.
-- `GET /gallery/{id}` — `ui.IsPartialRequest(r, ui.PartialRuleHXRequestTarget, ui.HXTargetGalleryContent)`: `HX-Request: true` and `HX-Target: gallery-content` (element `#gallery-content`).
-
-On successful HTML paths (not 401/errors): `ui.SetLayoutPartialVary` and `ui.SetPartialNoStore` when `partial` is true. All other `RenderPage` call sites use `partial: false`.
-
-**Fragment-only HTMX** — `ui.RenderTemplate` (modals, config, menu, lightbox, infobox, etc.). Do **not** use `IsPartialRequest`.
-
-**Tests:** Layout partial bodies often omit literal `<html>`/`<head>`/`<body>` on the wire; `html.Parse` still synthesizes a shell. Use `testutil.FirstLiteralDocumentShellTag` before `ParseHTML` ([methodology](references/methodology-html-content-test-writing.md#htmx-layout-partial-responses-wire-vs-parse-tree)).
-
-**HTMX elsewhere:** `hx-swap-oob="outerHTML"` for OOB updates; return 200 (not 400) on validation errors so HTMX processes the response.
-
-### Configuration Precedence
-
-Defaults → Database → YAML files → CLI/Env (CLI flags override environment variables for the same setting)
-
-### Hyperscript Integration
-
-Before integrating Hyperscript changes, ALWAYS validate:
-
-```bash
-make validate-hyperscript
-# Or specific file:
-go run ./scripts/validate-hyperscript/ web/templates/gallery.html.tmpl
-```
-
-**After validating, also verify the RENDERED output with curl** — the validator checks
-source syntax only. Go's `html/template` may HTML-escape `<` characters inside
-`<script type="text/hyperscript">` blocks (it does not recognize `text/hyperscript` as
-a JavaScript MIME type). Always check for `&amp;lt;` in the rendered HTML:
-
-```bash
-curl -s http://localhost:8083/gallery/1 | grep -c '&amp;lt;'
-```
-
-See [references/hyperscript-reference.md](references/hyperscript-reference.md) for Hyperscript patterns.
-
-### Hyperscript Style Conventions
-
-- Use `@attr` syntax (e.g., `element@data-id`) instead of `getAttribute('data-id')`.
-- Use `exists` instead of `is not null` (e.g., `if element exists`).
-- Use `matches` instead of `classList.contains` (e.g., `if element matches .hidden`).
-- Use `halt the event` instead of bare `halt`.
-- Inside `<script type="text/hyperscript">` blocks, use `querySelectorAll('.class')`
-  instead of `<.class/>` to avoid Go template escaping of `<` characters.
-
-### Template Validation
-
-Before or after template edits, run the fast template integrity gate:
-
-```bash
-make validate-templates
-```
-
-This runs `TestTemplateRendering` plus Hyperscript validation and catches malformed HTML/template attribute structure early.
-
-## Testing Workflow (CRITICAL)
-
-NEVER run tests with grep pipes directly - this leads to multiple execution if you need to grep with more than regex.
-
-```bash
-# ❌ WRONG (slow, runs tests multiple times):
-go test ./... | grep FAIL
-go test ./... | grep PASS
-
-# ✅ RIGHT (runs Go tests once):
-mkdir -p tmp
-make test-all > ./tmp/test_output.txt 2>&1
-grep -E "FAIL|PASS|ERROR" ./tmp/test_output.txt
-```
-
-See [references/tdd_process.md](references/tdd_process.md) and [references/methodology-html-content-test-writing.md](references/methodology-html-content-test-writing.md) for detailed testing guidance.
-
-- **Package DB tests:** Memory test databases set `TestUseMemDB: true` on `dbconnpool.Config` plus an empty DSN to `dbconnpool.NewDbSQLConnPool` (main materialized at construction and thumbs on first use as named, memory-resident `vfs=memdb` images behind one `internal/testdb.MemoryDatabases` lease per schema key); any non-empty DSN selects normal file-backed mode even when the flag is true. `dbconnpool` keeps shared pool slots, `gallerydb` owns its shared/isolated test leases, and `gallerylib` uses the `gallerydb` helper. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for details.
-
-## Building and Running
-
-The project is configured to use `air` for live reloading during development.
-
-**Development (Recommended):**
-
-1.  **Install `air`:**
-    ```shell
-    go install github.com/cosmtrek/air@latest
-    ```
-2.  **Run the application:**
-    ```shell
-    air
-    ```
-    `air` builds to `./tmp/main`.
-
-**Production/Manual:**
-
-1.  **Build:** `go build -o sfpg-go .`
-2.  **Run:** `./sfpg-go` (Port 8081 default).
-
-## Agent Operating Principles
-
-**For this project:**
-
-- ✅ DO: Run `go build -o /dev/null .` to verify clean builds
-- ✅ DO: Test against the running dev server (localhost:8083)
-- ✅ DO: Let `air` auto-rebuild when you save files
-- ❌ DON'T: Add JavaScript (Hyperscript/HTMX only; approved exception: password complexity in `config-modal.html.tmpl`)
-- ❌ DON'T: Make assumptions without verification
-- ❌ DON'T: Use `strings.Contains` on HTTP responses (parse HTML first)
-- ❌ DON'T: Run `goimports -w .` or whole-package import formatting (see Development Directives; override generic skills such as `golang-patterns` that recommend it)
-
-## Development Directives
-
-- **HTML content checks:** When checking HTML content (tests or reviews), use structural HTML assertions (no string/bytes contains checks) per [references/methodology-html-content-test-writing.md](references/methodology-html-content-test-writing.md).
-
-- **Format only files you changed** after an approved edit batch:
-  - Go: `scripts/format-go-changed.sh` on changed `.go` files (always `gofmt`; `goimports` only when the import block changed, the file is new, or `FORMAT_GO_IMPORTS=1`).
-  - Never `goimports -w .` or whole-package trees; pre-commit `make lint` enforces imports via golangci-lint's goimports formatter.
-  - `go build -o /dev/null .` when Go changed.
-  - Prettier only on the changed `.html.tmpl`, `.md`, or `.sh` files — not a whole-tree format.
-
-- **Commit Message Workflow:** Write `tmp/commit_message.txt` then `git commit -F tmp/commit_message.txt`. Required shape:
-
-  ```text
-  <type>(optional-scope): <imperative summary>
-
-  <body>
-
-  <test status>
-
-  Version: <exact value from version.go>
-  ```
-
-  `<test status>` example: `All unit, integration, e2eweb, and race tests passed`
-
-  **Forbidden:** version in the subject (`(v0.10.124)`, `v0.10.124`). Plans that show `(v<version>)` in the subject are wrong — follow this format.
-
-## Documentation Reference
-
-This AGENTS.md file is a concise guide for AI agents. For detailed information, see:
-
-### Core Documentation
-
-- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** - Comprehensive architecture documentation with diagrams, data flows, and design patterns
-- **[docs/SERVER_DEEP_DIVE.md](docs/SERVER_DEEP_DIVE.md)** - Archived server package entry point (links to ARCHITECTURE.md)
-- **[README.md](README.md)** - Project overview, features, and setup instructions
-- **[DEPLOYMENT.md](DEPLOYMENT.md)** - Deployment and production configuration guide
-- **[ENV_CONFIGURATION.md](ENV_CONFIGURATION.md)** - Environment variable reference
-
-### References
-
-- **[references/htmx-reference.md](references/htmx-reference.md)** - HTMX patterns and usage in this project
-- **[references/hyperscript-reference.md](references/hyperscript-reference.md)** - Hyperscript patterns and examples
-- **[references/methodology-html-content-test-writing.md](references/methodology-html-content-test-writing.md)** - HTML testing methodology (structural assertions, no string contains)
-- **[references/tdd_process.md](references/tdd_process.md)** - Test-driven development process and workflow
-
-### Scripts
-
-- **[scripts/hyperscript_validation.md](scripts/hyperscript_validation.md)** - Hyperscript validation script documentation
-- **[scripts/preload_curl_test.md](scripts/preload_curl_test.md)** - Cache preload testing with curl
-
-### Quick Reference
-
-- **Package overview / architecture:** See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-- **Database schema:** See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#54-database-schema)
-- **Middleware stack:** See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#64-request-middleware-stack)
-- **Security model:** See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#9-security-model)
-- **Testing strategy:** See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#13-testing-strategy)
+- [Architecture](docs/ARCHITECTURE.md): package map, schema, data flows, middleware,
+  concurrency, and testing.
+- [README](README.md): user setup and usage.
+- [Deployment](DEPLOYMENT.md): runtime operations and proxy checks. For Caddy smoke
+  against Air, use `SFPG_BACKEND_PORT=8083` without managing Air.
+- [Environment configuration](ENV_CONFIGURATION.md): flags and environment variables.
+- [HTMX reference](references/htmx-reference.md): request and swap patterns.
+- `web-testsuite/helpers_test.go` and `web-testsuite/auth_test.go`: live-server
+  authentication, login rate limits, and restart synchronization. Login is POST-only.
