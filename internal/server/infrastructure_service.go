@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync/atomic"
@@ -99,21 +100,44 @@ func (s *InfrastructureService) CacheMW() *cachelite.HTTPCacheMiddleware { retur
 // Lifecycle
 // =====================================================================
 
-// Shutdown closes the write batcher. The real writeBatcher.Close error branch
-// is unreachable in production because WriteBatcher.Close always returns nil;
-// it is exercised via testSeams.ShutdownWriteBatcher.
+// Shutdown closes the write batcher and database pools. Safe to call multiple
+// times. App.Shutdown performs discovery drain and subsystem teardown before
+// calling shutdownWriteBatcher, runShutdownPragmaOptimize, and
+// closeDatabasePools; tests that need full infra teardown call this directly.
+// The real writeBatcher.Close error branch is unreachable in production
+// because WriteBatcher.Close always returns nil; it is exercised via
+// testSeams.ShutdownWriteBatcher.
 func (s *InfrastructureService) Shutdown() {
+	s.shutdownWriteBatcher()
+	s.closeDatabasePools()
+}
+
+func (s *InfrastructureService) shutdownWriteBatcher() {
 	if s.testSeams.ShutdownWriteBatcher != nil {
 		if err := s.testSeams.ShutdownWriteBatcher(); err != nil {
 			slog.Error("error closing write batcher", "err", err)
 		}
 		return
 	}
-	if s.writeBatcher == nil {
-		return
+	if s.writeBatcher != nil {
+		if err := s.writeBatcher.Close(); err != nil {
+			slog.Error("error closing write batcher", "err", err)
+		}
 	}
-	if err := s.writeBatcher.Close(); err != nil {
-		slog.Error("error closing write batcher", "err", err)
+}
+
+func (s *InfrastructureService) closeDatabasePools() {
+	if s.dbRwPool != nil {
+		if err := s.dbRwPool.Close(); err != nil && !errors.Is(err, dbconnpool.ErrPoolClosed) {
+			slog.Error("error closing read-write pool", "err", err)
+		}
+		s.dbRwPool = nil
+	}
+	if s.dbRoPool != nil {
+		if err := s.dbRoPool.Close(); err != nil && !errors.Is(err, dbconnpool.ErrPoolClosed) {
+			slog.Error("error closing read-only pool", "err", err)
+		}
+		s.dbRoPool = nil
 	}
 }
 

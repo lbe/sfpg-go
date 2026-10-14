@@ -15,7 +15,7 @@ import {
   type Page,
 } from "@playwright/test";
 
-import { openMenu } from "./helpers";
+import { configModal, openMenu } from "./helpers";
 
 const BASE_URL = "http://localhost:8083";
 
@@ -26,16 +26,15 @@ const BASE_URL = "http://localhost:8083";
 export async function openConfigPerformanceTab(page: Page): Promise<Locator> {
   await openMenu(page);
   await page.locator('a[aria-label="Configuration"]').click();
-  await page.waitForSelector("#config-form", { timeout: 5000 });
-  await expect(page.locator("#config_modal").first()).toBeChecked({
-    timeout: 5000,
-  });
-  const perfTab = page.locator("#tab-performance-btn");
+  const root = configModal(page);
+  await expect(root.locator("#config-form")).toBeVisible({ timeout: 5000 });
+  await expect(root.locator("#config_modal")).toBeChecked({ timeout: 5000 });
+  const perfTab = root.locator("#tab-performance-btn");
   await perfTab.scrollIntoViewIfNeeded();
   await expect(perfTab).toBeVisible({ timeout: 5000 });
   await expect(perfTab).toBeEnabled();
   await perfTab.click();
-  const poolInput = page.locator('input[name="db_max_pool_size"]');
+  const poolInput = root.locator('input[name="db_max_pool_size"]');
   await expect(poolInput).toBeVisible({ timeout: 5000 });
   return poolInput;
 }
@@ -154,7 +153,7 @@ export async function waitForServerRestart(
   if (!recovered) {
     throw new Error("Server did not recover after restart");
   }
-  await new Promise((resolve) => setTimeout(resolve, 500));
+  await waitForServerHealth(request);
 }
 
 /**

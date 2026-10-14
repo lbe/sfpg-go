@@ -21,6 +21,8 @@ jobs:
             arch: arm64
           - os: windows
             arch: amd64
+          - os: windows
+            arch: arm64
     steps:
       - uses: actions/checkout@v6
         with:
@@ -33,6 +35,7 @@ jobs:
 
       - name: Build Binary
         run: |
+          go generate ./...
           BINARY_NAME=sfpg
           if [ "${{ matrix.os }}" = "windows" ]; then
             BINARY_NAME="sfpg.exe"

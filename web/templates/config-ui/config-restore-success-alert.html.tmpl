@@ -29,9 +29,7 @@
     hx-swap-oob="outerHTML"
     _="on load
       wait 2s
-      set #config_modal.checked to false
-      wait 300ms
-      remove #config-modal-container from body"
+      call closeConfigModalContainer(me)"
   >
     <svg
       xmlns="http://www.w3.org/2000/svg"

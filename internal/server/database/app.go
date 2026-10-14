@@ -115,9 +115,16 @@ func Setup(ctx context.Context, rootDir string, cfg *config.Config) (DatabasePat
 		dbRoPool.Close()
 		return DatabasePaths{}, nil, nil, fmt.Errorf("failed to get RW conn for root check: %w", err)
 	}
-	defer dbRwPool.Put(cpcRw)
+	putRw := true
+	defer func() {
+		if putRw {
+			dbRwPool.Put(cpcRw)
+		}
+	}()
 
 	if err := ensureRootFolderExistsFn(ctx, cpcRw, rootDir); err != nil {
+		putRw = false
+		dbRwPool.Put(cpcRw)
 		dbRwPool.Close()
 		dbRoPool.Close()
 		return DatabasePaths{}, nil, nil, fmt.Errorf("root folder check failed: %w", err)
@@ -331,8 +338,10 @@ func RecreatePoolsWithConfig(ctx context.Context, paths DatabasePaths, cfg *conf
 	}
 
 	// Create new pools with updated config
+	var newRwPool, newRoPool *dbconnpool.DbSQLConnPool
+	var err error
 	roDsn, rwDsn := configureDatabaseDSN(paths.Main)
-	newRwPool, newRoPool, err := createDatabasePools(ctx, roDsn, rwDsn, paths.Thumbs, cfg)
+	newRwPool, newRoPool, err = createDatabasePools(ctx, roDsn, rwDsn, paths.Thumbs, cfg)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to recreate pools with config: %w", err)
 	}

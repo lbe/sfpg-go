@@ -246,28 +246,32 @@ func evalDirRealPathForTest(current, reported string, bufs *readDirBuffers) (Pat
 	return evalDirRealPath(work, bufs, dirLen)
 }
 
+// reportedPathForWalkTest maps an absolute reported path to rootDir/... expected by tests.
+func reportedPathForWalkTest(tempRoot, reported string) string {
+	reported = filepath.ToSlash(reported)
+	walkRoot := filepath.ToSlash(filepath.Join(tempRoot, "rootDir"))
+	if strings.HasPrefix(reported, walkRoot) {
+		suffix := strings.TrimPrefix(reported, walkRoot)
+		suffix = strings.TrimPrefix(suffix, "/")
+		if suffix == "" {
+			return "rootDir"
+		}
+		return "rootDir/" + suffix
+	}
+	return reported
+}
+
 // testWalkWithOptions is a helper function to reduce code duplication in option tests.
 func testWalkWithOptions(t *testing.T, root string, opts []Option, expectedFiles []string, expectedErrors int, cleanup func()) {
-	oldWd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("Failed to get current working directory: %v", err)
-	}
-	if err := os.Chdir(root); err != nil {
-		t.Fatalf("Failed to change directory to %s: %v", root, err)
-	}
 	defer func() {
-		// Execute the provided cleanup function (if any).
 		if cleanup != nil {
 			cleanup()
-		}
-		// Change back to the original working directory.
-		if err := os.Chdir(oldWd); err != nil {
-			t.Errorf("Failed to change back to original directory %s: %v", oldWd, err)
 		}
 	}()
 
 	walker := NewWalker(opts...)
-	resultsChan, errChan := walker.ParallelWalk("rootDir")
+	walkRoot := filepath.Join(root, "rootDir")
+	resultsChan, errChan := walker.ParallelWalk(walkRoot)
 
 	var actualFiles []string
 	var errs []error
@@ -278,7 +282,7 @@ func testWalkWithOptions(t *testing.T, root string, opts []Option, expectedFiles
 			if !ok {
 				resultsChan = nil
 			} else {
-				actualFiles = append(actualFiles, filepath.ToSlash(string(path.Path)))
+				actualFiles = append(actualFiles, reportedPathForWalkTest(root, string(path.Path)))
 			}
 		case err, ok := <-errChan:
 			if !ok {
@@ -307,8 +311,9 @@ func testWalkWithOptions(t *testing.T, root string, opts []Option, expectedFiles
 			t.Errorf("Expected PathError.Op to be 'ReadDir', but got %q", pathErr.Op)
 		}
 		expectedErrorPath := filepath.Join("rootDir", "dir2", "dir2a")
-		if pathErr.Path != expectedErrorPath {
-			t.Errorf("Expected PathError.Path to be %q, but got %q", expectedErrorPath, pathErr.Path)
+		gotPath := reportedPathForWalkTest(root, pathErr.Path)
+		if gotPath != expectedErrorPath {
+			t.Errorf("Expected PathError.Path to be %q, but got %q", expectedErrorPath, gotPath)
 		}
 	}
 

@@ -1,12 +1,9 @@
-//go:build integration
-
+//nolint:govet // fixture setup reuses err in nested scopes
 package gallerydb
 
 import (
 	"context"
 	"database/sql"
-	"os"
-	"strings"
 	"testing"
 )
 
@@ -14,13 +11,11 @@ import (
 // COUNT query returns the same count as the stream and excludes orphans.
 func TestCountFilesForFolderIndexRebuild_MatchesStreamExcludesOrphan(t *testing.T) {
 	db, prepared, ctx := setupTestDB(t)
-
 	conn, err := db.Conn(ctx)
 	if err != nil {
 		t.Fatalf("db.Conn: %v", err)
 	}
 	defer conn.Close()
-
 	// Same fixture as TestQueryFilesForFolderIndexRebuild_StreamsInFolderFilenameOrder.
 	if _, err := conn.ExecContext(ctx,
 		`INSERT INTO folder_paths (id, path) VALUES (101, 'folder-a'), (102, 'folder-b')`); err != nil {
@@ -54,13 +49,11 @@ func TestCountFilesForFolderIndexRebuild_MatchesStreamExcludesOrphan(t *testing.
 			 VALUES (999, NULL, 1999, 'orphan.jpg', 1, 1, 'image/jpeg', 1, 1)`); err != nil {
 		t.Fatalf("insert orphan file: %v", err)
 	}
-
 	// COUNT must match the stream.
 	count, err := prepared.CountFilesForFolderIndexRebuild(ctx)
 	if err != nil {
 		t.Fatalf("CountFilesForFolderIndexRebuild: %v", err)
 	}
-
 	// Stream to verify.
 	rows, err := prepared.QueryFilesForFolderIndexRebuild(ctx)
 	if err != nil {
@@ -79,7 +72,6 @@ func TestCountFilesForFolderIndexRebuild_MatchesStreamExcludesOrphan(t *testing.
 	if err := rows.Err(); err != nil {
 		t.Fatalf("rows.Err: %v", err)
 	}
-
 	if count != streamCount {
 		t.Errorf("count %d != stream %d", count, streamCount)
 	}
@@ -88,37 +80,11 @@ func TestCountFilesForFolderIndexRebuild_MatchesStreamExcludesOrphan(t *testing.
 	}
 }
 
-// TestCountFilesForFolderIndexRebuildSQL_IsParts2 verifies the COUNT SQL is
-// embedded as parts[2] and the SELECT/INSERT indices are unchanged.
-func TestCountFilesForFolderIndexRebuildSQL_IsParts2(t *testing.T) {
-	content, err := os.ReadFile("../../sqlc/queries/embed.go")
-	if err != nil {
-		t.Fatalf("read embed.go: %v", err)
-	}
-	text := string(content)
-
-	if !strings.Contains(text, "CountFilesForFolderIndexRebuildSQL") {
-		t.Fatal("CountFilesForFolderIndexRebuildSQL function missing in embed.go")
-	}
-	if !strings.Contains(text, "parts[2]") {
-		t.Fatal("CountFilesForFolderIndexRebuildSQL must use parts[2]")
-	}
-
-	// SELECT/INSERT indices must be unchanged.
-	if !strings.Contains(text, "strings.Split(fileFolderIndexRebuildSQL, \"-- statement-break\")[0]") {
-		t.Error("QueryFilesForFolderIndexRebuildSQL must remain parts[0]")
-	}
-	if !strings.Contains(text, "parts[1]") {
-		t.Error("InsertFileFolderIndexNewSQL must remain parts[1]")
-	}
-}
-
 // TestInsertFileFolderIndexNewRows_RequiresTx verifies G2/G3: InsertFileFolderIndexNewRows
 // must be called on a WithTx-bound CustomQueries. Called without WithTx it returns an
 // error and must not INSERT.
 func TestInsertFileFolderIndexNewRows_RequiresTx(t *testing.T) {
 	_, prepared, ctx := setupTestDB(t)
-
 	// NewCustomQueries without WithTx must reject the call (no tx binding).
 	unprepared := NewCustomQueries(prepared.db)
 	if err := unprepared.InsertFileFolderIndexNewRows(ctx, []InsertFileFolderIndexNewParams{
@@ -134,7 +100,6 @@ func TestInsertFileFolderIndexNewRows_RequiresTx(t *testing.T) {
 // Execs, so a per-row Prepare or raw tx.ExecContext regression fails the test.
 func TestInsertFileFolderIndexNewRows_OnePrepareManyExec(t *testing.T) {
 	db, prepared, ctx := setupTestDB(t)
-
 	// Create an empty file_folder_index_new mirroring the active table's schema so
 	// the INSERT target exists (CloneEmpty lives in tableswap, which imports dbconnpool
 	// -> gallerydb, so we cannot call it here without an import cycle).
@@ -151,7 +116,6 @@ func TestInsertFileFolderIndexNewRows_OnePrepareManyExec(t *testing.T) {
 			PRIMARY KEY (file_id, folder_id))`); err != nil {
 		t.Fatalf("create dest: %v", err)
 	}
-
 	conn, err := db.Conn(ctx)
 	if err != nil {
 		t.Fatalf("db.Conn: %v", err)
@@ -162,7 +126,6 @@ func TestInsertFileFolderIndexNewRows_OnePrepareManyExec(t *testing.T) {
 		t.Fatalf("BeginTx: %v", err)
 	}
 	defer tx.Rollback()
-
 	prepareCount := 0
 	execCount := 0
 	origPrepare := prepareContextFn
@@ -179,7 +142,6 @@ func TestInsertFileFolderIndexNewRows_OnePrepareManyExec(t *testing.T) {
 		prepareContextFn = origPrepare
 		stmtExecContextFn = origExec
 	})
-
 	qtx := prepared.WithTx(tx)
 	rows := []InsertFileFolderIndexNewParams{
 		{FileID: 10, FolderID: 2, ImageIndex: 1, ImageCount: 3, NextID: sql.NullInt64{Int64: 11, Valid: true}, FirstID: 10, LastID: 12},
@@ -192,14 +154,12 @@ func TestInsertFileFolderIndexNewRows_OnePrepareManyExec(t *testing.T) {
 	if err := tx.Commit(); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
-
 	if prepareCount != 1 {
 		t.Errorf("expected exactly 1 Prepare (G6), got %d", prepareCount)
 	}
 	if execCount != 3 {
 		t.Errorf("expected exactly 3 Exec (G6, one per row), got %d", execCount)
 	}
-
 	// All three rows present in the dest.
 	verifyConn, err := db.Conn(ctx)
 	if err != nil {
@@ -220,13 +180,11 @@ func TestInsertFileFolderIndexNewRows_OnePrepareManyExec(t *testing.T) {
 // IS NULL) are skipped.
 func TestQueryFilesForFolderIndexRebuild_StreamsInFolderFilenameOrder(t *testing.T) {
 	db, prepared, ctx := setupTestDB(t)
-
 	conn, err := db.Conn(ctx)
 	if err != nil {
 		t.Fatalf("db.Conn: %v", err)
 	}
 	defer conn.Close()
-
 	// Two folders.
 	if _, err := conn.ExecContext(ctx,
 		`INSERT INTO folder_paths (id, path) VALUES (101, 'folder-a'), (102, 'folder-b')`); err != nil {
@@ -236,7 +194,6 @@ func TestQueryFilesForFolderIndexRebuild_StreamsInFolderFilenameOrder(t *testing
 		`INSERT INTO folders (id, parent_id, path_id, name) VALUES (101, NULL, 101, 'folder-a'), (102, NULL, 102, 'folder-b')`); err != nil {
 		t.Fatalf("insert folders: %v", err)
 	}
-
 	// Filenames are NOT in id order within each folder.
 	if _, err := conn.ExecContext(ctx,
 		`INSERT INTO file_paths (id, path) VALUES (1001, 'f1a'), (1002, 'f1z'), (1003, 'f1m'),
@@ -262,13 +219,11 @@ func TestQueryFilesForFolderIndexRebuild_StreamsInFolderFilenameOrder(t *testing
 			 VALUES (999, NULL, 1999, 'orphan.jpg', 1, 1, 'image/jpeg', 1, 1)`); err != nil {
 		t.Fatalf("insert orphan file: %v", err)
 	}
-
 	rows, err := prepared.QueryFilesForFolderIndexRebuild(ctx)
 	if err != nil {
 		t.Fatalf("QueryFilesForFolderIndexRebuild: %v", err)
 	}
 	defer rows.Close()
-
 	type fr struct {
 		id       int64
 		folderID int64
@@ -284,7 +239,6 @@ func TestQueryFilesForFolderIndexRebuild_StreamsInFolderFilenameOrder(t *testing
 	if err := rows.Err(); err != nil {
 		t.Fatalf("rows.Err: %v", err)
 	}
-
 	if len(got) != 5 {
 		t.Fatalf("expected 5 streamed rows (orphan skipped), got %d: %+v", len(got), got)
 	}

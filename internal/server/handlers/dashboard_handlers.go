@@ -23,7 +23,7 @@ type DashboardHandlers struct {
 	discoveryError ManualDiscoveryErrorSource
 
 	// Template helpers
-	AddCommonTemplateData func(http.ResponseWriter, *http.Request, map[string]any, bool) map[string]any
+	AddCommonTemplateData func(http.ResponseWriter, *http.Request, map[string]any) map[string]any
 	ServerError           func(http.ResponseWriter, *http.Request, error)
 }
 
@@ -42,7 +42,7 @@ func NewDashboardHandlers(
 	sessionManager SessionManager,
 	collector MetricsCollector,
 	discoveryError ManualDiscoveryErrorSource,
-	addCommonTemplateData func(http.ResponseWriter, *http.Request, map[string]any, bool) map[string]any,
+	addCommonTemplateData func(http.ResponseWriter, *http.Request, map[string]any) map[string]any,
 	serverError func(http.ResponseWriter, *http.Request, error),
 ) *DashboardHandlers {
 	return &DashboardHandlers{
@@ -55,7 +55,8 @@ func NewDashboardHandlers(
 }
 
 // DashboardGet handles GET /dashboard requests, rendering the dashboard page.
-// Requires authentication. Supports HTMX partial updates when HX-Request header is present.
+// Requires authentication. Renders an HTMX partial when HX-Request is true;
+// HX-Target does not affect partial vs full for this route.
 func (h *DashboardHandlers) DashboardGet(w http.ResponseWriter, r *http.Request) {
 	if !h.sessionManager.IsAuthenticated(w, r) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -71,26 +72,20 @@ func (h *DashboardHandlers) DashboardGet(w http.ResponseWriter, r *http.Request)
 		"FolderIndexRebuildError": h.discoveryError.ManualDiscoveryError(),
 	}
 
-	// Detect HTMX request for partial rendering (must be before AddCommonTemplateData for partial param)
-	hxRequest := r.Header.Get("HX-Request") == "true"
-	hxTarget := r.Header.Get("HX-Target")
-	isHTMX := hxRequest && hxTarget == "dashboard-container"
+	partial := ui.IsPartialRequest(r, ui.PartialRuleHXRequestOnly, "")
 
 	if h.AddCommonTemplateData != nil {
-		data = h.AddCommonTemplateData(w, r, data, isHTMX)
+		data = h.AddCommonTemplateData(w, r, data)
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	// Vary on HTMX headers so the browser does not serve a cached partial for a full page request
-	w.Header().Add("Vary", "HX-Request")
-	w.Header().Add("Vary", "HX-Target")
-	// Partial responses must not be cached or stored in bfcache
-	if isHTMX {
-		w.Header().Set("Cache-Control", "no-store")
+	ui.SetLayoutPartialVary(w, false)
+	if partial {
+		ui.SetPartialNoStore(w)
 	}
 	w.WriteHeader(http.StatusOK)
 
-	if err := ui.RenderPage(w, "dashboard", data, isHTMX); err != nil {
+	if err := ui.RenderPage(w, "dashboard", data, partial); err != nil {
 		slog.Error("failed to render dashboard", "err", err)
 		if h.ServerError != nil {
 			h.ServerError(w, r, err)

@@ -1,5 +1,4 @@
-//go:build integration
-
+//nolint:govet // fixture setup reuses err in nested scopes
 package gallerydb
 
 import (
@@ -33,7 +32,6 @@ func ensureRootFolderID(t *testing.T, q *CustomQueries, ctx context.Context) int
 	}
 	return folder.ID
 }
-
 func ensureFolderAtGalleryPath(t *testing.T, q *CustomQueries, ctx context.Context, galleryPath string, parentID int64) int64 {
 	t.Helper()
 	id, err := q.GetFolderIDByPath(ctx, galleryPath)
@@ -59,7 +57,6 @@ func ensureFolderAtGalleryPath(t *testing.T, q *CustomQueries, ctx context.Conte
 	}
 	return folder.ID
 }
-
 func TestListDiscoveryFilesByFolderID_empty(t *testing.T) {
 	_, q, ctx := setupTestDB(t)
 	rootID := ensureRootFolderID(t, q, ctx)
@@ -71,15 +68,12 @@ func TestListDiscoveryFilesByFolderID_empty(t *testing.T) {
 		t.Fatalf("expected no rows, got %d", len(rows))
 	}
 }
-
 func TestListDiscoveryCatalogByFolder_queries(t *testing.T) {
 	_, q, ctx := setupTestDB(t)
 	rootID := ensureRootFolderID(t, q, ctx)
 	now := time.Now().Unix()
-
 	filePath := "root-file.jpg"
 	invalidPath := "root-invalid.dat"
-
 	filePathID, err := q.UpsertFilePathReturningID(ctx, filePath)
 	if err != nil {
 		t.Fatalf("UpsertFilePathReturningID file: %v", err)
@@ -106,7 +100,6 @@ func TestListDiscoveryCatalogByFolder_queries(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("UpsertInvalidFile: %v", err)
 	}
-
 	inv, err := q.GetInvalidFileByPath(ctx, invalidPath)
 	if err != nil {
 		t.Fatalf("GetInvalidFileByPath: %v", err)
@@ -114,7 +107,6 @@ func TestListDiscoveryCatalogByFolder_queries(t *testing.T) {
 	if inv.FolderID != rootID {
 		t.Fatalf("invalid_files.folder_id = %d, want %d", inv.FolderID, rootID)
 	}
-
 	fileRows, err := q.ListDiscoveryFilesByFolderID(ctx, sql.NullInt64{Int64: rootID, Valid: true})
 	if err != nil {
 		t.Fatalf("ListDiscoveryFilesByFolderID: %v", err)
@@ -125,7 +117,6 @@ func TestListDiscoveryCatalogByFolder_queries(t *testing.T) {
 	if fileRows[0].FileID != file.ID || fileRows[0].FileFilename != "root-file.jpg" {
 		t.Fatalf("file row: %+v", fileRows[0])
 	}
-
 	invalidRows, err := q.ListDiscoveryInvalidByFolderID(ctx, rootID)
 	if err != nil {
 		t.Fatalf("ListDiscoveryInvalidByFolderID: %v", err)
@@ -136,7 +127,6 @@ func TestListDiscoveryCatalogByFolder_queries(t *testing.T) {
 	if invalidRows[0].InvalidPath != invalidPath {
 		t.Fatalf("invalid path: %q", invalidRows[0].InvalidPath)
 	}
-
 	// Nested folder: only rows in that folder_id.
 	parentID := ensureFolderAtGalleryPath(t, q, ctx, "parent", rootID)
 	childPath := "parent/child.jpg"
@@ -156,7 +146,6 @@ func TestListDiscoveryCatalogByFolder_queries(t *testing.T) {
 	if _, err := q.UpsertFilePathReturningID(ctx, "parent/deeper/nested.jpg"); err != nil {
 		t.Fatalf("UpsertFilePathReturningID nested: %v", err)
 	}
-
 	parentFiles, err := q.ListDiscoveryFilesByFolderID(ctx, sql.NullInt64{Int64: parentID, Valid: true})
 	if err != nil {
 		t.Fatalf("ListDiscoveryFilesByFolderID parent: %v", err)
@@ -165,13 +154,11 @@ func TestListDiscoveryCatalogByFolder_queries(t *testing.T) {
 		t.Fatalf("parent folder files: %+v", parentFiles)
 	}
 }
-
 func TestListDiscoveryInvalidByFolderID_albumOnly(t *testing.T) {
 	_, q, ctx := setupTestDB(t)
 	rootID := ensureRootFolderID(t, q, ctx)
 	albumID := ensureFolderAtGalleryPath(t, q, ctx, "album", rootID)
 	now := time.Now().Unix()
-
 	if err := q.UpsertInvalidFile(ctx, UpsertInvalidFileParams{
 		Path:     "album/bad.raw",
 		Mtime:    now,
@@ -181,7 +168,6 @@ func TestListDiscoveryInvalidByFolderID_albumOnly(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("UpsertInvalidFile: %v", err)
 	}
-
 	rows, err := q.ListDiscoveryInvalidByFolderID(ctx, albumID)
 	if err != nil {
 		t.Fatalf("ListDiscoveryInvalidByFolderID: %v", err)
@@ -189,7 +175,6 @@ func TestListDiscoveryInvalidByFolderID_albumOnly(t *testing.T) {
 	if len(rows) != 1 || rows[0].InvalidPath != "album/bad.raw" {
 		t.Fatalf("rows: %+v", rows)
 	}
-
 	rootInvalid, err := q.ListDiscoveryInvalidByFolderID(ctx, rootID)
 	if err != nil {
 		t.Fatalf("ListDiscoveryInvalidByFolderID root: %v", err)
@@ -198,14 +183,12 @@ func TestListDiscoveryInvalidByFolderID_albumOnly(t *testing.T) {
 		t.Fatalf("expected no invalid rows at root, got %d", len(rootInvalid))
 	}
 }
-
 func TestUpsertInvalidFile_updates_folder_id_on_conflict(t *testing.T) {
 	_, q, ctx := setupTestDB(t)
 	rootID := ensureRootFolderID(t, q, ctx)
 	albumID := ensureFolderAtGalleryPath(t, q, ctx, "album", rootID)
 	now := time.Now().Unix()
 	path := "album/photo.jpg"
-
 	if err := q.UpsertInvalidFile(ctx, UpsertInvalidFileParams{
 		Path: path, Mtime: now, Size: 10, FolderID: albumID,
 	}); err != nil {

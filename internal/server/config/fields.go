@@ -383,7 +383,7 @@ func fields() []configField {
 			stringField("http_cache_body_codec", "http-cache-body-codec", func(c *Config) *string { return &c.HTTPCacheBodyCodec }, validateHTTPCacheBodyCodec, false).toConfigField(),
 			stringField("session_same_site", "session-same-site", func(c *Config) *string { return &c.SessionSameSite }, validateOneOfExactNamed("session same-site", "Lax", "Strict", "None"), true).toConfigField(),
 
-			// --- Int fields (11) ---
+			// --- Int fields (10) ---
 			intField("listener_port", "listener-port", func(c *Config) *int { return &c.ListenerPort }, parsePort, true).toConfigField(),
 			intField("log_retention_count", "log-retention-count", func(c *Config) *int { return &c.LogRetentionCount }, parseIntMin("log retention count", "log retention count", 1), true).toConfigField(),
 			intField("session_max_age", "session-max-age", func(c *Config) *int { return &c.SessionMaxAge }, parseIntNamed("session max age"), true).toConfigField(),
@@ -398,7 +398,6 @@ func fields() []configField {
 			intField("lockout_duration", "lockout-duration", func(c *Config) *int { return &c.LockoutDuration }, parseIntNamed("lockout duration"), false).toConfigField(),
 			intField("lockout_threshold", "lockout-threshold", func(c *Config) *int { return &c.LockoutThreshold }, parseIntMin("lockout threshold", "lockout threshold", 1), false).toConfigField(),
 			intField("login_rate_limit_per_ip", "login-rate-limit-per-ip", func(c *Config) *int { return &c.LoginRateLimitPerIP }, parseIntNonNeg("login rate limit per IP", "login rate limit per IP"), false).toConfigField(),
-			intField("discovery_queue_max", "discovery-queue-max", func(c *Config) *int { return &c.DiscoveryQueueMax }, parseIntNonNeg("discovery queue max", "discovery queue max"), false).toConfigField(),
 
 			// --- Bool fields (6) ---
 			// Note: third arg is human-readable name for error messages, not dbKey.

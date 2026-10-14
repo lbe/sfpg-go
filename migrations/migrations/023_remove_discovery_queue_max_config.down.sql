@@ -1,0 +1,1 @@
+-- no-op: discovery_queue_max removed

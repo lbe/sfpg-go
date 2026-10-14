@@ -3,7 +3,9 @@
 package web_testsuite
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -179,6 +181,35 @@ func TestAuthRoutes_Auth(t *testing.T) {
 				note = fmt.Sprintf("expected %d, got %d", tt.expCode, resp.StatusCode)
 				if tt.note != "" {
 					note += "; " + tt.note
+				}
+			} else if tt.num == 40 {
+				body, err := io.ReadAll(resp.Body)
+				if err != nil {
+					status = "FAIL"
+					note = fmt.Sprintf("read body: %v", err)
+				} else if tag, scanErr := testutil.FirstLiteralDocumentShellTag(body); scanErr != nil {
+					status = "FAIL"
+					note = scanErr.Error()
+				} else if tag != "" {
+					status = "FAIL"
+					note = fmt.Sprintf("partial response must not include <%s> document shell", tag)
+				} else if doc, parseErr := testutil.ParseHTML(bytes.NewReader(body)); parseErr != nil {
+					status = "FAIL"
+					note = parseErr.Error()
+				} else {
+					h1 := testutil.FindElementByID(doc, "dashboard-title")
+					if h1 == nil {
+						h1 = testutil.FindElementByTag(doc, "h1")
+					}
+					if h1 == nil {
+						status = "FAIL"
+						note = "dashboard partial missing #dashboard-title or h1"
+					} else if strings.TrimSpace(testutil.GetTextContent(h1)) != "Performance & Health Dashboard" {
+						status = "FAIL"
+						note = "dashboard partial h1 title mismatch"
+					} else if note == "" {
+						note = "OK"
+					}
 				}
 			} else if note == "" {
 				note = "OK"

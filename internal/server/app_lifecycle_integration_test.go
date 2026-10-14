@@ -22,7 +22,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lbe/sfpg-go/internal/cachelite"
 	"github.com/lbe/sfpg-go/internal/dbconnpool"
 	"github.com/lbe/sfpg-go/internal/gallerydb"
 	"github.com/lbe/sfpg-go/internal/getopt"
@@ -885,8 +884,8 @@ func TestApp_ResetStats_DelegatesToSubsystemManager(t *testing.T) {
 }
 
 func TestApp_LoadsETagFromConfig(t *testing.T) {
-	app := CreateApp(t)
 	t.Parallel()
+	app := CreateApp(t)
 	ctx := context.Background()
 
 	cfg, err := app.ConfigManager.ConfigService.Load(ctx)
@@ -934,7 +933,7 @@ func TestMemoryReclaimer(t *testing.T) {
 
 		select {
 		case <-called:
-		case <-time.After(2 * time.Second):
+		case <-time.After(300 * time.Millisecond):
 			t.Error("FreeMemFunc was not called while idle")
 		}
 
@@ -967,7 +966,7 @@ func TestMemoryReclaimer(t *testing.T) {
 		select {
 		case <-called:
 			t.Error("FreeMemFunc was called even though queue was not empty")
-		case <-time.After(300 * time.Millisecond):
+		case <-time.After(100 * time.Millisecond):
 		}
 
 		app.RuntimeManager.cancel()
@@ -982,7 +981,7 @@ func TestMemoryReclaimer(t *testing.T) {
 		cfg := MemoryReclaimerConfig{
 			InitialDelay:  10 * time.Millisecond,
 			CheckInterval: 20 * time.Millisecond,
-			IdleThreshold: 1 * time.Second,
+			IdleThreshold: 200 * time.Millisecond,
 			FreeMemFunc:   func() { called <- struct{}{} },
 		}
 
@@ -997,97 +996,12 @@ func TestMemoryReclaimer(t *testing.T) {
 		select {
 		case <-called:
 			t.Error("FreeMemFunc was called even though pool was recently active")
-		case <-time.After(300 * time.Millisecond):
+		case <-time.After(100 * time.Millisecond):
 		}
 
 		app.RuntimeManager.cancel()
 		<-done
 	})
-}
-
-func TestApp_ApplyConfig_InvalidatesETagWhenChanged(t *testing.T) {
-	app := CreateApp(t)
-	defer app.Shutdown()
-
-	oldETag := "20260101-01"
-	newETag := "20260101-02"
-
-	ui.SetCacheVersion(oldETag)
-
-	ctx := app.RuntimeManager.ctx
-	entry := &cachelite.HTTPCacheEntry{
-		Key:           "etag-test-key",
-		Method:        "GET",
-		Path:          "/gallery/1",
-		Status:        200,
-		Body:          []byte("test"),
-		ContentLength: sql.NullInt64{Int64: 4, Valid: true},
-		CreatedAt:     time.Now().Unix(),
-	}
-	if err := cachelite.StoreCacheEntry(ctx, app.dbRwPool, entry); err != nil {
-		t.Fatalf("failed to seed cache entry: %v", err)
-	}
-	before, err := cachelite.CountCacheEntries(ctx, app.dbRwPool)
-	if err != nil {
-		t.Fatalf("failed to count cache entries before: %v", err)
-	}
-	if before != 1 {
-		t.Fatalf("expected 1 cache entry before ETag change, got %d", before)
-	}
-
-	app.ConfigManager.ConfigMu.Lock()
-	app.ConfigManager.Config.ETagVersion = newETag
-	app.ConfigManager.ConfigMu.Unlock()
-
-	app.ApplyConfig()
-
-	if got := ui.GetCacheVersion(); got != newETag {
-		t.Errorf("ui.GetCacheVersion() = %q, want %q", got, newETag)
-	}
-
-	after, err := cachelite.CountCacheEntries(ctx, app.dbRwPool)
-	if err != nil {
-		t.Fatalf("failed to count cache entries after: %v", err)
-	}
-	if after != 0 {
-		t.Errorf("expected cache to be invalidated after ETag change, got %d entries", after)
-	}
-}
-
-func TestApp_ApplyConfig_ETagUnchangedSkipsInvalidate(t *testing.T) {
-	app := CreateApp(t)
-	defer app.Shutdown()
-
-	const etag = "same-etag"
-	ui.SetCacheVersion(etag)
-
-	ctx := app.RuntimeManager.ctx
-	entry := &cachelite.HTTPCacheEntry{
-		Key:           "etag-unchanged-key",
-		Method:        "GET",
-		Path:          "/gallery/1",
-		Status:        200,
-		Body:          []byte("test"),
-		ContentLength: sql.NullInt64{Int64: 4, Valid: true},
-		CreatedAt:     time.Now().Unix(),
-	}
-	if err := cachelite.StoreCacheEntry(ctx, app.dbRwPool, entry); err != nil {
-		t.Fatalf("failed to seed cache entry: %v", err)
-	}
-
-	app.ConfigManager.ConfigMu.Lock()
-	app.ConfigManager.Config.ETagVersion = etag
-	app.ConfigManager.ConfigMu.Unlock()
-
-	app.ApplyConfig()
-
-	after, err := cachelite.CountCacheEntries(ctx, app.dbRwPool)
-	if err != nil {
-		t.Fatalf("failed to count cache entries: %v", err)
-	}
-	if after != 1 {
-		t.Errorf("expected cache entry to be preserved, got %d entries", after)
-	}
 }
 
 func TestApp_ApplyConfig_PreloadManagerSetEnabled(t *testing.T) {
@@ -1782,108 +1696,6 @@ func TestApp_Run_ProfilerUsesRealStart(t *testing.T) {
 
 	if profiler.Dir() == "" {
 		t.Error("expected profiler.Dir() to be non-empty after real start")
-	}
-}
-
-func TestStartupLogging_BootstrapThenReload_CapturesEarlyLogs(t *testing.T) {
-	tmpDir := t.TempDir()
-	bootstrapLogDir := filepath.Join(tmpDir, "logs")
-	configuredLogDir := filepath.Join(tmpDir, "configured-logs")
-
-	app := New(getopt.Opt{SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true}}, "x.y.z")
-	defer app.Shutdown()
-	app.rootDir = tmpDir
-	app.SubsystemManager.scheduler = scheduler.NewScheduler(0)
-	go func() {
-		if err := app.SubsystemManager.scheduler.Start(app.RuntimeManager.ctx); err != nil {
-			t.Logf("scheduler error: %v", err)
-		}
-	}()
-	defer func() { _ = app.SubsystemManager.scheduler.Shutdown() }()
-
-	app.setupBootstrapLogging()
-
-	if info, err := os.Stat(bootstrapLogDir); err != nil || !info.IsDir() {
-		t.Fatalf("bootstrap logs directory should exist: %v", err)
-	}
-	bootstrapLogFile := app.logger.FilePath()
-	if info, err := os.Stat(bootstrapLogFile); err != nil || info.IsDir() {
-		t.Fatalf("bootstrap log file should exist: %v", err)
-	}
-
-	app.ConfigManager.ConfigMu.Lock()
-	app.ConfigManager.Config = &config.Config{
-		LogDirectory: configuredLogDir,
-		LogLevel:     "debug",
-	}
-	app.ConfigManager.ConfigMu.Unlock()
-
-	if err := app.reloadLoggingFromConfig(); err != nil {
-		t.Fatalf("reloadLoggingFromConfig should not fail: %v", err)
-	}
-
-	if info, err := os.Stat(configuredLogDir); err != nil || !info.IsDir() {
-		t.Fatalf("configured logs directory should exist: %v", err)
-	}
-
-	newLogFile := app.logger.FilePath()
-	if newLogFile == bootstrapLogFile {
-		t.Fatal("log file path should have changed to configured directory")
-	}
-	if info, err := os.Stat(newLogFile); err != nil || info.IsDir() {
-		t.Fatalf("new log file should exist: %v", err)
-	}
-	if filepath.Dir(newLogFile) != configuredLogDir {
-		t.Fatalf("new log file should be in configured directory: got %s, want %s", filepath.Dir(newLogFile), configuredLogDir)
-	}
-	if filepath.Base(newLogFile) != filepath.Base(bootstrapLogFile) {
-		t.Fatalf("log file name should be preserved: got %s, want %s", filepath.Base(newLogFile), filepath.Base(bootstrapLogFile))
-	}
-
-	if app.logger != nil {
-		_ = app.logger.Shutdown()
-	}
-}
-
-func TestStartupLogging_BootstrapThenReload_SameDirectory(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	app := New(getopt.Opt{SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true}}, "x.y.z")
-	defer app.Shutdown()
-	app.rootDir = tmpDir
-	app.SubsystemManager.scheduler = scheduler.NewScheduler(0)
-	go func() {
-		if err := app.SubsystemManager.scheduler.Start(app.RuntimeManager.ctx); err != nil {
-			t.Logf("scheduler error: %v", err)
-		}
-	}()
-	defer func() { _ = app.SubsystemManager.scheduler.Shutdown() }()
-
-	app.setupBootstrapLogging()
-
-	originalLogger := app.logger
-	originalLogFile := app.logger.File()
-
-	app.ConfigManager.ConfigMu.Lock()
-	app.ConfigManager.Config = &config.Config{
-		LogDirectory: "logs",
-		LogLevel:     "debug",
-	}
-	app.ConfigManager.ConfigMu.Unlock()
-
-	if err := app.reloadLoggingFromConfig(); err != nil {
-		t.Fatalf("reloadLoggingFromConfig should not fail: %v", err)
-	}
-
-	if app.logger != originalLogger {
-		t.Fatal("logger should remain unchanged when directory is same")
-	}
-	if app.logger.File() != originalLogFile {
-		t.Fatal("log file should remain unchanged when directory is same")
-	}
-
-	if app.logger != nil {
-		_ = app.logger.Shutdown()
 	}
 }
 

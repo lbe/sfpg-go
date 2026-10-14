@@ -27,7 +27,7 @@ func (f *recordingFileProcessor) ProcessDiscoveryFile(ctx context.Context, file 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.processedPaths = append(f.processedPaths, file.Path)
-	return &files.File{Path: file.Path, Ok: true, Exists: false}, nil
+	return &files.File{Path: file.Path, Exists: false}, nil
 }
 
 func (f *recordingFileProcessor) RecordInvalidFile(ctx context.Context, path string, mtime, size int64, reason string, folderID int64) error {

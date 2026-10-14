@@ -116,12 +116,6 @@ type Config struct {
 	// Does not apply to POST /server/discovery.
 	RestartAfterDiscovery bool
 
-	// DiscoveryQueueMax is currently a no-op: the discovery work queue is a
-	// dedicated disk-backed dque (wipe-on-start), so SubsystemManager.Start
-	// ignores this field. It is retained for later removal and no longer bounds
-	// the production discovery queue.
-	DiscoveryQueueMax int
-
 	// Security settings
 	// LockoutDuration is the account lockout period in seconds after
 	// LockoutThreshold failed login attempts.
@@ -196,7 +190,6 @@ func DefaultConfig() *Config {
 		// Discovery
 		RunFileDiscovery:      true,
 		RestartAfterDiscovery: false,
-		DiscoveryQueueMax:     0, // no-op; Start ignores this field (see DiscoveryQueueMax godoc)
 
 		// Security
 		LockoutDuration:     3600, // 1 hour

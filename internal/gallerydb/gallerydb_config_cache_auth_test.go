@@ -1,10 +1,8 @@
-//go:build integration
-
 package gallerydb
 
 import (
-	"context"
 	"database/sql"
+	"errors"
 	"testing"
 	"time"
 )
@@ -13,16 +11,14 @@ func TestLoginAttemptQueries(t *testing.T) {
 	_, q, ctx := setupTestDB(t)
 	username := "testuser"
 	now := time.Now().Unix()
-
 	t.Run("GetLoginAttempt_NonExistent", func(t *testing.T) {
 		_, err := q.GetLoginAttempt(ctx, username)
 		if err == nil {
 			t.Error("expected error when getting non-existent login attempt, but got nil")
-		} else if err != sql.ErrNoRows {
+		} else if !errors.Is(err, sql.ErrNoRows) {
 			t.Errorf("expected sql.ErrNoRows, got %v", err)
 		}
 	})
-
 	t.Run("UpsertLoginAttempt_Insert", func(t *testing.T) {
 		failedAttempts := int64(1)
 		err := q.UpsertLoginAttempt(ctx, UpsertLoginAttemptParams{
@@ -34,7 +30,6 @@ func TestLoginAttemptQueries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("UpsertLoginAttempt (insert) failed: %v", err)
 		}
-
 		attempt, err := q.GetLoginAttempt(ctx, username)
 		if err != nil {
 			t.Fatalf("GetLoginAttempt failed: %v", err)
@@ -49,7 +44,6 @@ func TestLoginAttemptQueries(t *testing.T) {
 			t.Error("expected locked_until to be NULL, but it was set")
 		}
 	})
-
 	t.Run("UpsertLoginAttempt_UpdateIncrement", func(t *testing.T) {
 		newFailedAttempts := int64(2)
 		err := q.UpsertLoginAttempt(ctx, UpsertLoginAttemptParams{
@@ -61,7 +55,6 @@ func TestLoginAttemptQueries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("UpsertLoginAttempt (update) failed: %v", err)
 		}
-
 		attempt, err := q.GetLoginAttempt(ctx, username)
 		if err != nil {
 			t.Fatalf("GetLoginAttempt failed: %v", err)
@@ -70,7 +63,6 @@ func TestLoginAttemptQueries(t *testing.T) {
 			t.Errorf("expected failed_attempts %d, got %d", newFailedAttempts, attempt.FailedAttempts)
 		}
 	})
-
 	t.Run("UpsertLoginAttempt_SetLockout", func(t *testing.T) {
 		failedAttempts := int64(3)
 		lockedUntil := now + 3600 // 1 hour from now
@@ -83,7 +75,6 @@ func TestLoginAttemptQueries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("UpsertLoginAttempt (set lockout) failed: %v", err)
 		}
-
 		attempt, err := q.GetLoginAttempt(ctx, username)
 		if err != nil {
 			t.Fatalf("GetLoginAttempt failed: %v", err)
@@ -98,21 +89,18 @@ func TestLoginAttemptQueries(t *testing.T) {
 			t.Errorf("expected locked_until %d, got %d", lockedUntil, attempt.LockedUntil.Int64)
 		}
 	})
-
 	t.Run("ClearLoginAttempts", func(t *testing.T) {
 		err := q.ClearLoginAttempts(ctx, username)
 		if err != nil {
 			t.Fatalf("ClearLoginAttempts failed: %v", err)
 		}
-
 		_, err = q.GetLoginAttempt(ctx, username)
 		if err == nil {
 			t.Error("expected error when getting cleared login attempt, but got nil")
-		} else if err != sql.ErrNoRows {
+		} else if !errors.Is(err, sql.ErrNoRows) {
 			t.Errorf("expected sql.ErrNoRows, got %v", err)
 		}
 	})
-
 	t.Run("UnlockAccount", func(t *testing.T) {
 		// First create a locked account
 		lockedUntil := now + 3600
@@ -125,13 +113,11 @@ func TestLoginAttemptQueries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("UpsertLoginAttempt failed: %v", err)
 		}
-
 		// Unlock the account
 		err = q.UnlockAccount(ctx, username)
 		if err != nil {
 			t.Fatalf("UnlockAccount failed: %v", err)
 		}
-
 		// Verify account is unlocked
 		attempt, err := q.GetLoginAttempt(ctx, username)
 		if err != nil {
@@ -144,14 +130,12 @@ func TestLoginAttemptQueries(t *testing.T) {
 			t.Error("expected locked_until to be NULL after unlock, but it was set")
 		}
 	})
-
 	t.Run("CleanupExpiredLockouts", func(t *testing.T) {
 		// Create multiple accounts with expired and non-expired lockouts
 		expiredUsername := "expireduser"
 		activeUsername := "activeuser"
 		pastTime := now - 7200   // 2 hours ago
 		futureTime := now + 3600 // 1 hour from now
-
 		// Expired lockout
 		err := q.UpsertLoginAttempt(ctx, UpsertLoginAttemptParams{
 			Username:       expiredUsername,
@@ -162,7 +146,6 @@ func TestLoginAttemptQueries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("UpsertLoginAttempt (expired) failed: %v", err)
 		}
-
 		// Active lockout
 		err = q.UpsertLoginAttempt(ctx, UpsertLoginAttemptParams{
 			Username:       activeUsername,
@@ -180,7 +163,6 @@ func TestLoginAttemptQueries(t *testing.T) {
 func TestConfigQueries(t *testing.T) {
 	_, q, ctx := setupTestDB(t)
 	now := time.Now().Unix()
-
 	t.Run("UpsertConfigValueOnly and GetConfigValueByKey", func(t *testing.T) {
 		// Insert a config value
 		err := q.UpsertConfigValueOnly(ctx, UpsertConfigValueOnlyParams{
@@ -192,7 +174,6 @@ func TestConfigQueries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("UpsertConfigValueOnly failed: %v", err)
 		}
-
 		// Get the config value
 		value, err := q.GetConfigValueByKey(ctx, "test_key")
 		if err != nil {
@@ -201,7 +182,6 @@ func TestConfigQueries(t *testing.T) {
 		if value != "test_value" {
 			t.Errorf("Expected value 'test_value', got %s", value)
 		}
-
 		// Update the config value
 		err = q.UpsertConfigValueOnly(ctx, UpsertConfigValueOnlyParams{
 			Key:       "test_key",
@@ -212,7 +192,6 @@ func TestConfigQueries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("UpsertConfigValueOnly (update) failed: %v", err)
 		}
-
 		value, err = q.GetConfigValueByKey(ctx, "test_key")
 		if err != nil {
 			t.Fatalf("GetConfigValueByKey (after update) failed: %v", err)
@@ -221,16 +200,14 @@ func TestConfigQueries(t *testing.T) {
 			t.Errorf("Expected updated value 'updated_value', got %s", value)
 		}
 	})
-
 	t.Run("GetConfigValueByKey_NonExistent", func(t *testing.T) {
 		_, err := q.GetConfigValueByKey(ctx, "nonexistent_key")
 		if err == nil {
 			t.Error("expected error when getting non-existent config key, but got nil")
-		} else if err != sql.ErrNoRows {
+		} else if !errors.Is(err, sql.ErrNoRows) {
 			t.Errorf("expected sql.ErrNoRows, got %v", err)
 		}
 	})
-
 	t.Run("GetConfigs", func(t *testing.T) {
 		// Insert another config value
 		err := q.UpsertConfigValueOnly(ctx, UpsertConfigValueOnlyParams{
@@ -242,7 +219,6 @@ func TestConfigQueries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("UpsertConfigValueOnly failed: %v", err)
 		}
-
 		// Get all configs
 		configs, err := q.GetConfigs(ctx)
 		if err != nil {
@@ -252,7 +228,6 @@ func TestConfigQueries(t *testing.T) {
 		if len(configs) < 2 {
 			t.Errorf("Expected at least 2 configs, got %d", len(configs))
 		}
-
 		// Find our test configs
 		foundTestKey := false
 		foundAnotherKey := false
@@ -283,7 +258,6 @@ func TestConfigQueries(t *testing.T) {
 func TestHttpCacheQueries(t *testing.T) {
 	_, q, ctx := setupTestDB(t)
 	now := time.Now().Unix()
-
 	t.Run("UpsertHttpCache and GetHttpCacheByKey", func(t *testing.T) {
 		// Insert a cache entry
 		params := UpsertHttpCacheParams{
@@ -304,7 +278,6 @@ func TestHttpCacheQueries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("UpsertHttpCache failed: %v", err)
 		}
-
 		// Get the cache entry
 		entry, err := q.GetHttpCacheByKey(ctx, "test_key_1")
 		if err != nil {
@@ -323,16 +296,14 @@ func TestHttpCacheQueries(t *testing.T) {
 			t.Errorf("Expected body '{\"test\": \"data\"}', got %s", string(entry.Body))
 		}
 	})
-
 	t.Run("GetHttpCacheByKey_NonExistent", func(t *testing.T) {
 		_, err := q.GetHttpCacheByKey(ctx, "nonexistent_key")
 		if err == nil {
 			t.Error("expected error when getting non-existent cache entry, but got nil")
-		} else if err != sql.ErrNoRows {
+		} else if !errors.Is(err, sql.ErrNoRows) {
 			t.Errorf("expected sql.ErrNoRows, got %v", err)
 		}
 	})
-
 	t.Run("HttpCacheExistsByKey", func(t *testing.T) {
 		// Check existing key
 		exists, err := q.HttpCacheExistsByKey(ctx, "test_key_1")
@@ -342,7 +313,6 @@ func TestHttpCacheQueries(t *testing.T) {
 		if !exists {
 			t.Errorf("Expected exists=true for existing key, got %v", exists)
 		}
-
 		// Check non-existing key
 		exists, err = q.HttpCacheExistsByKey(ctx, "nonexistent_key")
 		if err != nil {
@@ -352,7 +322,6 @@ func TestHttpCacheQueries(t *testing.T) {
 			t.Errorf("Expected exists=false for non-existing key, got %v", exists)
 		}
 	})
-
 	t.Run("CountHttpCacheEntries", func(t *testing.T) {
 		// Add another entry
 		err := q.UpsertHttpCache(ctx, UpsertHttpCacheParams{
@@ -365,7 +334,6 @@ func TestHttpCacheQueries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("UpsertHttpCache (second entry) failed: %v", err)
 		}
-
 		// Count entries
 		count, err := q.CountHttpCacheEntries(ctx)
 		if err != nil {
@@ -375,7 +343,6 @@ func TestHttpCacheQueries(t *testing.T) {
 			t.Errorf("Expected at least 2 cache entries, got %d", count)
 		}
 	})
-
 	t.Run("GetHttpCacheSizeBytes", func(t *testing.T) {
 		size, err := q.GetHttpCacheSizeBytes(ctx)
 		if err != nil {
@@ -386,7 +353,6 @@ func TestHttpCacheQueries(t *testing.T) {
 			t.Errorf("Expected size >= 0, got %d", size)
 		}
 	})
-
 	t.Run("GetHttpCacheOldestCreated", func(t *testing.T) {
 		// Get oldest entries
 		entries, err := q.GetHttpCacheOldestCreated(ctx, 2)
@@ -400,45 +366,39 @@ func TestHttpCacheQueries(t *testing.T) {
 			t.Errorf("Expected at most 2 entries, got %d", len(entries))
 		}
 	})
-
 	t.Run("DeleteHttpCacheByID", func(t *testing.T) {
 		// Get an entry to find its ID
 		entry, err := q.GetHttpCacheByKey(ctx, "test_key_1")
 		if err != nil {
 			t.Fatalf("GetHttpCacheByKey for delete test failed: %v", err)
 		}
-
 		// Delete by ID
 		err = q.DeleteHttpCacheByID(ctx, entry.ID)
 		if err != nil {
 			t.Fatalf("DeleteHttpCacheByID failed: %v", err)
 		}
-
 		// Verify it's gone
 		_, err = q.GetHttpCacheByKey(ctx, "test_key_1")
 		if err == nil {
 			t.Error("expected error after DeleteHttpCacheByID, but got nil")
-		} else if err != sql.ErrNoRows {
+		} else if !errors.Is(err, sql.ErrNoRows) {
 			t.Errorf("expected sql.ErrNoRows after delete, got %v", err)
 		}
 	})
-
 	t.Run("DeleteHttpCacheByKey", func(t *testing.T) {
 		// Delete by key
 		err := q.DeleteHttpCacheByKey(ctx, "test_key_2")
 		if err != nil {
 			t.Fatalf("DeleteHttpCacheByKey failed: %v", err)
 		}
-
 		// Verify it's gone
 		_, err = q.GetHttpCacheByKey(ctx, "test_key_2")
 		if err == nil {
 			t.Error("expected error after DeleteHttpCacheByKey, but got nil")
-		} else if err != sql.ErrNoRows {
+		} else if !errors.Is(err, sql.ErrNoRows) {
 			t.Errorf("expected sql.ErrNoRows after delete, got %v", err)
 		}
 	})
-
 	t.Run("DeleteHttpCacheExpired", func(t *testing.T) {
 		// Insert an expired entry
 		pastTime := now - 3600
@@ -453,7 +413,6 @@ func TestHttpCacheQueries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("UpsertHttpCache (expired) failed: %v", err)
 		}
-
 		// Insert a non-expired entry
 		err = q.UpsertHttpCache(ctx, UpsertHttpCacheParams{
 			Key:       "nonexpired_key",
@@ -466,26 +425,22 @@ func TestHttpCacheQueries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("UpsertHttpCache (non-expired) failed: %v", err)
 		}
-
 		// Delete expired entries
 		err = q.DeleteHttpCacheExpired(ctx)
 		if err != nil {
 			t.Fatalf("DeleteHttpCacheExpired failed: %v", err)
 		}
-
 		// Verify expired entry is gone
 		_, err = q.GetHttpCacheByKey(ctx, "expired_key")
 		if err == nil {
 			t.Error("expected error for expired entry after DeleteHttpCacheExpired, but got nil")
 		}
-
 		// Verify non-expired entry still exists
 		_, err = q.GetHttpCacheByKey(ctx, "nonexpired_key")
 		if err != nil {
 			t.Errorf("Expected non-expired entry to exist, got error: %v", err)
 		}
 	})
-
 	t.Run("ClearHttpCache", func(t *testing.T) {
 		// Ensure we have an entry
 		err := q.UpsertHttpCache(ctx, UpsertHttpCacheParams{
@@ -498,13 +453,11 @@ func TestHttpCacheQueries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("UpsertHttpCache (for clear test) failed: %v", err)
 		}
-
 		// Clear all cache
 		err = q.ClearHttpCache(ctx)
 		if err != nil {
 			t.Fatalf("ClearHttpCache failed: %v", err)
 		}
-
 		// Verify all entries are gone
 		count, err := q.CountHttpCacheEntries(ctx)
 		if err != nil {
@@ -515,10 +468,8 @@ func TestHttpCacheQueries(t *testing.T) {
 		}
 	})
 }
-
 func TestConfigKeyExists(t *testing.T) {
 	_, q, ctx := setupTestDB(t)
-
 	exists, err := q.ConfigKeyExists(ctx, "test_exists_key")
 	if err != nil {
 		t.Fatalf("ConfigKeyExists failed: %v", err)
@@ -526,7 +477,6 @@ func TestConfigKeyExists(t *testing.T) {
 	if exists {
 		t.Error("expected ConfigKeyExists to return false for missing key")
 	}
-
 	err = q.UpsertConfigValueOnly(ctx, UpsertConfigValueOnlyParams{
 		Key:       "test_exists_key",
 		Value:     "exists_value",
@@ -536,7 +486,6 @@ func TestConfigKeyExists(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpsertConfigValueOnly failed: %v", err)
 	}
-
 	exists, err = q.ConfigKeyExists(ctx, "test_exists_key")
 	if err != nil {
 		t.Fatalf("ConfigKeyExists failed: %v", err)
@@ -545,11 +494,9 @@ func TestConfigKeyExists(t *testing.T) {
 		t.Error("expected ConfigKeyExists to return true for existing key")
 	}
 }
-
 func TestInsertConfigIfNotExists(t *testing.T) {
 	_, q, ctx := setupTestDB(t)
 	now := time.Now().Unix()
-
 	err := q.InsertConfigIfNotExists(ctx, InsertConfigIfNotExistsParams{
 		Key:       "insert_if_not_exists_key",
 		Value:     "original_value",
@@ -559,7 +506,6 @@ func TestInsertConfigIfNotExists(t *testing.T) {
 	if err != nil {
 		t.Fatalf("InsertConfigIfNotExists failed: %v", err)
 	}
-
 	value, err := q.GetConfigValueByKey(ctx, "insert_if_not_exists_key")
 	if err != nil {
 		t.Fatalf("GetConfigValueByKey failed: %v", err)
@@ -567,7 +513,6 @@ func TestInsertConfigIfNotExists(t *testing.T) {
 	if value != "original_value" {
 		t.Errorf("expected value 'original_value', got %s", value)
 	}
-
 	err = q.InsertConfigIfNotExists(ctx, InsertConfigIfNotExistsParams{
 		Key:       "insert_if_not_exists_key",
 		Value:     "new_value",
@@ -577,40 +522,11 @@ func TestInsertConfigIfNotExists(t *testing.T) {
 	if err != nil {
 		t.Fatalf("InsertConfigIfNotExists (second) failed: %v", err)
 	}
-
 	value, err = q.GetConfigValueByKey(ctx, "insert_if_not_exists_key")
 	if err != nil {
 		t.Fatalf("GetConfigValueByKey (second) failed: %v", err)
 	}
 	if value != "original_value" {
 		t.Errorf("expected value to remain 'original_value', got %s", value)
-	}
-}
-
-func seedConfigRows(t *testing.T, q *CustomQueries, ctx context.Context) {
-	t.Helper()
-	now := time.Now().Unix()
-	if err := q.UpsertConfigValueOnly(ctx, UpsertConfigValueOnlyParams{
-		Key:       "seed_key_1",
-		Value:     "seed_value_1",
-		CreatedAt: now,
-		UpdatedAt: now,
-	}); err != nil {
-		t.Fatalf("failed to seed config row: %v", err)
-	}
-}
-
-func seedHttpCacheRows(t *testing.T, q *CustomQueries, ctx context.Context) {
-	t.Helper()
-	now := time.Now().Unix()
-	err := q.UpsertHttpCache(ctx, UpsertHttpCacheParams{
-		Key:       "seed_cache_key",
-		Method:    "GET",
-		Path:      "/seed",
-		Status:    200,
-		CreatedAt: now,
-	})
-	if err != nil {
-		t.Fatalf("UpsertHttpCache failed: %v", err)
 	}
 }

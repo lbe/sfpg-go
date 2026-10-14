@@ -56,10 +56,6 @@ func TestNewService(t *testing.T) {
 	if svc == nil {
 		t.Fatal("NewService returned nil")
 	}
-
-	// Verify it implements AuthService
-	//nolint:staticcheck // Intentional compile-time type assertion
-	var _ AuthService = svc
 }
 
 func TestService_Authenticate(t *testing.T) {

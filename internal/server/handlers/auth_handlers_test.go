@@ -483,6 +483,22 @@ func TestAuthHandlers_LoginFormHandler_RenderError(t *testing.T) {
 	}
 }
 
+func TestAuthHandlers_renderLoginForm_RenderError(t *testing.T) {
+	if err := ui.ParseTemplates(web.FS); err != nil {
+		t.Fatalf("ParseTemplates failed: %v", err)
+	}
+
+	h := NewAuthHandlers(auth.NewService(&fakeCredentialStore{}), &mockSessionManagerAuth{})
+	req := httptest.NewRequest(http.MethodGet, "/login-form", nil)
+	w := &errorResponseWriter{}
+
+	h.renderLoginForm(w, req, "admin", "Invalid credentials")
+
+	if w.status == http.StatusInternalServerError {
+		t.Errorf("renderLoginForm must not respond with 500 on render error, got %d", w.status)
+	}
+}
+
 func TestAuthHandlers_LogoutFormHandler(t *testing.T) {
 	if err := ui.ParseTemplates(web.FS); err != nil {
 		t.Fatalf("ParseTemplates failed: %v", err)
@@ -952,5 +968,79 @@ func TestAuthHandlers_Login_SyncLoginRateLimitMax(t *testing.T) {
 	}
 	if got := strings.TrimSpace(w2.Body.String()); got != "Too many login attempts. Please try again later." {
 		t.Errorf("expected generic rate limit message, got %q", got)
+	}
+}
+
+func TestAuthHandlers_SyncLoginRateLimitMax_ClearsExistingLimiter(t *testing.T) {
+	if err := ui.ParseTemplates(web.FS); err != nil {
+		t.Fatalf("ParseTemplates failed: %v", err)
+	}
+
+	cs := &fakeCredentialStore{
+		checkAccountLockoutFunc: func(ctx context.Context, username string) (bool, error) {
+			return false, nil
+		},
+		getUserFunc: func(ctx context.Context, username string) (*session.User, error) {
+			return &session.User{Username: username, Password: hashPassword(t, "correctpassword")}, nil
+		},
+	}
+
+	authHandlers := NewAuthHandlers(auth.NewService(cs), &mockSessionManagerAuth{})
+	authHandlers.SetRateLimiter(security.NewIPRateLimiter(1, 60))
+
+	ip := "192.168.50.1:10000"
+	login := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/login",
+			strings.NewReader("username=testuser&password=wrong"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.RemoteAddr = ip
+		w := httptest.NewRecorder()
+		authHandlers.Login(w, req)
+		return w
+	}
+
+	if w := login(); w.Code != http.StatusOK {
+		t.Fatalf("first attempt: expected 200, got %d", w.Code)
+	}
+	if w := login(); w.Code != http.StatusTooManyRequests {
+		t.Fatalf("second attempt before sync: expected 429, got %d", w.Code)
+	}
+
+	authHandlers.SyncLoginRateLimitMax(1)
+
+	if w := login(); w.Code == http.StatusTooManyRequests {
+		t.Errorf("after SyncLoginRateLimitMax clear: expected fresh window (not 429), got %d", w.Code)
+	}
+}
+
+func TestAuthHandlers_SyncLoginRateLimitMax_UnlimitedWhenMaxZero(t *testing.T) {
+	if err := ui.ParseTemplates(web.FS); err != nil {
+		t.Fatalf("ParseTemplates failed: %v", err)
+	}
+
+	cs := &fakeCredentialStore{
+		checkAccountLockoutFunc: func(ctx context.Context, username string) (bool, error) {
+			return false, nil
+		},
+		getUserFunc: func(ctx context.Context, username string) (*session.User, error) {
+			return &session.User{Username: username, Password: hashPassword(t, "correctpassword")}, nil
+		},
+	}
+
+	authHandlers := NewAuthHandlers(auth.NewService(cs), &mockSessionManagerAuth{})
+	authHandlers.SetRateLimiter(security.NewIPRateLimiter(1, 60))
+	authHandlers.SyncLoginRateLimitMax(0)
+
+	ip := "192.168.50.2:10000"
+	for i := 0; i < 5; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/login",
+			strings.NewReader("username=testuser&password=wrong"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.RemoteAddr = ip
+		w := httptest.NewRecorder()
+		authHandlers.Login(w, req)
+		if w.Code == http.StatusTooManyRequests {
+			t.Fatalf("attempt %d: expected unlimited (not 429)", i+1)
+		}
 	}
 }

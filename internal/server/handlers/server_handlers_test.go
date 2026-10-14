@@ -451,7 +451,6 @@ func TestServerDiscoveryPost_SetsDashboardErrorOnRebuildFailure(t *testing.T) {
 
 	dashboardReq := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
 	dashboardReq.Header.Set("HX-Request", "true")
-	dashboardReq.Header.Set("HX-Target", "dashboard-container")
 
 	// Poll until the dashboard renders the alert (background goroutine sets it).
 	ticker := time.NewTicker(10 * time.Millisecond)

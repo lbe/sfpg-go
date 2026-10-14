@@ -105,6 +105,7 @@ See [Background Processing](#7-background-processing).
 | ---------------------------------------------------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | SQLite pool create/reconfigure, bootstrap DB wiring                    | `database`     | `internal/server/database`                                                                                                                                               |
 | Connection pools (read-only / read-write leases)                       | `dbconnpool`   | `internal/dbconnpool`                                                                                                                                                    |
+| Test memory database setup (process-local seeds)                       | `testdb`       | `internal/testdb`                                                                                                                                                        |
 | Generated SQL access (sqlc)                                            | `gallerydb`    | `internal/gallerydb`                                                                                                                                                     |
 | SQL query sources (not a Go package)                                   | —              | `sqlc/queries/`                                                                                                                                                          |
 | Schema migrations                                                      | `migrations`   | `migrations/`                                                                                                                                                            |
@@ -290,6 +291,7 @@ The application is organized into domain-driven packages under `internal/`:
 | **flock**               | Cross-platform file locking                                                                                         | `Flock`                                                                                                                                                                                                                                                                                          |
 | **errors**              | Error sentinels for dque                                                                                            | `ErrXxx` sentinels                                                                                                                                                                                                                                                                               |
 | **dbconnpool**          | SQLite connection pools                                                                                             | `DbSQLConnPool`                                                                                                                                                                                                                                                                                  |
+| **testdb**              | Memory-backed main/thumbs test databases (`MemoryDatabases`, caller-supplied schema key, process-local seeds)       | `NewMemoryDatabases`, `MainURI`, `ThumbsURI`, `Close`                                                                                                                                                                                                                                            |
 | **gallerydb**           | Database queries (sqlc)                                                                                             | `Queries`, `CustomQueries`                                                                                                                                                                                                                                                                       |
 | **gallerylib**          | File import / path-chain upserts                                                                                    | `Importer`                                                                                                                                                                                                                                                                                       |
 | **thumbnail**           | Thumbnail generation (go-scaled-jpeg JPEG decode)                                                                   | `GenerateThumbnailAndHashes`                                                                                                                                                                                                                                                                     |
@@ -384,7 +386,7 @@ Crash recovery: `New()` seeds `pendingCount` from the existing `dque` size, and 
 **`internal/queue` vs `internal/dque`:** These are unrelated. `internal/queue` is a generic in-memory deque (goroutine-safe, resizable ring buffer); it no longer backs the production discovery work queue (tests and bounded-queue helpers may still use it). `internal/dque` is a segment-backed on-disk FIFO with two distinct uses:
 
 - The WriteBatcher keeps a **durable** queue (`<db>-dque/`) for overflow when its in-memory submit channel is full — pending batched DB writes survive restarts.
-- Production discovery uses a **dedicated** queue (`discovery-dque/` in the database directory, e.g. `DB/discovery-dque/` beside `sfpg.db`) as the work backlog the walker fills and the file workers drain. Items are **`files.DiscoveryPathWork`** (path plus mtime/size from the walk), persisted via gob in `discovery_dque.go` — not bare path strings. It is a **disposable wipe-on-start backlog**: `SubsystemManager.Start` deletes the directory and recreates the queue on every start, and a full re-walk is the recovery — it is **not** durable like the writebatcher `…-dque`. `discovery_queue_max` is currently a no-op (ignored by `Start`; retained for later removal) — the discovery backlog is never bounded in-memory.
+- Production discovery uses a **dedicated** queue (`discovery-dque/` in the database directory, e.g. `DB/discovery-dque/` beside `sfpg.db`) as the work backlog the walker fills and the file workers drain. Items are **`files.DiscoveryPathWork`** (path plus mtime/size from the walk), persisted via gob in `discovery_dque.go` — not bare path strings. It is a **disposable wipe-on-start backlog**: `SubsystemManager.Start` deletes the directory and recreates the queue on every start, and a full re-walk is the recovery — it is **not** durable like the writebatcher `…-dque`. The discovery backlog is not bounded in-memory.
 
 To make `BatchedWrite` items persistable, `BatchedWrite` and `files.File` implement `GobEncode`/`GobDecode` via gob-safe wire structs (separately encoding the `File` and `CacheEntry` blobs, and replacing the un-exported `*bytes.Buffer` thumbnail with raw `[]byte`). An `init()` registers `int64` and `sql.Null*` types stored inside sqlc-generated `interface{}` fields.
 
@@ -534,8 +536,9 @@ sqlc/queries/
 
 - sqlc-generated output (`db.go`, `querier.go`, sqlc `*.sql.go` — **not** hand-written `custom.sql.go`) — never add test seams; run `sqlc generate` without post-processing.
 - Hand-written `custom.sql.go` + `custom_seams.go` — package-level hooks for custom query error-path tests only.
-- Generated queries: happy-path integration tests in `gallerydb_*_integration_test.go`.
+- Generated queries: happy-path tests in untagged `gallerydb_db_test.go` and other `gallerydb_*_test.go` files.
 - Custom queries: `gallerydb_seams_test.go` (prepare/close/row fault injection).
+- Shared/isolated SQL test DBs (`testdb_harness.go`): open memory-backed test databases through `testdb.NewMemoryDatabases` with `migrations.LatestSchemaKey` and use its `MainURI`/`ThumbsURI` URIs. `gallerydb` owns one shared lease plus one fresh lease per isolated test; `gallerylib` uses the `gallerydb` helper and does not import `internal/testdb` directly.
 
 ---
 
@@ -703,6 +706,40 @@ mux.Handle("GET /info/folder/{id}", withConditional(http.HandlerFunc(app.Handler
 // Config handlers (authenticated, not cacheable)
 mux.Handle("GET /config", app.authMiddleware(cfgAuth(app.HandlerManager.configHandlers.ConfigGet)))
 ```
+
+#### HTMX HTML responses
+
+Handlers use two patterns: **layout partials** (shell vs inner content via `ui.RenderPage(..., partial)`) and **fragment-only** responses (`ui.RenderTemplate` with no layout). `AddCommonTemplateData` does **not** take a `partial` argument; the same template data keys apply to full pages and layout partials. Layout partial detection is **`ui.RenderPage` only** — see `internal/server/ui/htmx_partial.go`.
+
+**Layout partial routes** (`ui.IsPartialRequest`, `ui.SetLayoutPartialVary`, `ui.SetPartialNoStore` on successful HTML paths after auth/validation; not on 401/error short-circuits):
+
+| Route               | Handler                          | `partial == true` when                                                                   | `Vary` (success paths)    | `Cache-Control: no-store` on partial   |
+| ------------------- | -------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------- | -------------------------------------- |
+| `GET /dashboard`    | `DashboardHandlers.DashboardGet` | `ui.PartialRuleHXRequestOnly` — `HX-Request: true` (case-sensitive); `HX-Target` ignored | `HX-Request`              | yes                                    |
+| `GET /gallery/{id}` | `GalleryHandlers.GalleryByID`    | `ui.PartialRuleHXRequestTarget` with `ui.HXTargetGalleryContent` (`gallery-content`)     | `HX-Request`, `HX-Target` | yes (overwrites gallery cache headers) |
+
+All other `RenderPage` call sites use `partial: false` (full layout only). Gallery full-page vs partial caching details: [§8.5 Client-Side Caching](#85-client-side-caching).
+
+**Fragment-only HTMX** (always `ui.RenderTemplate`; **do not** use `IsPartialRequest`):
+
+| Route                                           | Template(s)                                                                                                                                                                            |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /hamburger-menu`                           | `hamburger-menu-items.html.tmpl`                                                                                                                                                       |
+| `GET /about-modal`                              | `about-modal.html.tmpl`                                                                                                                                                                |
+| `GET /login-form`                               | `login-form-inner.html.tmpl` (via `LoginFormHandler` only)                                                                                                                             |
+| `GET /logout-form`                              | `logout-form-inner.html.tmpl` (via `LogoutFormHandler` only)                                                                                                                           |
+| `GET /config`                                   | `config-modal.html.tmpl`                                                                                                                                                               |
+| `POST /config`                                  | `config-validation-error.html.tmpl`, `config-generic-error.html.tmpl`, `config-database-error.html.tmpl`, `config-save-restart-alert.html.tmpl`, `config-save-success-alert.html.tmpl` |
+| `POST /config/increment-etag`                   | `config-etag-field.html.tmpl`, `config-generic-error.html.tmpl`                                                                                                                        |
+| `POST /config/themes`                           | `config-save-success-alert.html.tmpl`                                                                                                                                                  |
+| `POST /config/export/to-file`                   | `config-export-modal.html.tmpl`                                                                                                                                                        |
+| `POST /config/import/preview`                   | `config-import-modal.html.tmpl`                                                                                                                                                        |
+| `POST /config/import/commit`                    | `config-save-restart-alert.html.tmpl`, `config-import-success-alert.html.tmpl`                                                                                                         |
+| `POST /config/restore-last-known-good`          | `config-restore-modal.html.tmpl`, `config-restore-success-alert.html.tmpl`                                                                                                             |
+| `POST /config/restart`                          | `config-restart-initiated-alert.html.tmpl`                                                                                                                                             |
+| `GET /theme/modal`                              | `theme-modal.html.tmpl`                                                                                                                                                                |
+| `GET /lightbox/{id}`                            | `lightbox-content.html.tmpl`                                                                                                                                                           |
+| `GET /info/folder/{id}`, `GET /info/image/{id}` | infobox templates                                                                                                                                                                      |
 
 ---
 
@@ -1231,8 +1268,8 @@ stateDiagram-v2
 
 - `ETag`: `"<etagVersion>-<folderID>"` (content version + resource id; no theme or encoding)
 - `Last-Modified`: File modification time
-- `Cache-Control`: `public, max-age=2592000` (gallery) or handler-specific
-- `Vary`: `HX-Request`, `HX-Target` on gallery (partial vs full page); not `Cookie` or `Accept-Encoding`
+- `Cache-Control`: `public, max-age=2592000` (gallery full page) or handler-specific; gallery **layout partial** responses use `no-store` via `ui.SetPartialNoStore` (overwrites gallery cache headers). Dashboard layout partial `Cache-Control` / `Vary`: [HTMX HTML responses](#htmx-html-responses) table.
+- `Vary`: `HX-Request`, `HX-Target` on gallery (partial vs full page); not `Cookie` or `Accept-Encoding`. Authenticated routes also run `authMiddleware` HTMX cache policy (`Vary: HX-Request`, `HX-Target` when `HX-Request: true`) before handlers add layout-partial headers.
 
 ---
 
@@ -1677,10 +1714,10 @@ pool.Put(item)  // Return to pool
 **Purpose:** SQLite connection pooling with write-ahead logging (WAL) mode
 
 ```go
-pool := dbconnpool.New(ctx, dbPath, 10, 2)
-conn, err := pool.Get(ctx)
-// ... use conn ...
-pool.Put(conn)
+pool, err := dbconnpool.NewDbSQLConnPool(ctx, dsn, cfg)
+cpc, err := pool.Get()
+// ... use cpc ...
+pool.Put(cpc)
 ```
 
 **Features:**
@@ -1689,6 +1726,8 @@ pool.Put(conn)
 - WAL mode enabled
 - Connection validation
 - Graceful shutdown
+
+**Memory test database mode (`dbconnpool.Config.TestUseMemDB`):** Package tests opt in via `TestMain` (see `internal/server/config/testdb_test.go`): set `TestUseMemDB: true` on the `dbconnpool.Config` and call `NewDbSQLConnPool` with an **empty** DSN to select memory mode. A non-empty DSN selects normal file-backed mode even when the flag is true. Each schema key owns one shared `internal/testdb.MemoryDatabases` lease: construction materializes main immediately and reserves its fresh thumbs peer, while `ThumbsURI` materializes thumbs once on first use. Callers use only the `MainURI`/`ThumbsURI` URIs and never assemble SQLite URIs themselves. Main and thumbs live as separate named, memory-resident `memdb` VFS images, each restored from a process-local seed with SQLite's backup/restore API; each pool connection attaches the thumbs image per connection. RW and RO pools use distinct `*sql.DB` handles over the same image, and RO handles use SQLite read-only mode. The slot keeps shared-pool ownership and calls `Close` only on final release; there is no live disk copy and no repository-local fixture. File-backed test copies use `dbconnpool.CopyMainTestDatabaseTo` / `CopyThumbsTestDatabaseTo`, which copy from a short-lived memory pair.
 
 #### 11.1.10 imagemeta
 
@@ -1922,9 +1961,10 @@ internal/
 ├── cachelite/
 │   ├── cache_test.go                          # Unit tests (default)
 │   ├── http_cache_middleware_test.go          # Unit tests (default)
-│   ├── http_cache_middleware_integration_test.go  # Integration tests
-│   └── cache_benchmark_test.go                # Benchmarks
-├── server/                                    # 27 root *_test.go files
+│   ├── http_cache_middleware_db_test.go       # DB-component tests (default)
+│   ├── cache_benchmark_test.go                # Benchmarks (default)
+│   └── cache_benchmark_integration_test.go    # Benchmarks (integration && benchmark; not plain -tags integration)
+├── server/
 │   ├── helpers_test.go                        # CreateApp, shared test options
 │   ├── server_test.go                         # Unit tests (default)
 │   ├── app_test.go                            # App + handler manager unit tests
@@ -1941,7 +1981,7 @@ internal/
 │   ├── folder_index_sql_guard_test.go         # Folder index SQL guard tests
 │   ├── trigger_discovery_test.go            # TriggerDiscovery unit tests
 │   ├── infrastructure_service_test.go         # InfrastructureService unit
-│   ├── infrastructure_service_integration_test.go
+│   ├── infrastructure_service_db_test.go      # DB-component tests (default)
 │   ├── infrastructure_pragma_test.go          # PRAGMA optimize scheduling
 │   ├── infrastructure_cache_calibration_test.go
 │   ├── batcher_wiring_test.go
@@ -1954,13 +1994,13 @@ internal/
 │   ├── helpers_integration_test.go            # Shared auth helpers
 │   └── files/
 │       ├── service_test.go                    # Unit tests (default)
-│       └── files_integration_test.go          # Integration tests
+│       └── files_db_test.go                   # DB-component tests (default)
 └── workerpool/
     ├── workerpool_test.go                     # Unit tests
     └── mock.go                                # Test doubles
 ```
 
-Root `internal/server/*_test.go` files are listed in the test layout above (27 files).
+The layout above is a subset of root `internal/server/*_test.go` files (not a full inventory).
 
 **Running tests:**
 
@@ -2027,17 +2067,20 @@ Where each test category lives and how to choose the right seam.
 
 #### 13.4.5 Choosing a Test Seam
 
-| Seam                                   | Location                                                                                | Cost     | Use When                                                                                                                                                 |
-| -------------------------------------- | --------------------------------------------------------------------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `mockConfigOps`                        | `internal/server/handlers/helpers_test.go`                                              | Very low | Unit-testing config/theme handlers that only need `interfaces.ConfigOps` / `func() *config.Config`.                                                      |
-| `mockGalleryOps`                       | `internal/server/handlers/helpers_test.go`                                              | Very low | Unit-testing gallery/image/info-box handlers that only need `interfaces.GalleryOps`.                                                                     |
-| `mockServerControl`                    | `internal/server/handlers/helpers_test.go`                                              | Very low | Unit-testing server/dashboard handlers that only need `interfaces.ServerControl`.                                                                        |
-| `mockTemplateHelpers`                  | `internal/server/handlers/helpers_test.go`                                              | Very low | Unit-testing handlers that need `AddCommonTemplateData` and `ServerError` helpers.                                                                       |
-| `fakeCredentialStore`                  | `internal/server/handlers/helpers_test.go`                                              | Very low | Unit-testing auth handlers that only need `interfaces.CredentialStore`.                                                                                  |
-| `setupTestConfigHandlers`              | `internal/server/handlers/config_etag_test.go`                                          | Low      | Unit-testing config handlers with mocked `config.ConfigService` and `auth.AuthService`.                                                                  |
-| `setupTestDB` / `setupTestDBForConfig` | `internal/server/config/config_test.go`, `internal/server/config_helpers_test.go`, etc. | Medium   | Testing config/database logic that needs a real migrated SQLite database (in-memory or temp file).                                                       |
-| `*.testSeams.*`                        | `internal/server/testseams.go` + manager structs                                        | Low–Med  | Stubbing App/manager lifecycle paths (serve, restart, pool recreate, handler build, cache hooks) without full `CreateApp` when a narrower seam suffices. |
-| `CreateApp`                            | `internal/server/helpers_test.go`                                                       | High     | Testing full routing, middleware, lifecycle, or anything that requires a wired `*server.App`. Use sparingly.                                             |
+| Seam                                   | Location                                                                                                                                   | Cost     | Use When                                                                                                                                                                                                                                                                                |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mockConfigOps`                        | `internal/server/handlers/helpers_test.go`                                                                                                 | Very low | Unit-testing config/theme handlers that only need `interfaces.ConfigOps` / `func() *config.Config`.                                                                                                                                                                                     |
+| `mockGalleryOps`                       | `internal/server/handlers/helpers_test.go`                                                                                                 | Very low | Unit-testing gallery/image/info-box handlers that only need `interfaces.GalleryOps`.                                                                                                                                                                                                    |
+| `mockServerControl`                    | `internal/server/handlers/helpers_test.go`                                                                                                 | Very low | Unit-testing server/dashboard handlers that only need `interfaces.ServerControl`.                                                                                                                                                                                                       |
+| `mockTemplateHelpers`                  | `internal/server/handlers/helpers_test.go`                                                                                                 | Very low | Unit-testing handlers that need `AddCommonTemplateData` and `ServerError` helpers.                                                                                                                                                                                                      |
+| `fakeCredentialStore`                  | `internal/server/handlers/helpers_test.go`                                                                                                 | Very low | Unit-testing auth handlers that only need `interfaces.CredentialStore`.                                                                                                                                                                                                                 |
+| `setupTestConfigHandlers`              | `internal/server/handlers/config_etag_test.go`                                                                                             | Low      | Unit-testing config handlers with mocked `config.ConfigService` and `auth.AuthService`.                                                                                                                                                                                                 |
+| `setupTestDB` / `setupTestDBForConfig` | `internal/server/config/config_test.go`, `internal/server/config_helpers_test.go`, etc.                                                    | Medium   | Testing config/database logic that needs a real migrated SQLite database (in-memory or temp file).                                                                                                                                                                                      |
+| `TestMain` + `TestUseMemDB`            | `internal/server/config/testdb_test.go` (pattern for package DB tests)                                                                     | Medium   | Shared memory-mode RW/RO pools: `TestUseMemDB: true` + empty DSN to `NewDbSQLConnPool`. A non-empty DSN selects file-backed mode even when the flag is true. Isolated file pools copy both images with `CopyMainTestDatabaseTo` / `CopyThumbsTestDatabaseTo` before opening a file DSN. |
+| `testdb`                               | `internal/testdb` (`MemoryDatabases`, `NewMemoryDatabases`, `MainURI`, `ThumbsURI`, `Close`)                                               | Low      | Single memory-backed test database mechanism keyed by caller-supplied schema key; process-local seeds restored into named `memdb` VFS images. Used by `dbconnpool` slots and `gallerydb` shared/isolated harnesses (`config`, `cachelite`, … receive URIs only). Not for production.    |
+| `dbconnpool` memory test helpers       | `internal/dbconnpool/schema_seed_helpers.go` (`CopyMainTestDatabaseTo`, `CopyThumbsTestDatabaseTo`; copy from a short-lived `testdb` pair) | Low      | File-backed test database copies for callers that already import `dbconnpool`. Do not open pools.                                                                                                                                                                                       |
+| `*.testSeams.*`                        | `internal/server/testseams.go` + manager structs                                                                                           | Low–Med  | Stubbing App/manager lifecycle paths (serve, restart, pool recreate, handler build, cache hooks) without full `CreateApp` when a narrower seam suffices.                                                                                                                                |
+| `CreateApp`                            | `internal/server/helpers_test.go`                                                                                                          | High     | Testing full routing, middleware, lifecycle, or anything that requires a wired `*server.App`. Use sparingly.                                                                                                                                                                            |
 
 Prefer the lightest seam that exercises the behavior under test. `CreateApp` is appropriate when the test must verify interactions across handlers, middleware, sessions, the worker pool, or the database pools. For handler business logic in isolation, use the narrow per-group mocks (`mockConfigOps`, `mockGalleryOps`, `mockServerControl`, `mockTemplateHelpers`, `fakeCredentialStore`) or `setupTestConfigHandlers` instead. For App or manager lifecycle paths, prefer explicit `app.testSeams.*` or `app.<Manager>.testSeams.*` over embedding-promoted field names.
 
@@ -2224,6 +2267,7 @@ sfpg-go/
 │   ├── flock/                   # Cross-platform file locking
 │   ├── errors/                  # Error sentinels for dque
 │   ├── dbconnpool/              # Connection pooling
+│   ├── testdb/                  # Memory-backed test databases (process-local seeds)
 │   ├── gallerydb/               # Database queries (sqlc)
 │   ├── gallerylib/              # File import / path-chain upserts
 │   ├── thumbnail/               # Thumbnail generation

@@ -77,8 +77,7 @@ func (m *SubsystemManager) Start(
 	m.moduleStateService = modulestate.NewService(m.infra.DBRwPool())
 
 	// Discovery backlog queue: a dedicated disk-backed dque, wiped on every
-	// start (a full re-walk is the recovery). cfg.DiscoveryQueueMax is a no-op
-	// here — the backlog is never bounded in-memory.
+	// start (a full re-walk is the recovery); the backlog is not bounded in-memory.
 	//
 	// Start is once-per-process for the discovery dque: if a queue is already
 	// open, close it before wiping its directory so the flock is released.

@@ -267,15 +267,6 @@ func runPoolWorkerWithProcessor(ctx context.Context,
 			stats.NewlyInserted.Add(1)
 		}
 
-		// Skipped invalid file: no thumbnail to generate
-		if file.Ok && !file.Exists {
-			if stats != nil {
-				stats.InFlight.Add(-1)
-			}
-			wc.AddCompleted()
-			continue
-		}
-
 		if err := processor.SubmitFileForWrite(file); err != nil {
 			slog.Error("submit file for write", "path", file.Path, "err", err)
 			// Return thumbnail buffer since batcher won't handle it

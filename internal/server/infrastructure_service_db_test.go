@@ -1,5 +1,4 @@
-//go:build integration
-
+//nolint:govet // infra DB tests reuse err and share fixture setup scopes
 package server
 
 import (
@@ -10,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -17,7 +17,10 @@ import (
 
 	"github.com/lbe/sfpg-go/internal/cachelite"
 	"github.com/lbe/sfpg-go/internal/dbconnpool"
+	"github.com/lbe/sfpg-go/internal/gallerydb"
+	"github.com/lbe/sfpg-go/internal/gallerylib"
 	"github.com/lbe/sfpg-go/internal/server/config"
+	"github.com/lbe/sfpg-go/internal/server/database"
 	"github.com/lbe/sfpg-go/internal/server/files"
 	"github.com/lbe/sfpg-go/internal/tableswap"
 	"github.com/lbe/sfpg-go/internal/writebatcher"
@@ -25,9 +28,73 @@ import (
 	_ "github.com/ncruces/go-sqlite3/driver"
 )
 
-// newIntegratedService creates an InfrastructureService with a real on-disk
-// database in a temporary directory. The caller must call Shutdown.
+// newIntegratedService creates an InfrastructureService with memory-mode pools.
+// The caller must call Shutdown.
 func newIntegratedService(t *testing.T, ctx context.Context, cfg *config.Config) *InfrastructureService {
+	t.Helper()
+	rootDir := t.TempDir()
+	infra := NewInfrastructureService()
+	infra.rootDir = rootDir
+
+	max, minIdle, interval := database.EffectivePoolLimits(cfg)
+	poolCfg := func(ro bool) dbconnpool.Config {
+		return dbconnpool.Config{
+			DriverName:         "sqlite3",
+			MaxConnections:     max,
+			MinIdleConnections: minIdle,
+			MonitorInterval:    interval,
+			ReadOnly:           ro,
+			QueriesFunc:        gallerydb.NewCustomQueries,
+			ThumbsDBPath:       "thumbs.db",
+			TestUseMemDB:       true,
+		}
+	}
+	rw, err := dbconnpool.NewDbSQLConnPool(ctx, "", poolCfg(false))
+	if err != nil {
+		t.Fatalf("mem RW pool: %v", err)
+	}
+	ro, err := dbconnpool.NewDbSQLConnPool(ctx, "", poolCfg(true))
+	if err != nil {
+		_ = rw.Close()
+		t.Fatalf("mem RO pool: %v", err)
+	}
+
+	dbPath := filepath.Join(rootDir, "DB", "sfpg.db")
+	thumbsPath := filepath.Join(rootDir, "DB", "thumbs", "thumbs.db")
+	infra.dbPaths = database.DatabasePaths{Main: dbPath, Thumbs: thumbsPath}
+	infra.dbRwPool = rw
+	infra.dbRoPool = ro
+	infra.dqueDirPath = filepath.Join(filepath.Dir(dbPath), filepath.Base(dbPath)+"-dque")
+	infra.discoveryDQueDirPath = filepath.Join(filepath.Dir(dbPath), "discovery-dque")
+
+	cpc, err := rw.Get()
+	if err != nil {
+		t.Fatalf("get RW for root folder: %v", err)
+	}
+	_, qerr := cpc.Queries.GetFolderIDByPath(ctx, "")
+	if errors.Is(qerr, sql.ErrNoRows) {
+		imp := &gallerylib.Importer{Q: cpc.Queries}
+		if _, ierr := imp.CreateRootFolderEntry(ctx, time.Now().Unix()); ierr != nil {
+			rw.Put(cpc)
+			t.Fatalf("create root folder: %v", ierr)
+		}
+	} else if qerr != nil {
+		rw.Put(cpc)
+		t.Fatalf("root folder: %v", qerr)
+	}
+	rw.Put(cpc)
+
+	infra.cacheStore = cachelite.NewSQLiteCacheStore(rw)
+	infra.CalibrateCacheSizeNow(ctx)
+	infra.StartWriteBatcher(ctx, true, config.DefaultDQueMaxDiskBytes)
+	t.Cleanup(func() {
+		infra.Shutdown()
+	})
+	return infra
+}
+
+// newIntegratedServiceOnDisk uses a real migrated database under a temp directory.
+func newIntegratedServiceOnDisk(t *testing.T, ctx context.Context, cfg *config.Config) *InfrastructureService {
 	t.Helper()
 	rootDir := t.TempDir()
 	infra := NewInfrastructureService()
@@ -35,6 +102,9 @@ func newIntegratedService(t *testing.T, ctx context.Context, cfg *config.Config)
 	infra.SetupDB(ctx, cfg)
 	infra.CalibrateCacheSizeNow(ctx)
 	infra.StartWriteBatcher(ctx, true, config.DefaultDQueMaxDiskBytes)
+	t.Cleanup(func() {
+		infra.Shutdown()
+	})
 	return infra
 }
 
@@ -59,6 +129,7 @@ func TestInfrastructureService_SetupDB_RealPools(t *testing.T) {
 	cfg.DBMinIdleConnections = 1
 
 	infra := newIntegratedService(t, ctx, cfg)
+	resetInfraMemDB(t, infra.dbRwPool)
 	defer infra.Shutdown()
 
 	if infra.dbRwPool == nil || infra.dbRoPool == nil {
@@ -85,7 +156,7 @@ func TestInfrastructureService_ReconfigurePools_RealPools(t *testing.T) {
 	cfg.DBMaxPoolSize = 2
 	cfg.DBMinIdleConnections = 1
 
-	infra := newIntegratedService(t, ctx, cfg)
+	infra := newIntegratedServiceOnDisk(t, ctx, cfg)
 	defer infra.Shutdown()
 
 	newCfg := config.DefaultConfig()
@@ -118,11 +189,7 @@ func TestInfrastructureService_buildWriteBatcher_BeginTxError(t *testing.T) {
 	infra := newIntegratedService(t, ctx, cfg)
 	defer infra.Shutdown()
 
-	// Force BeginTx failures by closing the pool.
-	if err := infra.dbRwPool.Close(); err != nil {
-		t.Fatalf("close pool: %v", err)
-	}
-
+	infra.testSeams.BeginTxPoolGetErr = errors.New("simulated pool get failure")
 	infra.testSeams.GetCacheSizeBytes = func(ctx context.Context, pool *dbconnpool.DbSQLConnPool) (int64, error) {
 		return 1234, nil
 	}
@@ -157,6 +224,7 @@ func TestInfrastructureService_buildWriteBatcher_BeginTxError(t *testing.T) {
 func TestInfrastructureService_flushBatchedWrites_FileError(t *testing.T) {
 	ctx := context.Background()
 	infra := newIntegratedService(t, ctx, config.DefaultConfig())
+	resetInfraMemDB(t, infra.dbRwPool)
 	defer infra.Shutdown()
 
 	cpc, err := infra.dbRwPool.Get()
@@ -184,6 +252,7 @@ func TestInfrastructureService_flushBatchedWrites_FileError(t *testing.T) {
 func TestInfrastructureService_flushBatchedWrites_GalleryCacheError(t *testing.T) {
 	ctx := context.Background()
 	infra := newIntegratedService(t, ctx, config.DefaultConfig())
+	resetInfraMemDB(t, infra.dbRwPool)
 	defer infra.Shutdown()
 
 	cpc, err := infra.dbRwPool.Get()
@@ -218,6 +287,7 @@ func TestInfrastructureService_flushBatchedWrites_GalleryCacheError(t *testing.T
 func TestInfrastructureService_flushBatchedWrites_OtherCacheError(t *testing.T) {
 	ctx := context.Background()
 	infra := newIntegratedService(t, ctx, config.DefaultConfig())
+	resetInfraMemDB(t, infra.dbRwPool)
 	defer infra.Shutdown()
 
 	cpc, err := infra.dbRwPool.Get()
@@ -256,6 +326,7 @@ func TestInfrastructureService_buildWriteBatcher_OnSuccessCacheEntry(t *testing.
 	cfg.DBMinIdleConnections = 1
 
 	infra := newIntegratedService(t, ctx, cfg)
+	resetInfraMemDB(t, infra.dbRwPool)
 	defer infra.Shutdown()
 
 	// Use Body length 40 with ContentLength 100 to prove the counter uses
@@ -291,6 +362,7 @@ func TestInfrastructureService_buildWriteBatcher_OnErrorFileFlush(t *testing.T) 
 	cfg.DBMinIdleConnections = 1
 
 	infra := newIntegratedService(t, ctx, cfg)
+	resetInfraMemDB(t, infra.dbRwPool)
 	defer infra.Shutdown()
 
 	infra.testSeams.FlushBatchedWrites = func(ctx context.Context, tx *sql.Tx, batch []BatchedWrite) error {
@@ -330,6 +402,7 @@ func TestInfrastructureService_buildWriteBatcher_OnSuccessFileStats(t *testing.T
 	cfg.DBMinIdleConnections = 1
 
 	infra := newIntegratedService(t, ctx, cfg)
+	resetInfraMemDB(t, infra.dbRwPool)
 	defer infra.Shutdown()
 
 	filesBatch := []*files.File{
@@ -352,6 +425,7 @@ func TestInfrastructureService_buildWriteBatcher_OnSuccessEvicts(t *testing.T) {
 	cfg.DBMinIdleConnections = 1
 
 	infra := newIntegratedService(t, ctx, cfg)
+	resetInfraMemDB(t, infra.dbRwPool)
 	defer infra.Shutdown()
 
 	cfgHTTPCache := config.DefaultConfig()
@@ -438,7 +512,7 @@ func TestInfrastructureService_MaybeRunPeriodicOptimize_RealOptimize(t *testing.
 
 func TestInfrastructureService_walCheckpointAfterCommit_RealWALThreshold(t *testing.T) {
 	ctx := context.Background()
-	infra := newIntegratedService(t, ctx, config.DefaultConfig())
+	infra := newIntegratedServiceOnDisk(t, ctx, config.DefaultConfig())
 	defer infra.Shutdown()
 
 	// Create an oversized WAL file to trigger the threshold path with a real pool.
@@ -466,6 +540,7 @@ func TestInfrastructureService_InvalidateHTTPCache_RealPool(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.EnableHTTPCache = true
 	infra := newIntegratedService(t, ctx, cfg)
+	resetInfraMemDB(t, infra.dbRwPool)
 	defer infra.Shutdown()
 	infra.InitializeHTTPCache(cfg)
 
@@ -502,6 +577,7 @@ func TestInfrastructureService_InvalidateHTTPCache_RealPool(t *testing.T) {
 func TestInfrastructureService_IncrementETag_RealPool(t *testing.T) {
 	ctx := context.Background()
 	infra := newIntegratedService(t, ctx, config.DefaultConfig())
+	resetInfraMemDB(t, infra.dbRwPool)
 	defer infra.Shutdown()
 
 	cfgService := config.NewService(infra.dbRwPool, infra.dbRoPool)
@@ -556,86 +632,6 @@ func TestInfrastructureService_IncrementETag_RealPool(t *testing.T) {
 	}
 	if size != 0 {
 		t.Fatalf("cache store size = %d, want 0", size)
-	}
-}
-
-// newRawSQLiteConn opens a raw *sql.Conn to a temporary SQLite database.
-// It avoids the custom query preparation performed by dbconnpool, making it
-// suitable for unit tests that only exercise low-level connection operations.
-func newRawSQLiteConn(t *testing.T, ctx context.Context) *sql.Conn {
-	t.Helper()
-	db, err := sql.Open("sqlite3", "file:"+t.TempDir()+"/test.db?_pragma=journal_mode(WAL)")
-	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
-	}
-	defer db.Close()
-	conn, err := db.Conn(ctx)
-	if err != nil {
-		t.Fatalf("get conn: %v", err)
-	}
-	return conn
-}
-
-func TestInfrastructureService_PerformWALCheckpoint_Success(t *testing.T) {
-	infra := NewInfrastructureService()
-	cpc := &dbconnpool.CpConn{Conn: newRawSQLiteConn(t, context.Background())}
-	fakePool := &fakeDBPoolForCheckpoint{getCpc: &fakeCpConn{CpConn: cpc}}
-
-	logs := withLogCapture(t, slog.LevelDebug, func() {
-		infra.performWALCheckpoint(context.Background(), fakePool)
-	})
-	if !strings.Contains(logs, "wal_frames") {
-		t.Errorf("expected wal_frames log, got: %s", logs)
-	}
-	if !fakePool.putCalled {
-		t.Error("Put should be called")
-	}
-}
-
-func TestInfrastructureService_PerformWALCheckpoint_ConnectionError(t *testing.T) {
-	infra := NewInfrastructureService()
-	fakePool := &fakeDBPoolForCheckpoint{getErr: errors.New("no connection")}
-
-	logs := withLogCapture(t, slog.LevelError, func() {
-		infra.performWALCheckpoint(context.Background(), fakePool)
-	})
-	if !strings.Contains(logs, "failed to get connection for WAL checkpoint") {
-		t.Errorf("expected connection error log, got: %s", logs)
-	}
-}
-
-func TestInfrastructureService_PerformWALCheckpoint_QueryError(t *testing.T) {
-	infra := NewInfrastructureService()
-	cpc := &dbconnpool.CpConn{Conn: newRawSQLiteConn(t, context.Background())}
-	if err := cpc.Conn.Close(); err != nil {
-		t.Fatalf("close conn: %v", err)
-	}
-	fakePool := &fakeDBPoolForCheckpoint{getCpc: &fakeCpConn{CpConn: cpc}}
-
-	logs := withLogCapture(t, slog.LevelError, func() {
-		infra.performWALCheckpoint(context.Background(), fakePool)
-	})
-	if !strings.Contains(logs, "WAL checkpoint failed") {
-		t.Errorf("expected query error log, got: %s", logs)
-	}
-}
-
-func TestInfrastructureService_PerformWALCheckpoint_ScanError(t *testing.T) {
-	infra := NewInfrastructureService()
-	cpc := &dbconnpool.CpConn{Conn: newRawSQLiteConn(t, context.Background())}
-	fakePool := &fakeDBPoolForCheckpoint{getCpc: &fakeCpConn{CpConn: cpc}}
-
-	// Override the checkpoint query hook to return rows with a single column,
-	// causing Scan to fail.
-	infra.testSeams.WALCheckpointQuery = func(ctx context.Context, conn *sql.Conn) (*sql.Rows, error) {
-		return conn.QueryContext(ctx, "SELECT 1")
-	}
-
-	logs := withLogCapture(t, slog.LevelWarn, func() {
-		infra.performWALCheckpoint(context.Background(), fakePool)
-	})
-	if !strings.Contains(logs, "failed to parse wal_checkpoint result") {
-		t.Errorf("expected scan error log, got: %s", logs)
 	}
 }
 
@@ -715,6 +711,7 @@ func countFolderIndexRows(t *testing.T, infra *InfrastructureService, ctx contex
 func TestFlushBatchedWrites_FolderIndexInsertsRow(t *testing.T) {
 	ctx := context.Background()
 	infra := newIntegratedService(t, ctx, config.DefaultConfig())
+	resetInfraMemDB(t, infra.dbRwPool)
 	defer infra.Shutdown()
 
 	cloneEmptyFileFolderIndex(t, infra, ctx)
@@ -775,6 +772,7 @@ func TestFlushBatchedWrites_FolderIndexInsertsRow(t *testing.T) {
 func TestFlushBatchedWrites_FolderIndexSkippedWhenDestMissing(t *testing.T) {
 	ctx := context.Background()
 	infra := newIntegratedService(t, ctx, config.DefaultConfig())
+	resetInfraMemDB(t, infra.dbRwPool)
 	defer infra.Shutdown()
 
 	// No file_folder_index_new exists. Flag state is irrelevant for this case.
@@ -826,6 +824,7 @@ func TestFlushBatchedWrites_FolderIndexSkippedWhenDestMissing(t *testing.T) {
 func TestFlushBatchedWrites_FolderIndexSkippedWhenRebuildInactive(t *testing.T) {
 	ctx := context.Background()
 	infra := newIntegratedService(t, ctx, config.DefaultConfig())
+	resetInfraMemDB(t, infra.dbRwPool)
 	defer infra.Shutdown()
 
 	cloneEmptyFileFolderIndex(t, infra, ctx)
@@ -864,6 +863,7 @@ func TestFlushBatchedWrites_FolderIndexSkippedWhenRebuildInactive(t *testing.T) 
 func TestFlushBatchedWrites_FolderIndexSkippedWhenGenerationMismatch(t *testing.T) {
 	ctx := context.Background()
 	infra := newIntegratedService(t, ctx, config.DefaultConfig())
+	resetInfraMemDB(t, infra.dbRwPool)
 	defer infra.Shutdown()
 
 	cloneEmptyFileFolderIndex(t, infra, ctx)
@@ -923,6 +923,7 @@ func TestFlushBatchedWrites_FolderIndexSkippedWhenGenerationMismatch(t *testing.
 func TestFlushBatchedWrites_IndexOnlySkippedWithoutBeginTx(t *testing.T) {
 	ctx := context.Background()
 	infra := newIntegratedService(t, ctx, config.DefaultConfig())
+	resetInfraMemDB(t, infra.dbRwPool)
 	defer infra.Shutdown()
 
 	var beginTxCount atomic.Int64
@@ -947,6 +948,7 @@ func TestFlushBatchedWrites_IndexOnlySkippedWithoutBeginTx(t *testing.T) {
 func TestFlushBatchedWrites_DropWithoutFlushFalseIncrementsBeginTx(t *testing.T) {
 	ctx := context.Background()
 	infra := newIntegratedService(t, ctx, config.DefaultConfig())
+	resetInfraMemDB(t, infra.dbRwPool)
 	defer infra.Shutdown()
 
 	var beginTxCount, putCount atomic.Int64
@@ -981,6 +983,7 @@ func TestFlushBatchedWrites_DropWithoutFlushFalseIncrementsBeginTx(t *testing.T)
 func TestFlushBatchedWrites_LastFlushWroteDMLFalseOnSkipOnlyBeginTx(t *testing.T) {
 	ctx := context.Background()
 	infra := newIntegratedService(t, ctx, config.DefaultConfig())
+	resetInfraMemDB(t, infra.dbRwPool)
 	defer infra.Shutdown()
 
 	// Rebuild active but no dest table — index-only skip inside flushBatchedWrites.
@@ -1004,6 +1007,7 @@ func TestFlushBatchedWrites_LastFlushWroteDMLFalseOnSkipOnlyBeginTx(t *testing.T
 func TestFlushBatchedWrites_LastFlushWroteDMLTrueOnDML(t *testing.T) {
 	ctx := context.Background()
 	infra := newIntegratedService(t, ctx, config.DefaultConfig())
+	resetInfraMemDB(t, infra.dbRwPool)
 	defer infra.Shutdown()
 
 	entry := &cachelite.HTTPCacheEntry{

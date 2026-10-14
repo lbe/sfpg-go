@@ -355,6 +355,35 @@ func TestConfigManager_GetETagVersion_And_UpdateConfigWithPrecedence(t *testing.
 	}
 }
 
+func TestApp_UpdateConfigWithPrecedence(t *testing.T) {
+	app := &App{
+		ConfigManager: config.NewConfigManager(),
+		opt: getopt.Opt{
+			Port: getopt.OptInt{Int: 8083, IsSet: true},
+		},
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.ListenerPort = 8081
+	app.UpdateConfigWithPrecedence(cfg, []string{"site_name"})
+
+	got := app.ConfigManager.GetConfig()
+	if got == nil {
+		t.Fatal("expected config to be set")
+	}
+	if got.ListenerPort != 8083 {
+		t.Errorf("ListenerPort = %d, want %d (CLI override)", got.ListenerPort, 8083)
+	}
+
+	cfg2 := config.DefaultConfig()
+	cfg2.ListenerPort = 8084
+	app.UpdateConfigWithPrecedence(cfg2, []string{"listener_port"})
+
+	if app.ConfigManager.GetConfig().ListenerPort != 8084 {
+		t.Errorf("ListenerPort = %d, want %d (user change preserved)", app.ConfigManager.GetConfig().ListenerPort, 8084)
+	}
+}
+
 func Test_GetAdminUsername_delegates_to_AuthService(t *testing.T) {
 	t.Setenv("SEPG_SESSION_SECRET", "test-secret-with-at-least-32-bytes-long")
 
@@ -983,6 +1012,11 @@ func TestApp_Run_ServeErrorPanics(t *testing.T) {
 	defer app.Shutdown()
 
 	app.setRootDir(&tempDir)
+	app.dbInitializer = &fakeDatabaseInitializer{
+		setupPaths: database.DatabasePaths{Main: filepath.Join(tempDir, "DB", "sfpg.db")},
+		setupRw:    newFakePool(8, 1),
+		setupRo:    newFakePool(8, 1),
+	}
 	app.testSeams.Serve = func(http.Handler, string) error {
 		return fmt.Errorf("serve failed")
 	}

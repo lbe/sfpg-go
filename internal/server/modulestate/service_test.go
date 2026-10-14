@@ -8,82 +8,32 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
-	"strconv"
 	"strings"
 	"testing"
 
-	"github.com/golang-migrate/migrate/v4"
-	"github.com/golang-migrate/migrate/v4/database/sqlite"
-	"github.com/golang-migrate/migrate/v4/source/iofs"
 	_ "github.com/ncruces/go-sqlite3/driver"
 
 	"github.com/lbe/sfpg-go/internal/dbconnpool"
 	"github.com/lbe/sfpg-go/internal/gallerydb"
 	"github.com/lbe/sfpg-go/internal/server/metrics"
-	"github.com/lbe/sfpg-go/migrations"
 )
 
 func setupModuleStatePool(t *testing.T) (*dbconnpool.DbSQLConnPool, func()) {
 	t.Helper()
 
 	tempDir := t.TempDir()
-	dbfile := filepath.Join(tempDir, "module_state.db")
+	mainPath := filepath.Join(tempDir, "module_state.db")
 	thumbsDBPath := filepath.Join(tempDir, "thumbs.db")
-	mmapSize := strconv.Itoa(39 * 1024 * 1024 * 1024)
-	params := []string{
-		"_cache_size=10240",
-		"_pragma=cache(shared)",
-		"_pragma=journal_mode(WAL)",
-		"_pragma=synchronous(NORMAL)",
-		"_pragma=busy_timeout(5000)",
-		"_pragma=temp_store(memory)",
-		"_pragma=foreign_keys(true)",
-		"_pragma=mmap_size(" + mmapSize + ")",
-		"_txlock=deferred",
-	}
-	dsn := filepath.ToSlash(dbfile) + "?" + strings.Join(params, "&")
 
-	db, err := sql.Open("sqlite3", dsn)
-	if err != nil {
-		t.Fatalf("failed to open test database: %v", err)
+	if err := dbconnpool.CopyMainTestDatabaseTo(mainPath); err != nil {
+		t.Fatalf("CopyMainTestDatabaseTo: %v", err)
 	}
-
-	driver, err := sqlite.WithInstance(db, &sqlite.Config{})
-	if err != nil {
-		db.Close()
-		t.Fatalf("failed to create sqlite driver instance: %v", err)
+	if err := dbconnpool.CopyThumbsTestDatabaseTo(thumbsDBPath); err != nil {
+		t.Fatalf("CopyThumbsTestDatabaseTo: %v", err)
 	}
-
-	d, err := iofs.New(migrations.FS, "migrations")
-	if err != nil {
-		db.Close()
-		t.Fatalf("failed to create iofs source driver: %v", err)
-	}
-
-	m, err := migrate.NewWithInstance("iofs", d, "sqlite", driver)
-	if err != nil {
-		db.Close()
-		t.Fatalf("failed to create migrate instance: %v", err)
-	}
-
-	if upErr := m.Up(); upErr != nil && !errors.Is(upErr, migrate.ErrNoChange) {
-		db.Close()
-		t.Fatalf("failed to apply migrations: %v", upErr)
-	}
-
-	thumbsMigrator, err := migrations.NewThumbsMigrator(thumbsDBPath)
-	if err != nil {
-		db.Close()
-		t.Fatalf("failed to create thumbs migrator: %v", err)
-	}
-	if thumbsErr := thumbsMigrator.Up(); thumbsErr != nil && !errors.Is(thumbsErr, migrate.ErrNoChange) {
-		thumbsMigrator.Close()
-		db.Close()
-		t.Fatalf("failed to apply thumbs migrations: %v", thumbsErr)
-	}
-	thumbsMigrator.Close()
 
 	ctx := context.Background()
+	dsn := "file:" + filepath.ToSlash(mainPath) + "?_txlock=immediate&mode=rwc"
 	pool, err := dbconnpool.NewDbSQLConnPool(ctx, dsn, dbconnpool.Config{
 		DriverName:         "sqlite3",
 		ReadOnly:           false,
@@ -93,16 +43,10 @@ func setupModuleStatePool(t *testing.T) (*dbconnpool.DbSQLConnPool, func()) {
 		ThumbsDBPath:       thumbsDBPath,
 	})
 	if err != nil {
-		db.Close()
 		t.Fatalf("failed to create db pool: %v", err)
 	}
 
-	cleanup := func() {
-		_ = pool.Close()
-		_ = db.Close()
-	}
-
-	return pool, cleanup
+	return pool, func() { _ = pool.Close() }
 }
 
 func TestService_IsActive_DefaultFalse(t *testing.T) {

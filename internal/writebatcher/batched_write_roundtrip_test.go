@@ -56,7 +56,6 @@ func fullyPopulatedFilesFile() *files.File {
 	}
 
 	return &files.File{
-		Ok:        true,
 		Exists:    false,
 		ImagesDir: "/photos/2024",
 		Path:      "/photos/2024/sunset.jpg",
@@ -170,9 +169,6 @@ func assertGallerydbFileEqual(t *testing.T, context string, a, b gallerydb.File)
 
 func assertFilesFileEqual(t *testing.T, context string, a, b *files.File) {
 	t.Helper()
-	if a.Ok != b.Ok {
-		t.Errorf("%s: Ok: got %v, want %v", context, b.Ok, a.Ok)
-	}
 	if a.Exists != b.Exists {
 		t.Errorf("%s: Exists: got %v, want %v", context, b.Exists, a.Exists)
 	}
@@ -664,9 +660,6 @@ func TestBatchedWrite_GobRoundTrip_FileWithoutThumbnail(t *testing.T) {
 	}
 
 	assertGallerydbFileEqual(t, "File without thumbnail", fileNoThumb.File, decoded.File.File)
-	if decoded.File.Ok != fileNoThumb.Ok {
-		t.Errorf("Ok: got %v, want %v", decoded.File.Ok, fileNoThumb.Ok)
-	}
 	if decoded.File.Path != fileNoThumb.Path {
 		t.Errorf("Path: got %q, want %q", decoded.File.Path, fileNoThumb.Path)
 	}
@@ -748,9 +741,6 @@ func TestBatchedWrite_GobRoundTrip_DoesNotMutateOriginal(t *testing.T) {
 	if file.File.Filename != "sunset.jpg" {
 		t.Errorf("Filename changed: got %q", file.File.Filename)
 	}
-	if file.Ok != true {
-		t.Error("Ok changed")
-	}
 
 	encoded1, err := original.GobEncode()
 	if err != nil {
@@ -803,7 +793,6 @@ func TestBatchedWrite_GobRoundTrip_InterfaceFields(t *testing.T) {
 
 func TestBatchedWrite_GobRoundTrip_NullFields(t *testing.T) {
 	file := &files.File{
-		Ok:        true,
 		Exists:    false,
 		ImagesDir: "/test",
 		Path:      "/test/file.jpg",
@@ -866,7 +855,6 @@ func TestBatchedWrite_GobRoundTrip_LargeThumbnail(t *testing.T) {
 	}
 
 	file := &files.File{
-		Ok:        true,
 		Path:      "/photos/large.jpg",
 		File:      fullyPopulatedGallerydbFile(),
 		Thumbnail: bytes.NewBuffer(largeThumb),

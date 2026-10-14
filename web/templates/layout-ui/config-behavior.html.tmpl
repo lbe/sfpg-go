@@ -10,6 +10,20 @@
     -- Mirrors the config modal init snapshot so the same logic can be reused
     -- after a successful save: the success alert refreshes it on load, and
     -- the restart diff builder refreshes it after populating its table.
+    def closeConfigModalContainer(fromEl)
+      set container to fromEl.closest('#config-modal-container')
+      if container
+        set toggle to container.querySelector('#config_modal')
+        if toggle
+          set toggle.checked to false
+        end
+        wait 300ms
+        remove container from body
+      end
+    end
+  </script>
+
+  <script type="text/hyperscript">
     def snapshotConfigOriginals()
       set window.configOriginalValues to {}
       set form to #config-form
@@ -49,9 +63,7 @@
   <script type="text/hyperscript">
     behavior CloseConfigModal
       on click
-        set #config_modal.checked to false
-        wait 300ms
-        remove #config-modal-container from body
+        call closeConfigModalContainer(me)
     end
   </script>
 
@@ -189,9 +201,7 @@
           call buildConfigDiff(configFields, #cancel-diff-content, true)
           set #cancel-diff-modal.checked to true
         else
-          set #config_modal.checked to false
-          wait 300ms
-          remove #config-modal-container from body
+          call closeConfigModalContainer(me)
         end
     end
   </script>

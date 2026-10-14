@@ -3,8 +3,9 @@ set -euo pipefail
 
 DB_PATH="${DB_PATH:-$HOME/tmp/gallery/DB/sfpg.db}"
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-OUT_DIR="$REPO_ROOT/internal/cachelite/bodycodec/testdata"
-MANIFEST="$OUT_DIR/MANIFEST.md"
+ARCHIVE_DIR="$REPO_ROOT/internal/cachelite/bodycodec/testdata"
+OUT_DIR="$REPO_ROOT/tmp/bodycodec/testdata"
+MANIFEST="$ARCHIVE_DIR/MANIFEST.md"
 
 mkdir -p "$OUT_DIR"
 
@@ -71,7 +72,7 @@ emit_band small 3 $(echo "$SMALL_IDS" | tr '\n' ' ')
 emit_band med 3 $(echo "$MED_IDS" | tr '\n' ' ')
 emit_band large 3 $(echo "$LARGE_IDS" | tr '\n' ' ')
 
-ARCHIVE="$OUT_DIR/galleries.tar.gz"
+ARCHIVE="$ARCHIVE_DIR/galleries.tar.gz"
 rm -f "$ARCHIVE"
 tar -czf "$ARCHIVE" -C "$OUT_DIR" \
   gallery_small_1.html gallery_small_2.html gallery_small_3.html \
@@ -79,4 +80,4 @@ tar -czf "$ARCHIVE" -C "$OUT_DIR" \
   gallery_large_1.html gallery_large_2.html gallery_large_3.html
 rm -f "$OUT_DIR/.galleries-extracted"
 
-echo "Wrote 9 fixtures and $ARCHIVE"
+echo "Wrote 9 fixtures and $ARCHIVE (extracted HTML under $OUT_DIR)"

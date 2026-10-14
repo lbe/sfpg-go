@@ -1,16 +1,14 @@
-//go:build integration
-
 package gallerydb
 
 import (
 	"database/sql"
+	"errors"
 	"testing"
 	"time"
 )
 
 func TestFolderInfoCounts(t *testing.T) {
 	_, q, ctx := setupTestDB(t)
-
 	// Create a parent folder
 	parentPathID, err := q.UpsertFolderPathReturningID(ctx, "/folder_info_test")
 	if err != nil {
@@ -25,7 +23,6 @@ func TestFolderInfoCounts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpsertFolderReturningFolder failed: %v", err)
 	}
-
 	// Create 2 child subfolders
 	for _, name := range []string{"child_a", "child_b"} {
 		childPathID, err := q.UpsertFolderPathReturningID(ctx, "/folder_info_test/"+name)
@@ -43,7 +40,6 @@ func TestFolderInfoCounts(t *testing.T) {
 			t.Fatalf("UpsertFolderReturningFolder for %s failed: %v", name, err)
 		}
 	}
-
 	// Create files: 2 images (a.jpg, b.png), 1 non-image (notes.txt)
 	now := time.Now().Unix()
 	testFiles := []struct {
@@ -70,7 +66,6 @@ func TestFolderInfoCounts(t *testing.T) {
 			t.Fatalf("UpsertFileReturningFile for %s failed: %v", tf.filename, err)
 		}
 	}
-
 	// Test: Folder + 2 children + a.jpg, b.png, notes.txt → Dir=2, Image=2, File=1
 	t.Run("mixed_counts", func(t *testing.T) {
 		row, err := q.GetFolderInfoCountsByID(ctx, parent.ID)
@@ -87,7 +82,6 @@ func TestFolderInfoCounts(t *testing.T) {
 			t.Errorf("expected FileCount=1, got %d", row.FileCount)
 		}
 	})
-
 	// Test: Photo.JPG → image (case insensitive)
 	t.Run("case_insensitive_image", func(t *testing.T) {
 		// Create a second folder for this test
@@ -104,7 +98,6 @@ func TestFolderInfoCounts(t *testing.T) {
 		if err != nil {
 			t.Fatalf("UpsertFolderReturningFolder failed: %v", err)
 		}
-
 		// Add Photo.JPG (uppercase extension)
 		fpID, err := q.UpsertFilePathReturningID(ctx, "/folder_info_case_test/Photo.JPG")
 		if err != nil {
@@ -120,7 +113,6 @@ func TestFolderInfoCounts(t *testing.T) {
 		if err != nil {
 			t.Fatalf("UpsertFileReturningFile failed: %v", err)
 		}
-
 		row, err := q.GetFolderInfoCountsByID(ctx, f2.ID)
 		if err != nil {
 			t.Fatalf("GetFolderInfoCountsByID failed: %v", err)
@@ -135,7 +127,6 @@ func TestFolderInfoCounts(t *testing.T) {
 			t.Errorf("expected FileCount=0, got %d", row.FileCount)
 		}
 	})
-
 	// Test: Empty folder → zeros
 	t.Run("empty_folder", func(t *testing.T) {
 		emptyPathID, err := q.UpsertFolderPathReturningID(ctx, "/folder_info_empty_test")
@@ -151,7 +142,6 @@ func TestFolderInfoCounts(t *testing.T) {
 		if err != nil {
 			t.Fatalf("UpsertFolderReturningFolder failed: %v", err)
 		}
-
 		row, err := q.GetFolderInfoCountsByID(ctx, emptyFolder.ID)
 		if err != nil {
 			t.Fatalf("GetFolderInfoCountsByID failed: %v", err)
@@ -166,18 +156,16 @@ func TestFolderInfoCounts(t *testing.T) {
 			t.Errorf("expected FileCount=0 for empty folder, got %d", row.FileCount)
 		}
 	})
-
 	// Test: Missing id → sql.ErrNoRows
 	t.Run("missing_folder", func(t *testing.T) {
 		_, err := q.GetFolderInfoCountsByID(ctx, 99999)
 		if err == nil {
 			t.Fatal("expected error for missing folder, got nil")
 		}
-		if err != sql.ErrNoRows {
+		if !errors.Is(err, sql.ErrNoRows) {
 			t.Errorf("expected sql.ErrNoRows, got %v", err)
 		}
 	})
-
 	// Test: foo.jpg.bak → FileCount (not image) — suffix/filepath.Ext semantics
 	t.Run("bak_suffix_not_image", func(t *testing.T) {
 		bakPathID, err := q.UpsertFolderPathReturningID(ctx, "/folder_info_bak_test")
@@ -193,7 +181,6 @@ func TestFolderInfoCounts(t *testing.T) {
 		if err != nil {
 			t.Fatalf("UpsertFolderReturningFolder failed: %v", err)
 		}
-
 		fpID, err := q.UpsertFilePathReturningID(ctx, "/folder_info_bak_test/foo.jpg.bak")
 		if err != nil {
 			t.Fatalf("UpsertFilePathReturningID failed: %v", err)
@@ -208,7 +195,6 @@ func TestFolderInfoCounts(t *testing.T) {
 		if err != nil {
 			t.Fatalf("UpsertFileReturningFile failed: %v", err)
 		}
-
 		row, err := q.GetFolderInfoCountsByID(ctx, bakFolder.ID)
 		if err != nil {
 			t.Fatalf("GetFolderInfoCountsByID failed: %v", err)

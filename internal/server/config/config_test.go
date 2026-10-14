@@ -2,64 +2,13 @@ package config
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"slices"
 	"testing"
 
-	"github.com/golang-migrate/migrate/v4"
-	"github.com/golang-migrate/migrate/v4/database/sqlite"
-	"github.com/golang-migrate/migrate/v4/source/iofs"
-	_ "github.com/ncruces/go-sqlite3/driver"
-
 	"github.com/lbe/sfpg-go/internal/gallerydb"
-	"github.com/lbe/sfpg-go/migrations"
 )
-
-// setupTestDB creates a test database with migrations applied for config tests.
-// Uses an in-memory database for faster test execution.
-func setupTestDB(t *testing.T) (*sql.DB, *gallerydb.Queries, context.Context) {
-	t.Helper()
-
-	// Use in-memory database for faster tests
-	db, err := sql.Open("sqlite3", ":memory:")
-	if err != nil {
-		t.Fatalf("failed to open test database: %v", err)
-	}
-
-	driver, err := sqlite.WithInstance(db, &sqlite.Config{})
-	if err != nil {
-		db.Close()
-		t.Fatalf("failed to create sqlite driver instance: %v", err)
-	}
-
-	d, err := iofs.New(migrations.FS, "migrations")
-	if err != nil {
-		db.Close()
-		t.Fatalf("failed to create iofs source driver: %v", err)
-	}
-
-	m, err := migrate.NewWithInstance("iofs", d, "sqlite", driver)
-	if err != nil {
-		db.Close()
-		t.Fatalf("failed to create migrate instance: %v", err)
-	}
-
-	if upErr := m.Up(); upErr != nil && !errors.Is(upErr, migrate.ErrNoChange) {
-		db.Close()
-		t.Fatalf("failed to apply migrations: %v", upErr)
-	}
-
-	ctx := context.Background()
-	q, err := gallerydb.Prepare(ctx, db)
-	if err != nil {
-		db.Close()
-		t.Fatalf("failed to prepare queries: %v", err)
-	}
-
-	return db, q, ctx
-}
 
 type mockConfigQueries struct {
 	configs []gallerydb.Config

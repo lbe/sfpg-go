@@ -70,6 +70,7 @@ Reinforced in `.cursor/rules/approval-before-action.mdc` (overrides helpfulness 
 - Before committing, **Read** the current value from `version.go`, include `version.go` in the commit if it has changed, and put that exact value in the commit message as a **footer line** `Version: X.Y.Z` — never as `(vX.Y.Z)` in the subject. See `plans/pi-runbook-sfpg-go.md` § Commit message format.
 - **Do not use `git commit --no-verify` (or equivalent hook-skipping flags)** unless the user explicitly instructs you to do so, or a plan the user has approved explicitly requires it. Otherwise **STOP** and notify the user.
 - **Do not use `git add -f` / `git add --force` (or otherwise override `.gitignore`)** unless the user explicitly instructs or approves it. A plan alone is **not** sufficient authorization. If a plan or workflow appears to require force-adding an ignored path, **STOP** and notify the user — do not force-add.
+- **Do not change `.gitignore`.** No edits, additions, or deletions unless the user explicitly instructs or approves it. A plan alone is **not** authorization. If ignore rules seem required, **STOP** and notify the user.
 - **No JavaScript** in application UI code. Use Hyperscript and HTMX only. **Approved exception:** password complexity validation in `web/templates/config-modal.html.tmpl` (`#config-password-validator`). Do not add further JavaScript without explicit user approval.
 
 ## Project Learnings
@@ -148,14 +149,22 @@ if err != nil { /* handle error */ }
 defer app.dbRwPool.Put(conn)
 ```
 
-### HTMX Partial Routes
+### HTMX HTML responses
 
-Many routes are HTMX partials (won't work via direct URL access):
+Route table and contracts: [docs/ARCHITECTURE.md § HTMX HTML responses](docs/ARCHITECTURE.md#htmx-html-responses). Implementation: `internal/server/ui/htmx_partial.go`.
 
-- Check `Hx-Request` header to determine request type
-- Full page renders have `<body>` tag; partials don't
-- Use `hx-swap-oob="outerHTML"` for out-of-band updates
-- Return 200 for validation errors (not 400) so HTMX processes response
+**Layout partials** (`ui.RenderPage(..., partial)` only — `AddCommonTemplateData` has no `partial` flag):
+
+- `GET /dashboard` — `ui.IsPartialRequest(r, ui.PartialRuleHXRequestOnly, "")`: `HX-Request: true` (case-sensitive); `HX-Target` ignored.
+- `GET /gallery/{id}` — `ui.IsPartialRequest(r, ui.PartialRuleHXRequestTarget, ui.HXTargetGalleryContent)`: `HX-Request: true` and `HX-Target: gallery-content` (element `#gallery-content`).
+
+On successful HTML paths (not 401/errors): `ui.SetLayoutPartialVary` and `ui.SetPartialNoStore` when `partial` is true. All other `RenderPage` call sites use `partial: false`.
+
+**Fragment-only HTMX** — `ui.RenderTemplate` (modals, config, menu, lightbox, infobox, etc.). Do **not** use `IsPartialRequest`.
+
+**Tests:** Layout partial bodies often omit literal `<html>`/`<head>`/`<body>` on the wire; `html.Parse` still synthesizes a shell. Use `testutil.FirstLiteralDocumentShellTag` before `ParseHTML` ([methodology](references/methodology-html-content-test-writing.md#htmx-layout-partial-responses-wire-vs-parse-tree)).
+
+**HTMX elsewhere:** `hx-swap-oob="outerHTML"` for OOB updates; return 200 (not 400) on validation errors so HTMX processes the response.
 
 ### Configuration Precedence
 
@@ -217,6 +226,8 @@ grep -E "FAIL|PASS|ERROR" ./tmp/test_output.txt
 ```
 
 See [references/tdd_process.md](references/tdd_process.md) and [references/methodology-html-content-test-writing.md](references/methodology-html-content-test-writing.md) for detailed testing guidance.
+
+- **Package DB tests:** Memory test databases set `TestUseMemDB: true` on `dbconnpool.Config` plus an empty DSN to `dbconnpool.NewDbSQLConnPool` (main materialized at construction and thumbs on first use as named, memory-resident `vfs=memdb` images behind one `internal/testdb.MemoryDatabases` lease per schema key); any non-empty DSN selects normal file-backed mode even when the flag is true. `dbconnpool` keeps shared pool slots, `gallerydb` owns its shared/isolated test leases, and `gallerylib` uses the `gallerydb` helper. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for details.
 
 ## Building and Running
 

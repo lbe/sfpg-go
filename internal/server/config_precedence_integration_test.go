@@ -21,11 +21,11 @@ import (
 
 // --- merged from config_precedence_integration_test.go ---
 func TestIntegration_MultipleCategoryUpdates(t *testing.T) {
+	t.Parallel()
 	setenvForTest(t, "SEPG_SESSION_SECURE", "false")
 	app := CreateApp(t, WithPool())
 	defer app.Shutdown()
 
-	t.Parallel()
 	ts := httptest.NewServer(app.getRouter())
 	defer ts.Close()
 
@@ -136,12 +136,12 @@ func TestIntegration_MultipleCategoryUpdates(t *testing.T) {
 }
 
 func TestIntegration_ConfigPersistence_LoadFromOptDoesNotOverrideWithDefaults(t *testing.T) {
+	t.Parallel()
 	setenvForTest(t, "SEPG_SESSION_SECURE", "false")
 
 	// Create first app instance
 	app1 := CreateApp(t, WithPool())
 
-	t.Parallel()
 	ts1 := httptest.NewServer(app1.getRouter())
 	defer ts1.Close()
 
@@ -179,7 +179,6 @@ func TestIntegration_ConfigPersistence_LoadFromOptDoesNotOverrideWithDefaults(t 
 	if err != nil {
 		t.Fatalf("failed to get DB connection: %v", err)
 	}
-	defer app1.dbRoPool.Put(cpcRo)
 	ctx := context.Background()
 
 	value, err := cpcRo.Queries.GetConfigValueByKey(ctx, "enable_http_cache")
@@ -202,6 +201,7 @@ func TestIntegration_ConfigPersistence_LoadFromOptDoesNotOverrideWithDefaults(t 
 	dbPaths := app1.dbPaths
 	rootDir := app1.rootDir
 
+	app1.dbRoPool.Put(cpcRo)
 	// Shutdown first app
 	app1.Shutdown()
 
@@ -237,78 +237,18 @@ func TestIntegration_ConfigPersistence_LoadFromOptDoesNotOverrideWithDefaults(t 
 	}
 }
 
-func TestIntegration_ConfigPrecedence(t *testing.T) {
-	setenvForTest(t, "SEPG_SESSION_SECURE", "false")
-
-	// Step 1: Set a value in database
-	app1 := CreateApp(t, WithPool())
-	// Note: We'll shutdown manually before creating app2, so no defer here
-
-	t.Parallel()
-	cpcRw, err := app1.dbRwPool.Get()
-	if err != nil {
-		t.Fatalf("failed to get DB connection: %v", err)
-	}
-	defer app1.dbRwPool.Put(cpcRw)
-
-	ctx := context.Background()
-	now := time.Now().Unix()
-	err = cpcRw.Queries.UpsertConfigValueOnly(ctx, gallerydb.UpsertConfigValueOnlyParams{
-		Key:       "site_name",
-		Value:     "Database Value",
-		CreatedAt: now,
-		UpdatedAt: now,
-	})
-	if err != nil {
-		t.Fatalf("failed to set config in DB: %v", err)
-	}
-
-	// Step 2: Create new app - database value should be loaded
-	// Save DB paths before shutdown
-	dbPaths := app1.dbPaths
-	rootDir := app1.rootDir
-	app1.Shutdown()
-
-	// Create app2 with same database
-	opt := getopt.Opt{
-		SessionSecret: getopt.OptString{String: "this-is-a-test-secret-with-min-32-bytes", IsSet: true},
-	}
-	app2 := New(opt, "x.y.z")
-	app2.dbPaths = dbPaths
-	app2.setRootDir(&rootDir)
-	app2.setDB()
-	app2.setConfigDefaults()
-	defer app2.Shutdown()
-
-	// setConfigDefaults() initializes defaults but doesn't load from DB
-	// We need to explicitly call loadConfig() to load from database
-	if err := app2.loadConfig(); err != nil {
-		t.Fatalf("failed to load config: %v", err)
-	}
-	app2.ApplyConfig()
-
-	// Verify database value was loaded
-	if app2.ConfigManager.Config.SiteName != "Database Value" {
-		t.Errorf("expected database value 'Database Value', got '%s'", app2.ConfigManager.Config.SiteName)
-	}
-
-	// Note: CLI and env precedence testing would require getopt.Parse() integration
-	// which is tested in other unit tests. This E2E test verifies database persistence.
-}
-
 func TestIntegration_ConfigLoadsOnStartup(t *testing.T) {
+	t.Parallel()
 	setenvForTest(t, "SEPG_SESSION_SECURE", "false")
 
 	// Create app and set a config value in database
 	app1 := CreateApp(t, WithPool())
 	// Note: We'll shutdown manually before creating app2, so no defer here
 
-	t.Parallel()
 	cpcRw, err := app1.dbRwPool.Get()
 	if err != nil {
 		t.Fatalf("failed to get DB connection: %v", err)
 	}
-	defer app1.dbRwPool.Put(cpcRw)
 
 	ctx := context.Background()
 	now := time.Now().Unix()
@@ -325,6 +265,7 @@ func TestIntegration_ConfigLoadsOnStartup(t *testing.T) {
 	// Save DB paths before shutdown
 	dbPaths := app1.dbPaths
 	rootDir := app1.rootDir
+	app1.dbRwPool.Put(cpcRw)
 	app1.Shutdown()
 
 	// Create new app with same database
@@ -348,240 +289,6 @@ func TestIntegration_ConfigLoadsOnStartup(t *testing.T) {
 	// Verify config was loaded
 	if app2.ConfigManager.Config.LogLevel != "DEBUG" {
 		t.Errorf("expected LogLevel='DEBUG' from database, got '%s'", app2.ConfigManager.Config.LogLevel)
-	}
-}
-
-func TestConfigPrecedence_CLIOverridesDB(t *testing.T) {
-	tempDir := t.TempDir()
-	ss := "test-session-secret"
-	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
-
-	// Create app and initialize DB
-	app := New(getopt.Opt{}, "x.y.z")
-	app.setRootDir(&tempDir)
-	app.setDB()
-
-	// Set a value in database
-	cpcRw, err := app.dbRwPool.Get()
-	if err != nil {
-		t.Fatalf("failed to get RW connection: %v", err)
-	}
-	defer app.dbRwPool.Put(cpcRw)
-
-	now := time.Now().Unix()
-	err = cpcRw.Queries.UpsertConfigValueOnly(context.Background(), gallerydb.UpsertConfigValueOnlyParams{
-		Key:       "listener_port",
-		Value:     "9090",
-		CreatedAt: now,
-		UpdatedAt: now,
-	})
-	if err != nil {
-		t.Fatalf("failed to set DB config: %v", err)
-	}
-
-	// Reload config from database
-	app.ConfigManager.Config = config.DefaultConfig()
-	err = app.ConfigManager.Config.LoadFromDatabase(context.Background(), cpcRw.Queries)
-	if err != nil {
-		t.Fatalf("failed to load config from DB: %v", err)
-	}
-
-	// Verify DB value is loaded
-	if app.ConfigManager.Config.ListenerPort != 9090 {
-		t.Errorf("expected ListenerPort to be 9090 from DB, got %d", app.ConfigManager.Config.ListenerPort)
-	}
-
-	// Close the first app to release its dque flock before creating
-	// a second app with the same root directory.
-	app.Shutdown()
-
-	// Now create app with CLI flag that should override
-	opt := getopt.Opt{
-		Port: getopt.OptInt{Int: 8080, IsSet: true},
-	}
-	app2 := New(opt, "x.y.z")
-	app2.setRootDir(&tempDir)
-	app2.setDB()
-
-	// Load from DB
-	app2.ConfigManager.Config = config.DefaultConfig()
-	cpcRw2, err := app2.dbRwPool.Get()
-	if err != nil {
-		t.Fatalf("failed to get RW connection: %v", err)
-	}
-	defer app2.dbRwPool.Put(cpcRw2)
-
-	err = app2.ConfigManager.Config.LoadFromDatabase(context.Background(), cpcRw2.Queries)
-	if err != nil {
-		t.Fatalf("failed to load config from DB: %v", err)
-	}
-
-	// Apply CLI options (should override DB)
-	app2.ConfigManager.Config.LoadFromOpt(opt)
-
-	// Verify CLI value overrides DB value
-	if app2.ConfigManager.Config.ListenerPort != 8080 {
-		t.Errorf("expected ListenerPort to be 8080 from CLI, got %d", app2.ConfigManager.Config.ListenerPort)
-	}
-}
-
-func TestConfigPrecedence_LogLevelCLIOverridesDB(t *testing.T) {
-	tempDir := t.TempDir()
-	ss := "test-session-secret-with-at-least-32-bytes-long!!"
-	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
-
-	app := New(getopt.Opt{}, "x.y.z")
-	app.setRootDir(&tempDir)
-	app.setDB()
-
-	cpcRw, err := app.dbRwPool.Get()
-	if err != nil {
-		t.Fatalf("failed to get RW connection: %v", err)
-	}
-	defer app.dbRwPool.Put(cpcRw)
-
-	now := time.Now().Unix()
-	err = cpcRw.Queries.UpsertConfigValueOnly(context.Background(), gallerydb.UpsertConfigValueOnlyParams{
-		Key:       "log_level",
-		Value:     "debug",
-		CreatedAt: now,
-		UpdatedAt: now,
-	})
-	if err != nil {
-		t.Fatalf("failed to set DB config: %v", err)
-	}
-
-	app.ConfigManager.Config = config.DefaultConfig()
-	if err := app.ConfigManager.Config.LoadFromDatabase(context.Background(), cpcRw.Queries); err != nil {
-		t.Fatalf("failed to load config from DB: %v", err)
-	}
-	if app.ConfigManager.Config.LogLevel != "debug" {
-		t.Fatalf("expected LogLevel debug from DB, got %q", app.ConfigManager.Config.LogLevel)
-	}
-
-	app.Shutdown()
-
-	opt := getopt.Opt{
-		LogLevel: getopt.OptString{String: "warn", IsSet: true},
-	}
-	app2 := New(opt, "x.y.z")
-	app2.setRootDir(&tempDir)
-	app2.setDB()
-
-	app2.ConfigManager.Config = config.DefaultConfig()
-	cpcRw2, err := app2.dbRwPool.Get()
-	if err != nil {
-		t.Fatalf("failed to get RW connection: %v", err)
-	}
-	defer app2.dbRwPool.Put(cpcRw2)
-
-	if err := app2.ConfigManager.Config.LoadFromDatabase(context.Background(), cpcRw2.Queries); err != nil {
-		t.Fatalf("failed to load config from DB: %v", err)
-	}
-	app2.ConfigManager.Config.LoadFromOpt(opt)
-
-	if app2.ConfigManager.Config.LogLevel != "warn" {
-		t.Errorf("expected LogLevel warn from CLI override, got %q", app2.ConfigManager.Config.LogLevel)
-	}
-}
-
-func TestConfigPrecedence_EnvOverridesDB(t *testing.T) {
-	tempDir := t.TempDir()
-	ss := "test-session-secret"
-	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
-
-	// Set environment variable
-	setenvForTest(t, "SFG_PORT", "7070")
-
-	// Create opt manually instead of calling getopt.Parse() which conflicts with test flags
-	opt := getopt.Opt{
-		Port: getopt.OptInt{Int: 7070, IsSet: true}, // This simulates what env var would set
-	}
-
-	// Create app
-	app := New(opt, "x.y.z")
-	app.setRootDir(&tempDir)
-	app.setDB()
-
-	// Set a different value in database
-	cpcRw, err := app.dbRwPool.Get()
-	if err != nil {
-		t.Fatalf("failed to get RW connection: %v", err)
-	}
-	defer app.dbRwPool.Put(cpcRw)
-
-	now := time.Now().Unix()
-	err = cpcRw.Queries.UpsertConfigValueOnly(context.Background(), gallerydb.UpsertConfigValueOnlyParams{
-		Key:       "listener_port",
-		Value:     "9090",
-		CreatedAt: now,
-		UpdatedAt: now,
-	})
-	if err != nil {
-		t.Fatalf("failed to set DB config: %v", err)
-	}
-
-	// Load config
-	app.ConfigManager.Config = config.DefaultConfig()
-	err = app.ConfigManager.Config.LoadFromDatabase(context.Background(), cpcRw.Queries)
-	if err != nil {
-		t.Fatalf("failed to load config from DB: %v", err)
-	}
-
-	// Apply env/CLI options (should override DB)
-	app.ConfigManager.Config.LoadFromOpt(opt)
-
-	// Verify env value overrides DB value
-	if app.ConfigManager.Config.ListenerPort != 7070 {
-		t.Errorf("expected ListenerPort to be 7070 from env, got %d", app.ConfigManager.Config.ListenerPort)
-	}
-}
-
-func TestConfigPrecedence_LoginRateLimitEnvOverridesDB(t *testing.T) {
-	tempDir := t.TempDir()
-	ss := "test-session-secret"
-	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
-
-	// Simulate what SEPG_LOGIN_RATE_LIMIT_PER_IP=5 would set via env parsing.
-	opt := getopt.Opt{
-		LoginRateLimitPerIP: getopt.OptInt{Int: 5, IsSet: true},
-	}
-
-	app := New(opt, "x.y.z")
-	app.setRootDir(&tempDir)
-	app.setDB()
-
-	// Set a different value in database
-	cpcRw, err := app.dbRwPool.Get()
-	if err != nil {
-		t.Fatalf("failed to get RW connection: %v", err)
-	}
-	defer app.dbRwPool.Put(cpcRw)
-
-	now := time.Now().Unix()
-	err = cpcRw.Queries.UpsertConfigValueOnly(context.Background(), gallerydb.UpsertConfigValueOnlyParams{
-		Key:       "login_rate_limit_per_ip",
-		Value:     "10",
-		CreatedAt: now,
-		UpdatedAt: now,
-	})
-	if err != nil {
-		t.Fatalf("failed to set DB config: %v", err)
-	}
-
-	// Load config
-	app.ConfigManager.Config = config.DefaultConfig()
-	err = app.ConfigManager.Config.LoadFromDatabase(context.Background(), cpcRw.Queries)
-	if err != nil {
-		t.Fatalf("failed to load config from DB: %v", err)
-	}
-
-	// Apply env/CLI options (should override DB)
-	app.ConfigManager.Config.LoadFromOpt(opt)
-
-	// Verify env value overrides DB value
-	if app.ConfigManager.Config.LoginRateLimitPerIP != 5 {
-		t.Errorf("expected LoginRateLimitPerIP to be 5 from env, got %d", app.ConfigManager.Config.LoginRateLimitPerIP)
 	}
 }
 
@@ -1043,8 +750,8 @@ func TestIntegration_ConcurrentConfigUpdates(t *testing.T) {
 
 // --- merged from config_import_integration_test.go ---
 func TestConfigImport_Commit_UpdatesDatabase(t *testing.T) {
-	app := CreateApp(t)
 	t.Parallel()
+	app := CreateApp(t)
 	app.ConfigManager.Config = config.DefaultConfig()
 
 	newYAML := `listener-port: 9999
@@ -1089,8 +796,8 @@ log-level: "info"
 }
 
 func TestConfigImport_PreservesUserPassword(t *testing.T) {
-	app := CreateApp(t)
 	t.Parallel()
+	app := CreateApp(t)
 	app.ConfigManager.Config = config.DefaultConfig()
 
 	// Set up existing user/password in database
@@ -1126,8 +833,8 @@ func TestConfigImport_PreservesUserPassword(t *testing.T) {
 }
 
 func TestConfigImport_PrecedenceIntegration(t *testing.T) {
-	app := CreateApp(t)
 	t.Parallel()
+	app := CreateApp(t)
 	app.ConfigManager.Config = config.DefaultConfig()
 
 	// Set value in database

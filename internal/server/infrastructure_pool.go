@@ -38,6 +38,10 @@ type dbPoolForCheckpoint interface {
 	Put(*dbconnpool.CpConn)
 }
 
+// seedTestDatabase is set from helpers_test.go init() to copy test database files into
+// the test rootDir before Setup. Nil in production builds.
+var seedTestDatabase func(rootDir string) error
+
 // =====================================================================
 // DB pool lifecycle
 // =====================================================================
@@ -45,6 +49,12 @@ type dbPoolForCheckpoint interface {
 // SetupDB creates database pools and cache store. Write batcher startup and cache
 // size calibration are deferred until after config load and pool resize.
 func (s *InfrastructureService) SetupDB(ctx context.Context, cfg *config.Config) {
+	if seedTestDatabase != nil {
+		if err := seedTestDatabase(s.rootDir); err != nil {
+			slog.Error("failed to seed test database", "err", err)
+			panic("main")
+		}
+	}
 	var err error
 	s.dbPaths, s.dbRwPool, s.dbRoPool, err = s.dbInitializer.Setup(ctx, s.rootDir, cfg)
 	if err != nil {

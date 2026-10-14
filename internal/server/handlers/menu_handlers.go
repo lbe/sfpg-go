@@ -10,14 +10,14 @@ import (
 // MenuHandlers holds dependencies for the hamburger menu endpoint.
 type MenuHandlers struct {
 	sessionManager        SessionManager
-	AddCommonTemplateData func(w http.ResponseWriter, r *http.Request, data map[string]any, partial bool) map[string]any
+	AddCommonTemplateData func(w http.ResponseWriter, r *http.Request, data map[string]any) map[string]any
 	ServerError           func(w http.ResponseWriter, r *http.Request, err error)
 }
 
 // NewMenuHandlers creates a new MenuHandlers with the given dependencies.
 func NewMenuHandlers(
 	sessionManager SessionManager,
-	addCommonTemplateData func(w http.ResponseWriter, r *http.Request, data map[string]any, partial bool) map[string]any,
+	addCommonTemplateData func(w http.ResponseWriter, r *http.Request, data map[string]any) map[string]any,
 	serverError func(w http.ResponseWriter, r *http.Request, err error),
 ) *MenuHandlers {
 	return &MenuHandlers{
@@ -55,7 +55,7 @@ func (h *MenuHandlers) HamburgerMenu(w http.ResponseWriter, r *http.Request) {
 // AboutModal handles GET /about-modal — public HTMX partial with live Version + GalleryStats.
 func (h *MenuHandlers) AboutModal(w http.ResponseWriter, r *http.Request) {
 	data := map[string]any{}
-	data = h.AddCommonTemplateData(w, r, data, true)
+	data = h.AddCommonTemplateData(w, r, data)
 
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

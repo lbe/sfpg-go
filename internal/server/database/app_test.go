@@ -10,15 +10,61 @@ import (
 	"testing"
 	"time"
 
-	"github.com/golang-migrate/migrate/v4"
-	"github.com/golang-migrate/migrate/v4/database/sqlite"
-	"github.com/golang-migrate/migrate/v4/source/iofs"
 	_ "github.com/ncruces/go-sqlite3/driver"
 
 	"github.com/lbe/sfpg-go/internal/dbconnpool"
 	"github.com/lbe/sfpg-go/internal/server/config"
-	"github.com/lbe/sfpg-go/migrations"
 )
+
+func copyTestDBFixture(t *testing.T, mainDB, thumbsDB string) {
+	t.Helper()
+	if err := dbconnpool.CopyMainTestDatabaseTo(mainDB); err != nil {
+		t.Fatalf("CopyMainTestDatabaseTo: %v", err)
+	}
+	if err := dbconnpool.CopyThumbsTestDatabaseTo(thumbsDB); err != nil {
+		t.Fatalf("CopyThumbsTestDatabaseTo: %v", err)
+	}
+}
+
+func TestSetup_LegacyTestDBSeedMarkerStillMigrates(t *testing.T) {
+	tempDir := t.TempDir()
+	dbDir := filepath.Join(tempDir, "DB")
+	thumbsDir := filepath.Join(dbDir, "thumbs")
+	if err := os.MkdirAll(thumbsDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	mainDB := filepath.Join(dbDir, "sfpg.db")
+	thumbsDB := filepath.Join(thumbsDir, "thumbs.db")
+	copyTestDBFixture(t, mainDB, thumbsDB)
+	if err := os.WriteFile(mainDB+".testdb-seed", nil, 0o644); err != nil {
+		t.Fatalf("write legacy marker: %v", err)
+	}
+
+	var migrateCalls int
+	origMigrate := migrateDBFn
+	migrateDBFn = func(dbPath string) (bool, error) {
+		migrateCalls++
+		return origMigrate(dbPath)
+	}
+	t.Cleanup(func() { migrateDBFn = origMigrate })
+
+	ctx := context.Background()
+	_, dbRwPool, dbRoPool, err := Setup(ctx, tempDir, config.DefaultConfig())
+	if err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+	defer func() {
+		if dbRoPool != nil {
+			_ = dbRoPool.Close()
+		}
+		if dbRwPool != nil {
+			_ = dbRwPool.Close()
+		}
+	}()
+	if migrateCalls != 1 {
+		t.Fatalf("migrateDBFn calls = %d, want 1", migrateCalls)
+	}
+}
 
 // TestSetDirectories verifies that Setup creates the DB directory.
 func TestSetDirectories(t *testing.T) {
@@ -153,48 +199,12 @@ func TestConfigureDatabaseDSN(t *testing.T) {
 
 func TestCreateDatabasePools(t *testing.T) {
 	ctx := context.Background()
-	// Use a temporary file database instead of :memory: so migrations can be applied
-	// and shared between the RO and RW pools
 	tempDir := t.TempDir()
 	tempDB := filepath.Join(tempDir, "test.db")
 	thumbsDBPath := filepath.Join(tempDir, "thumbs.db")
+	copyTestDBFixture(t, tempDB, thumbsDBPath)
 
-	// Run migrations first (use simple DSN, no pragmas needed for migration)
-	db, err := sql.Open("sqlite3", "file:"+filepath.ToSlash(tempDB))
-	if err != nil {
-		t.Fatalf("failed to open test database: %v", err)
-	}
-
-	driver, err := sqlite.WithInstance(db, &sqlite.Config{})
-	if err != nil {
-		db.Close()
-		t.Fatalf("failed to create sqlite driver instance: %v", err)
-	}
-
-	d, err := iofs.New(migrations.FS, "migrations")
-	if err != nil {
-		db.Close()
-		t.Fatalf("failed to create iofs source driver: %v", err)
-	}
-
-	m, err := migrate.NewWithInstance("iofs", d, "sqlite", driver)
-	if err != nil {
-		db.Close()
-		t.Fatalf("failed to create migrate instance: %v", err)
-	}
-
-	if upErr := m.Up(); upErr != nil && !errors.Is(upErr, migrate.ErrNoChange) {
-		db.Close()
-		t.Fatalf("failed to apply migrations: %v", upErr)
-	}
-	db.Close()
-
-	// Run thumbs migration (required for CustomQueries that reference thumbs.thumbnail_blobs)
-	if _, migErr := migrateBlobsDB(thumbsDBPath); migErr != nil {
-		t.Fatalf("migrateBlobsDB failed: %v", migErr)
-	}
-
-	// Now create the pools with the migrated database
+	// Create the pools with a test-database-copy schema fixture
 	// Use simple DSNs without WAL - the test just needs to verify pool creation
 	ro := "file:" + filepath.ToSlash(tempDB) + "?mode=ro"
 	rw := "file:" + filepath.ToSlash(tempDB) + "?_txlock=immediate&mode=rwc"
@@ -248,12 +258,7 @@ func TestCreateDatabasePools_MinIdleZero(t *testing.T) {
 	dbPath := filepath.Join(tempDir, "test.db")
 	thumbsDBPath := filepath.Join(tempDir, "thumbs.db")
 
-	if _, err := migrateDB(dbPath); err != nil {
-		t.Fatalf("migrateDB failed: %v", err)
-	}
-	if _, err := migrateBlobsDB(thumbsDBPath); err != nil {
-		t.Fatalf("migrateBlobsDB failed: %v", err)
-	}
+	copyTestDBFixture(t, dbPath, thumbsDBPath)
 
 	cfg := config.DefaultConfig()
 	cfg.DBMaxPoolSize = 10
@@ -285,12 +290,7 @@ func TestCreateDatabasePools_ZeroIntervalClampedToDefault(t *testing.T) {
 	dbPath := filepath.Join(tempDir, "test.db")
 	thumbsDBPath := filepath.Join(tempDir, "thumbs.db")
 
-	if _, err := migrateDB(dbPath); err != nil {
-		t.Fatalf("migrateDB failed: %v", err)
-	}
-	if _, err := migrateBlobsDB(thumbsDBPath); err != nil {
-		t.Fatalf("migrateBlobsDB failed: %v", err)
-	}
+	copyTestDBFixture(t, dbPath, thumbsDBPath)
 
 	cfg := config.DefaultConfig()
 	cfg.DBPoolMonitorInterval = 0
@@ -322,12 +322,7 @@ func TestCreateDatabasePools_PositiveIntervalApplied(t *testing.T) {
 	dbPath := filepath.Join(tempDir, "test.db")
 	thumbsDBPath := filepath.Join(tempDir, "thumbs.db")
 
-	if _, err := migrateDB(dbPath); err != nil {
-		t.Fatalf("migrateDB failed: %v", err)
-	}
-	if _, err := migrateBlobsDB(thumbsDBPath); err != nil {
-		t.Fatalf("migrateBlobsDB failed: %v", err)
-	}
+	copyTestDBFixture(t, dbPath, thumbsDBPath)
 
 	cfg := config.DefaultConfig()
 	cfg.DBPoolMonitorInterval = 30 * time.Second
@@ -355,12 +350,7 @@ func TestEnsureRootFolderExists(t *testing.T) {
 	dbPath := filepath.Join(tempDir, "sfpg.db")
 	thumbsDBPath := filepath.Join(tempDir, "thumbs.db")
 
-	if _, err := migrateDB(dbPath); err != nil {
-		t.Fatalf("migrateDB failed: %v", err)
-	}
-	if _, err := migrateBlobsDB(thumbsDBPath); err != nil {
-		t.Fatalf("migrateBlobsDB failed: %v", err)
-	}
+	copyTestDBFixture(t, dbPath, thumbsDBPath)
 
 	ro, rw := configureDatabaseDSN(dbPath)
 	dbRwPool, dbRoPool, err := createDatabasePools(ctx, ro, rw, thumbsDBPath, nil)
@@ -636,41 +626,7 @@ func TestCreateDatabasePools_RoPoolFails(t *testing.T) {
 	tempDir := t.TempDir()
 	tempDB := filepath.Join(tempDir, "test.db")
 	thumbsDBPath := filepath.Join(tempDir, "thumbs.db")
-
-	// Run main migrations
-	db, err := sql.Open("sqlite3", "file:"+filepath.ToSlash(tempDB))
-	if err != nil {
-		t.Fatalf("failed to open test database: %v", err)
-	}
-
-	driver, err := sqlite.WithInstance(db, &sqlite.Config{})
-	if err != nil {
-		db.Close()
-		t.Fatalf("failed to create sqlite driver instance: %v", err)
-	}
-
-	d, err := iofs.New(migrations.FS, "migrations")
-	if err != nil {
-		db.Close()
-		t.Fatalf("failed to create iofs source driver: %v", err)
-	}
-
-	m, err := migrate.NewWithInstance("iofs", d, "sqlite", driver)
-	if err != nil {
-		db.Close()
-		t.Fatalf("failed to create migrate instance: %v", err)
-	}
-
-	if upErr := m.Up(); upErr != nil && !errors.Is(upErr, migrate.ErrNoChange) {
-		db.Close()
-		t.Fatalf("failed to apply migrations: %v", upErr)
-	}
-	db.Close()
-
-	// Run thumbs migration
-	if _, migErr := migrateBlobsDB(thumbsDBPath); migErr != nil {
-		t.Fatalf("migrateBlobsDB failed: %v", migErr)
-	}
+	copyTestDBFixture(t, tempDB, thumbsDBPath)
 
 	ro := "file:" + filepath.ToSlash(tempDB) + "?mode=ro"
 	rw := "file:" + filepath.ToSlash(tempDB) + "?_txlock=immediate&mode=rwc"
@@ -686,7 +642,7 @@ func TestCreateDatabasePools_RoPoolFails(t *testing.T) {
 	}
 	t.Cleanup(func() { newDbSQLConnPool = orig })
 
-	_, _, err = createDatabasePools(ctx, ro, rw, thumbsDBPath, nil)
+	_, _, err := createDatabasePools(ctx, ro, rw, thumbsDBPath, nil)
 	if err == nil {
 		t.Fatal("expected error")
 	}

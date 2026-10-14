@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { goToGallery } from "./helpers";
+import { ensureInfoBoxWrapperVisible, goToGallery } from "./helpers";
 import {
   getFirstFolderID,
   getFirstFileID,
@@ -89,7 +89,6 @@ async function leaveGalleryGrid(page: Page): Promise<void> {
   } else {
     await page.locator("#hamburger-menu-btn").hover({ force: true });
   }
-  await page.waitForTimeout(300);
 }
 
 test.describe("Info Box", () => {
@@ -129,27 +128,9 @@ test.describe("Info Box", () => {
     await goToGallery(page, folderID);
 
     // Ensure info box wrapper is visible
-    const wrapper = page.locator("#box_info_wrapper");
-    if (await wrapper.evaluate((el) => el.classList.contains("hidden"))) {
-      await page.locator("#info-btn").click();
-      await page.waitForTimeout(200);
-    }
+    await ensureInfoBoxWrapperVisible(page);
 
-    // Hover over a subfolder tile that appears on the root gallery page
-    const folderTile = page.locator(`#gallery-tile-${subfolderID}`).first();
-    await expect(folderTile).toBeVisible({ timeout: 5000 });
-
-    await folderTile.hover();
-    await page.waitForTimeout(1500); // mouseenter delay:1000ms
-
-    // Wait for info box to load the folder info
-    await page.waitForSelector(
-      `#inner_box_info[data-info-id="${subfolderID}"]`,
-      {
-        state: "attached",
-        timeout: 10000,
-      },
-    );
+    await hoverTileForInfo(page, subfolderID);
     const name = getFolderName(subfolderID);
     if (name) {
       await expect(page.locator("#box_info")).toContainText(name, {
@@ -162,26 +143,9 @@ test.describe("Info Box", () => {
     await goToGallery(page, fileFolderID);
 
     // Ensure info box wrapper is visible
-    const wrapper = page.locator("#box_info_wrapper");
-    if (await wrapper.evaluate((el) => el.classList.contains("hidden"))) {
-      await page.locator("#info-btn").click();
-      await page.waitForTimeout(200);
-    }
+    await ensureInfoBoxWrapperVisible(page);
 
-    // Hover over the image tile (scroll into view first — it may be below the fold)
-    const imgTile = page.locator(`#gallery-tile-${fileID}`).first();
-    await expect(imgTile).toBeAttached({ timeout: 5000 });
-    await imgTile.scrollIntoViewIfNeeded();
-    await page.waitForTimeout(200);
-
-    await imgTile.hover();
-    await page.waitForTimeout(1500); // mouseenter delay:1000ms
-
-    // Wait for info box to load image info
-    await page.waitForSelector(`#inner_box_info[data-info-id="${fileID}"]`, {
-      state: "attached",
-      timeout: 10000,
-    });
+    await hoverTileForInfo(page, fileID);
     const filename = getFileName(fileID);
     if (filename) {
       await expect(page.locator("#box_info")).toContainText(filename, {
@@ -195,40 +159,35 @@ test.describe("Info Box", () => {
     await goToGallery(page, folderID);
 
     // Ensure info box wrapper is visible
-    const wrapper = page.locator("#box_info_wrapper");
-    if (await wrapper.evaluate((el) => el.classList.contains("hidden"))) {
-      await page.locator("#info-btn").click();
-      await page.waitForTimeout(200);
-    }
+    await ensureInfoBoxWrapperVisible(page);
 
-    // Hover the first gallery tile to load an info box
-    const firstTile = page.locator(".gallery-tile").first();
-    await firstTile.hover();
-    await page.waitForTimeout(1500);
+    const firstTile = page.locator('[id^="gallery-tile-"]').first();
+    await expect(firstTile).toBeVisible({ timeout: 5000 });
+    const firstID = await firstTile.getAttribute("id");
+    const firstTileID = firstID?.replace("gallery-tile-", "");
+    expect(firstTileID).toBeTruthy();
+    await hoverTileForInfo(page, Number(firstTileID));
     const firstInfoID = await page
       .locator("#inner_box_info")
       .getAttribute("data-info-id");
     expect(firstInfoID).not.toBeNull();
 
-    // Try a different tile
-    const allTiles = page.locator(".gallery-tile");
+    const allTiles = page.locator('[id^="gallery-tile-"]');
     const count = await allTiles.count();
     if (count < 2) {
       test.skip(true, "Need at least 2 tiles on this page");
       return;
     }
-    const secondTile = allTiles.nth(count > 1 ? 1 : 0);
-    if (secondTile) {
-      await secondTile.hover();
-      await page.waitForTimeout(1500);
-      const secondInfoID = await page
-        .locator("#inner_box_info")
-        .getAttribute("data-info-id");
+    const secondTile = allTiles.nth(1);
+    const secondAttr = await secondTile.getAttribute("id");
+    const secondTileID = secondAttr?.replace("gallery-tile-", "");
+    expect(secondTileID).toBeTruthy();
+    await hoverTileForInfo(page, Number(secondTileID));
+    const secondInfoID = await page
+      .locator("#inner_box_info")
+      .getAttribute("data-info-id");
 
-      if (count >= 2) {
-        expect(secondInfoID).not.toBe(firstInfoID);
-      }
-    }
+    expect(secondInfoID).not.toBe(firstInfoID);
   });
 
   test("6: Pinned info box survives mouseleave from gallery grid", async ({

@@ -1,103 +1,18 @@
-//go:build integration
-
+//nolint:govet // legacy DB integration tests reuse err in subtests
 package gallerydb
 
 import (
 	"context"
 	"database/sql"
-	"fmt"
-	"path/filepath"
+	"errors"
 	"testing"
 	"time"
 
-	"github.com/golang-migrate/migrate/v4"
-	"github.com/golang-migrate/migrate/v4/database/sqlite"
-	"github.com/golang-migrate/migrate/v4/source/iofs" // Added
 	_ "github.com/ncruces/go-sqlite3/driver"
-	_ "github.com/ncruces/go-sqlite3/embed"
-
-	"github.com/lbe/sfpg-go/migrations" // Added
 )
-
-// setupTestDB creates a temp file SQLite database for testing, applies migrations,
-// attaches thumbs.db, and returns a connection, a queries object, and a context.
-func setupTestDB(t *testing.T) (*sql.DB, *CustomQueries, context.Context) {
-	t.Helper()
-
-	// Use temp file database to support ATTACH for thumbs.db
-	tempDir := t.TempDir()
-	mainDBPath := filepath.Join(tempDir, "test.db")
-	thumbsDBPath := filepath.Join(tempDir, "thumbs.db")
-
-	db, err := sql.Open("sqlite3", "file:"+filepath.ToSlash(mainDBPath))
-	if err != nil {
-		t.Fatalf("failed to open test database: %v", err)
-	}
-
-	// Apply main database migrations
-	driver, err := sqlite.WithInstance(db, &sqlite.Config{})
-	if err != nil {
-		db.Close()
-		t.Fatalf("failed to create sqlite driver instance: %v", err)
-	}
-
-	d, err := iofs.New(migrations.FS, "migrations")
-	if err != nil {
-		db.Close()
-		t.Fatalf("failed to create iofs source driver: %v", err)
-	}
-
-	m, err := migrate.NewWithInstance("iofs", d, "sqlite", driver)
-	if err != nil {
-		db.Close()
-		t.Fatalf("failed to create migrate instance: %v", err)
-	}
-	if migErr := m.Up(); migErr != nil && migErr != migrate.ErrNoChange {
-		// Force clean state in case of dirty database
-		if _, isDirty := migErr.(migrate.ErrDirty); isDirty {
-			m.Force(1)
-		} else {
-			db.Close()
-			t.Fatalf("failed to apply migrations: %v", migErr)
-		}
-	}
-
-	// Apply thumbs database migrations
-	thumbsMigrator, err := migrations.NewThumbsMigrator(thumbsDBPath)
-	if err != nil {
-		db.Close()
-		t.Fatalf("failed to create thumbs migrator: %v", err)
-	}
-	if thumbsErr := thumbsMigrator.Up(); thumbsErr != nil && thumbsErr != migrate.ErrNoChange {
-		db.Close()
-		t.Fatalf("failed to apply thumbs migrations: %v", thumbsErr)
-	}
-	thumbsMigrator.Close()
-
-	// ATTACH thumbs.db
-	if _, err := db.ExecContext(context.Background(),
-		fmt.Sprintf("ATTACH DATABASE 'file:%s' AS thumbs", filepath.ToSlash(thumbsDBPath))); err != nil {
-		db.Close()
-		t.Fatalf("failed to attach thumbs: %v", err)
-	}
-
-	ctx := context.Background()
-	q, err := PrepareCustomQueries(ctx, db)
-	if err != nil {
-		db.Close()
-		t.Fatalf("failed to prepare queries: %v", err)
-	}
-
-	t.Cleanup(func() {
-		db.Close()
-	})
-
-	return db, q, ctx
-}
 
 func TestThumbnailQueries(t *testing.T) {
 	_, q, ctx := setupTestDB(t)
-
 	// 1. Create a file to associate the thumbnail with
 	folderPathID, _ := q.UpsertFolderPathReturningID(ctx, "/thumbs")
 	folder, _ := q.UpsertFolderReturningFolder(ctx, UpsertFolderReturningFolderParams{
@@ -117,7 +32,6 @@ func TestThumbnailQueries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create file for thumbnail test: %v", err)
 	}
-
 	// 2. Create a thumbnail record
 	thumbID, err := q.UpsertThumbnailReturningID(ctx, UpsertThumbnailReturningIDParams{
 		FileID:    file.ID,
@@ -131,7 +45,6 @@ func TestThumbnailQueries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpsertThumbnailReturningID failed: %v", err)
 	}
-
 	// 3. Insert the thumbnail blob data
 	thumbData := []byte{0xFF, 0xD8, 0xFF, 0xE0} // Minimal JPEG SOI marker
 	err = q.UpsertThumbnailBlob(ctx, UpsertThumbnailBlobParams{
@@ -141,7 +54,6 @@ func TestThumbnailQueries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpsertThumbnailBlob failed: %v", err)
 	}
-
 	// 4. Verify retrieval of the blob
 	retrievedData, err := q.GetThumbnailBlobDataByID(ctx, thumbID)
 	if err != nil {
@@ -150,7 +62,6 @@ func TestThumbnailQueries(t *testing.T) {
 	if string(retrievedData) != string(thumbData) {
 		t.Errorf("Expected thumbnail data %v, got %v", thumbData, retrievedData)
 	}
-
 	// 5. Verify the thumbnail exists view
 	exists, err := q.GetThumbnailExistsViewByID(ctx, file.ID)
 	if err != nil {
@@ -160,10 +71,8 @@ func TestThumbnailQueries(t *testing.T) {
 		t.Error("Expected GetThumbnailExistsViewByID to return true, but it returned false")
 	}
 }
-
 func TestMetadataQueries(t *testing.T) {
 	_, q, ctx := setupTestDB(t)
-
 	// Create a file to associate metadata with
 	folderPathID, _ := q.UpsertFolderPathReturningID(ctx, "/meta")
 	folder, _ := q.UpsertFolderReturningFolder(ctx, UpsertFolderReturningFolderParams{PathID: folderPathID, Name: "meta", CreatedAt: time.Now().Unix(), UpdatedAt: time.Now().Unix()})
@@ -178,7 +87,6 @@ func TestMetadataQueries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create file for metadata test: %v", err)
 	}
-
 	t.Run("EXIF", func(t *testing.T) {
 		err := q.UpsertExif(ctx, UpsertExifParams{
 			FileID:      file.ID,
@@ -196,7 +104,6 @@ func TestMetadataQueries(t *testing.T) {
 			t.Errorf("Expected CameraMake 'TestMake', got %v", exif.CameraMake)
 		}
 	})
-
 	t.Run("IPTC", func(t *testing.T) {
 		err := q.UpsertIPTC(ctx, UpsertIPTCParams{
 			FileID: file.ID,
@@ -217,11 +124,10 @@ func TestMetadataQueries(t *testing.T) {
 			t.Fatalf("DeleteIPTC failed: %v", err)
 		}
 		_, err = q.GetIPTCByFile(ctx, file.ID)
-		if err != sql.ErrNoRows {
+		if !errors.Is(err, sql.ErrNoRows) {
 			t.Errorf("Expected sql.ErrNoRows after delete, got %v", err)
 		}
 	})
-
 	t.Run("XMP", func(t *testing.T) {
 		err := q.UpsertXMPRaw(ctx, UpsertXMPRawParams{
 			FileID: file.ID,
@@ -242,7 +148,7 @@ func TestMetadataQueries(t *testing.T) {
 			t.Fatalf("DeleteXMPRaw failed: %v", err)
 		}
 		_, err = q.GetXMPRaw(ctx, file.ID)
-		if err != sql.ErrNoRows {
+		if !errors.Is(err, sql.ErrNoRows) {
 			t.Errorf("Expected sql.ErrNoRows after delete, got %v", err)
 		}
 	})
@@ -251,7 +157,6 @@ func TestMetadataQueries(t *testing.T) {
 // TestIPTCKeywordQueries tests IPTC keyword queries
 func TestIPTCKeywordQueries(t *testing.T) {
 	_, q, ctx := setupTestDB(t)
-
 	// Create a file to associate keywords with
 	folderPathID, _ := q.UpsertFolderPathReturningID(ctx, "/iptc")
 	folder, _ := q.UpsertFolderReturningFolder(ctx, UpsertFolderReturningFolderParams{
@@ -271,7 +176,6 @@ func TestIPTCKeywordQueries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create file for IPTC keyword test: %v", err)
 	}
-
 	t.Run("InsertIPTCKeyword and GetIPTCKeywords", func(t *testing.T) {
 		// Insert keywords
 		keywords := []string{"sunset", "beach", "vacation"}
@@ -285,7 +189,6 @@ func TestIPTCKeywordQueries(t *testing.T) {
 				t.Fatalf("InsertIPTCKeyword failed for %s: %v", kw, err)
 			}
 		}
-
 		// Get all keywords for the file
 		retrieved, err := q.GetIPTCKeywords(ctx, file.ID)
 		if err != nil {
@@ -294,7 +197,6 @@ func TestIPTCKeywordQueries(t *testing.T) {
 		if len(retrieved) != len(keywords) {
 			t.Errorf("Expected %d keywords, got %d", len(keywords), len(retrieved))
 		}
-
 		// Verify keywords match
 		foundKeywords := make(map[string]bool)
 		for _, kw := range retrieved {
@@ -306,7 +208,6 @@ func TestIPTCKeywordQueries(t *testing.T) {
 			}
 		}
 	})
-
 	t.Run("GetIPTCKeywords_Empty", func(t *testing.T) {
 		// Create a file with no keywords
 		noKwPathID, _ := q.UpsertFilePathReturningID(ctx, "/iptc/nokw.jpg")
@@ -317,7 +218,6 @@ func TestIPTCKeywordQueries(t *testing.T) {
 			CreatedAt: time.Now().Unix(),
 			UpdatedAt: time.Now().Unix(),
 		})
-
 		keywords, err := q.GetIPTCKeywords(ctx, noKwFile.ID)
 		if err != nil {
 			t.Fatalf("GetIPTCKeywords (empty) failed: %v", err)
@@ -326,7 +226,6 @@ func TestIPTCKeywordQueries(t *testing.T) {
 			t.Errorf("Expected 0 keywords, got %d", len(keywords))
 		}
 	})
-
 	t.Run("DeleteIPTCKeyword", func(t *testing.T) {
 		// Insert a keyword to delete
 		err := q.InsertIPTCKeyword(ctx, InsertIPTCKeywordParams{
@@ -337,7 +236,6 @@ func TestIPTCKeywordQueries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("InsertIPTCKeyword for delete test failed: %v", err)
 		}
-
 		// Verify it exists
 		keywords, _ := q.GetIPTCKeywords(ctx, file.ID)
 		foundBefore := false
@@ -350,13 +248,11 @@ func TestIPTCKeywordQueries(t *testing.T) {
 		if !foundBefore {
 			t.Error("Keyword 'toberemoved' should exist before delete")
 		}
-
 		// Delete the keyword
 		err = q.DeleteIPTCKeyword(ctx, 999)
 		if err != nil {
 			t.Fatalf("DeleteIPTCKeyword failed: %v", err)
 		}
-
 		// Verify it's gone
 		keywords, _ = q.GetIPTCKeywords(ctx, file.ID)
 		foundAfter := false
@@ -375,7 +271,6 @@ func TestIPTCKeywordQueries(t *testing.T) {
 // TestXMPPropertyQueries tests XMP property queries
 func TestXMPPropertyQueries(t *testing.T) {
 	_, q, ctx := setupTestDB(t)
-
 	// Create a file to associate XMP properties with
 	folderPathID, _ := q.UpsertFolderPathReturningID(ctx, "/xmp")
 	folder, _ := q.UpsertFolderReturningFolder(ctx, UpsertFolderReturningFolderParams{
@@ -395,7 +290,6 @@ func TestXMPPropertyQueries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create file for XMP property test: %v", err)
 	}
-
 	t.Run("UpsertXMPProperty and GetXMPPropertiesByFile", func(t *testing.T) {
 		// Insert XMP properties
 		properties := []UpsertXMPPropertyParams{
@@ -403,14 +297,12 @@ func TestXMPPropertyQueries(t *testing.T) {
 			{ID: 2, FileID: file.ID, Namespace: "dc", Property: "description", Value: sql.NullString{String: "A nice photo", Valid: true}},
 			{ID: 3, FileID: file.ID, Namespace: "exif", Property: "FNumber", Value: sql.NullString{String: "2.8", Valid: true}},
 		}
-
 		for _, prop := range properties {
 			err := q.UpsertXMPProperty(ctx, prop)
 			if err != nil {
 				t.Fatalf("UpsertXMPProperty failed: %v", err)
 			}
 		}
-
 		// Get all properties for the file
 		retrieved, err := q.GetXMPPropertiesByFile(ctx, file.ID)
 		if err != nil {
@@ -419,7 +311,6 @@ func TestXMPPropertyQueries(t *testing.T) {
 		if len(retrieved) != len(properties) {
 			t.Errorf("Expected %d properties, got %d", len(properties), len(retrieved))
 		}
-
 		// Find specific properties
 		foundTitle := false
 		foundDescription := false
@@ -454,7 +345,6 @@ func TestXMPPropertyQueries(t *testing.T) {
 			t.Error("Did not find XMP FNumber property")
 		}
 	})
-
 	t.Run("GetXMPPropertiesByFile_Empty", func(t *testing.T) {
 		// Create a file with no XMP properties
 		noXmpPathID, _ := q.UpsertFilePathReturningID(ctx, "/xmp/noxmp.jpg")
@@ -465,7 +355,6 @@ func TestXMPPropertyQueries(t *testing.T) {
 			CreatedAt: time.Now().Unix(),
 			UpdatedAt: time.Now().Unix(),
 		})
-
 		props, err := q.GetXMPPropertiesByFile(ctx, noXmpFile.ID)
 		if err != nil {
 			t.Fatalf("GetXMPPropertiesByFile (empty) failed: %v", err)
@@ -474,7 +363,6 @@ func TestXMPPropertyQueries(t *testing.T) {
 			t.Errorf("Expected 0 properties, got %d", len(props))
 		}
 	})
-
 	t.Run("UpsertXMPProperty_Update", func(t *testing.T) {
 		// Update the title property
 		err := q.UpsertXMPProperty(ctx, UpsertXMPPropertyParams{
@@ -487,12 +375,10 @@ func TestXMPPropertyQueries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("UpsertXMPProperty (update) failed: %v", err)
 		}
-
 		props, err := q.GetXMPPropertiesByFile(ctx, file.ID)
 		if err != nil {
 			t.Fatalf("GetXMPPropertiesByFile (after update) failed: %v", err)
 		}
-
 		foundUpdated := false
 		for _, prop := range props {
 			if prop.Namespace == "dc" && prop.Property == "title" {
@@ -506,7 +392,6 @@ func TestXMPPropertyQueries(t *testing.T) {
 			t.Error("Did not find updated XMP title property")
 		}
 	})
-
 	t.Run("DeleteXMPProperty", func(t *testing.T) {
 		// Insert a property to delete
 		err := q.UpsertXMPProperty(ctx, UpsertXMPPropertyParams{
@@ -519,7 +404,6 @@ func TestXMPPropertyQueries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("UpsertXMPProperty for delete test failed: %v", err)
 		}
-
 		// Verify it exists
 		props, _ := q.GetXMPPropertiesByFile(ctx, file.ID)
 		foundBefore := false
@@ -532,13 +416,11 @@ func TestXMPPropertyQueries(t *testing.T) {
 		if !foundBefore {
 			t.Error("Property 'toberemoved' should exist before delete")
 		}
-
 		// Delete the property
 		err = q.DeleteXMPProperty(ctx, 888)
 		if err != nil {
 			t.Fatalf("DeleteXMPProperty failed: %v", err)
 		}
-
 		// Verify it's gone
 		props, _ = q.GetXMPPropertiesByFile(ctx, file.ID)
 		foundAfter := false
@@ -557,7 +439,6 @@ func TestXMPPropertyQueries(t *testing.T) {
 // TestGetThumbnailsByFileID tests getting thumbnails by file ID
 func TestGetThumbnailsByFileID(t *testing.T) {
 	_, q, ctx := setupTestDB(t)
-
 	// Create folder and file
 	folderPathID, _ := q.UpsertFolderPathReturningID(ctx, "/thumbtest")
 	folder, _ := q.UpsertFolderReturningFolder(ctx, UpsertFolderReturningFolderParams{
@@ -577,7 +458,6 @@ func TestGetThumbnailsByFileID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create file: %v", err)
 	}
-
 	t.Run("GetThumbnailsByFileID_Existing", func(t *testing.T) {
 		// Create a thumbnail
 		thumbID, err := q.UpsertThumbnailReturningID(ctx, UpsertThumbnailReturningIDParams{
@@ -592,7 +472,6 @@ func TestGetThumbnailsByFileID(t *testing.T) {
 		if err != nil {
 			t.Fatalf("UpsertThumbnailReturningID failed: %v", err)
 		}
-
 		// Get thumbnail by file ID
 		thumbnail, err := q.GetThumbnailsByFileID(ctx, file.ID)
 		if err != nil {
@@ -617,7 +496,6 @@ func TestGetThumbnailsByFileID(t *testing.T) {
 			t.Errorf("Expected format 'jpeg', got %s", thumbnail.Format)
 		}
 	})
-
 	t.Run("GetThumbnailsByFileID_NonExistent", func(t *testing.T) {
 		// Try to get thumbnail for a file without one
 		noThumbPathID, _ := q.UpsertFilePathReturningID(ctx, "/thumbtest/nothumb.jpg")
@@ -628,11 +506,10 @@ func TestGetThumbnailsByFileID(t *testing.T) {
 			CreatedAt: time.Now().Unix(),
 			UpdatedAt: time.Now().Unix(),
 		})
-
 		_, err := q.GetThumbnailsByFileID(ctx, noThumbFile.ID)
 		if err == nil {
 			t.Error("expected error when getting thumbnail for file without one, but got nil")
-		} else if err != sql.ErrNoRows {
+		} else if !errors.Is(err, sql.ErrNoRows) {
 			t.Errorf("expected sql.ErrNoRows, got %v", err)
 		}
 	})
@@ -645,7 +522,6 @@ func TestNewAndClose(t *testing.T) {
 		t.Fatalf("failed to open test database: %v", err)
 	}
 	defer db.Close()
-
 	t.Run("New", func(t *testing.T) {
 		q := New(db)
 		if q == nil {
@@ -656,48 +532,13 @@ func TestNewAndClose(t *testing.T) {
 			t.Error("New() did not set db correctly")
 		}
 	})
-
 	t.Run("Close", func(t *testing.T) {
-		// Setup migrations
-		driver, err := sqlite.WithInstance(db, &sqlite.Config{})
-		if err != nil {
-			t.Fatalf("failed to create sqlite driver: %v", err)
-		}
-		d, err := iofs.New(migrations.FS, "migrations")
-		if err != nil {
-			t.Fatalf("failed to create iofs source: %v", err)
-		}
-		m, err := migrate.NewWithInstance("iofs", d, "sqlite", driver)
-		if err != nil {
-			t.Fatalf("failed to create migrate instance: %v", err)
-		}
-		if migErr := m.Up(); migErr != nil && migErr != migrate.ErrNoChange {
-			t.Fatalf("failed to apply migrations: %v", migErr)
-		}
-
-		// Setup thumbs.db for custom queries
-		thumbsDBPath := filepath.Join(t.TempDir(), "test_thumbs.db")
-		thumbsMigrator, err := migrations.NewThumbsMigrator(thumbsDBPath)
-		if err != nil {
-			t.Fatalf("failed to create thumbs migrator: %v", err)
-		}
-		if thumbsErr := thumbsMigrator.Up(); thumbsErr != nil && thumbsErr != migrate.ErrNoChange {
-			t.Fatalf("failed to apply thumbs migrations: %v", thumbsErr)
-		}
-		thumbsMigrator.Close()
-
-		// ATTACH thumbs.db
-		if _, err := db.ExecContext(context.Background(),
-			fmt.Sprintf("ATTACH DATABASE 'file:%s' AS thumbs", filepath.ToSlash(thumbsDBPath))); err != nil {
-			t.Fatalf("failed to attach thumbs: %v", err)
-		}
-
+		isolatedDB := newIsolatedGallerySQLDB(t)
 		ctx := context.Background()
-		q, err := PrepareCustomQueries(ctx, db)
+		q, err := PrepareCustomQueries(ctx, isolatedDB)
 		if err != nil {
 			t.Fatalf("Prepare() failed: %v", err)
 		}
-
 		// Close should succeed
 		err = q.Close()
 		if err != nil {
@@ -705,12 +546,10 @@ func TestNewAndClose(t *testing.T) {
 		}
 	})
 }
-
 func TestCustomQueriesThumbsDB(t *testing.T) {
 	// This test requires thumbs.db to be ATTACHed as "thumbs".
 	// setupTestDB provides that attachment.
 	_, q, ctx := setupTestDB(t)
-
 	// Create test folder
 	pathID, err := q.UpsertFolderPathReturningID(ctx, "/test")
 	if err != nil {
@@ -725,7 +564,6 @@ func TestCustomQueriesThumbsDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpsertFolderReturningFolder: %v", err)
 	}
-
 	// Create test file
 	filePath := "/test/test.jpg"
 	filePathID, err := q.UpsertFilePathReturningID(ctx, filePath)
@@ -745,7 +583,6 @@ func TestCustomQueriesThumbsDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpsertFileReturningFile: %v", err)
 	}
-
 	// Create thumbnail
 	thumbID, err := q.UpsertThumbnailReturningID(ctx, UpsertThumbnailReturningIDParams{
 		FileID:    file.ID,
@@ -759,7 +596,6 @@ func TestCustomQueriesThumbsDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpsertThumbnailReturningID: %v", err)
 	}
-
 	// Test UpsertThumbnailBlob (uses thumbs.thumbnail_blobs)
 	blobData := []byte("fake-jpeg-data")
 	err = q.UpsertThumbnailBlob(ctx, UpsertThumbnailBlobParams{
@@ -769,7 +605,6 @@ func TestCustomQueriesThumbsDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpsertThumbnailBlob: %v", err)
 	}
-
 	// Test GetThumbnailBlobDataByID (uses thumbs.thumbnail_blobs)
 	got, err := q.GetThumbnailBlobDataByID(ctx, thumbID)
 	if err != nil {
@@ -779,15 +614,12 @@ func TestCustomQueriesThumbsDB(t *testing.T) {
 		t.Errorf("blob mismatch: got %q, want %q", got, blobData)
 	}
 }
-
 func TestModuleStateQueries(t *testing.T) {
 	_, q, ctx := setupTestDB(t)
-
 	_, err := q.GetModuleState(ctx, "discovery")
-	if err != sql.ErrNoRows {
+	if !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("expected sql.ErrNoRows, got %v", err)
 	}
-
 	startedAt := time.Now().Unix()
 	err = q.SetModuleState(ctx, SetModuleStateParams{
 		Name:          "discovery",
@@ -797,7 +629,6 @@ func TestModuleStateQueries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetModuleState failed: %v", err)
 	}
-
 	state, err := q.GetModuleState(ctx, "discovery")
 	if err != nil {
 		t.Fatalf("GetModuleState failed: %v", err)
@@ -808,7 +639,6 @@ func TestModuleStateQueries(t *testing.T) {
 	if !state.LastStartedAt.Valid || state.LastStartedAt.Int64 != startedAt {
 		t.Errorf("expected LastStartedAt=%d, got %v", startedAt, state.LastStartedAt)
 	}
-
 	finishedAt := startedAt + 10
 	err = q.SetModuleState(ctx, SetModuleStateParams{
 		Name:           "discovery",
@@ -818,7 +648,6 @@ func TestModuleStateQueries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetModuleState (update) failed: %v", err)
 	}
-
 	state, err = q.GetModuleState(ctx, "discovery")
 	if err != nil {
 		t.Fatalf("GetModuleState (after update) failed: %v", err)
@@ -836,9 +665,7 @@ func TestModuleStateQueries(t *testing.T) {
 // flips the module inactive. SetModuleState must never clobber the payload column.
 func TestModuleStatePayload_PreservedAcrossSetActive(t *testing.T) {
 	_, q, ctx := setupTestDB(t)
-
 	payloadJSON := `{"file_processing":{"total_found":7,"already_existing":6,"newly_inserted":1,"skipped_invalid":2}}`
-
 	startedAt := time.Now().Unix()
 	err := q.SetModuleState(ctx, SetModuleStateParams{
 		Name:          "discovery",
@@ -848,14 +675,12 @@ func TestModuleStatePayload_PreservedAcrossSetActive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetModuleState (active) failed: %v", err)
 	}
-
 	if err := q.SetModuleStatePayload(ctx, SetModuleStatePayloadParams{
 		Name:    "discovery",
 		Payload: sql.NullString{String: payloadJSON, Valid: true},
 	}); err != nil {
 		t.Fatalf("SetModuleStatePayload failed: %v", err)
 	}
-
 	state, err := q.GetModuleState(ctx, "discovery")
 	if err != nil {
 		t.Fatalf("GetModuleState failed: %v", err)
@@ -866,7 +691,6 @@ func TestModuleStatePayload_PreservedAcrossSetActive(t *testing.T) {
 	if state.Payload.String != payloadJSON {
 		t.Errorf("payload mismatch:\n got %q\nwant %q", state.Payload.String, payloadJSON)
 	}
-
 	finishedAt := startedAt + 10
 	err = q.SetModuleState(ctx, SetModuleStateParams{
 		Name:           "discovery",
@@ -876,7 +700,6 @@ func TestModuleStatePayload_PreservedAcrossSetActive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetModuleState (inactive) failed: %v", err)
 	}
-
 	state, err = q.GetModuleState(ctx, "discovery")
 	if err != nil {
 		t.Fatalf("GetModuleState (after inactive) failed: %v", err)
@@ -892,84 +715,56 @@ func TestModuleStatePayload_PreservedAcrossSetActive(t *testing.T) {
 	}
 }
 
-func seedIPTCKeywordRows(t *testing.T, q *CustomQueries, ctx context.Context) int64 {
-	t.Helper()
-	folderPathID, err := q.UpsertFolderPathReturningID(ctx, "/seediptc")
-	if err != nil {
-		t.Fatalf("UpsertFolderPathReturningID failed: %v", err)
-	}
-	folder, err := q.UpsertFolderReturningFolder(ctx, UpsertFolderReturningFolderParams{
-		PathID:    folderPathID,
-		Name:      "seediptc",
+// TestIsolatedTestDatabasesObserveNoSharedState verifies that an isolated
+// memory-backed test database cannot observe rows written to the shared
+// harness or to another isolated database.
+func TestIsolatedTestDatabasesObserveNoSharedState(t *testing.T) {
+	_, sharedQ, sharedCtx := setupTestDB(t)
+	const markerKey = "testdb-isolation-marker"
+	if err := sharedQ.UpsertConfigValueOnly(sharedCtx, UpsertConfigValueOnlyParams{
+		Key:       markerKey,
+		Value:     "shared",
 		CreatedAt: time.Now().Unix(),
 		UpdatedAt: time.Now().Unix(),
-	})
-	if err != nil {
-		t.Fatalf("UpsertFolderReturningFolder failed: %v", err)
+	}); err != nil {
+		t.Fatalf("UpsertConfigValueOnly (shared): %v", err)
 	}
-	filePathID, err := q.UpsertFilePathReturningID(ctx, "/seediptc/photo.jpg")
-	if err != nil {
-		t.Fatalf("UpsertFilePathReturningID failed: %v", err)
-	}
-	file, err := q.UpsertFileReturningFile(ctx, UpsertFileReturningFileParams{
-		FolderID:  sql.NullInt64{Int64: folder.ID, Valid: true},
-		PathID:    filePathID,
-		Filename:  "photo.jpg",
-		CreatedAt: time.Now().Unix(),
-		UpdatedAt: time.Now().Unix(),
-	})
-	if err != nil {
-		t.Fatalf("UpsertFileReturningFile failed: %v", err)
-	}
-	err = q.InsertIPTCKeyword(ctx, InsertIPTCKeywordParams{
-		ID:      1,
-		FileID:  file.ID,
-		Keyword: "seedkeyword",
-	})
-	if err != nil {
-		t.Fatalf("InsertIPTCKeyword failed: %v", err)
-	}
-	return file.ID
-}
 
-func seedXMPPropertyRows(t *testing.T, q *CustomQueries, ctx context.Context) int64 {
-	t.Helper()
-	folderPathID, err := q.UpsertFolderPathReturningID(ctx, "/seedxmp")
+	isolatedA := newIsolatedGallerySQLDB(t)
+	ctxA := context.Background()
+	qA, err := PrepareCustomQueries(ctxA, isolatedA)
 	if err != nil {
-		t.Fatalf("UpsertFolderPathReturningID failed: %v", err)
+		t.Fatalf("PrepareCustomQueries (isolated A): %v", err)
 	}
-	folder, err := q.UpsertFolderReturningFolder(ctx, UpsertFolderReturningFolderParams{
-		PathID:    folderPathID,
-		Name:      "seedxmp",
+	if exists, err := qA.ConfigKeyExists(ctxA, markerKey); err != nil {
+		t.Fatalf("ConfigKeyExists (isolated A): %v", err)
+	} else if exists {
+		t.Fatal("isolated database observed a row from the shared harness")
+	}
+	if err := qA.UpsertConfigValueOnly(ctxA, UpsertConfigValueOnlyParams{
+		Key:       markerKey,
+		Value:     "isolated-a",
 		CreatedAt: time.Now().Unix(),
 		UpdatedAt: time.Now().Unix(),
-	})
-	if err != nil {
-		t.Fatalf("UpsertFolderReturningFolder failed: %v", err)
+	}); err != nil {
+		t.Fatalf("UpsertConfigValueOnly (isolated A): %v", err)
 	}
-	filePathID, err := q.UpsertFilePathReturningID(ctx, "/seedxmp/photo.jpg")
+
+	isolatedB := newIsolatedGallerySQLDB(t)
+	ctxB := context.Background()
+	qB, err := PrepareCustomQueries(ctxB, isolatedB)
 	if err != nil {
-		t.Fatalf("UpsertFilePathReturningID failed: %v", err)
+		t.Fatalf("PrepareCustomQueries (isolated B): %v", err)
 	}
-	file, err := q.UpsertFileReturningFile(ctx, UpsertFileReturningFileParams{
-		FolderID:  sql.NullInt64{Int64: folder.ID, Valid: true},
-		PathID:    filePathID,
-		Filename:  "photo.jpg",
-		CreatedAt: time.Now().Unix(),
-		UpdatedAt: time.Now().Unix(),
-	})
-	if err != nil {
-		t.Fatalf("UpsertFileReturningFile failed: %v", err)
+	if exists, err := qB.ConfigKeyExists(ctxB, markerKey); err != nil {
+		t.Fatalf("ConfigKeyExists (isolated B): %v", err)
+	} else if exists {
+		t.Fatal("isolated database observed a row from another isolated database")
 	}
-	err = q.UpsertXMPProperty(ctx, UpsertXMPPropertyParams{
-		ID:        1,
-		FileID:    file.ID,
-		Namespace: "dc",
-		Property:  "title",
-		Value:     sql.NullString{String: "seed title", Valid: true},
-	})
-	if err != nil {
-		t.Fatalf("UpsertXMPProperty failed: %v", err)
+
+	if exists, err := sharedQ.ConfigKeyExists(sharedCtx, markerKey); err != nil {
+		t.Fatalf("ConfigKeyExists (shared): %v", err)
+	} else if !exists {
+		t.Fatal("shared harness lost its row to an isolated database")
 	}
-	return file.ID
 }

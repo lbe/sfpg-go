@@ -86,6 +86,11 @@ type InfrastructureTestSeams struct {
 	PragmaOptimizePollInterval time.Duration
 	PragmaOptimizeMaxWait      time.Duration
 
+	// BeginTxPoolGetErr, when non-nil, is returned from buildWriteBatcher's BeginTx
+	// closure instead of dbRwPool.Get. Exercises batcher error paths without closing
+	// the shared pool (required for in-memory DB tests).
+	BeginTxPoolGetErr error
+
 	// OnBeginTx is called (if non-nil) before production Get+BeginTx
 	// inside buildWriteBatcher's BeginTx closure. Observe-then-production:
 	// the hook runs first, then production Get + Conn.BeginTx always
@@ -95,6 +100,9 @@ type InfrastructureTestSeams struct {
 	// in OnSuccess/OnError. Observe-then-production: the hook runs first,
 	// then production Put always follows. The hook must not Put itself.
 	OnPut func()
+	// BeforeCloseDatabasePools runs on the App.Shutdown goroutine immediately
+	// before closeDatabasePools (tests only; nil in production).
+	BeforeCloseDatabasePools func()
 }
 
 // RuntimeManagerTestSeams holds optional test doubles for RuntimeManager.

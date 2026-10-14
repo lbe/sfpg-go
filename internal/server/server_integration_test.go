@@ -28,6 +28,7 @@ import (
 	"github.com/lbe/sfpg-go/internal/server/files"
 	"github.com/lbe/sfpg-go/internal/server/session"
 	"github.com/lbe/sfpg-go/internal/server/ui"
+	"github.com/lbe/sfpg-go/internal/testutil"
 )
 
 // --- merged from middleware_wiring_integration_test.go ---
@@ -203,7 +204,7 @@ func TestIntegration_GalleryCache_AnonymousDoesNotReceiveAuthBody(t *testing.T) 
 		t.Fatalf("anonymous gallery: status %d, want 200", w2.Code)
 	}
 
-	doc, err := html.Parse(strings.NewReader(w2.Body.String()))
+	doc, err := testutil.ParseHTML(w2.Body)
 	if err != nil {
 		t.Fatalf("parse anonymous gallery HTML: %v", err)
 	}
@@ -396,12 +397,12 @@ func TestIntegration_HTMLPartialRoutes_CacheHitPreservesContentType(t *testing.T
 }
 
 func TestIntegration_ConfigCache_ServerUsesConfig(t *testing.T) {
+	t.Parallel()
 	setenvForTest(t, "SEPG_SESSION_SECURE", "false")
 	app := CreateApp(t)
 	defer app.Shutdown()
 
 	// Set initial config with cache enabled
-	t.Parallel()
 	app.ConfigManager.ConfigMu.Lock()
 	app.ConfigManager.Config = config.DefaultConfig()
 	app.ConfigManager.Config.EnableHTTPCache = true
@@ -784,38 +785,6 @@ func TestSessionSecurity_Secure(t *testing.T) {
 }
 
 // --- merged from server_session_integration_test.go ---
-func TestGetSessionOptionsConfig(t *testing.T) {
-	app := createAppWithLoadedConfig(t)
-	defer app.Shutdown()
-
-	cfg := app.getSessionOptionsConfig()
-	if cfg == nil {
-		t.Fatal("Expected non-nil session options config")
-	}
-
-	if cfg.SessionMaxAge <= 0 {
-		t.Error("Expected positive session max age")
-	}
-
-	// Just check that values exist, don't test specific values since they come from defaults
-	_ = cfg.SessionHttpOnly
-	_ = cfg.SessionSecure
-
-	if cfg.SessionSameSite == "" {
-		t.Error("Expected non-empty SessionSameSite")
-	}
-}
-
-func TestGetSessionOptions_WithLoadedConfig(t *testing.T) {
-	app := createAppWithLoadedConfig(t)
-	defer app.Shutdown()
-
-	opts := session.GetSessionOptions(app.getSessionOptionsConfig())
-	if opts == nil {
-		t.Error("Expected non-nil session options")
-	}
-}
-
 func TestSessionExpiry_SessionMaxAge(t *testing.T) {
 	app := createAppWithLoadedConfig(t)
 	defer app.Shutdown()

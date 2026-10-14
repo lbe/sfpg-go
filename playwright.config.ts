@@ -46,8 +46,12 @@ export default defineConfig({
     },
     {
       name: "chromium",
-      use: { ...devices["Desktop Chrome"] },
-      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: authFile,
+      },
+      // Run after chromium-serial so config restart does not drop :8083 mid-suite.
+      dependencies: ["setup", "chromium-serial"],
       // Config, server-actions, and the htmx restart-alert fixture run in
       // the serial project below (fixture depends on :8083 static assets).
       testIgnore:

@@ -1,5 +1,11 @@
 import { test, expect } from "@playwright/test";
-import { goToGallery, loginViaUI, openMenu, menu } from "./helpers";
+import {
+  ensureGallerySession,
+  goToGallery,
+  guestStorageState,
+  openMenu,
+  menu,
+} from "./helpers";
 
 test.describe.configure({ timeout: 60000 });
 
@@ -25,19 +31,32 @@ test.describe("Layout & Static Assets", () => {
     expect(contentType).toContain("svg");
   });
 
-  test("4: Menu structure shows unauthenticated items", async ({ page }) => {
-    await goToGallery(page);
-    await openMenu(page);
+  test.describe("guest", () => {
+    test.use({ storageState: guestStorageState });
 
-    await expect(menu(page)).toBeVisible();
-    // Should have list items
-    const listItems = menu(page).locator("li");
-    const count = await listItems.count();
-    expect(count).toBeGreaterThan(0);
+    test("4: Menu structure shows unauthenticated items", async ({ page }) => {
+      await goToGallery(page);
+      await openMenu(page);
 
-    // Login and Theme should be visible
-    await expect(menu(page).getByText("Login", { exact: true })).toBeVisible();
-    await expect(menu(page).getByText("Theme", { exact: true })).toBeVisible();
+      await expect(menu(page)).toBeVisible();
+      // Should have list items
+      const listItems = menu(page).locator("li");
+      const count = await listItems.count();
+      expect(count).toBeGreaterThan(0);
+
+      // Login and Theme should be visible
+      await expect(
+        menu(page).getByText("Login", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        menu(page).getByText("Theme", { exact: true }),
+      ).toBeVisible();
+    });
+
+    test("8: Pprof unauthenticated returns 401", async ({ page }) => {
+      const response = await page.goto("/debug/pprof/");
+      expect(response?.status()).toBe(401);
+    });
   });
 
   test("5: Menu cache headers include no-store", async ({ page }) => {
@@ -89,15 +108,10 @@ test.describe("Layout & Static Assets", () => {
     });
   });
 
-  test("8: Pprof unauthenticated returns 401", async ({ page }) => {
-    const response = await page.goto("/debug/pprof/");
-    expect(response?.status()).toBe(401);
-  });
-
   test("9: Pprof returns 200 when authenticated on loopback", async ({
     page,
   }) => {
-    await loginViaUI(page);
+    await ensureGallerySession(page);
     const response = await page.goto("/debug/pprof/");
     expect(response?.status()).toBe(200);
   });

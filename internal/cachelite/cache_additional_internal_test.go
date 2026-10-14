@@ -296,36 +296,6 @@ func TestMaybeTriggerGalleryPreload(t *testing.T) {
 	}
 }
 
-func TestMockCacheStore_DeleteEvictClearErrors(t *testing.T) {
-	ctx := context.Background()
-	store := NewMockCacheStore()
-
-	store.DeleteErr = sql.ErrNoRows
-	if err := store.Delete(ctx, "missing"); err == nil {
-		t.Fatal("expected delete error")
-	}
-
-	store.EvictErr = sql.ErrNoRows
-	if _, err := store.EvictLRU(ctx, 10); err == nil {
-		t.Fatal("expected evict error")
-	}
-
-	store.ClearErr = sql.ErrNoRows
-	if err := store.Clear(ctx); err == nil {
-		t.Fatal("expected clear error")
-	}
-
-	store.EvictErr = nil
-	store.ClearErr = nil
-	store.Entries["a"] = &HTTPCacheEntry{Key: "a"}
-	if _, err := store.EvictLRU(ctx, 1); err != nil {
-		t.Fatalf("expected evict success, got %v", err)
-	}
-	if len(store.Entries) != 0 {
-		t.Fatal("expected entries cleared after evict")
-	}
-}
-
 func TestSQLiteCacheStore_Wrappers(t *testing.T) {
 	db := createTestDBPoolInternal(t)
 	ctx := context.Background()

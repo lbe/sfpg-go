@@ -18,7 +18,7 @@ const ThemeCookieMaxAge = 365 * 24 * 60 * 60
 type ThemeHandlers struct {
 	sessionManager        SessionManager
 	getConfig             func() *config.Config
-	AddCommonTemplateData func(w http.ResponseWriter, r *http.Request, data map[string]any, fullPage bool) map[string]any
+	AddCommonTemplateData func(w http.ResponseWriter, r *http.Request, data map[string]any) map[string]any
 	ServerError           func(w http.ResponseWriter, r *http.Request, err error)
 }
 
@@ -26,7 +26,7 @@ type ThemeHandlers struct {
 func NewThemeHandlers(
 	sessionManager SessionManager,
 	getConfig func() *config.Config,
-	addCommonTemplateData func(w http.ResponseWriter, r *http.Request, data map[string]any, fullPage bool) map[string]any,
+	addCommonTemplateData func(w http.ResponseWriter, r *http.Request, data map[string]any) map[string]any,
 	serverError func(w http.ResponseWriter, r *http.Request, err error),
 ) *ThemeHandlers {
 	return &ThemeHandlers{
@@ -52,7 +52,7 @@ func (h *ThemeHandlers) ThemeModalHandler(w http.ResponseWriter, r *http.Request
 		"CurrentTheme": currentTheme,
 	}
 
-	data = h.AddCommonTemplateData(w, r, data, true)
+	data = h.AddCommonTemplateData(w, r, data)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 

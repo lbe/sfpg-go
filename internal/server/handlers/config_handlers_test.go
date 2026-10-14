@@ -229,3 +229,18 @@ func TestConfigHandlers_executeConfigTemplate_ExecuteError(t *testing.T) {
 		t.Errorf("expected body text %q, got %q", "Internal Server Error", got)
 	}
 }
+
+func TestConfigHandlers_renderConfigValidationError_RenderError(t *testing.T) {
+	if err := ui.ParseTemplates(web.FS); err != nil {
+		t.Fatalf("ParseTemplates failed: %v", err)
+	}
+
+	h := NewConfigHandlers(nil, nil, nil, nil, nil, nil, nil, nil, nil, ConfigTemplates{}, context.Background())
+	w := &errorResponseWriter{}
+
+	h.renderConfigValidationError(w, map[string]string{"_global": "invalid"})
+
+	if w.status != http.StatusInternalServerError {
+		t.Errorf("expected status 500, got %d", w.status)
+	}
+}

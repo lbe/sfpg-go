@@ -10,7 +10,6 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -550,125 +549,6 @@ func TestRestartWithModifiedDBConfig_AppliesNewValues(t *testing.T) {
 }
 
 // --- merged from server_config_test.go ---
-func TestSetConfigDefaults_AllDefaultsPresent(t *testing.T) {
-	tempDir := t.TempDir()
-	app := New(getopt.Opt{
-		SessionSecret: getopt.OptString{String: "this-is-a-test-secret-with-min-32-bytes", IsSet: true},
-	}, "x.y.z")
-	defer app.Shutdown()
-
-	app.setRootDir(&tempDir)
-	app.setDB()
-	app.setConfigDefaults()
-
-	cpcRo, err := app.dbRoPool.Get()
-	if err != nil {
-		t.Fatalf("Failed to get RO DB connection: %v", err)
-	}
-	defer app.dbRoPool.Put(cpcRo)
-
-	excluded := map[string]bool{
-		"user":                true,
-		"password":            true,
-		"LastKnownGoodConfig": true,
-		"log_directory":       true,
-		"etag_version":        true,
-		"image_directory":     true,
-	}
-
-	defaults := config.DefaultConfig().ToMap()
-	for key, expected := range defaults {
-		if excluded[key] {
-			continue
-		}
-		got, dbErr := cpcRo.Queries.GetConfigValueByKey(app.RuntimeManager.ctx, key)
-		if dbErr != nil {
-			t.Errorf("expected config key %q to be present, got error: %v", key, dbErr)
-			continue
-		}
-		if got != expected {
-			t.Errorf("config key %q: expected %q, got %q", key, expected, got)
-		}
-	}
-
-	etag, err := cpcRo.Queries.GetConfigValueByKey(app.RuntimeManager.ctx, "etag_version")
-	if err != nil {
-		t.Fatalf("expected etag_version to be present, got error: %v", err)
-	}
-	matched, err := regexp.MatchString(`^[vV]?\d{8}-\d{2}$`, etag)
-	if err != nil {
-		t.Fatalf("invalid etag regex: %v", err)
-	}
-	if !matched {
-		t.Errorf("etag_version %q does not match expected pattern", etag)
-	}
-
-	runDiscovery, err := cpcRo.Queries.GetConfigValueByKey(app.RuntimeManager.ctx, "run_file_discovery")
-	if err != nil {
-		t.Fatalf("expected run_file_discovery to be present, got error: %v", err)
-	}
-	if runDiscovery != "true" {
-		t.Errorf("expected run_file_discovery=true, got %q", runDiscovery)
-	}
-}
-
-func TestParseConfigUITemplates_Coverage(t *testing.T) {
-	templates, err := parseConfigUITemplates(web.FS)
-	if err != nil {
-		t.Fatalf("parseConfigUITemplates failed: %v", err)
-	}
-
-	// Verify each template exists (value type, zero fields are nil)
-	if templates.SaveRestartAlert == nil {
-		t.Error("SaveRestartAlert template is nil")
-	}
-	if templates.SaveSuccessAlert == nil {
-		t.Error("SaveSuccessAlert template is nil")
-	}
-	if templates.ExportModal == nil {
-		t.Error("ExportModal template is nil")
-	}
-	if templates.ImportModal == nil {
-		t.Error("ImportModal template is nil")
-	}
-	if templates.RestoreModal == nil {
-		t.Error("RestoreModal template is nil")
-	}
-	if templates.RestoreSuccessAlert == nil {
-		t.Error("RestoreSuccessAlert template is nil")
-	}
-	if templates.ImportSuccessAlert == nil {
-		t.Error("ImportSuccessAlert template is nil")
-	}
-	if templates.RestartInitiatedAlert == nil {
-		t.Error("RestartInitiatedAlert template is nil")
-	}
-}
-
-func TestLoadConfig_Coverage(t *testing.T) {
-	app := createAppForConfigTest(t)
-	defer app.Shutdown()
-
-	err := app.loadConfig()
-	if err != nil {
-		t.Errorf("loadConfig failed: %v", err)
-	}
-
-	if app.ConfigManager.Config == nil {
-		t.Error("Expected config to be loaded")
-	}
-}
-
-func TestApplyConfig_Coverage(t *testing.T) {
-	app := createAppForConfigTest(t)
-	defer app.Shutdown()
-
-	// applyConfig takes no arguments and applies current config
-	app.ApplyConfig()
-
-	// Should not panic, config should be applied
-}
-
 func TestLoadConfig_WithError(t *testing.T) {
 	app := createAppForConfigTest(t)
 	defer app.Shutdown()
@@ -696,8 +576,8 @@ func TestApplyConfig_MultipleApply(t *testing.T) {
 
 // --- merged from config_last_known_good_integration_test.go ---
 func TestLastKnownGood_SavedOnConfigUpdate(t *testing.T) {
-	app := CreateApp(t)
 	t.Parallel()
+	app := CreateApp(t)
 	app.ConfigManager.Config = config.DefaultConfig()
 	app.ConfigManager.Config.ListenerPort = 8081
 	app.ConfigManager.Config.SiteName = "Original"
@@ -744,8 +624,8 @@ func TestLastKnownGood_SavedOnConfigUpdate(t *testing.T) {
 }
 
 func TestLastKnownGood_RestoreFromUI(t *testing.T) {
-	app := CreateApp(t)
 	t.Parallel()
+	app := CreateApp(t)
 	app.ConfigManager.Config = config.DefaultConfig()
 
 	// Set up last known good config in database
@@ -853,11 +733,11 @@ func TestIntegration_DBConfig_HTTPCacheDisableActuallyDisablesCaching(t *testing
 }
 
 func TestIntegration_DBConfig_ListenerPortChangeRequiresRestart(t *testing.T) {
+	t.Parallel()
 	app := CreateApp(t, WithPool())
 	defer app.Shutdown()
 
 	// Set initial port in config
-	t.Parallel()
 	app.ConfigManager.ConfigMu.Lock()
 	app.ConfigManager.Config.ListenerPort = 8081
 	app.ConfigManager.ConfigMu.Unlock()

@@ -2,7 +2,11 @@
 
 package rssmonitor
 
-import "testing"
+import (
+	"context"
+	"testing"
+	"time"
+)
 
 func TestParseVmRSSKB(t *testing.T) {
 	t.Parallel()
@@ -28,4 +32,18 @@ func TestReadProcessRSS(t *testing.T) {
 	if rss == 0 {
 		t.Fatal("expected non-zero rss")
 	}
+}
+
+func TestReadHeapInuse(t *testing.T) {
+	if inuse := readHeapInuse(); inuse == 0 {
+		t.Fatal("expected non-zero heap inuse")
+	}
+}
+
+func TestRun_StopsOnCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	Run(ctx, Config{Interval: time.Millisecond})
+	cancel()
 }

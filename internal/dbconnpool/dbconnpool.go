@@ -2,6 +2,12 @@
 // It manages connection lifecycle including acquisition, validation, release and cleanup.
 // The pool maintains both maximum total connections and minimum idle connections,
 // automatically scaling between these bounds based on demand.
+//
+// Memory-VFS mode requires Config.TestUseMemDB plus an empty
+// dataSourceName: live main and thumbs databases are named, process-local
+// memdb VFS images restored from process-local seeds (see internal/testdb).
+// A non-empty DSN selects the normal file-backed path even when the flag
+// selects mem mode.
 package dbconnpool
 
 import (
@@ -103,6 +109,11 @@ type Config struct {
 	// and returned without a round-trip ping.
 	// Default: 30s. Set to 0 to ping on every Get().
 	HealthCheckThreshold time.Duration
+
+	// TestUseMemDB selects memory-VFS mode when dataSourceName is empty
+	// (process-local seeds from internal/testdb). Tests only. Production
+	// must leave this false.
+	TestUseMemDB bool
 }
 
 // RW pool recycle thresholds on Put (close instead of returning to idle channel).
@@ -204,6 +215,20 @@ type DbSQLConnPool struct {
 
 	// closed indicates if the pool has been closed (atomic for lock-free fast path).
 	closed atomic.Bool
+
+	// shutdownWait caps how long Close waits for checked-out connections. Zero
+	// means the production default (5s). Tests in this package set a shorter value.
+	shutdownWait time.Duration
+
+	// memRelease releases the schema-key memory-VFS slot reference. It runs
+	// exactly once, only after this pool's p.pool.Close() returns.
+	memRelease func()
+
+	// isMemory records explicitly that the pool uses the memory VFS.
+	isMemory bool
+
+	// thumbsAttachURI is the ATTACH DATABASE URI for thumbs in memory-VFS mode.
+	thumbsAttachURI string
 }
 
 // isThumbsDBAttached reports whether the "thumbs" schema is already ATTACHed on
@@ -220,6 +245,15 @@ func isThumbsDBAttached(conn *sql.Conn, ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("error querying database list: %w", err)
 	}
 	return true, nil
+}
+
+const defaultShutdownWait = 5 * time.Second
+
+func (p *DbSQLConnPool) closeWaitTimeout() time.Duration {
+	if p.shutdownWait > 0 {
+		return p.shutdownWait
+	}
+	return defaultShutdownWait
 }
 
 // newCpConn creates, pings, and initializes a new CpConn, wrapping a raw *sql.Conn.
@@ -244,7 +278,8 @@ func (p *DbSQLConnPool) newCpConn() (*CpConn, error) {
 	}
 
 	var thumbsAttached bool
-	if p.Config.ThumbsDBPath != "" {
+	wantThumbs := p.thumbsAttachURI != "" || p.Config.ThumbsDBPath != ""
+	if wantThumbs {
 		if thumbsAttached, err = isThumbsDBAttached(conn, p.ctx); err != nil {
 			conn.Close()
 			return nil, fmt.Errorf("check thumbs database attachment: %w", err)
@@ -253,8 +288,12 @@ func (p *DbSQLConnPool) newCpConn() (*CpConn, error) {
 
 	// ATTACH the thumbs database when configured and not already present on
 	// recycled driver connections (see isThumbsDBAttached).
-	if p.Config.ThumbsDBPath != "" && !thumbsAttached {
-		attachSQL := fmt.Sprintf("ATTACH DATABASE 'file:%s' AS thumbs", filepath.ToSlash(p.Config.ThumbsDBPath))
+	thumbsTarget := p.thumbsAttachURI
+	if thumbsTarget == "" && p.Config.ThumbsDBPath != "" {
+		thumbsTarget = "file:" + filepath.ToSlash(p.Config.ThumbsDBPath)
+	}
+	if thumbsTarget != "" && !thumbsAttached {
+		attachSQL := fmt.Sprintf("ATTACH DATABASE '%s' AS thumbs", thumbsTarget)
 		if _, err = conn.ExecContext(p.ctx, attachSQL); err != nil {
 			conn.Close()
 			return nil, fmt.Errorf("attach thumbs database: %w", err)
@@ -264,7 +303,17 @@ func (p *DbSQLConnPool) newCpConn() (*CpConn, error) {
 		// journal_mode and synchronous require a write-capable connection (they modify
 		// the database file header). On RO connections the file header already has these
 		// values set persistently by the RW pool, so we skip to avoid write-attempt errors.
-		if !p.Config.ReadOnly {
+		// Memory images use SQLite memory journaling; file pools retain WAL.
+		// RO pools perform no write-requiring pragma.
+		if p.isMemory && !p.Config.ReadOnly {
+			thumbsPragmas := `PRAGMA thumbs.journal_mode=MEMORY;` +
+				`PRAGMA thumbs.synchronous=NORMAL;` +
+				`PRAGMA thumbs.cache_size=10240`
+			if _, err = conn.ExecContext(p.ctx, thumbsPragmas); err != nil {
+				conn.Close()
+				return nil, fmt.Errorf("set thumbs pragmas: %w", err)
+			}
+		} else if thumbsTarget != "" && !p.Config.ReadOnly {
 			thumbsPragmas := `PRAGMA thumbs.journal_mode=WAL;` +
 				`PRAGMA thumbs.synchronous=NORMAL;` +
 				`PRAGMA thumbs.cache_size=10240`
@@ -313,14 +362,19 @@ func (p *DbSQLConnPool) needsHealthCheck(cpc *CpConn) bool {
 }
 
 // NewDbSQLConnPool creates a new connection pool with the specified parameters.
-// driverName and dataSourceName are passed to sql.Open to create the base pool.
-// config specifies the pool's connection limits and behavior.
-// Returns error if the database connection cannot be established.
+// config.DriverName and dataSourceName select the backing store: with
+// Config.TestUseMemDB enabled, an empty dataSourceName opens restored
+// memory-VFS test databases (each pool owns a distinct *sql.DB over shared
+// named memdb images); with a non-empty DSN the normal file-backed path is
+// used even when the flag selects mem mode.
 func NewDbSQLConnPool(
 	ctx context.Context,
 	dataSourceName string,
 	config Config,
 ) (*DbSQLConnPool, error) {
+	// A non-empty DSN selects the normal file-backed path even when the
+	// flag selects mem mode; execution falls through to sql.Open.
+	// No validation error is returned for the combined inputs.
 	if config.DriverName == "" {
 		return nil, fmt.Errorf("DriverName must be specified in config")
 	}
@@ -348,11 +402,25 @@ func NewDbSQLConnPool(
 		healthCheck = 30 * time.Second
 	}
 
-	db, err := sql.Open(config.DriverName, dataSourceName)
-	if err != nil {
-		return nil, fmt.Errorf(
-			"failed to open database %s: %w", dataSourceName, err,
-		)
+	var memOpen *memPoolOpen
+	var err error
+	if useMemDB(dataSourceName, config.TestUseMemDB) && config.DriverName == "sqlite3" {
+		memOpen, err = openMemTestPool(config)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	var db *sql.DB
+	if memOpen != nil {
+		db = memOpen.db
+	} else {
+		db, err = sql.Open(config.DriverName, dataSourceName)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"failed to open database %s: %w", dataSourceName, err,
+			)
+		}
 	}
 
 	// Determine pool name from ReadOnly config for diagnostics
@@ -371,6 +439,11 @@ func NewDbSQLConnPool(
 		monitorInterval:      config.MonitorInterval,
 		healthCheckThreshold: healthCheck,
 		done:                 make(chan struct{}),
+	}
+	if memOpen != nil {
+		p.memRelease = memOpen.release
+		p.thumbsAttachURI = memOpen.thumbsAttachURI
+		p.isMemory = memOpen.isMemory
 	}
 	p.minIdleConnections.Store(config.MinIdleConnections)
 
@@ -599,16 +672,15 @@ func (p *DbSQLConnPool) Close() error {
 				p.numConnections.Add(-1)
 			}
 		default:
-			goto waitForActive
+			goto afterDrain
 		}
 	}
 
-waitForActive:
+afterDrain:
 	// Wait for all active (checked-out) connections to be returned.
 	// This prevents "database is locked: unable to close due to unfinalized statements" errors.
-	const maxWaitTime = 5 * time.Second
 	const pollInterval = 10 * time.Millisecond
-	deadline := time.Now().Add(maxWaitTime)
+	deadline := time.Now().Add(p.closeWaitTimeout())
 
 	for time.Now().Before(deadline) {
 		activeConns := p.numConnections.Load()
@@ -649,7 +721,15 @@ waitForActive:
 	// Give sql.DB a moment to process the connection limit change
 	time.Sleep(50 * time.Millisecond)
 
-	return p.pool.Close()
+	// Close this pool's *sql.DB first; only then release the schema-key
+	// memory-VFS slot reference, exactly once.
+	err := p.pool.Close()
+	if p.memRelease != nil {
+		release := p.memRelease
+		p.memRelease = nil
+		release()
+	}
+	return err
 }
 
 // DbStats returns database/sql DBStats for the underlying sql.DB pool.

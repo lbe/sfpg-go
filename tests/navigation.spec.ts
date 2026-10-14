@@ -1,5 +1,12 @@
 import { test, expect } from "@playwright/test";
-import { goToGallery, loginViaUI, openMenu, menu } from "./helpers";
+import {
+  ensureGallerySession,
+  goToGallery,
+  guestStorageState,
+  openMenu,
+  menu,
+  waitForAuthenticatedGalleryShell,
+} from "./helpers";
 import { getFirstFolderID } from "./db-queries";
 
 test.describe.configure({ timeout: 60000 });
@@ -81,65 +88,73 @@ test.describe("Navigation", () => {
     expect(page.url()).toContain(`/gallery/${folderID}`);
   });
 
-  test("6: New tab — no session leak", async ({ context }) => {
-    const newPage = await context.newPage();
-    await newPage.goto(`/gallery/${folderID}`);
-    await expect(newPage.locator("#gallery-content")).toBeVisible({
-      timeout: 10000,
-    });
-    // Menu should show Login (unauthenticated)
-    await newPage.locator("#hamburger-menu-btn").click();
-    await newPage.waitForTimeout(200);
-    await expect(newPage.locator("#hamburger-menu-items")).toContainText(
-      "Login",
-      { timeout: 5000 },
-    );
-    await newPage.close();
-  });
+  test.describe("guest", () => {
+    test.use({ storageState: guestStorageState });
 
-  test("7: Dashboard in new tab after login", async ({ page, context }) => {
-    await loginViaUI(page);
-
-    const newTab = await context.newPage();
-    const response = await newTab.goto("/dashboard", {
-      waitUntil: "domcontentloaded",
-    });
-
-    if (response?.status() === 401) {
-      // Session may not be shared due to SameSite cookie restrictions
-      test.info().annotations.push({
-        type: "info",
-        description:
-          "New tab received 401 — session cookie not shared across tabs. Expected with SameSite lax.",
+    test("6: New tab — no session leak", async ({ context }) => {
+      const newPage = await context.newPage();
+      await newPage.goto(`/gallery/${folderID}`);
+      await expect(newPage.locator("#gallery-content")).toBeVisible({
+        timeout: 10000,
       });
-      await newTab.close();
-      return;
-    }
-
-    await newTab.waitForSelector("#dashboard-container", { timeout: 10000 });
-    await expect(newTab.locator("#dashboard-container")).toBeVisible();
-    await newTab.close();
+      // Menu should show Login (unauthenticated)
+      await newPage.locator("#hamburger-menu-btn").click();
+      await expect(newPage.locator("#hamburger-menu-items")).toBeVisible({
+        timeout: 5000,
+      });
+      await expect(newPage.locator("#hamburger-menu-items")).toContainText(
+        "Login",
+        { timeout: 5000 },
+      );
+      await newPage.close();
+    });
   });
 
-  test("8: Gallery→Dashboard→Back preserves session", async ({ page }) => {
-    await loginViaUI(page);
+  test.describe("authenticated", () => {
+    test.beforeEach(async ({ page }) => {
+      await ensureGallerySession(page);
+    });
 
-    // Navigate to dashboard
-    await page.goto("/dashboard");
-    await page.waitForSelector("#dashboard-container", { timeout: 10000 });
+    test("7: Dashboard in new tab after login", async ({ page, context }) => {
+      const newTab = await context.newPage();
+      const response = await newTab.goto("/dashboard", {
+        waitUntil: "domcontentloaded",
+      });
 
-    // Go back to gallery
-    await page.goBack();
-    await page.waitForURL("**/gallery/**", { timeout: 10000 });
-    await page.waitForTimeout(500);
+      if (response?.status() === 401) {
+        // Session may not be shared due to SameSite cookie restrictions
+        test.info().annotations.push({
+          type: "info",
+          description:
+            "New tab received 401 — session cookie not shared across tabs. Expected with SameSite lax.",
+        });
+        await newTab.close();
+        return;
+      }
 
-    // Menu should show authenticated state
-    await openMenu(page);
-    await expect(
-      menu(page).getByText("Dashboard", { exact: true }),
-    ).toBeVisible();
-    await expect(
-      menu(page).getByText("Login", { exact: true }),
-    ).not.toBeVisible();
+      await newTab.waitForSelector("#dashboard-container", { timeout: 10000 });
+      await expect(newTab.locator("#dashboard-container")).toBeVisible();
+      await newTab.close();
+    });
+
+    test("8: Gallery→Dashboard→Back preserves session", async ({ page }) => {
+      // Navigate to dashboard
+      await page.goto("/dashboard");
+      await page.waitForSelector("#dashboard-container", { timeout: 10000 });
+
+      // Go back to gallery
+      await page.goBack();
+      await page.waitForURL("**/gallery/**", { timeout: 10000 });
+      await waitForAuthenticatedGalleryShell(page);
+
+      // Menu should show authenticated state
+      await openMenu(page);
+      await expect(
+        menu(page).getByText("Dashboard", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        menu(page).getByText("Login", { exact: true }),
+      ).not.toBeVisible();
+    });
   });
 });

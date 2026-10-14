@@ -86,10 +86,10 @@ func TestValidateHTMLAssertions(t *testing.T) {
 			want:     []vioCheck{{File: "handlers/x_test.go", Line: 3, Rule: "C3-html-tree"}},
 		},
 		{
-			name:     "T11 GetAttr URL allowlist clean",
+			name:     "T11 GetAttr hx-get Contains non-path needle",
 			filename: "handlers/x_test.go",
 			src:      "package p\nfunc TestX() {\nclass := testutil.GetAttr(n, \"hx-get\")\nstrings.Contains(class, \"x\")\n}",
-			want:     nil,
+			want:     []vioCheck{{File: "handlers/x_test.go", Line: 4, Rule: "C3-html-tree"}},
 		},
 		{
 			name:     "T12 helper-contains",
@@ -220,6 +220,90 @@ func findTextContains(n *html.Node, text string) bool {
 			name:     "T30 dashboard stderr clean",
 			filename: "cmd/sfpg-go-dashboard/main_test.go",
 			src:      "package p\nfunc TestX() {\nstrings.Contains(errOut.String(), \"tty unavailable\")\n}",
+			want:     nil,
+		},
+		{
+			name:     "T31 helper returns GetTextContent",
+			filename: "handlers/menu_handlers_test.go",
+			src: `package p
+
+func aboutModalBoxText(t *testing.T, body *bytes.Buffer) string {
+	t.Helper()
+	return testutil.GetTextContent(box)
+}
+
+func TestX(t *testing.T) {
+	text := aboutModalBoxText(t, w.Body)
+	if strings.Contains(text, "Version") {}
+}`,
+			want: []vioCheck{
+				{File: "handlers/menu_handlers_test.go", Line: 10, Rule: "C3-get-text-content"},
+			},
+		},
+		{
+			name:     "T32 e2e GetTextContent assigned",
+			filename: "web-testsuite/lightbox_test.go",
+			src:      "package p\nfunc TestX(t *testing.T) {\nbody := GetTextContent(n)\nstrings.Contains(body, \"x\")\n}",
+			want:     []vioCheck{{File: "web-testsuite/lightbox_test.go", Line: 4, Rule: "C3-get-text-content"}},
+		},
+		{
+			name:     "T33 e2e GetAttr class not allowlisted",
+			filename: "web-testsuite/lightbox_test.go",
+			src:      "package p\nfunc TestX(t *testing.T) {\nclass := GetAttr(n, \"class\")\nstrings.Contains(class, \"x\")\n}",
+			want:     []vioCheck{{File: "web-testsuite/lightbox_test.go", Line: 4, Rule: "C3-html-tree"}},
+		},
+		{
+			name:     "T34 C5 html.Parse Body.String",
+			filename: "internal/server/foo_test.go",
+			src:      "package p\nfunc TestX() {\n_, _ = html.Parse(strings.NewReader(w.Body.String()))\n}",
+			want:     []vioCheck{{File: "internal/server/foo_test.go", Line: 3, Rule: "C5-inefficient-parse"}},
+		},
+		{
+			name:     "T35 C5 html.Parse testutil.ParseHTML clean",
+			filename: "internal/server/foo_test.go",
+			src:      "package p\nfunc TestX() {\n_, _ = testutil.ParseHTML(w.Body)\n}",
+			want:     nil,
+		},
+		{
+			name:     "T36 GetAttr path needle still clean",
+			filename: "handlers/x_test.go",
+			src:      "package p\nfunc TestX() {\ngot := testutil.GetAttr(n, \"hx-get\")\nstrings.Contains(got, \"/gallery/1\")\n}",
+			want:     nil,
+		},
+		{
+			name:     "T37 C6 regexp.MatchString on GetAttr value",
+			filename: "handlers/x_test.go",
+			src:      "package p\nfunc TestX() {\ngot := testutil.GetAttr(n, \"value\")\nregexp.MatchString(\"^x$\", got)\n}",
+			want:     []vioCheck{{File: "handlers/x_test.go", Line: 4, Rule: "C6-regexp-html"}},
+		},
+		{
+			name:     "T38 C6 allow-regexp comment",
+			filename: "handlers/x_test.go",
+			src:      "package p\nfunc TestX() {\ngot := testutil.GetAttr(n, \"value\")\n// validate-html-assertions:allow-regexp hyperscript init parse\nregexp.MatchString(\"^x$\", got)\n}",
+			want:     nil,
+		},
+		{
+			name:     "T39 C6 FindStringSubmatch on body string",
+			filename: "handlers/x_test.go",
+			src:      "package p\nfunc TestX() {\nre := regexp.MustCompile(\".\")\nre.FindStringSubmatch(w.Body.String())\n}",
+			want:     []vioCheck{{File: "handlers/x_test.go", Line: 4, Rule: "C6-regexp-html"}},
+		},
+		{
+			name:     "T40 C7 FindElementByTag html == nil",
+			filename: "handlers/x_test.go",
+			src:      "package p\nfunc TestX() {\nif testutil.FindElementByTag(doc, \"html\") == nil {\n}\n}",
+			want:     []vioCheck{{File: "handlers/x_test.go", Line: 3, Rule: "C7-htmx-partial-parse"}},
+		},
+		{
+			name:     "T41 C7 FindElementByTag html != nil clean",
+			filename: "handlers/x_test.go",
+			src:      "package p\nfunc TestX() {\nif testutil.FindElementByTag(doc, \"html\") != nil {\n}\n}",
+			want:     nil,
+		},
+		{
+			name:     "T42 C7 FirstLiteralDocumentShellTag clean",
+			filename: "handlers/x_test.go",
+			src:      "package p\nfunc TestX() {\ntag, _ := testutil.FirstLiteralDocumentShellTag(body)\nif tag != \"\" {}\n}",
 			want:     nil,
 		},
 	} {

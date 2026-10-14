@@ -12,8 +12,7 @@ import (
 )
 
 func TestLoadFromDatabase(t *testing.T) {
-	db, q, ctx := setupTestDB(t)
-	defer db.Close()
+	q, ctx, _ := setupTestDB(t)
 
 	// Insert some test config values
 	now := time.Now().Unix()
@@ -131,8 +130,7 @@ func TestLoadFromOpt_LoginRateLimitPerIP(t *testing.T) {
 }
 
 func TestLoadFromOpt_LogLevelOverridesDatabaseValue(t *testing.T) {
-	db, q, ctx := setupTestDB(t)
-	defer db.Close()
+	q, ctx, _ := setupTestDB(t)
 
 	now := time.Now().Unix()
 	err := q.UpsertConfigValueOnly(ctx, gallerydb.UpsertConfigValueOnlyParams{
@@ -192,8 +190,7 @@ func TestMergeDefaults(t *testing.T) {
 // TestSaveToDatabase verifies saving configuration to database.
 
 func TestSaveToDatabase(t *testing.T) {
-	db, q, ctx := setupTestDB(t)
-	defer db.Close()
+	q, ctx, _ := setupTestDB(t)
 
 	cfg := DefaultConfig()
 	cfg.ListenerPort = 9090
@@ -225,8 +222,7 @@ func TestSaveToDatabase(t *testing.T) {
 // TestLoadFromDatabase_MissingKeys verifies that missing keys are handled gracefully.
 
 func TestLoadFromDatabase_MissingKeys(t *testing.T) {
-	db, q, ctx := setupTestDB(t)
-	defer db.Close()
+	q, ctx, _ := setupTestDB(t)
 
 	// Don't insert any config values - database is empty
 	cfg := DefaultConfig()
@@ -247,8 +243,7 @@ func TestLoadFromDatabase_MissingKeys(t *testing.T) {
 // TestSaveToDatabase_UpdatesExisting verifies that saving updates existing keys.
 
 func TestSaveToDatabase_UpdatesExisting(t *testing.T) {
-	db, q, ctx := setupTestDB(t)
-	defer db.Close()
+	q, ctx, _ := setupTestDB(t)
 
 	// Insert initial value
 	now := time.Now().Unix()
@@ -349,11 +344,10 @@ func TestIdentifyChanges(t *testing.T) {
 }
 
 func TestConfigHelp_DatabaseSchema_HelpTextColumn(t *testing.T) {
-	db, _, ctx := setupTestDB(t)
-	defer db.Close()
+	_, ctx, cpc := setupTestDB(t)
 
 	var columnExists bool
-	err := db.QueryRowContext(ctx, `
+	err := cpc.Conn.QueryRowContext(ctx, `
 		SELECT COUNT(*) > 0
 		FROM pragma_table_info('config')
 		WHERE name = 'help_text'
@@ -368,11 +362,10 @@ func TestConfigHelp_DatabaseSchema_HelpTextColumn(t *testing.T) {
 }
 
 func TestConfigHelp_DatabaseSchema_ExampleValueColumn(t *testing.T) {
-	db, _, ctx := setupTestDB(t)
-	defer db.Close()
+	_, ctx, cpc := setupTestDB(t)
 
 	var columnExists bool
-	err := db.QueryRowContext(ctx, `
+	err := cpc.Conn.QueryRowContext(ctx, `
 		SELECT COUNT(*) > 0
 		FROM pragma_table_info('config')
 		WHERE name = 'example_value'
@@ -387,11 +380,10 @@ func TestConfigHelp_DatabaseSchema_ExampleValueColumn(t *testing.T) {
 }
 
 func TestConfigHelp_RetrieveHelpText(t *testing.T) {
-	db, q, ctx := setupTestDB(t)
-	defer db.Close()
+	q, ctx, cpc := setupTestDB(t)
 
 	// Insert a config setting with help text
-	_, err := db.ExecContext(ctx, `
+	_, err := cpc.Conn.ExecContext(ctx, `
 		INSERT INTO config (key, value, help_text, example_value, created_at, updated_at)
 		VALUES (?, ?, ?, ?, UNIXEPOCH('now'), UNIXEPOCH('now'))
 	`, "test_setting", "test_value", "This is help text for the test setting", "example_value")
@@ -407,7 +399,7 @@ func TestConfigHelp_RetrieveHelpText(t *testing.T) {
 
 	// Now query directly for the metadata columns
 	var helpText, exampleValue string
-	err = db.QueryRowContext(ctx, `
+	err = cpc.Conn.QueryRowContext(ctx, `
 		SELECT help_text, example_value
 		FROM config
 		WHERE key = ?

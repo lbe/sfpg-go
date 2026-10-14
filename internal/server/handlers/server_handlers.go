@@ -13,7 +13,7 @@ import (
 type ServerHandlers struct {
 	sessionManager        SessionManager
 	serverControl         interfaces.ServerControl
-	AddCommonTemplateData func(w http.ResponseWriter, r *http.Request, data map[string]any, fullPage bool) map[string]any
+	AddCommonTemplateData func(w http.ResponseWriter, r *http.Request, data map[string]any) map[string]any
 	ServerError           func(w http.ResponseWriter, r *http.Request, err error)
 }
 
@@ -21,7 +21,7 @@ type ServerHandlers struct {
 func NewServerHandlers(
 	sessionManager SessionManager,
 	serverControl interfaces.ServerControl,
-	addCommonTemplateData func(w http.ResponseWriter, r *http.Request, data map[string]any, fullPage bool) map[string]any,
+	addCommonTemplateData func(w http.ResponseWriter, r *http.Request, data map[string]any) map[string]any,
 	serverError func(w http.ResponseWriter, r *http.Request, err error),
 ) *ServerHandlers {
 	return &ServerHandlers{
@@ -46,7 +46,7 @@ func (h *ServerHandlers) ServerShutdownPost(w http.ResponseWriter, r *http.Reque
 		"PageName": "shutdown",
 	}
 
-	data = h.AddCommonTemplateData(w, r, data, false)
+	data = h.AddCommonTemplateData(w, r, data)
 
 	// Render the shutdown page
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -93,7 +93,7 @@ func (h *ServerHandlers) ServerDiscoveryPost(w http.ResponseWriter, r *http.Requ
 		"Message": "File discovery started",
 	}
 
-	data = h.AddCommonTemplateData(w, r, data, true)
+	data = h.AddCommonTemplateData(w, r, data)
 
 	if err := ui.RenderPage(w, "discovery-started", data, false); err != nil {
 		slog.Error("failed to render discovery started notification", "err", err)
@@ -143,7 +143,7 @@ func (h *ServerHandlers) ServerCacheBatchLoadPost(w http.ResponseWriter, r *http
 		"Message":    result.Message,
 		"AlertClass": alertClass,
 	}
-	data = h.AddCommonTemplateData(w, r, data, true)
+	data = h.AddCommonTemplateData(w, r, data)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)

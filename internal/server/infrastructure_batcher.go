@@ -38,6 +38,9 @@ func (s *InfrastructureService) buildWriteBatcher(ctx context.Context, maxBatchS
 			if s.testSeams.OnBeginTx != nil {
 				s.testSeams.OnBeginTx()
 			}
+			if s.testSeams.BeginTxPoolGetErr != nil {
+				return nil, s.testSeams.BeginTxPoolGetErr
+			}
 			var getErr error
 			cpcRw, getErr = s.dbRwPool.Get()
 			if getErr != nil {

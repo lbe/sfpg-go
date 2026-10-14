@@ -53,7 +53,6 @@ func TestGoldenBaseline(t *testing.T) {
 		LoginRateLimitPerIP:                   20,
 		RunFileDiscovery:                      false,
 		RestartAfterDiscovery:                 true,
-		DiscoveryQueueMax:                     10000,
 	}
 
 	// zeroConfig is used for MergeDefaults / RecoverFromCorruption tests.
@@ -98,7 +97,6 @@ func TestGoldenBaseline(t *testing.T) {
 		LoginRateLimitPerIP:                   50,
 		RunFileDiscovery:                      true,
 		RestartAfterDiscovery:                 false,
-		DiscoveryQueueMax:                     50000,
 	}
 
 	t.Run("ToMap", func(t *testing.T) {
@@ -141,7 +139,6 @@ func TestGoldenBaseline(t *testing.T) {
 			"login_rate_limit_per_ip":                     "20",
 			"run_file_discovery":                          "false",
 			"restart_after_discovery":                     "true",
-			"discovery_queue_max":                         "10000",
 		}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("ToMap mismatch")
@@ -208,7 +205,6 @@ func TestGoldenBaseline(t *testing.T) {
 			"login-rate-limit-per-ip":                     20,
 			"discover":                                    false,
 			"restart-after-discovery":                     true,
-			"discovery-queue-max":                         10000,
 		}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("ExportToYAML parsed mismatch")
@@ -237,7 +233,7 @@ func TestGoldenBaseline(t *testing.T) {
 			"cache-max-time", "current-theme",
 			"db-max-pool-size", "db-min-idle-connections", "db-optimize-interval",
 			"db-pool-monitor-interval", "discover", "enable-cache-preload",
-			"discovery-queue-max", "dque-max-disk-bytes",
+			"dque-max-disk-bytes",
 			"etag-version",
 			"http-cache", "image-directory", "listener-address", "listener-port",
 			"log-directory", "log-level", "log-retention-count", "log-rollover",
@@ -389,9 +385,6 @@ func TestGoldenBaseline(t *testing.T) {
 		if zeroConfig.RestartAfterDiscovery != false {
 			t.Errorf("RestartAfterDiscovery = %v, want false", zeroConfig.RestartAfterDiscovery)
 		}
-		if zeroConfig.DiscoveryQueueMax != 0 {
-			t.Errorf("DiscoveryQueueMax = %d, want 0", zeroConfig.DiscoveryQueueMax)
-		}
 		// DQueMaxDiskBytes uses zeroNever: explicit 0 (= unlimited) must survive
 		// MergeDefaults. New installs still get 50 GiB via DefaultConfig() at load
 		// time (config.Load starts from DefaultConfig before overlay), not by
@@ -514,9 +507,6 @@ func TestGoldenBaseline(t *testing.T) {
 		}
 		if zeroConfig.RestartAfterDiscovery != def.RestartAfterDiscovery {
 			t.Errorf("RestartAfterDiscovery = %v, want %v", zeroConfig.RestartAfterDiscovery, def.RestartAfterDiscovery)
-		}
-		if zeroConfig.DiscoveryQueueMax != def.DiscoveryQueueMax {
-			t.Errorf("DiscoveryQueueMax = %d, want %d", zeroConfig.DiscoveryQueueMax, def.DiscoveryQueueMax)
 		}
 		if zeroConfig.DQueMaxDiskBytes != def.DQueMaxDiskBytes {
 			t.Errorf("DQueMaxDiskBytes = %d, want %d (recovered from defaults)", zeroConfig.DQueMaxDiskBytes, def.DQueMaxDiskBytes)

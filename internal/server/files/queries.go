@@ -9,7 +9,6 @@ import (
 
 // File represents a file being processed, including its metadata and status.
 type File struct {
-	Ok                  bool
 	Exists              bool
 	ImagesDir           string
 	Path                string

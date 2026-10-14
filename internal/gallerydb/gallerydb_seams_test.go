@@ -1,24 +1,15 @@
-//go:build integration
-
 package gallerydb
 
 import (
 	"context"
 	"database/sql"
 	"errors"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/golang-migrate/migrate/v4"
-	"github.com/golang-migrate/migrate/v4/database/sqlite"
-	"github.com/golang-migrate/migrate/v4/source/iofs"
 	_ "github.com/ncruces/go-sqlite3/driver"
-	_ "github.com/ncruces/go-sqlite3/embed"
-
-	"github.com/lbe/sfpg-go/migrations"
 )
 
 // openMemoryDB returns an un-migrated :memory: SQLite database.
@@ -32,114 +23,8 @@ func openMemoryDB(t *testing.T) *sql.DB {
 	return db
 }
 
-// openMigratedMemoryDB returns a :memory: SQLite database with main migrations applied.
-func openMigratedMemoryDB(t *testing.T) *sql.DB {
-	t.Helper()
-	db := openMemoryDB(t)
-	applyMainMigrations(t, db)
-	return db
-}
-
-func applyMainMigrations(t *testing.T, db *sql.DB) {
-	t.Helper()
-	driver, err := sqlite.WithInstance(db, &sqlite.Config{})
-	if err != nil {
-		t.Fatalf("failed to create sqlite driver instance: %v", err)
-	}
-	d, err := iofs.New(migrations.FS, "migrations")
-	if err != nil {
-		t.Fatalf("failed to create iofs source driver: %v", err)
-	}
-	m, err := migrate.NewWithInstance("iofs", d, "sqlite", driver)
-	if err != nil {
-		t.Fatalf("failed to create migrate instance: %v", err)
-	}
-	if migErr := m.Up(); migErr != nil && migErr != migrate.ErrNoChange {
-		t.Fatalf("failed to apply migrations: %v", migErr)
-	}
-}
-
-// openMigratedAttachedMemoryDB returns a :memory: SQLite database with main
-// migrations applied and a temp-file thumbs.db attached as "thumbs".
-func openMigratedAttachedMemoryDB(t *testing.T) *sql.DB {
-	t.Helper()
-	db := openMemoryDB(t)
-	applyMainMigrations(t, db)
-
-	thumbsDBPath := filepath.Join(t.TempDir(), "thumbs.db")
-	thumbsMigrator, err := migrations.NewThumbsMigrator(thumbsDBPath)
-	if err != nil {
-		t.Fatalf("failed to create thumbs migrator: %v", err)
-	}
-	if thumbsErr := thumbsMigrator.Up(); thumbsErr != nil && thumbsErr != migrate.ErrNoChange {
-		t.Fatalf("failed to apply thumbs migrations: %v", thumbsErr)
-	}
-	thumbsMigrator.Close()
-
-	if _, err := db.ExecContext(context.Background(),
-		"ATTACH DATABASE 'file:"+filepath.ToSlash(thumbsDBPath)+"' AS thumbs"); err != nil {
-		t.Fatalf("failed to attach thumbs: %v", err)
-	}
-	return db
-}
-
-// setupAttachedTestDB returns a migrated DB with thumbs.db attached and a
-// prepared *CustomQueries. It is like setupTestDB but keeps the raw *sql.DB
-// reference so callers can also run raw SQL for seed data.
-func setupAttachedTestDB(t *testing.T) (*sql.DB, *CustomQueries, context.Context) {
-	t.Helper()
-
-	tempDir := t.TempDir()
-	mainDBPath := filepath.Join(tempDir, "test.db")
-	thumbsDBPath := filepath.Join(tempDir, "thumbs.db")
-
-	db, err := sql.Open("sqlite3", "file:"+filepath.ToSlash(mainDBPath))
-	if err != nil {
-		t.Fatalf("failed to open test database: %v", err)
-	}
-	t.Cleanup(func() { db.Close() })
-
-	driver, err := sqlite.WithInstance(db, &sqlite.Config{})
-	if err != nil {
-		t.Fatalf("failed to create sqlite driver instance: %v", err)
-	}
-	d, err := iofs.New(migrations.FS, "migrations")
-	if err != nil {
-		t.Fatalf("failed to create iofs source driver: %v", err)
-	}
-	m, err := migrate.NewWithInstance("iofs", d, "sqlite", driver)
-	if err != nil {
-		t.Fatalf("failed to create migrate instance: %v", err)
-	}
-	if migErr := m.Up(); migErr != nil && migErr != migrate.ErrNoChange {
-		t.Fatalf("failed to apply migrations: %v", migErr)
-	}
-
-	thumbsMigrator, err := migrations.NewThumbsMigrator(thumbsDBPath)
-	if err != nil {
-		t.Fatalf("failed to create thumbs migrator: %v", err)
-	}
-	if thumbsErr := thumbsMigrator.Up(); thumbsErr != nil && thumbsErr != migrate.ErrNoChange {
-		t.Fatalf("failed to apply thumbs migrations: %v", thumbsErr)
-	}
-	thumbsMigrator.Close()
-
-	if _, err := db.ExecContext(context.Background(),
-		"ATTACH DATABASE 'file:"+filepath.ToSlash(thumbsDBPath)+"' AS thumbs"); err != nil {
-		t.Fatalf("failed to attach thumbs: %v", err)
-	}
-
-	ctx := context.Background()
-	q, err := PrepareCustomQueries(ctx, db)
-	if err != nil {
-		t.Fatalf("failed to prepare queries: %v", err)
-	}
-
-	return db, q, ctx
-}
-
 func TestPrepare_HappyPath(t *testing.T) {
-	db := openMigratedMemoryDB(t)
+	db, _, _ := setupTestDB(t)
 
 	q, err := Prepare(context.Background(), db)
 	if err != nil {
@@ -157,7 +42,7 @@ func TestPrepare_HappyPath(t *testing.T) {
 }
 
 func TestQueriesClose_HappyPath(t *testing.T) {
-	db := openMigratedMemoryDB(t)
+	db := newIsolatedGallerySQLDB(t)
 
 	q, err := Prepare(context.Background(), db)
 	if err != nil {
@@ -170,7 +55,7 @@ func TestQueriesClose_HappyPath(t *testing.T) {
 }
 
 func TestPrepareCustomQueries_HappyPath(t *testing.T) {
-	_, q, ctx := setupAttachedTestDB(t)
+	_, q, ctx := setupTestDB(t)
 
 	if q.getBatchLoadTargetsStmt == nil {
 		t.Error("expected getBatchLoadTargetsStmt to be non-nil")
@@ -202,7 +87,7 @@ func TestPrepareCustomQueries_CustomStatementFails(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			db := openMigratedAttachedMemoryDB(t)
+			db, _, _ := setupTestDB(t)
 
 			orig := prepareContextFn
 			prepareContextFn = func(ctx context.Context, d DBTX, query string) (*sql.Stmt, error) {
@@ -226,9 +111,11 @@ func TestPrepareCustomQueries_CustomStatementFails(t *testing.T) {
 }
 
 func TestCustomQueriesClose_HappyPath(t *testing.T) {
-	_, q, ctx := setupAttachedTestDB(t)
-	_ = ctx
-
+	db := newIsolatedGallerySQLDB(t)
+	q, err := PrepareCustomQueries(context.Background(), db)
+	if err != nil {
+		t.Fatalf("PrepareCustomQueries: %v", err)
+	}
 	if err := q.Close(); err != nil {
 		t.Errorf("Close returned error: %v", err)
 	}
@@ -251,7 +138,11 @@ func TestCustomQueriesClose_CustomStatementCloseFails(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			_, q, _ := setupAttachedTestDB(t)
+			db := newIsolatedGallerySQLDB(t)
+			q, err := PrepareCustomQueries(context.Background(), db)
+			if err != nil {
+				t.Fatalf("PrepareCustomQueries: %v", err)
+			}
 
 			var target *sql.Stmt
 			switch tc.name {
@@ -284,13 +175,13 @@ func TestCustomQueriesClose_CustomStatementCloseFails(t *testing.T) {
 			}
 			t.Cleanup(func() { stmtCloseFn = orig })
 
-			err := q.Close()
-			if err == nil {
+			closeErr := q.Close()
+			if closeErr == nil {
 				t.Fatal("expected error, got nil")
 			}
 			want := "error closing " + tc.name
-			if !strings.Contains(err.Error(), want) {
-				t.Errorf("expected error to contain %q, got %q", want, err.Error())
+			if !strings.Contains(closeErr.Error(), want) {
+				t.Errorf("expected error to contain %q, got %q", want, closeErr.Error())
 			}
 		})
 	}
@@ -328,7 +219,7 @@ func TestQueryRow_FallbackRawSQL(t *testing.T) {
 }
 
 func TestExec_TransactionBranch(t *testing.T) {
-	db := openMigratedMemoryDB(t)
+	db, _, _ := setupTestDB(t)
 	q, err := Prepare(context.Background(), db)
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
@@ -352,7 +243,7 @@ func TestExec_TransactionBranch(t *testing.T) {
 }
 
 func TestQuery_TransactionBranch(t *testing.T) {
-	db := openMigratedMemoryDB(t)
+	db, _, _ := setupTestDB(t)
 	q, err := Prepare(context.Background(), db)
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
@@ -492,7 +383,7 @@ func TestSetModuleState_ExecError(t *testing.T) {
 // TestGetBatchLoadTargets_TargetCountFormula verifies the batch load target
 // count formula: len == 3*folderCount + 2*fileCount.
 func TestGetBatchLoadTargets_TargetCountFormula(t *testing.T) {
-	_, q, ctx := setupAttachedTestDB(t)
+	_, q, ctx := setupTestDB(t)
 	const folderCount, fileCount = 2, 3
 	folderIDs, fileIDs := seedBatchLoadTargetRowsN(t, q, ctx, folderCount, fileCount)
 
@@ -519,7 +410,7 @@ func TestGetBatchLoadTargets_TargetCountFormula(t *testing.T) {
 }
 
 func TestGetBatchLoadTargets_RowsCloseError(t *testing.T) {
-	_, q, ctx := setupAttachedTestDB(t)
+	_, q, ctx := setupTestDB(t)
 	seedBatchLoadTargetRows(t, q, ctx)
 
 	orig := rowsCloseFn
@@ -533,7 +424,7 @@ func TestGetBatchLoadTargets_RowsCloseError(t *testing.T) {
 }
 
 func TestGetBatchLoadTargets_RowsErrError(t *testing.T) {
-	_, q, ctx := setupAttachedTestDB(t)
+	_, q, ctx := setupTestDB(t)
 	seedBatchLoadTargetRows(t, q, ctx)
 
 	orig := rowsErrFn

@@ -1,9 +1,8 @@
-//go:build integration
-
 package gallerydb
 
 import (
 	"database/sql"
+	"errors"
 	"testing"
 	"time"
 )
@@ -13,7 +12,6 @@ import (
 // handlers respectively.
 func TestLeanFileQueries(t *testing.T) {
 	db, q, ctx := setupTestDB(t)
-
 	// Create a folder for our test files
 	folderPathID, err := q.UpsertFolderPathReturningID(ctx, "/lean_test")
 	if err != nil {
@@ -28,9 +26,7 @@ func TestLeanFileQueries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpsertFolderReturningFolder failed: %v", err)
 	}
-
 	now := time.Now().Unix()
-
 	// Create 3 files: a.jpg, b.jpg, c.jpg — in alphabetical order
 	fileAPathID, _ := q.UpsertFilePathReturningID(ctx, "/lean_test/a.jpg")
 	fileA, err := q.UpsertFileReturningFile(ctx, UpsertFileReturningFileParams{
@@ -43,7 +39,6 @@ func TestLeanFileQueries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpsertFileReturningFile a.jpg failed: %v", err)
 	}
-
 	fileBPathID, _ := q.UpsertFilePathReturningID(ctx, "/lean_test/b.jpg")
 	fileB, err := q.UpsertFileReturningFile(ctx, UpsertFileReturningFileParams{
 		FolderID:  sql.NullInt64{Int64: folder.ID, Valid: true},
@@ -55,7 +50,6 @@ func TestLeanFileQueries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpsertFileReturningFile b.jpg failed: %v", err)
 	}
-
 	fileCPathID, _ := q.UpsertFilePathReturningID(ctx, "/lean_test/c.jpg")
 	fileC, err := q.UpsertFileReturningFile(ctx, UpsertFileReturningFileParams{
 		FolderID:  sql.NullInt64{Int64: folder.ID, Valid: true},
@@ -67,7 +61,6 @@ func TestLeanFileQueries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpsertFileReturningFile c.jpg failed: %v", err)
 	}
-
 	// Populate file_folder_index for the 3 files (ordered alphabetically by filename, id).
 	// a.jpg(id=fileA) -> index 1, b.jpg(id=fileB) -> index 2, c.jpg(id=fileC) -> index 3.
 	for _, idx := range []struct {
@@ -87,11 +80,9 @@ func TestLeanFileQueries(t *testing.T) {
 			t.Fatalf("insert file_folder_index for file %d: %v", idx.fileID, err)
 		}
 	}
-
 	// ---------------------------------------------------------------
 	// GetFileFolderIndexByID tests
 	// ---------------------------------------------------------------
-
 	t.Run("GetFileFolderIndexByID_middle_file", func(t *testing.T) {
 		row, err := q.GetFileFolderIndexByID(ctx, fileB.ID)
 		if err != nil {
@@ -105,7 +96,6 @@ func TestLeanFileQueries(t *testing.T) {
 			t.Errorf("Expected ImageCount=3, got %d", row.ImageCount)
 		}
 	})
-
 	t.Run("GetFileFolderIndexByID_first_file", func(t *testing.T) {
 		row, err := q.GetFileFolderIndexByID(ctx, fileA.ID)
 		if err != nil {
@@ -118,7 +108,6 @@ func TestLeanFileQueries(t *testing.T) {
 			t.Errorf("Expected ImageCount=3, got %d", row.ImageCount)
 		}
 	})
-
 	t.Run("GetFileFolderIndexByID_last_file", func(t *testing.T) {
 		row, err := q.GetFileFolderIndexByID(ctx, fileC.ID)
 		if err != nil {
@@ -131,21 +120,18 @@ func TestLeanFileQueries(t *testing.T) {
 			t.Errorf("Expected ImageCount=3, got %d", row.ImageCount)
 		}
 	})
-
 	t.Run("GetFileFolderIndexByID_missing_id", func(t *testing.T) {
 		_, err := q.GetFileFolderIndexByID(ctx, 99999)
 		if err == nil {
 			t.Fatal("Expected error for missing ID, got nil")
 		}
-		if err != sql.ErrNoRows {
+		if !errors.Is(err, sql.ErrNoRows) {
 			t.Errorf("Expected sql.ErrNoRows, got %v", err)
 		}
 	})
-
 	// ---------------------------------------------------------------
 	// GetLightboxNavByFileID tests
 	// ---------------------------------------------------------------
-
 	t.Run("GetLightboxNavByFileID_middle_file", func(t *testing.T) {
 		row, err := q.GetLightboxNavByFileID(ctx, fileB.ID)
 		if err != nil {
@@ -177,7 +163,6 @@ func TestLeanFileQueries(t *testing.T) {
 			t.Errorf("Expected NextID=%d, got %d", fileC.ID, row.NextID.Int64)
 		}
 	})
-
 	t.Run("GetLightboxNavByFileID_first_file", func(t *testing.T) {
 		row, err := q.GetLightboxNavByFileID(ctx, fileA.ID)
 		if err != nil {
@@ -205,7 +190,6 @@ func TestLeanFileQueries(t *testing.T) {
 			t.Errorf("Expected NextID=%d, got %d", fileB.ID, row.NextID.Int64)
 		}
 	})
-
 	t.Run("GetLightboxNavByFileID_last_file", func(t *testing.T) {
 		row, err := q.GetLightboxNavByFileID(ctx, fileC.ID)
 		if err != nil {
@@ -227,21 +211,18 @@ func TestLeanFileQueries(t *testing.T) {
 			t.Errorf("Expected NextID to be invalid for last file, got %v", row.NextID)
 		}
 	})
-
 	t.Run("GetLightboxNavByFileID_missing_id", func(t *testing.T) {
 		_, err := q.GetLightboxNavByFileID(ctx, 99999)
 		if err == nil {
 			t.Fatal("Expected error for missing ID, got nil")
 		}
-		if err != sql.ErrNoRows {
+		if !errors.Is(err, sql.ErrNoRows) {
 			t.Errorf("Expected sql.ErrNoRows, got %v", err)
 		}
 	})
-
 	// ---------------------------------------------------------------
 	// Single-file folder test
 	// ---------------------------------------------------------------
-
 	t.Run("single_file_folder", func(t *testing.T) {
 		// Create a separate folder with just one file
 		singlePathID, err := q.UpsertFolderPathReturningID(ctx, "/lean_test_single")
@@ -257,7 +238,6 @@ func TestLeanFileQueries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("UpsertFolderReturningFolder failed: %v", err)
 		}
-
 		singleFilePathID, _ := q.UpsertFilePathReturningID(ctx, "/lean_test_single/only.jpg")
 		singleFile, err := q.UpsertFileReturningFile(ctx, UpsertFileReturningFileParams{
 			FolderID:  sql.NullInt64{Int64: singleFolder.ID, Valid: true},
@@ -269,7 +249,6 @@ func TestLeanFileQueries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("UpsertFileReturningFile only.jpg failed: %v", err)
 		}
-
 		// Populate file_folder_index for single-file folder.
 		_, err = db.ExecContext(ctx,
 			`INSERT INTO file_folder_index (file_id, folder_id, image_index, image_count, prev_id, next_id, first_id, last_id)
@@ -278,7 +257,6 @@ func TestLeanFileQueries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("insert file_folder_index for single file %d: %v", singleFile.ID, err)
 		}
-
 		// GetFileFolderIndexByID for single-file folder
 		idxRow, err := q.GetFileFolderIndexByID(ctx, singleFile.ID)
 		if err != nil {
@@ -290,7 +268,6 @@ func TestLeanFileQueries(t *testing.T) {
 		if idxRow.ImageCount != 1 {
 			t.Errorf("Expected ImageCount=1, got %d", idxRow.ImageCount)
 		}
-
 		// GetLightboxNavByFileID for single-file folder
 		navRow, err := q.GetLightboxNavByFileID(ctx, singleFile.ID)
 		if err != nil {
@@ -315,11 +292,9 @@ func TestLeanFileQueries(t *testing.T) {
 			t.Errorf("Expected NextID to be invalid for single file, got %v", navRow.NextID)
 		}
 	})
-
 	// ---------------------------------------------------------------
 	// Orphan file test (folder_id IS NULL)
 	// ---------------------------------------------------------------
-
 	t.Run("orphan_file_returns_err_no_rows", func(t *testing.T) {
 		// Insert a files row with folder_id = NULL
 		orphanPathID, err := q.UpsertFilePathReturningID(ctx, "/lean_test/orphan.jpg")
@@ -336,36 +311,31 @@ func TestLeanFileQueries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("UpsertFileReturningFile for orphan failed: %v", err)
 		}
-
 		// GetFileFolderIndexByID should return sql.ErrNoRows
 		_, err = q.GetFileFolderIndexByID(ctx, orphanFile.ID)
 		if err == nil {
 			t.Fatal("Expected error for orphan file (folder_id IS NULL), got nil")
 		}
-		if err != sql.ErrNoRows {
+		if !errors.Is(err, sql.ErrNoRows) {
 			t.Errorf("Expected sql.ErrNoRows for orphan file, got %v", err)
 		}
-
 		// GetLightboxNavByFileID should also return sql.ErrNoRows
 		_, err = q.GetLightboxNavByFileID(ctx, orphanFile.ID)
 		if err == nil {
 			t.Fatal("Expected error for orphan file (folder_id IS NULL), got nil")
 		}
-		if err != sql.ErrNoRows {
+		if !errors.Is(err, sql.ErrNoRows) {
 			t.Errorf("Expected sql.ErrNoRows for orphan file, got %v", err)
 		}
 	})
-
 	// ---------------------------------------------------------------
 	// GetGalleryFileThumbRowsByFolderID tests (Query D)
 	// ---------------------------------------------------------------
-
 	t.Run("GetGalleryFileThumbRowsByFolderID_returns_ordered_slice", func(t *testing.T) {
 		// Setup: create files b.jpg then a.jpg (reverse alphabetical) to
 		// verify the query sorts by filename.
 		bPathID, _ := q.UpsertFilePathReturningID(ctx, "/lean_test/b.jpg")
 		// b.jpg already exists from earlier setup; just ensure both exist.
-
 		aPathID, _ := q.UpsertFilePathReturningID(ctx, "/lean_test/a_order.jpg")
 		aFile, err := q.UpsertFileReturningFile(ctx, UpsertFileReturningFileParams{
 			FolderID:  sql.NullInt64{Int64: folder.ID, Valid: true},
@@ -377,12 +347,10 @@ func TestLeanFileQueries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("UpsertFileReturningFile a_order.jpg failed: %v", err)
 		}
-
 		rows, err := q.GetGalleryFileThumbRowsByFolderID(ctx, sql.NullInt64{Int64: folder.ID, Valid: true})
 		if err != nil {
 			t.Fatalf("GetGalleryFileThumbRowsByFolderID failed: %v", err)
 		}
-
 		// Expected: a.jpg, a_order.jpg, b.jpg, c.jpg (alphabetical)
 		// At this point the folder has a.jpg, b.jpg, c.jpg (from setup) plus a_order.jpg
 		if len(rows) < 4 {
@@ -399,7 +367,6 @@ func TestLeanFileQueries(t *testing.T) {
 		_ = aFile
 		_ = bPathID
 	})
-
 	t.Run("GetGalleryFileThumbRowsByFolderID_empty", func(t *testing.T) {
 		// Create an empty folder
 		emptyPathID, err := q.UpsertFolderPathReturningID(ctx, "/lean_test_empty_files")
@@ -415,7 +382,6 @@ func TestLeanFileQueries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("UpsertFolderReturningFolder failed: %v", err)
 		}
-
 		rows, err := q.GetGalleryFileThumbRowsByFolderID(ctx, sql.NullInt64{Int64: emptyFolder.ID, Valid: true})
 		if err != nil {
 			t.Fatalf("GetGalleryFileThumbRowsByFolderID failed: %v", err)
@@ -424,11 +390,9 @@ func TestLeanFileQueries(t *testing.T) {
 			t.Errorf("expected empty slice, got %d rows", len(rows))
 		}
 	})
-
 	// ---------------------------------------------------------------
 	// GetGalleryFolderThumbRowsByParentID tests (Query E)
 	// ---------------------------------------------------------------
-
 	t.Run("GetGalleryFolderThumbRowsByParentID_returns_ordered_slice", func(t *testing.T) {
 		// The main folder already has sub-folders from earlier tests. Create a
 		// new sub-folder 'Alpha' that sorts before existing ones.
@@ -446,12 +410,10 @@ func TestLeanFileQueries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("UpsertFolderReturningFolder Alpha failed: %v", err)
 		}
-
 		rows, err := q.GetGalleryFolderThumbRowsByParentID(ctx, sql.NullInt64{Int64: folder.ID, Valid: true})
 		if err != nil {
 			t.Fatalf("GetGalleryFolderThumbRowsByParentID failed: %v", err)
 		}
-
 		// Should have at least Alpha
 		if len(rows) < 1 {
 			t.Fatalf("expected at least 1 row, got %d", len(rows))
@@ -471,7 +433,6 @@ func TestLeanFileQueries(t *testing.T) {
 			t.Errorf("expected 'Alpha' in folder thumb rows, got %v", rows)
 		}
 	})
-
 	t.Run("GetGalleryFolderThumbRowsByParentID_empty", func(t *testing.T) {
 		// Create a leaf folder with no subfolders
 		leafPathID, err := q.UpsertFolderPathReturningID(ctx, "/lean_test_leaf")
@@ -487,7 +448,6 @@ func TestLeanFileQueries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("UpsertFolderReturningFolder failed: %v", err)
 		}
-
 		rows, err := q.GetGalleryFolderThumbRowsByParentID(ctx, sql.NullInt64{Int64: leafFolder.ID, Valid: true})
 		if err != nil {
 			t.Fatalf("GetGalleryFolderThumbRowsByParentID failed: %v", err)

@@ -227,6 +227,4 @@ migrations/sqlite::memory:
 
 /.agents/*
 
-# bodycodec gallery fixtures (tracked as galleries.tar.gz; extracted on demand)
-internal/cachelite/bodycodec/testdata/gallery_*.html
-internal/cachelite/bodycodec/testdata/.galleries-extracted
+/.claude/*

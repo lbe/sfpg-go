@@ -251,8 +251,8 @@ func TestLightboxByID_WrapsPrevFromFirst(t *testing.T) {
 	if prev == nil {
 		t.Fatal("missing #lightbox-prev-btn")
 	}
-	if got := testutil.GetAttr(prev, "hx-get"); !strings.Contains(got, "/lightbox/3") {
-		t.Errorf("prev hx-get = %q, want lightbox/3", got)
+	if got := testutil.GetAttr(prev, "hx-get"); !strings.HasPrefix(got, "/lightbox/3") {
+		t.Errorf("prev hx-get = %q, want prefix /lightbox/3", got)
 	}
 	if got := testutil.GetAttr(prev, "_"); !strings.Contains(got, "/raw-image/3") {
 		t.Errorf("prev _ attr = %q, want raw-image/3", got)
@@ -262,8 +262,8 @@ func TestLightboxByID_WrapsPrevFromFirst(t *testing.T) {
 	if next == nil {
 		t.Fatal("missing #lightbox-next-btn")
 	}
-	if got := testutil.GetAttr(next, "hx-get"); !strings.Contains(got, "/lightbox/2") {
-		t.Errorf("next hx-get = %q, want lightbox/2", got)
+	if got := testutil.GetAttr(next, "hx-get"); !strings.HasPrefix(got, "/lightbox/2") {
+		t.Errorf("next hx-get = %q, want prefix /lightbox/2", got)
 	}
 	if got := testutil.GetAttr(next, "_"); !strings.Contains(got, "/raw-image/2") {
 		t.Errorf("next _ attr = %q, want raw-image/2", got)
@@ -298,8 +298,8 @@ func TestLightboxByID_WrapsNextFromLast(t *testing.T) {
 	if next == nil {
 		t.Fatal("missing #lightbox-next-btn")
 	}
-	if got := testutil.GetAttr(next, "hx-get"); !strings.Contains(got, "/lightbox/1") {
-		t.Errorf("next hx-get = %q, want lightbox/1", got)
+	if got := testutil.GetAttr(next, "hx-get"); !strings.HasPrefix(got, "/lightbox/1") {
+		t.Errorf("next hx-get = %q, want prefix /lightbox/1", got)
 	}
 	if got := testutil.GetAttr(next, "_"); !strings.Contains(got, "/raw-image/1") {
 		t.Errorf("next _ attr = %q, want raw-image/1", got)
@@ -309,8 +309,8 @@ func TestLightboxByID_WrapsNextFromLast(t *testing.T) {
 	if prev == nil {
 		t.Fatal("missing #lightbox-prev-btn")
 	}
-	if got := testutil.GetAttr(prev, "hx-get"); !strings.Contains(got, "/lightbox/2") {
-		t.Errorf("prev hx-get = %q, want lightbox/2", got)
+	if got := testutil.GetAttr(prev, "hx-get"); !strings.HasPrefix(got, "/lightbox/2") {
+		t.Errorf("prev hx-get = %q, want prefix /lightbox/2", got)
 	}
 	if got := testutil.GetAttr(prev, "_"); !strings.Contains(got, "/raw-image/2") {
 		t.Errorf("prev _ attr = %q, want raw-image/2", got)

@@ -205,9 +205,10 @@ func (app *App) Serve() error {
 // authMiddleware is a middleware that protects routes by checking for a valid session.
 // It delegates to middleware.AuthMiddleware, using the current store and sessionManager.
 // If sessionManager is nil (e.g., in tests before Serve() is called), it creates a temporary one.
-// After auth succeeds, it sets cache policy for HTMX: any request with HX-Request: true gets
-// no-cache so partials are not cached or bfcached (breadcrumb back then gets full page via new request).
-// Vary: HX-Request, HX-Target is set so caches do not reuse a partial for a full-page request.
+// After auth succeeds, sets blanket HTMX cache policy on protected routes: HX-Request: true gets
+// no-cache headers and Vary HX-Request + HX-Target (see e32e621). Layout partial routes
+// (GET /dashboard, GET /gallery/{id}) also set handler-specific Vary/no-store via
+// ui.SetLayoutPartialVary and ui.SetPartialNoStore — see docs/ARCHITECTURE.md § HTMX HTML responses.
 func (app *App) authMiddleware(next http.Handler) http.Handler {
 	config := &middleware.AuthConfig{
 		DebugDelayMS: struct {
@@ -243,11 +244,11 @@ func (app *App) authMiddleware(next http.Handler) http.Handler {
 }
 
 // AddCommonTemplateData adds common template data (auth state, theme, version, and gallery statistics)
-// to the template data map. GalleryStats is always included regardless of partial/full page:
-// partial HTMX responses (dashboard polls, modal swaps) now render cards that need GalleryStats.
+// to the template data map. Keys are identical for layout full page and layout partial; whether the
+// response is a layout partial is decided only at ui.RenderPage(..., partial bool).
 // GalleryStats is a live atomic-counter cache populated by async startup queries and
 // incremental discovery updates.
-func (app *App) AddCommonTemplateData(w http.ResponseWriter, r *http.Request, data map[string]any, partial bool) map[string]any {
+func (app *App) AddCommonTemplateData(w http.ResponseWriter, r *http.Request, data map[string]any) map[string]any {
 	authenticated := app.IsAuthenticated(w, r)
 	data = template.AddCommonData(data, authenticated)
 	// Theme: use site default (CurrentTheme) for SSR; client cookie overrides via hyperscript.

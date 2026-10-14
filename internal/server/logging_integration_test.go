@@ -852,6 +852,108 @@ func TestStartupLogging_BootstrapThenReload_CreatesNewDirectory(t *testing.T) {
 	}
 }
 
+func TestStartupLogging_BootstrapThenReload_CapturesEarlyLogs(t *testing.T) {
+	tmpDir := t.TempDir()
+	bootstrapLogDir := filepath.Join(tmpDir, "logs")
+	configuredLogDir := filepath.Join(tmpDir, "configured-logs")
+
+	infra := NewInfrastructureService()
+	app := &App{
+		InfrastructureService: infra,
+		ConfigManager:         config.NewConfigManager(),
+		SessionAuthFacade:     NewSessionAuthFacade("test-secret-with-at-least-32-bytes-long"),
+		RuntimeManager:        NewRuntimeManager(context.Background()),
+		SubsystemManager:      NewSubsystemManager(infra),
+		HandlerManager:        NewHandlerManager(),
+	}
+	app.rootDir = tmpDir
+
+	app.setupBootstrapLogging()
+
+	if info, err := os.Stat(bootstrapLogDir); err != nil || !info.IsDir() {
+		t.Fatalf("bootstrap logs directory should exist: %v", err)
+	}
+	bootstrapLogFile := app.logger.FilePath()
+	if info, err := os.Stat(bootstrapLogFile); err != nil || info.IsDir() {
+		t.Fatalf("bootstrap log file should exist: %v", err)
+	}
+
+	app.ConfigManager.ConfigMu.Lock()
+	app.ConfigManager.Config = &config.Config{
+		LogDirectory: configuredLogDir,
+		LogLevel:     "debug",
+	}
+	app.ConfigManager.ConfigMu.Unlock()
+
+	if err := app.reloadLoggingFromConfig(); err != nil {
+		t.Fatalf("reloadLoggingFromConfig should not fail: %v", err)
+	}
+
+	if info, err := os.Stat(configuredLogDir); err != nil || !info.IsDir() {
+		t.Fatalf("configured logs directory should exist: %v", err)
+	}
+
+	newLogFile := app.logger.FilePath()
+	if newLogFile == bootstrapLogFile {
+		t.Fatal("log file path should have changed to configured directory")
+	}
+	if info, err := os.Stat(newLogFile); err != nil || info.IsDir() {
+		t.Fatalf("new log file should exist: %v", err)
+	}
+	if filepath.Dir(newLogFile) != configuredLogDir {
+		t.Fatalf("new log file should be in configured directory: got %s, want %s", filepath.Dir(newLogFile), configuredLogDir)
+	}
+	if filepath.Base(newLogFile) != filepath.Base(bootstrapLogFile) {
+		t.Fatalf("log file name should be preserved: got %s, want %s", filepath.Base(newLogFile), filepath.Base(bootstrapLogFile))
+	}
+
+	if app.logger != nil {
+		_ = app.logger.Shutdown()
+	}
+}
+
+func TestStartupLogging_BootstrapThenReload_SameDirectory(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	infra := NewInfrastructureService()
+	app := &App{
+		InfrastructureService: infra,
+		ConfigManager:         config.NewConfigManager(),
+		SessionAuthFacade:     NewSessionAuthFacade("test-secret-with-at-least-32-bytes-long"),
+		RuntimeManager:        NewRuntimeManager(context.Background()),
+		SubsystemManager:      NewSubsystemManager(infra),
+		HandlerManager:        NewHandlerManager(),
+	}
+	app.rootDir = tmpDir
+
+	app.setupBootstrapLogging()
+
+	originalLogger := app.logger
+	originalLogFile := app.logger.File()
+
+	app.ConfigManager.ConfigMu.Lock()
+	app.ConfigManager.Config = &config.Config{
+		LogDirectory: "logs",
+		LogLevel:     "debug",
+	}
+	app.ConfigManager.ConfigMu.Unlock()
+
+	if err := app.reloadLoggingFromConfig(); err != nil {
+		t.Fatalf("reloadLoggingFromConfig should not fail: %v", err)
+	}
+
+	if app.logger != originalLogger {
+		t.Fatal("logger should remain unchanged when directory is same")
+	}
+	if app.logger.File() != originalLogFile {
+		t.Fatal("log file should remain unchanged when directory is same")
+	}
+
+	if app.logger != nil {
+		_ = app.logger.Shutdown()
+	}
+}
+
 func TestStartupLogging_BootstrapThenReload_AbsoluteConfigPath(t *testing.T) {
 	// Setup: Create temp directories
 	tmpDir := t.TempDir()

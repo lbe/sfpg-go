@@ -68,10 +68,8 @@ func createStaticGradientTestImage(t *testing.T, dir, filename string) string {
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
 
 	// Use fixed colors for a deterministic gradient
-	//nolint:govet // Alpha value is part of the color definition
 	startColor := color.RGBA{R: 255, G: 0, B: 0, A: 255} // Red
-	//nolint:govet // Alpha value is part of the color definition
-	endColor := color.RGBA{R: 0, G: 0, B: 255, A: 255} // Blue
+	endColor := color.RGBA{R: 0, G: 0, B: 255, A: 255}   // Blue
 
 	for y := range height {
 		for x := range width {

@@ -12,7 +12,6 @@ import (
 // no exported fields and cannot be gob-encoded — even when the pointer is nil,
 // gob still tries to resolve the pointed-to type for type info.
 type fileWire struct {
-	Ok                  bool
 	Exists              bool
 	ImagesDir           string
 	Path                string
@@ -29,7 +28,6 @@ type fileWire struct {
 // Thumbnail field is extracted as raw bytes; the caller's object is not mutated.
 func (f File) GobEncode() ([]byte, error) {
 	w := fileWire{
-		Ok:                  f.Ok,
 		Exists:              f.Exists,
 		ImagesDir:           f.ImagesDir,
 		Path:                f.Path,
@@ -62,7 +60,6 @@ func (f *File) GobDecode(data []byte) error {
 		return err
 	}
 
-	f.Ok = w.Ok
 	f.Exists = w.Exists
 	f.ImagesDir = w.ImagesDir
 	f.Path = w.Path

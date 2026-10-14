@@ -26,7 +26,6 @@ import (
 func (app *App) Shutdown() {
 	app.RuntimeManager.shutdownOnce.Do(func() {
 		app.LogProfileLocation()
-		app.InfrastructureService.Shutdown()
 
 		if app.RuntimeManager.cancel != nil {
 			app.RuntimeManager.cancel()
@@ -45,27 +44,22 @@ func (app *App) Shutdown() {
 		}
 
 		app.SubsystemManager.Shutdown()
-		if app.SubsystemManager.scheduler != nil {
-			if err := app.SubsystemManager.scheduler.Shutdown(); err != nil {
-				slog.Error("error shutting down scheduler", "err", err)
-			}
-		}
+		// Subsystem scheduler stops via RuntimeManager.cancel above; Start waits for
+		// active tasks before returning. Do not call scheduler.Shutdown here — it
+		// returns ErrSchedulerRunning while Start is still in its run loop.
+
+		app.shutdownWriteBatcher()
 
 		// Run PRAGMA optimize before closing pools (after batcher is closed).
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		app.runShutdownPragmaOptimize(ctx)
 
-		if app.dbRoPool != nil {
-			if err := app.dbRoPool.Close(); err != nil {
-				slog.Error("error closing read-only pool", "err", err)
-			}
+		if app.InfrastructureService.testSeams.BeforeCloseDatabasePools != nil {
+			app.InfrastructureService.testSeams.BeforeCloseDatabasePools()
 		}
-		if app.dbRwPool != nil {
-			if err := app.dbRwPool.Close(); err != nil {
-				slog.Error("error closing read-write pool", "err", err)
-			}
-		}
+		app.closeDatabasePools()
+
 		if app.logger != nil {
 			if err := app.logger.Shutdown(); err != nil {
 				slog.Error("error shutting down logger", "err", err)

@@ -52,6 +52,8 @@ type authService struct {
 	store UserStore
 }
 
+var _ AuthService = (*authService)(nil)
+
 // NewService creates a new AuthService with the given UserStore.
 func NewService(store UserStore) AuthService {
 	return &authService{store: store}

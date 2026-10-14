@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 	"net/http/httptest"
@@ -66,7 +67,7 @@ func TestDashboardHandlers_DashboardGet_Authorized(t *testing.T) {
 
 	collector := &mockCollector{snapshot: snapshot}
 
-	addCommonData := func(w http.ResponseWriter, r *http.Request, data map[string]any, _ bool) map[string]any {
+	addCommonData := func(w http.ResponseWriter, r *http.Request, data map[string]any) map[string]any {
 		data["IsAuthenticated"] = true
 		return data
 	}
@@ -121,7 +122,7 @@ func TestDashboardHandlers_DashboardGet_HTMXPartial(t *testing.T) {
 
 	collector := &mockCollector{snapshot: snapshot}
 
-	addCommonData := func(w http.ResponseWriter, r *http.Request, data map[string]any, _ bool) map[string]any {
+	addCommonData := func(w http.ResponseWriter, r *http.Request, data map[string]any) map[string]any {
 		data["IsAuthenticated"] = true
 		return data
 	}
@@ -135,7 +136,6 @@ func TestDashboardHandlers_DashboardGet_HTMXPartial(t *testing.T) {
 	// Test with HTMX headers (partial request)
 	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
 	req.Header.Set("HX-Request", "true")
-	req.Header.Set("HX-Target", "dashboard-container")
 	rr := httptest.NewRecorder()
 
 	handlers.DashboardGet(rr, req)
@@ -150,6 +150,97 @@ func TestDashboardHandlers_DashboardGet_HTMXPartial(t *testing.T) {
 	vary := rr.Header().Get("Vary")
 	if !strings.Contains(vary, "HX-Request") {
 		t.Errorf("expected Vary header to contain HX-Request, got: %s", vary)
+	}
+}
+
+func TestDashboardHandlers_DashboardGet_PartialOnHXRequestOnly(t *testing.T) {
+	h := newTestDashboardHandlers(t, &stubManualDiscoveryErrorSource{})
+
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	req.Header.Set("HX-Request", "true")
+	rr := httptest.NewRecorder()
+	h.DashboardGet(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	vary := rr.Header().Get("Vary")
+	if !strings.Contains(vary, "HX-Request") {
+		t.Errorf("expected Vary header to contain HX-Request, got: %s", vary)
+	}
+	if rr.Header().Get("Cache-Control") != "no-store" {
+		t.Errorf("expected Cache-Control no-store, got: %q", rr.Header().Get("Cache-Control"))
+	}
+	body := rr.Body.Bytes()
+	tag, err := testutil.FirstLiteralDocumentShellTag(body)
+	if err != nil {
+		t.Fatalf("scan partial HTML: %v", err)
+	}
+	if tag != "" {
+		t.Errorf("partial response must not include <%s> document shell", tag)
+	}
+	doc, err := testutil.ParseHTML(bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("failed to parse partial HTML: %v", err)
+	}
+	h1 := testutil.FindElementByTag(doc, "h1")
+	if h1 == nil {
+		t.Fatal("dashboard partial missing h1 element")
+	}
+	if got := strings.TrimSpace(testutil.GetTextContent(h1)); got != "Performance & Health Dashboard" {
+		t.Errorf("dashboard h1 text = %q, want %q", got, "Performance & Health Dashboard")
+	}
+	pollers := testutil.FindAllElements(doc, func(n *html.Node) bool {
+		return testutil.GetAttr(n, "hx-trigger") == "every 5s"
+	})
+	if len(pollers) != 0 {
+		t.Error("polling element must not be in partial response")
+	}
+}
+
+func TestDashboardHandlers_DashboardGet_PartialWhenHXTargetWrong(t *testing.T) {
+	h := newTestDashboardHandlers(t, &stubManualDiscoveryErrorSource{})
+
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	req.Header.Set("HX-Request", "true")
+	req.Header.Set("HX-Target", "gallery-content")
+	rr := httptest.NewRecorder()
+	h.DashboardGet(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	vary := rr.Header().Get("Vary")
+	if !strings.Contains(vary, "HX-Request") {
+		t.Errorf("expected Vary header to contain HX-Request, got: %s", vary)
+	}
+	if rr.Header().Get("Cache-Control") != "no-store" {
+		t.Errorf("expected Cache-Control no-store, got: %q", rr.Header().Get("Cache-Control"))
+	}
+	body := rr.Body.Bytes()
+	tag, err := testutil.FirstLiteralDocumentShellTag(body)
+	if err != nil {
+		t.Fatalf("scan partial HTML: %v", err)
+	}
+	if tag != "" {
+		t.Errorf("partial response must not include <%s> document shell", tag)
+	}
+	doc, err := testutil.ParseHTML(bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("failed to parse partial HTML: %v", err)
+	}
+	h1 := testutil.FindElementByTag(doc, "h1")
+	if h1 == nil {
+		t.Fatal("dashboard partial missing h1 element")
+	}
+	if got := strings.TrimSpace(testutil.GetTextContent(h1)); got != "Performance & Health Dashboard" {
+		t.Errorf("dashboard h1 text = %q, want %q", got, "Performance & Health Dashboard")
+	}
+	pollers := testutil.FindAllElements(doc, func(n *html.Node) bool {
+		return testutil.GetAttr(n, "hx-trigger") == "every 5s"
+	})
+	if len(pollers) != 0 {
+		t.Error("polling element must not be in partial response")
 	}
 }
 
@@ -170,7 +261,7 @@ func TestDashboardHandlers_DashboardGet_PageRendering(t *testing.T) {
 	}
 	collector := &mockCollector{snapshot: snapshot}
 
-	addCommonData := func(w http.ResponseWriter, r *http.Request, data map[string]any, _ bool) map[string]any {
+	addCommonData := func(w http.ResponseWriter, r *http.Request, data map[string]any) map[string]any {
 		data["IsAuthenticated"] = true
 		return data
 	}
@@ -224,7 +315,7 @@ func TestDashboardHandlers_PollingPersistsAcrossMultipleRequests(t *testing.T) {
 	}
 	collector := &mockCollector{snapshot: snapshot}
 
-	addCommonData := func(w http.ResponseWriter, r *http.Request, data map[string]any, _ bool) map[string]any {
+	addCommonData := func(w http.ResponseWriter, r *http.Request, data map[string]any) map[string]any {
 		data["IsAuthenticated"] = true
 		return data
 	}
@@ -238,7 +329,6 @@ func TestDashboardHandlers_PollingPersistsAcrossMultipleRequests(t *testing.T) {
 	for i := range 3 {
 		req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
 		req.Header.Set("HX-Request", "true")
-		req.Header.Set("HX-Target", "dashboard-container")
 		rr := httptest.NewRecorder()
 
 		handlers.DashboardGet(rr, req)
@@ -288,7 +378,7 @@ func (fakeGalleryStats) FoldersCount() int64    { return 10 }
 func (fakeGalleryStats) ImagesCount() int64     { return 100 }
 
 // TestDashboardHandlers_CardTitleOrder renders the dashboard as an HTMX partial
-// (HX-Request: true, HX-Target: dashboard-container) and asserts that all card
+// (HX-Request: true) and asserts that all card
 // titles appear in the correct diagram order. It uses a locally defined
 // fakeGalleryStats so the {{ if .GalleryStats }} cards render without importing
 // internal/server.
@@ -307,7 +397,7 @@ func TestDashboardHandlers_CardTitleOrder(t *testing.T) {
 	}
 	collector := &mockCollector{snapshot: snapshot}
 
-	addCommonData := func(w http.ResponseWriter, r *http.Request, data map[string]any, _ bool) map[string]any {
+	addCommonData := func(w http.ResponseWriter, r *http.Request, data map[string]any) map[string]any {
 		data["IsAuthenticated"] = true
 		data["Version"] = "0.0.0-test"
 		data["GalleryStats"] = fakeGalleryStats{}
@@ -323,7 +413,6 @@ func TestDashboardHandlers_CardTitleOrder(t *testing.T) {
 	// text is NOT in the document.
 	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
 	req.Header.Set("HX-Request", "true")
-	req.Header.Set("HX-Target", "dashboard-container")
 	rr := httptest.NewRecorder()
 
 	handlers.DashboardGet(rr, req)
@@ -386,7 +475,7 @@ func TestDashboardHandlers_DashboardVersionID(t *testing.T) {
 	}
 	collector := &mockCollector{snapshot: snapshot}
 
-	addCommonData := func(w http.ResponseWriter, r *http.Request, data map[string]any, _ bool) map[string]any {
+	addCommonData := func(w http.ResponseWriter, r *http.Request, data map[string]any) map[string]any {
 		data["IsAuthenticated"] = true
 		data["Version"] = "0.0.0-test"
 		data["GalleryStats"] = fakeGalleryStats{}
@@ -400,7 +489,6 @@ func TestDashboardHandlers_DashboardVersionID(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
 	req.Header.Set("HX-Request", "true")
-	req.Header.Set("HX-Target", "dashboard-container")
 	rr := httptest.NewRecorder()
 
 	handlers.DashboardGet(rr, req)
@@ -432,7 +520,6 @@ func TestDashboardHandlers_GalleryStatIDs(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
 	req.Header.Set("HX-Request", "true")
-	req.Header.Set("HX-Target", "dashboard-container")
 	rr := httptest.NewRecorder()
 
 	h.DashboardGet(rr, req)
@@ -502,7 +589,7 @@ func TestDashboardHandlers_FileProcessingStatIDs(t *testing.T) {
 	}
 	collector := &mockCollector{snapshot: snapshot}
 
-	addCommonData := func(w http.ResponseWriter, r *http.Request, data map[string]any, _ bool) map[string]any {
+	addCommonData := func(w http.ResponseWriter, r *http.Request, data map[string]any) map[string]any {
 		data["IsAuthenticated"] = true
 		data["Version"] = "0.0.0-test"
 		data["GalleryStats"] = fakeGalleryStats{}
@@ -557,7 +644,7 @@ func newTestDashboardHandlers(t *testing.T, disc ManualDiscoveryErrorSource) *Da
 		Runtime:   metrics.RuntimeMetrics{NumGoroutine: 10, NumCPU: 4},
 	}
 	collector := &mockCollector{snapshot: snapshot}
-	addCommonData := func(w http.ResponseWriter, r *http.Request, data map[string]any, _ bool) map[string]any {
+	addCommonData := func(w http.ResponseWriter, r *http.Request, data map[string]any) map[string]any {
 		data["IsAuthenticated"] = true
 		data["Version"] = "0.0.0-test"
 		data["GalleryStats"] = fakeGalleryStats{}
@@ -608,7 +695,6 @@ func TestDashboardHandlers_RebuildErrorShownWhenSet(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
 		if partial {
 			req.Header.Set("HX-Request", "true")
-			req.Header.Set("HX-Target", "dashboard-container")
 		}
 		rr := httptest.NewRecorder()
 		h.DashboardGet(rr, req)
@@ -865,7 +951,7 @@ func TestDashboardHandlers_GalleryLoadingIDs(t *testing.T) {
 	}
 	collector := &mockCollector{snapshot: snapshot}
 	// Intentionally omit the GalleryStats key so the loading branch renders.
-	addCommonData := func(w http.ResponseWriter, r *http.Request, data map[string]any, _ bool) map[string]any {
+	addCommonData := func(w http.ResponseWriter, r *http.Request, data map[string]any) map[string]any {
 		data["IsAuthenticated"] = true
 		data["Version"] = "0.0.0-test"
 		return data

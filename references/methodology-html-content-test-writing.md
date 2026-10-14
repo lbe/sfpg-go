@@ -181,6 +181,18 @@ func TestUserProfileHandler(t *testing.T) {
 }
 ```
 
+## HTMX layout partial responses (wire vs parse tree)
+
+HTMX layout partials (e.g. `GET /dashboard` with `HX-Request: true`, or `GET /gallery/{id}` with `HX-Request: true` and `HX-Target: gallery-content`) often return a **fragment** on the wire: no literal `<html>`, `<head>`, or `<body>` tags.
+
+`html.Parse` / `testutil.ParseHTML` **always** synthesize `<html>` and `<body>` in the parse tree, even for those fragments. **Do not** use `FindElementByTag(doc, "html") == nil` to mean “partial on the wire.”
+
+**Wire check (first):** `tag, err := testutil.FirstLiteralDocumentShellTag(body)` on raw response bytes. For a layout partial, `tag` must be `""` and `err` must be nil. The helper tokenizes start/end tags named `html`, `head`, or `body` only (not substring search).
+
+**Structure check (second):** `testutil.ParseHTML` on the same bytes, then `FindElementByID` / `FindElementByTag` / `GetTextContent` as usual (e.g. `#dashboard-title`, `#gallery-content`, h1).
+
+Tests: `internal/testutil/html_test.go` (`TestFirstLiteralDocumentShellTag`); handler helper `assertDashboardHTMXPartialResponse` in `dashboard_handlers_test.go`.
+
 ## Implementation Instructions
 
 ### Task 1: Writing New Tests
@@ -188,15 +200,14 @@ func TestUserProfileHandler(t *testing.T) {
 When writing HTTP handler tests:
 
 1. Use `httptest.NewRequest` and `httptest.NewRecorder` to call the handler
-2. Parse the response body with `testutil.ParseHTML(rec.Body)`
-3. Assert structure using:
+2. For layout HTMX partials, run `FirstLiteralDocumentShellTag` on the body bytes before parsing (see **HTMX layout partial responses** above)
+3. Parse the response body with `testutil.ParseHTML(rec.Body)`
+4. Assert structure using:
    - `FindElementByID(doc, "id")` — element must exist
    - `FindElementByClass(doc, "class")` — element must exist
    - `GetAttr(node, "attr")` — attribute value check
    - `GetTextContent(node)` — only when text matters
-4. Never use `strings.Contains(rec.Body.String(), "...")` for HTML assertions
-
-> **Note:** This is the project's target convention. Some existing tests may still use string/bytes contains checks; new tests and refactored tests should follow the structural patterns below.
+5. Never use `strings.Contains(rec.Body.String(), "...")` for HTML assertions
 
 ### Task 2: Refactoring Existing Tests
 
@@ -376,3 +387,50 @@ if !strings.HasPrefix(href, "/user/") {
 3. Replace string check with structural assertion
 4. Run tests to verify behavior unchanged
 5. Note: If `w.Body` is read multiple times, you may need to buffer it first since `html.Parse` consumes the reader
+
+## Automated enforcement (`validate-html-test-assertions`)
+
+Pre-commit and CI run a static checker over `*_test.go` files. From the repo root:
+
+```bash
+make validate-html-test-assertions
+```
+
+The tool must report **0 violations** before you commit HTML-related test changes. Implementation: `scripts/validate-html-test-assertions/`.
+
+### Rules C2–C7
+
+| Rule                      | What it flags                                                                                                                                                                                   | Prefer instead                                                                                         |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| **C2-raw-body**           | `strings.Contains` (or similar) on raw response body text (`Body.String()`, template/menu HTML strings, etc.)                                                                                   | `testutil.ParseHTML` + `FindElementByID` / `GetAttr` / exact text on a node                            |
+| **C3-get-text-content**   | `Contains` on `testutil.GetTextContent` (or a `t.Helper()` that returns aggregated text from the tree)                                                                                          | Target a specific element; use `==` or structural checks                                               |
+| **C3-html-tree**          | `Contains` on parsed HTML (`GetAttr`, `n.Data`, script/hyperscript attrs, etc.)                                                                                                                 | Assert attributes or structure, not substring of serialized HTML                                       |
+| **C3-helper-contains**    | Test helper with `*html.Node` that walks the tree and uses `Contains` on `n.Data`                                                                                                               | Structural helpers (`FindElementByID`, etc.)                                                           |
+| **C4-tui-view**           | `Contains` on rendered TUI dashboard view strings                                                                                                                                               | `tuiview.AssertPlainIncludes` or model/exact assertions                                                |
+| **C5-inefficient-parse**  | `html.Parse(strings.NewReader(...Body.String()))` (or `string` of body bytes)                                                                                                                   | `testutil.ParseHTML(w.Body)` or `html.Parse` on the response body reader directly                      |
+| **C6-regexp-html**        | `regexp.MatchString`, `FindStringSubmatch`, or `(*regexp.Regexp).MatchString` when the subject is HTML-derived (same provenance as C3: `GetTextContent`, `GetAttr`, body string, helpers, etc.) | Structural or exact equality checks                                                                    |
+| **C7-htmx-partial-parse** | `FindElementByTag(doc, "html"\|"head"\|"body") == nil` (HTMX partial mis-detection; parse tree always has synthetic shell)                                                                      | `testutil.FirstLiteralDocumentShellTag(body)` then `ParseHTML` (see **HTMX layout partial responses**) |
+
+**Not flagged:** `Header().Get(...)` for HTTP headers (not HTML body).
+
+**P1 (provenance):** The checker tracks assignments from `testutil.GetTextContent` / `GetAttr` / `ParseHTML`, test helpers that return aggregated text, and in `web-testsuite/` the package-local `GetTextContent` / `GetAttr` / `ParseHTML` names.
+
+### Path-needle exception (C3 on attributes only)
+
+`strings.Contains(haystack, needle)` is **allowed** when:
+
+- `haystack` comes from `GetAttr` (any attribute name), and
+- `needle` is a **string literal** whose value starts with `/` (URL/path assertion, e.g. `"/gallery/1"` on `hx-get`).
+
+Any other `Contains` on attribute values is still a C3 violation.
+
+### `allow-regexp` escape hatch
+
+Use only when a non-regexp parse is genuinely awkward (document why in the comment):
+
+```go
+// validate-html-assertions:allow-regexp hyperscript init attribute is not a stable DOM shape
+matched, _ := regexp.MatchString(pattern, script)
+```
+
+The comment must be on the line **immediately above** the flagged `regexp` call. It exempts **that one statement** only; do not use `//nolint` for this.

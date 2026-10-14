@@ -1,10 +1,9 @@
-//go:build integration
-
 package gallerydb
 
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -14,7 +13,6 @@ import (
 func TestViewAndCustomQueries(t *testing.T) {
 	db, q, ctx := setupTestDB(t)
 	_ = db // q already contains custom queries
-
 	// 1. Setup data
 	// /gaps
 	gapsPathID, _ := q.UpsertFolderPathReturningID(ctx, "/gaps")
@@ -32,7 +30,6 @@ func TestViewAndCustomQueries(t *testing.T) {
 	thumbID, _ := q.UpsertThumbnailReturningID(ctx, UpsertThumbnailReturningIDParams{FileID: imgBFile.ID, SizeLabel: "test", Width: 1, Height: 1, Format: "jpeg", CreatedAt: time.Now().Unix(), UpdatedAt: time.Now().Unix()})
 	thumbData := []byte("test_thumb_data")
 	_ = q.UpsertThumbnailBlob(ctx, UpsertThumbnailBlobParams{ThumbnailID: thumbID, Data: thumbData})
-
 	// 2. Test GetFolderViewByID
 	t.Run("GetFolderViewByID", func(t *testing.T) {
 		view, err := q.GetFolderViewByID(ctx, subFolder.ID)
@@ -46,7 +43,6 @@ func TestViewAndCustomQueries(t *testing.T) {
 			t.Errorf("Expected name sub, got %s", view.Name)
 		}
 	})
-
 	// 3. Test UpdateFolderTileId
 	t.Run("UpdateFolderTileId", func(t *testing.T) {
 		err := q.UpdateFolderTileId(ctx, UpdateFolderTileIdParams{
@@ -64,12 +60,10 @@ func TestViewAndCustomQueries(t *testing.T) {
 			t.Errorf("Expected TileID to be %d, got %v", thumbID, updatedFolder.TileID)
 		}
 	})
-
 	// 5. Test GetFolderTileExistsViewByPath
 	t.Run("GetFolderTileExistsViewByPath", func(t *testing.T) {
 		// First, update the tile ID for the folder
 		_ = q.UpdateFolderTileId(ctx, UpdateFolderTileIdParams{ID: subFolder.ID, TileID: sql.NullInt64{Int64: thumbID, Valid: true}})
-
 		exists, err := q.GetFolderTileExistsViewByPath(ctx, "/gaps/sub")
 		if err != nil {
 			t.Fatalf("GetFolderTileExistsViewByPath for /gaps/sub failed: %v", err)
@@ -77,13 +71,11 @@ func TestViewAndCustomQueries(t *testing.T) {
 		if !exists {
 			t.Error("Expected tile to exist for /gaps/sub, but it doesn't")
 		}
-
 		_, err = q.GetFolderTileExistsViewByPath(ctx, "/gaps")
-		if err != sql.ErrNoRows {
+		if !errors.Is(err, sql.ErrNoRows) {
 			t.Errorf("Expected sql.ErrNoRows for /gaps, but got %v", err)
 		}
 	})
-
 	// 6. Test custom.go GetFolderViewThumbnailBlobDataByPath
 	t.Run("CustomGetFolderViewThumbnailBlobDataByPath", func(t *testing.T) {
 		// Ensure tile is set
@@ -96,7 +88,6 @@ func TestViewAndCustomQueries(t *testing.T) {
 			t.Errorf("Expected thumb data %v, got %v", thumbData, retrievedData)
 		}
 	})
-
 	// 7. Test custom.go WithTx
 	t.Run("CustomWithTxRollback", func(t *testing.T) {
 		tx, err := db.BeginTx(ctx, nil)
@@ -104,7 +95,6 @@ func TestViewAndCustomQueries(t *testing.T) {
 			t.Fatal(err)
 		}
 		qtx := q.WithTx(tx)
-
 		// Insert a folder path within the transaction
 		txFolderPathID, err := qtx.UpsertFolderPathReturningID(ctx, "/tx_test")
 		if err != nil {
@@ -116,19 +106,16 @@ func TestViewAndCustomQueries(t *testing.T) {
 			tx.Rollback()
 			t.Fatalf("UpsertFolderReturningFolder within tx failed: %v", err)
 		}
-
 		// Rollback the transaction
 		if rbErr := tx.Rollback(); rbErr != nil {
 			t.Fatalf("Rollback failed: %v", err)
 		}
-
 		// Verify the folder does not exist
 		_, err = q.GetFolderByPath(ctx, "/tx_test")
-		if err != sql.ErrNoRows {
+		if !errors.Is(err, sql.ErrNoRows) {
 			t.Errorf("Expected sql.ErrNoRows after rollback, but got %v", err)
 		}
 	})
-
 	// 8. Test GetFileViewRowsByFolderPath
 	t.Run("GetFileViewRowsByFolderPath", func(t *testing.T) {
 		rows, err := q.GetFileViewRowsByFolderPath(ctx, "/gaps/sub")
@@ -136,7 +123,6 @@ func TestViewAndCustomQueries(t *testing.T) {
 			t.Fatalf("GetFileViewRowsByFolderPath failed: %v", err)
 		}
 		defer rows.Close()
-
 		var foundFiles []string
 		for rows.Next() {
 			var i FileView
@@ -148,13 +134,11 @@ func TestViewAndCustomQueries(t *testing.T) {
 		if scanErr := rows.Err(); scanErr != nil {
 			t.Fatalf("rows.Err() was not nil: %v", scanErr)
 		}
-
 		expectedFiles := []string{"imageA.png", "imageB.jpg"}
 		if !reflect.DeepEqual(foundFiles, expectedFiles) {
 			t.Errorf("Expected files %v, got %v", expectedFiles, foundFiles)
 		}
 	})
-
 	// 9. Test GetFileViewRowsByFolderID
 	t.Run("GetFileViewRowsByFolderID", func(t *testing.T) {
 		rows, err := q.GetFileViewRowsByFolderID(ctx, subFolder.ID)
@@ -162,7 +146,6 @@ func TestViewAndCustomQueries(t *testing.T) {
 			t.Fatalf("GetFileViewRowsByFolderID failed: %v", err)
 		}
 		defer rows.Close()
-
 		var foundFiles []string
 		for rows.Next() {
 			var i FileView
@@ -174,20 +157,16 @@ func TestViewAndCustomQueries(t *testing.T) {
 		if err := rows.Err(); err != nil {
 			t.Fatalf("rows.Err() was not nil: %v", err)
 		}
-
 		expectedFiles := []string{"imageA.png", "imageB.jpg"}
 		if !reflect.DeepEqual(foundFiles, expectedFiles) {
 			t.Errorf("Expected files %v, got %v", expectedFiles, foundFiles)
 		}
 	})
 }
-
 func TestGetPreloadRoutesByFolderID(t *testing.T) {
 	db, q, ctx := setupTestDB(t)
-
 	// q is already *CustomQueries from setupTestDB
 	_ = db
-
 	// 1. Create folder hierarchy
 	rootPathID, err := q.UpsertFolderPathReturningID(ctx, "/root")
 	if err != nil {
@@ -202,7 +181,6 @@ func TestGetPreloadRoutesByFolderID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpsertFolderReturningFolder for root failed: %v", err)
 	}
-
 	// 2. Create child folder under root
 	childPathID, err := q.UpsertFolderPathReturningID(ctx, "/root/child")
 	if err != nil {
@@ -218,7 +196,6 @@ func TestGetPreloadRoutesByFolderID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpsertFolderReturningFolder for child failed: %v", err)
 	}
-
 	// 3. Create a file under child folder
 	filePathID, err := q.UpsertFilePathReturningID(ctx, "/root/child/image.jpg")
 	if err != nil {
@@ -239,19 +216,16 @@ func TestGetPreloadRoutesByFolderID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpsertFileReturningFile failed: %v", err)
 	}
-
 	// Verify file was created
 	if file.ID == 0 {
 		t.Error("expected file ID to be non-zero")
 	}
-
 	// 4. Test GetPreloadRoutesByFolderID for root folder (parent_id)
 	// Should return routes for child folder and files under child
 	routes, err := q.GetPreloadRoutesByFolderID(ctx, sql.NullInt64{Int64: rootFolder.ID, Valid: true})
 	if err != nil {
 		t.Fatalf("GetPreloadRoutesByFolderID failed: %v", err)
 	}
-
 	// 5. Verify routes contain expected prefixes
 	expectedPrefixes := map[string]bool{
 		"/gallery/":     false,
@@ -259,7 +233,6 @@ func TestGetPreloadRoutesByFolderID(t *testing.T) {
 		"/info/image/":  false,
 		"/lightbox/":    false,
 	}
-
 	for _, route := range routes {
 		for prefix := range expectedPrefixes {
 			if strings.HasPrefix(route, prefix) {
@@ -267,7 +240,6 @@ func TestGetPreloadRoutesByFolderID(t *testing.T) {
 			}
 		}
 	}
-
 	// At least some of the route types should be present
 	foundAtLeastOne := false
 	for _, found := range expectedPrefixes {
@@ -276,28 +248,23 @@ func TestGetPreloadRoutesByFolderID(t *testing.T) {
 			break
 		}
 	}
-
 	if !foundAtLeastOne {
 		t.Errorf("expected at least one route with valid prefix, got routes: %v", routes)
 	}
-
 	// 6. Test GetPreloadRoutesByFolderID for child folder
 	childRoutes, err := q.GetPreloadRoutesByFolderID(ctx, sql.NullInt64{Int64: childFolder.ID, Valid: true})
 	if err != nil {
 		t.Fatalf("GetPreloadRoutesByFolderID for child failed: %v", err)
 	}
-
 	// Child folder routes should include the file
 	if len(childRoutes) == 0 {
 		t.Error("expected at least one route for child folder files, got none")
 	}
-
 	// Verify the custom database connection works correctly
 	if db == nil {
 		t.Error("database connection should not be nil")
 	}
 }
-
 func ensureRootFolderIDForInvalidTests(t *testing.T, q *CustomQueries, ctx context.Context) int64 {
 	t.Helper()
 	id, err := q.GetFolderIDByPath(ctx, "")
@@ -323,11 +290,9 @@ func ensureRootFolderIDForInvalidTests(t *testing.T, q *CustomQueries, ctx conte
 func TestInvalidFileQueries(t *testing.T) {
 	_, q, ctx := setupTestDB(t)
 	rootID := ensureRootFolderIDForInvalidTests(t, q, ctx)
-
 	t.Run("UpsertInvalidFile and GetInvalidFileByPath", func(t *testing.T) {
 		testPath := "/invalid/test.jpg"
 		now := time.Now().Unix()
-
 		// Insert an invalid file record
 		err := q.UpsertInvalidFile(ctx, UpsertInvalidFileParams{
 			Path:     testPath,
@@ -339,7 +304,6 @@ func TestInvalidFileQueries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("UpsertInvalidFile failed: %v", err)
 		}
-
 		// Get the invalid file
 		invFile, err := q.GetInvalidFileByPath(ctx, testPath)
 		if err != nil {
@@ -358,11 +322,9 @@ func TestInvalidFileQueries(t *testing.T) {
 			t.Errorf("Expected reason 'corrupted header', got %v", invFile.Reason)
 		}
 	})
-
 	t.Run("UpsertInvalidFile_Update", func(t *testing.T) {
 		testPath := "/invalid/update.jpg"
 		now := time.Now().Unix()
-
 		// Insert initial record
 		err := q.UpsertInvalidFile(ctx, UpsertInvalidFileParams{
 			Path:     testPath,
@@ -374,7 +336,6 @@ func TestInvalidFileQueries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("UpsertInvalidFile (initial) failed: %v", err)
 		}
-
 		// Update the record
 		err = q.UpsertInvalidFile(ctx, UpsertInvalidFileParams{
 			Path:     testPath,
@@ -386,7 +347,6 @@ func TestInvalidFileQueries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("UpsertInvalidFile (update) failed: %v", err)
 		}
-
 		invFile, err := q.GetInvalidFileByPath(ctx, testPath)
 		if err != nil {
 			t.Fatalf("GetInvalidFileByPath (after update) failed: %v", err)
@@ -398,11 +358,9 @@ func TestInvalidFileQueries(t *testing.T) {
 			t.Errorf("Expected updated reason 'updated reason', got %v", invFile.Reason)
 		}
 	})
-
 	t.Run("DeleteInvalidFileByPath", func(t *testing.T) {
 		testPath := "/invalid/delete.jpg"
 		now := time.Now().Unix()
-
 		// Insert a record
 		err := q.UpsertInvalidFile(ctx, UpsertInvalidFileParams{
 			Path:     testPath,
@@ -413,33 +371,29 @@ func TestInvalidFileQueries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("UpsertInvalidFile failed: %v", err)
 		}
-
 		// Verify it exists
 		_, err = q.GetInvalidFileByPath(ctx, testPath)
 		if err != nil {
 			t.Fatalf("GetInvalidFileByPath before delete failed: %v", err)
 		}
-
 		// Delete the record
 		err = q.DeleteInvalidFileByPath(ctx, testPath)
 		if err != nil {
 			t.Fatalf("DeleteInvalidFileByPath failed: %v", err)
 		}
-
 		// Verify it's gone
 		_, err = q.GetInvalidFileByPath(ctx, testPath)
 		if err == nil {
 			t.Error("expected error when getting deleted invalid file, but got nil")
-		} else if err != sql.ErrNoRows {
+		} else if !errors.Is(err, sql.ErrNoRows) {
 			t.Errorf("expected sql.ErrNoRows after delete, got %v", err)
 		}
 	})
-
 	t.Run("GetInvalidFileByPath_NonExistent", func(t *testing.T) {
 		_, err := q.GetInvalidFileByPath(ctx, "/nonexistent/invalid.jpg")
 		if err == nil {
 			t.Error("expected error when getting non-existent invalid file, but got nil")
-		} else if err != sql.ErrNoRows {
+		} else if !errors.Is(err, sql.ErrNoRows) {
 			t.Errorf("expected sql.ErrNoRows, got %v", err)
 		}
 	})

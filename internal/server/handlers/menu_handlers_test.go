@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -157,9 +158,9 @@ func (m *mockMenuSessionManager) IsAuthenticated(w http.ResponseWriter, r *http.
 	return m.authenticated
 }
 
-// aboutModalBoxText parses the About modal response and returns the text content
-// of the .modal-box element, asserting the container and checkbox are present.
-func aboutModalBoxText(t *testing.T, body *bytes.Buffer) string {
+// aboutModalBox parses the About modal response and returns the .modal-box node,
+// asserting the container and checkbox are present.
+func aboutModalBox(t *testing.T, body *bytes.Buffer) *html.Node {
 	t.Helper()
 	doc, err := testutil.ParseHTML(body)
 	if err != nil {
@@ -172,7 +173,54 @@ func aboutModalBoxText(t *testing.T, body *bytes.Buffer) string {
 	if box == nil {
 		t.Fatal("missing .modal-box")
 	}
-	return testutil.GetTextContent(box)
+	return box
+}
+
+func assertAboutModalVersion(t *testing.T, box *html.Node, wantVersion string) {
+	t.Helper()
+	p := testutil.FindElement(box, func(n *html.Node) bool {
+		return n.Type == html.ElementNode && n.Data == "p" &&
+			slices.Contains(strings.Fields(testutil.GetAttr(n, "class")), "text-base-content/70")
+	})
+	if p == nil {
+		t.Fatal("missing version paragraph")
+	}
+	got := strings.Join(strings.Fields(testutil.GetTextContent(p)), " ")
+	want := "Version " + wantVersion
+	if got != want {
+		t.Errorf("version paragraph = %q, want %q", got, want)
+	}
+}
+
+func assertAboutModalFolders(t *testing.T, box *html.Node, wantCount string) {
+	t.Helper()
+	stats := testutil.FindElementByClass(box, "bg-base-200")
+	if stats == nil {
+		t.Fatal("missing gallery stats block")
+	}
+	wantLine := "Folders: " + wantCount
+	list := testutil.FindElementByClass(stats, "space-y-1")
+	if list == nil {
+		t.Fatal("missing stats list")
+	}
+	var found bool
+	for c := list.FirstChild; c != nil; c = c.NextSibling {
+		if c.Type != html.ElementNode || c.Data != "div" {
+			continue
+		}
+		line := strings.TrimSpace(testutil.GetTextContent(c))
+		if !strings.HasPrefix(line, "Folders:") {
+			continue
+		}
+		if line != wantLine {
+			t.Errorf("Folders line = %q, want %q", line, wantLine)
+		}
+		found = true
+		break
+	}
+	if !found {
+		t.Fatalf("missing Folders stat line, want %q", wantLine)
+	}
 }
 
 func TestMenuHandlers_AboutModal_OK(t *testing.T) {
@@ -181,7 +229,7 @@ func TestMenuHandlers_AboutModal_OK(t *testing.T) {
 	}
 	sm := &mockMenuSessionManager{authenticated: false}
 	helper := &mockTemplateHelpers{}
-	addCommon := func(w http.ResponseWriter, r *http.Request, data map[string]any, partial bool) map[string]any {
+	addCommon := func(w http.ResponseWriter, r *http.Request, data map[string]any) map[string]any {
 		if data == nil {
 			data = make(map[string]any)
 		}
@@ -205,13 +253,9 @@ func TestMenuHandlers_AboutModal_OK(t *testing.T) {
 		t.Errorf("Content-Type = %q", got)
 	}
 
-	text := aboutModalBoxText(t, w.Body)
-	if !strings.Contains(text, "Version") || !strings.Contains(text, "9.9.9-test") {
-		t.Errorf("modal-box text missing Version/9.9.9-test: %q", text)
-	}
-	if !strings.Contains(text, "Folders:") || !strings.Contains(text, "10") {
-		t.Errorf("modal-box text missing Folders/10: %q", text)
-	}
+	box := aboutModalBox(t, w.Body)
+	assertAboutModalVersion(t, box, "9.9.9-test")
+	assertAboutModalFolders(t, box, "10")
 }
 
 // mutableFakeGalleryStats is a fake GalleryStats whose Folders value can be
@@ -235,7 +279,7 @@ func TestMenuHandlers_AboutModal_FreshStatsEachRequest(t *testing.T) {
 	sm := &mockMenuSessionManager{authenticated: false}
 	helper := &mockTemplateHelpers{}
 	stats := &mutableFakeGalleryStats{folders: "10"}
-	addCommon := func(w http.ResponseWriter, r *http.Request, data map[string]any, partial bool) map[string]any {
+	addCommon := func(w http.ResponseWriter, r *http.Request, data map[string]any) map[string]any {
 		if data == nil {
 			data = make(map[string]any)
 		}
@@ -250,10 +294,8 @@ func TestMenuHandlers_AboutModal_FreshStatsEachRequest(t *testing.T) {
 	if w1.Code != http.StatusOK {
 		t.Fatalf("call1 status = %d", w1.Code)
 	}
-	text1 := aboutModalBoxText(t, w1.Body)
-	if !strings.Contains(text1, "Folders:") || !strings.Contains(text1, "10") {
-		t.Fatalf("call1 missing Folders 10: %q", text1)
-	}
+	box1 := aboutModalBox(t, w1.Body)
+	assertAboutModalFolders(t, box1, "10")
 
 	stats.folders = "99"
 
@@ -262,11 +304,6 @@ func TestMenuHandlers_AboutModal_FreshStatsEachRequest(t *testing.T) {
 	if w2.Code != http.StatusOK {
 		t.Fatalf("call2 status = %d", w2.Code)
 	}
-	text2 := aboutModalBoxText(t, w2.Body)
-	if !strings.Contains(text2, "Folders:") || !strings.Contains(text2, "99") {
-		t.Fatalf("call2 missing Folders 99: %q", text2)
-	}
-	if strings.Contains(text2, "Folders: 10") {
-		t.Fatalf("call2 still shows stale Folders 10: %q", text2)
-	}
+	box2 := aboutModalBox(t, w2.Body)
+	assertAboutModalFolders(t, box2, "99")
 }

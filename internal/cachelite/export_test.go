@@ -4,4 +4,6 @@ package cachelite
 var (
 	NewHTTPCacheMiddlewareForTest = newHTTPCacheMiddlewareForTest
 	HTTPCacheCountersForTest      = httpCacheCountersForTest
+	AcquireSharedTestPoolForTest  = createTestDBPoolInternal
+	NewIsolatedTestDBPoolForTest  = newIsolatedTestDBPool
 )

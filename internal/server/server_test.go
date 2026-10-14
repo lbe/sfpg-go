@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"image"
 	"image/jpeg"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -111,7 +112,26 @@ func TestSetConfigDefaultsLegacy_Coverage(t *testing.T) {
 	}
 }
 
-func TestAddCommonTemplateData_PartialIncludesGalleryStats(t *testing.T) {
+func TestAddCommonTemplateData_IncludesCommonKeys(t *testing.T) {
+	app := New(getopt.Opt{
+		SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true},
+	}, "x.y.z")
+	app.ensureSession()
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	rr := httptest.NewRecorder()
+	seed := map[string]any{"RouteKey": "seed"}
+
+	result := app.AddCommonTemplateData(rr, req, maps.Clone(seed))
+
+	for _, key := range []string{"IsAuthenticated", "Theme", "Version", "GalleryStats", "RouteKey"} {
+		if _, ok := result[key]; !ok {
+			t.Fatalf("expected key %q in template data", key)
+		}
+	}
+}
+
+func TestAddCommonTemplateData_IncludesGalleryStats(t *testing.T) {
 	app := New(getopt.Opt{
 		SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true},
 	}, "x.y.z")
@@ -121,30 +141,13 @@ func TestAddCommonTemplateData_PartialIncludesGalleryStats(t *testing.T) {
 	req := httptest.NewRequest("GET", "/test", nil)
 	rr := httptest.NewRecorder()
 
-	result := app.AddCommonTemplateData(rr, req, data, true)
+	result := app.AddCommonTemplateData(rr, req, data)
 
 	if _, ok := result["IsAuthenticated"]; !ok {
 		t.Error("Expected IsAuthenticated in template data")
 	}
-	// GalleryStats must be present when partial=true (dashboard polls need it)
 	if gs, ok := result["GalleryStats"].(*GalleryStats); !ok || gs == nil {
-		t.Error("Expected non-nil GalleryStats when partial=true")
-	}
-}
-
-func TestAddCommonTemplateData_FullPageIncludesGalleryStats(t *testing.T) {
-	app := New(getopt.Opt{
-		SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true},
-	}, "x.y.z")
-	app.ensureSession()
-
-	data := make(map[string]any)
-	req := httptest.NewRequest("GET", "/test", nil)
-	rr := httptest.NewRecorder()
-
-	result := app.AddCommonTemplateData(rr, req, data, false)
-	if gs, ok := result["GalleryStats"].(*GalleryStats); !ok || gs == nil {
-		t.Error("Expected non-nil GalleryStats when partial=false")
+		t.Error("Expected non-nil GalleryStats")
 	}
 }
 
@@ -162,7 +165,7 @@ func TestAddCommonTemplateData_AboutModalGetsN_A(t *testing.T) {
 	req := httptest.NewRequest("GET", "/test", nil)
 	rr := httptest.NewRecorder()
 
-	result := app.AddCommonTemplateData(rr, req, data, false)
+	result := app.AddCommonTemplateData(rr, req, data)
 	stats, ok := result["GalleryStats"].(*GalleryStats)
 	if !ok || stats == nil {
 		t.Fatal("expected GalleryStats in result")
@@ -709,7 +712,7 @@ func (m *mockServerDeps) SetManualDiscoveryError(msg string) {}
 
 func (m *mockServerDeps) GetConfig() *config.Config { return m.Cfg }
 
-func (m *mockServerDeps) AddCommonTemplateData(w http.ResponseWriter, r *http.Request, data map[string]any, fullPage bool) map[string]any {
+func (m *mockServerDeps) AddCommonTemplateData(w http.ResponseWriter, r *http.Request, data map[string]any) map[string]any {
 	if data == nil {
 		data = make(map[string]any)
 	}

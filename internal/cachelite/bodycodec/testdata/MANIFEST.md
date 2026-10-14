@@ -1,8 +1,9 @@
 # bodycodec testdata manifest
 
 Gallery HTML fixtures are stored in git as `galleries.tar.gz`. Tests extract them
-lazily via `internal/cachelite/bodycodec/fixtures` on first use. Regenerate with
-`scripts/extract_bodycodec_testdata.sh` (requires a local gallery DB).
+lazily to `tmp/bodycodec/testdata/` via `internal/cachelite/bodycodec/testfixture`
+on first use. Regenerate the archive with `scripts/extract_bodycodec_testdata.sh`
+(requires a local gallery DB).
 
 | file | id | key | path | content_length | stored_length |
 | ---- | -- | --- | ---- | -------------- | ------------- |

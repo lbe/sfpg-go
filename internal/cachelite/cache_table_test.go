@@ -1,5 +1,3 @@
-//go:build integration
-
 package cachelite
 
 import (
@@ -150,8 +148,8 @@ func TestCountCacheEntries(t *testing.T) {
 			Body:      []byte("counting"),
 			CreatedAt: now,
 		}
-		if err := StoreCacheEntry(ctx, db, entry); err != nil {
-			t.Fatalf("StoreCacheEntry: %v", err)
+		if storeErr := StoreCacheEntry(ctx, db, entry); storeErr != nil {
+			t.Fatalf("StoreCacheEntry: %v", storeErr)
 		}
 	}
 
@@ -163,8 +161,8 @@ func TestCountCacheEntries(t *testing.T) {
 		t.Fatalf("CountCacheEntries = %d, want 3", count)
 	}
 
-	if err := ClearCache(ctx, db); err != nil {
-		t.Fatalf("ClearCache: %v", err)
+	if clearErr := ClearCache(ctx, db); clearErr != nil {
+		t.Fatalf("ClearCache: %v", clearErr)
 	}
 
 	count, err = CountCacheEntries(ctx, db)
@@ -177,8 +175,8 @@ func TestCountCacheEntries(t *testing.T) {
 }
 
 func TestRotateCacheTable_ClosedPoolReturnsError(t *testing.T) {
-	db := createTestDBPoolInternal(t)
-	db.Close()
+	db := newIsolatedTestDBPool(t)
+	_ = db.Close()
 
 	if err := RotateCacheTable(context.Background(), db); err == nil {
 		t.Fatal("expected RotateCacheTable to return error with closed pool")
@@ -199,11 +197,16 @@ func TestRotateCacheTable_ConcurrentTransactionCausesError(t *testing.T) {
 	db := createTestDBPoolInternal(t)
 	ctx := context.Background()
 
+	t.Cleanup(func() {
+		setSharedPoolIdleConnBusyTimeoutMS(t, sqliteBusyTimeoutDefaultMS)
+	})
+	setSharedPoolIdleConnBusyTimeoutMS(t, sqliteBusyTimeoutFastTestMS)
+
 	cpc, err := db.Get()
 	if err != nil {
 		t.Fatalf("Get connection: %v", err)
 	}
-	defer db.Put(cpc)
+	defer putSharedPoolConnRestoringBusyTimeout(t, cpc)
 
 	tx, err := cpc.Conn.BeginTx(ctx, nil)
 	if err != nil {

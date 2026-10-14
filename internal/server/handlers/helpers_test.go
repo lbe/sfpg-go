@@ -251,7 +251,7 @@ type mockTemplateHelpers struct {
 	Authed bool
 }
 
-func (m *mockTemplateHelpers) AddCommonTemplateData(w http.ResponseWriter, r *http.Request, data map[string]any, fullPage bool) map[string]any {
+func (m *mockTemplateHelpers) AddCommonTemplateData(w http.ResponseWriter, r *http.Request, data map[string]any) map[string]any {
 	if data == nil {
 		data = make(map[string]any)
 	}

@@ -18,7 +18,6 @@ import (
 
 	"github.com/lbe/sfpg-go/internal/coords"
 	"github.com/lbe/sfpg-go/internal/gallerydb"
-	"github.com/lbe/sfpg-go/internal/gallerylib"
 	"github.com/lbe/sfpg-go/internal/queue"
 	"github.com/lbe/sfpg-go/internal/workerpool"
 
@@ -511,33 +510,6 @@ func TestExtractExifData_Timeout(t *testing.T) {
 	}
 }
 
-// --- GenerateThumbnail (CallsImporterMethods) ---
-
-//nolint:unused // used in files_integration_test.go (same package)
-type wrappedImporter struct {
-	inner              *gallerylib.Importer
-	upsertCalls        int
-	lastUpsertPath     string
-	updateCalls        int
-	lastUpdateFolderID int64
-	lastUpdateTileID   int64
-}
-
-//nolint:unused // used in files_integration_test.go (same package)
-func (w *wrappedImporter) UpsertPathChain(ctx context.Context, path string, mtime, size int64, md5 string, phash, width, height int64, mimeType string) (gallerydb.File, error) {
-	w.upsertCalls++
-	w.lastUpsertPath = path
-	return w.inner.UpsertPathChain(ctx, path, mtime, size, md5, phash, width, height, mimeType)
-}
-
-//nolint:unused // used in files_integration_test.go (same package)
-func (w *wrappedImporter) UpdateFolderTileChain(ctx context.Context, folderID, tileFileID int64) error {
-	w.updateCalls++
-	w.lastUpdateFolderID = folderID
-	w.lastUpdateTileID = tileFileID
-	return w.inner.UpdateFolderTileChain(ctx, folderID, tileFileID)
-}
-
 // --- BufPool ---
 
 func TestBufPool_Get(t *testing.T) {
@@ -612,7 +584,6 @@ type recordInvalidCall struct {
 type fakeProcessor struct {
 	processErrByPath    map[string]error
 	thumbErrByPath      map[string]error
-	skipAsInvalidByPath map[string]bool // if true, ProcessFile returns Ok=true, Exists=false
 	processExistsByPath map[string]bool // if true, ProcessFile returns Exists=true
 	processed           []string
 	recordInvalidCalls  []recordInvalidCall
@@ -626,12 +597,8 @@ func (f *fakeProcessor) processPath(path string) (*File, error) {
 	}
 	f.mu.Lock()
 	f.processed = append(f.processed, path)
-	skip := f.skipAsInvalidByPath[path]
 	exists := f.processExistsByPath[path]
 	f.mu.Unlock()
-	if skip {
-		return &File{Path: path, Ok: true, Exists: false}, nil
-	}
 	if exists {
 		return &File{Path: path, Exists: true}, nil
 	}

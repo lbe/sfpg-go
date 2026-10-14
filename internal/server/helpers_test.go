@@ -19,6 +19,33 @@ import (
 	"github.com/lbe/sfpg-go/web"
 )
 
+func init() {
+	seedTestDatabase = seedTestDBIfAbsent
+}
+
+// seedTestDBIfAbsent copies main and thumbs test database files into rootDir when
+// sfpg.db is absent.
+func seedTestDBIfAbsent(rootDir string) error {
+	dbPath := filepath.Join(rootDir, "DB", "sfpg.db")
+	_, statErr := os.Stat(dbPath)
+	if statErr == nil {
+		return nil
+	}
+	if !os.IsNotExist(statErr) {
+		return statErr
+	}
+	thumbsPath := filepath.Join(rootDir, "DB", "thumbs", "thumbs.db")
+	if err := dbconnpool.CopyMainTestDatabaseTo(dbPath); err != nil {
+		return err
+	}
+	if err := dbconnpool.CopyThumbsTestDatabaseTo(thumbsPath); err != nil {
+		_ = os.Remove(dbPath)
+		_ = os.Remove(thumbsPath)
+		return err
+	}
+	return nil
+}
+
 // Thumb is a minimal test struct used across server test files.
 type Thumb struct {
 	ID        int64

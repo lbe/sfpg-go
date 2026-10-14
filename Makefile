@@ -17,7 +17,8 @@ help:
 	@echo "Available targets:"
 	@echo "  make bench         - Run benchmarks (single iteration)"
 	@echo "  make bench5        - Run benchmarks (5 iterations)"
-	@echo "  make build         - Build the binary"
+	@echo "  make build         - Cross-build sfpg + dashboard for release GOOS/GOARCH matrix"
+	@echo "  make build-one     - Build sfpg + dashboard for one GOOS/GOARCH (host default)"
 	@echo "  make build-assets  - Build static assets (CSS + JS) from npm sources"
 	@echo "  make clean         - Remove build artifacts"
 	@echo "  make cover         - Generate coverage report"
@@ -42,23 +43,24 @@ help:
 test:
 	# Run all tests with session env for compatibility
 	# Extra go test flags can be passed via ARGS: make test ARGS="-count=1 -v"
-	time SEPG_SESSION_SECURE=false go test $(PKG) $(ARGS)
+	time ( SEPG_SESSION_SECURE=false go test $(PKG) $(ARGS) )
 
 .PHONY: test-all
 test-all:
 	# Run tests across all packages
-	time SEPG_SESSION_SECURE=false go test -tags "integration e2eweb" ./... $(ARGS)
+	time ( SEPG_SESSION_SECURE=false go test -tags "integration e2eweb" ./... $(ARGS) )
 
 .PHONY: test-browser
 test-browser:
 	# Run browser-based menu/auth tests via Playwright (requires air on :8083)
 	# setup auth, then chromium (parallel) and chromium-serial (config + restart, workers=1)
-	time npx playwright test --project=chromium --project=chromium-serial --reporter=list
+	# Skip post-suite cache batch load in global teardown (see tests/global-teardown.ts).
+	time SFPG_PW_SKIP_CACHE_BATCH=1 npx playwright test --project=chromium --project=chromium-serial --reporter=list
 
 .PHONY: test-race
 test-race:
 	# Run all tests with race detector
-	time SEPG_SESSION_SECURE=false go test -tags "integration" $(PKG) -race -timeout=1200s $(ARGS)
+	time ( SEPG_SESSION_SECURE=false go test -tags "integration" $(PKG) -race -timeout=1200s $(ARGS) )
 
 .PHONY: lint
 lint:
@@ -87,7 +89,8 @@ bench5:
 	SEPG_SESSION_SECURE=false go test $(PKG) -run ^Bench -bench . -benchmem -count=5 | tee "$(BENCH_OUT)"
 	@echo "Saved: $(BENCH_OUT)"
 
-# Allow cross-compilation via GOOS/GOARCH
+# Release cross-compile matrix (make build builds all; override for one platform).
+BUILD_PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64
 GOOS ?= $$(go env GOOS)
 GOARCH ?= $$(go env GOARCH)
 BINARY_NAME := bin/sfpg-$(GOOS)-$(GOARCH)
@@ -101,15 +104,27 @@ build-assets:
 	cp node_modules/htmx.org/dist/htmx.min.js web/static/js/htmx.min.js
 	cp node_modules/hyperscript.org/dist/_hyperscript.min.js web/static/js/hyperscript.min.js
 
-.PHONY: build
+.PHONY: build build-one
 build:
-	# Build the application binary (respects GOOS/GOARCH for cross-compilation)
+	# Cross-build sfpg and dashboard for every platform in BUILD_PLATFORMS
+	go generate ./...
+	@set -euo pipefail; \
+	for platform in $(BUILD_PLATFORMS); do \
+		os="$${platform%/*}"; arch="$${platform#*/}"; \
+		ext=""; [ "$$os" = "windows" ] && ext=".exe"; \
+		echo "==> $$os/$$arch"; \
+		GOOS=$$os GOARCH=$$arch go build -v -o "bin/sfpg-$${os}-$${arch}$${ext}" .; \
+		GOOS=$$os GOARCH=$$arch go build -v -o "bin/sfpg-dashboard-$${os}-$${arch}$${ext}" ./cmd/sfpg-go-dashboard/.; \
+	done
+
+build-one:
+	# Single-platform build (GOOS/GOARCH from env or host default)
 	go generate ./...
 	GOOS=$(GOOS) GOARCH=$(GOARCH) go build -v -o $(BINARY_NAME) .
 	GOOS=$(GOOS) GOARCH=$(GOARCH) go build -v -o $(BINARY_NAME2) ./cmd/sfpg-go-dashboard/.
  
 .PHONY: run
-run: build
+run: build-one
 	# Run the application (requires SEPG_SESSION_SECRET)
 	./$(BINARY_NAME)
 

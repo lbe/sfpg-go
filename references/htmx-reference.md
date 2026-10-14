@@ -927,16 +927,37 @@ For each HTMX endpoint, verify:
 
 ## Go Template Integration
 
+### Layout partials (`ui.RenderPage`)
+
+Documented in [ARCHITECTURE.md § HTMX HTML responses](../docs/ARCHITECTURE.md). Handlers call `ui.IsPartialRequest` with a `ui.PartialRule` instead of ad-hoc header checks.
+
+**Dashboard polling (`GET /dashboard`):** The poller (`hx-get="/dashboard"`, `hx-target="#dashboard-container"`) uses `ui.PartialRuleHXRequestOnly` — **`HX-Request: true`** (case-sensitive) selects the layout partial; **`HX-Target` is ignored** (the poller may still send `dashboard-container`).
+
+Authenticated poll (matches `AGENTS.md` curl step 5 — header only):
+
+    curl -s http://localhost:8083/dashboard \
+      -b /tmp/cookies.txt \
+      -H "Hx-Request: true"
+
+**Gallery (`GET /gallery/{id}`):** Uses `ui.PartialRuleHXRequestTarget` with `ui.HXTargetGalleryContent` (`gallery-content`). Both **`HX-Request: true`** and **`HX-Target: gallery-content`** are required for the layout partial; other targets or missing headers return the full-page layout. On partial responses, `ui.SetPartialNoStore` applies after gallery cache headers.
+
 ### Partial Templates
 
-    // Handler
-    func handlePartial(w http.ResponseWriter, r *http.Request) {
-        if r.Header.Get("HX-Request") == "true" {
-            tmpl.ExecuteTemplate(w, "partial.html", data)
-        } else {
-            tmpl.ExecuteTemplate(w, "full-page.html", data)
-        }
+    // Dashboard layout partial (GET /dashboard)
+    partial := ui.IsPartialRequest(r, ui.PartialRuleHXRequestOnly, "")
+    ui.SetLayoutPartialVary(w, false)
+    if partial {
+        ui.SetPartialNoStore(w)
     }
+    ui.RenderPage(w, "dashboard", data, partial)
+
+    // Gallery layout partial (GET /gallery/{id}) — after gallery cache headers on success path
+    partial := ui.IsPartialRequest(r, ui.PartialRuleHXRequestTarget, ui.HXTargetGalleryContent)
+    ui.SetLayoutPartialVary(w, true)
+    if partial {
+        ui.SetPartialNoStore(w)
+    }
+    ui.RenderPage(w, "gallery", data, partial)
 
 ### OOB in Templates
 

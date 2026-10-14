@@ -1,90 +1,16 @@
-//go:build integration
-
 package cachelite
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
-	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/golang-migrate/migrate/v4"
-	_ "github.com/golang-migrate/migrate/v4/database/sqlite"
-	"github.com/golang-migrate/migrate/v4/source/iofs"
-	_ "github.com/ncruces/go-sqlite3/driver"
-
 	"github.com/lbe/sfpg-go/internal/dbconnpool"
-	"github.com/lbe/sfpg-go/internal/gallerydb"
-	"github.com/lbe/sfpg-go/migrations"
 )
-
-// createTestDBPoolInDir creates a migrated SQLite pool in an explicit directory.
-// Used when a test needs multiple pools pointing at the same database file.
-// Set readOnly=true to open a read-only pool for error-path testing.
-func createTestDBPoolInDir(t *testing.T, dir string, readOnly bool) *dbconnpool.DbSQLConnPool {
-	t.Helper()
-
-	dbPath := filepath.Join(dir, "test.db")
-	thumbsDBPath := filepath.Join(dir, "thumbs.db")
-
-	d, err := iofs.New(migrations.FS, "migrations")
-	if err != nil {
-		t.Fatalf("failed to create migrations source: %v", err)
-	}
-	m, err := migrate.NewWithSourceInstance("iofs", d, "sqlite://"+filepath.ToSlash(dbPath))
-	if err != nil {
-		t.Fatalf("failed to initialize migrate: %v", err)
-	}
-	t.Cleanup(func() { _, _ = m.Close() })
-	if migErr := m.Up(); migErr != nil && !errors.Is(migErr, migrate.ErrNoChange) {
-		t.Fatalf("failed to apply migrations: %v", migErr)
-	}
-
-	m2, err := migrations.NewThumbsMigrator(thumbsDBPath)
-	if err != nil {
-		t.Fatalf("failed to create thumbs migrator: %v", err)
-	}
-	if thumbsErr := m2.Up(); thumbsErr != nil && !errors.Is(thumbsErr, migrate.ErrNoChange) {
-		m2.Close()
-		t.Fatalf("failed to run thumbs migrations: %v", thumbsErr)
-	}
-	m2.Close()
-
-	mmapSize := strconv.Itoa(39 * 1024 * 1024 * 1024)
-	params := []string{
-		"_cache_size=10240",
-		"_pragma=cache(shared)",
-		"_pragma=journal_mode(WAL)",
-		"_pragma=synchronous(NORMAL)",
-		"_pragma=busy_timeout(5000)",
-		"_pragma=temp_store(memory)",
-		"_pragma=foreign_keys(true)",
-		"_pragma=mmap_size(" + mmapSize + ")",
-		"_txlock=deferred",
-	}
-	dsn := filepath.ToSlash(dbPath) + "?" + strings.Join(params, "&")
-
-	pool, err := dbconnpool.NewDbSQLConnPool(context.Background(), dsn, dbconnpool.Config{
-		DriverName:         "sqlite",
-		MaxConnections:     10,
-		MinIdleConnections: 1,
-		ReadOnly:           readOnly,
-		QueriesFunc:        gallerydb.NewCustomQueries,
-		ThumbsDBPath:       thumbsDBPath,
-	})
-	if err != nil {
-		t.Fatalf("failed to create test DB pool: %v", err)
-	}
-	t.Cleanup(func() { pool.Close() })
-	return pool
-}
 
 func defaultIntegrationConfig() CacheConfig {
 	return CacheConfig{
@@ -381,6 +307,7 @@ func TestHTTPCacheMiddleware_GetSizeBytes(t *testing.T) {
 	})
 
 	t.Run("closed pool still returns seeded value", func(t *testing.T) {
+		closedDB := newIsolatedTestDBPool(t)
 		var sizeBytes atomic.Int64
 		var br atomic.Int32
 		sizeBytes.Store(99)
@@ -389,8 +316,8 @@ func TestHTTPCacheMiddleware_GetSizeBytes(t *testing.T) {
 			EntryCount:      &atomic.Int64{},
 			BaselineRunning: &br,
 		}
-		mw := newHTTPCacheMiddlewareForTest(db, cfg, counter, createSyncSubmitFuncForIntegration(t, db))
-		db.Close()
+		mw := newHTTPCacheMiddlewareForTest(closedDB, cfg, counter, createSyncSubmitFuncForIntegration(t, closedDB))
+		_ = closedDB.Close()
 		if got := mw.GetSizeBytes(); got != 99 {
 			t.Fatalf("closed pool GetSizeBytes = %d, want 99 (getters must not touch DB)", got)
 		}
@@ -484,6 +411,7 @@ func TestHTTPCacheMiddleware_GetEntryCount(t *testing.T) {
 	})
 
 	t.Run("closed pool still returns seeded value", func(t *testing.T) {
+		closedDB := newIsolatedTestDBPool(t)
 		var entryCount atomic.Int64
 		var br atomic.Int32
 		entryCount.Store(3)
@@ -492,8 +420,8 @@ func TestHTTPCacheMiddleware_GetEntryCount(t *testing.T) {
 			EntryCount:      &entryCount,
 			BaselineRunning: &br,
 		}
-		mw := newHTTPCacheMiddlewareForTest(db, cfg, counter, createSyncSubmitFuncForIntegration(t, db))
-		db.Close()
+		mw := newHTTPCacheMiddlewareForTest(closedDB, cfg, counter, createSyncSubmitFuncForIntegration(t, closedDB))
+		_ = closedDB.Close()
 		if got := mw.GetEntryCount(); got != 3 {
 			t.Fatalf("closed pool GetEntryCount = %d, want 3 (getters must not touch DB)", got)
 		}

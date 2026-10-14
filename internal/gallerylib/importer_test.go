@@ -3,90 +3,26 @@ package gallerylib_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	time "time"
 
+	"github.com/golang-migrate/migrate/v4"
+	"github.com/golang-migrate/migrate/v4/database/sqlite"
+	"github.com/golang-migrate/migrate/v4/source/iofs"
 	_ "github.com/ncruces/go-sqlite3/driver"
 
 	"github.com/lbe/sfpg-go/internal/gallerydb"
 	"github.com/lbe/sfpg-go/internal/gallerylib"
-
-	"errors"
-
-	"github.com/golang-migrate/migrate/v4"
-	"github.com/golang-migrate/migrate/v4/database/sqlite"
-	"github.com/golang-migrate/migrate/v4/source/iofs"
-
 	"github.com/lbe/sfpg-go/migrations"
 )
 
-// setupTestDB creates a test database with migrations applied.
-// Uses production-equivalent DSN configuration from app.configureDatabaseDSN().
 func setupTestDB(t *testing.T) (*sql.DB, *gallerydb.CustomQueries, context.Context) {
-	tempDir := t.TempDir()
-	dbfile := filepath.Join(tempDir, "test_gallery.db")
-	thumbsDBPath := filepath.Join(tempDir, "thumbs.db")
-
-	// Match production DSN from app.configureDatabaseDSN()
-	mmapSize := strconv.Itoa(39 * 1024 * 1024 * 1024)
-	params := []string{
-		"_cache_size=10240",
-		"_pragma=cache(shared)",
-		"_pragma=journal_mode(WAL)",
-		"_pragma=synchronous(NORMAL)",
-		"_pragma=busy_timeout(5000)",
-		"_pragma=temp_store(memory)",
-		"_pragma=foreign_keys(true)",
-		"_pragma=mmap_size(" + mmapSize + ")",
-		"_txlock=deferred",
-	}
-	dsn := filepath.ToSlash(dbfile) + "?" + strings.Join(params, "&")
-
-	db, err := sql.Open("sqlite3", dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	driver, err := sqlite.WithInstance(db, &sqlite.Config{})
-	if err != nil {
-		t.Fatalf("sqlite.WithInstance: %v", err)
-	}
-	d, err := iofs.New(migrations.FS, "migrations")
-	if err != nil {
-		t.Fatalf("failed to create iofs source driver: %v", err)
-	}
-
-	m, err := migrate.NewWithInstance("iofs", d, "sqlite", driver)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if migErr := m.Up(); migErr != nil && !errors.Is(migErr, migrate.ErrNoChange) {
-		t.Fatal(err)
-	}
-	m2, err := migrations.NewThumbsMigrator(thumbsDBPath)
-	if err != nil {
-		t.Fatalf("NewThumbsMigrator: %v", err)
-	}
-	if thumbsErr := m2.Up(); thumbsErr != nil && !errors.Is(thumbsErr, migrate.ErrNoChange) {
-		m2.Close()
-		t.Fatalf("thumbs migrate: %v", thumbsErr)
-	}
-	m2.Close()
-	if _, attachErr := db.ExecContext(context.Background(),
-		fmt.Sprintf("ATTACH DATABASE 'file:%s' AS thumbs", filepath.ToSlash(thumbsDBPath))); attachErr != nil {
-		t.Fatalf("ATTACH thumbs: %v", attachErr)
-	}
-	ctx := context.Background()
-	q, err := gallerydb.PrepareCustomQueries(ctx, db)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return db, q, ctx
+	return gallerydb.SetupTestDBForTests(t)
 }
 
 func createTestThumbnail(t *testing.T, q *gallerydb.CustomQueries, ctx context.Context, folderName, fileName string) int64 {
@@ -188,8 +124,7 @@ func (m *createRootFolderMockQueries) UpsertFolderReturningFolder(ctx context.Co
 }
 
 func TestCreateRootFolderEntry_GetFolderIDByPathNonNoRowsError(t *testing.T) {
-	db, q, ctx := setupTestDB(t)
-	defer db.Close()
+	_, q, ctx := setupTestDB(t)
 
 	mock := &createRootFolderMockQueries{
 		CustomQueries: q,
@@ -207,8 +142,7 @@ func TestCreateRootFolderEntry_GetFolderIDByPathNonNoRowsError(t *testing.T) {
 }
 
 func TestCreateRootFolderEntry_UpsertFolderPathReturningIDFails(t *testing.T) {
-	db, q, ctx := setupTestDB(t)
-	defer db.Close()
+	_, q, ctx := setupTestDB(t)
 
 	mock := &createRootFolderMockQueries{
 		CustomQueries: q,
@@ -227,8 +161,7 @@ func TestCreateRootFolderEntry_UpsertFolderPathReturningIDFails(t *testing.T) {
 }
 
 func TestCreateRootFolderEntry_UpsertFolderReturningFolderFails(t *testing.T) {
-	db, q, ctx := setupTestDB(t)
-	defer db.Close()
+	_, q, ctx := setupTestDB(t)
 
 	mock := &createRootFolderMockQueries{
 		CustomQueries:   q,
@@ -247,8 +180,7 @@ func TestCreateRootFolderEntry_UpsertFolderReturningFolderFails(t *testing.T) {
 }
 
 func TestCreateRootFolderEntry_DefensiveFallbackSucceeds(t *testing.T) {
-	db, q, ctx := setupTestDB(t)
-	defer db.Close()
+	_, q, ctx := setupTestDB(t)
 
 	mock := &createRootFolderMockQueries{
 		CustomQueries:      q,
@@ -271,8 +203,7 @@ func TestCreateRootFolderEntry_DefensiveFallbackSucceeds(t *testing.T) {
 }
 
 func TestCreateRootFolderEntry_DefensiveFallbackFails(t *testing.T) {
-	db, q, ctx := setupTestDB(t)
-	defer db.Close()
+	_, q, ctx := setupTestDB(t)
 
 	mock := &createRootFolderMockQueries{
 		CustomQueries:      q,
@@ -336,7 +267,6 @@ func TestMarkDirTiled_Idempotent(t *testing.T) {
 
 func TestUpsertPathChain(t *testing.T) {
 	db, q, ctx := setupTestDB(t)
-	defer db.Close()
 
 	imp := &gallerylib.Importer{Q: q}
 	path := filepath.Join(string(os.PathSeparator), "photos", "2025", "vacation", "beach.jpg")
@@ -428,7 +358,6 @@ func TestUpsertPathChain(t *testing.T) {
 
 func TestUpsertPathChain_OnFolderCreated(t *testing.T) {
 	db, q, ctx := setupTestDB(t)
-	defer db.Close()
 
 	var folderCreatedCalls int
 	imp := &gallerylib.Importer{
@@ -464,8 +393,7 @@ func TestUpsertPathChain_OnFolderCreated(t *testing.T) {
 }
 
 func TestRootFile(t *testing.T) {
-	db, q, ctx := setupTestDB(t)
-	defer db.Close()
+	_, q, ctx := setupTestDB(t)
 
 	imp := &gallerylib.Importer{Q: q}
 	path := filepath.Join(string(os.PathSeparator), "lonely.jpg")
@@ -490,8 +418,7 @@ func TestRootFile(t *testing.T) {
 }
 
 func TestCreateRootFolderEntry(t *testing.T) {
-	db, q, ctx := setupTestDB(t)
-	defer db.Close()
+	_, q, ctx := setupTestDB(t)
 
 	imp := &gallerylib.Importer{Q: q}
 
@@ -526,8 +453,7 @@ func TestCreateRootFolderEntry(t *testing.T) {
 }
 
 func TestCreateRootFolderEntry_ContextError(t *testing.T) {
-	db, q, _ := setupTestDB(t)
-	defer db.Close()
+	_, q, _ := setupTestDB(t)
 
 	imp := &gallerylib.Importer{Q: q}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -602,8 +528,7 @@ func TestCreateRootFolderEntry_ReadOnlyDB(t *testing.T) {
 }
 
 func TestUpdateFolderTileChain_SingleFolder(t *testing.T) {
-	db, q, ctx := setupTestDB(t)
-	defer db.Close()
+	_, q, ctx := setupTestDB(t)
 
 	imp := &gallerylib.Importer{Q: q}
 
@@ -642,8 +567,7 @@ func TestUpdateFolderTileChain_SingleFolder(t *testing.T) {
 }
 
 func TestUpdateFolderTileChain_HierarchyUntilExistingTile(t *testing.T) {
-	db, q, ctx := setupTestDB(t)
-	defer db.Close()
+	_, q, ctx := setupTestDB(t)
 
 	imp := &gallerylib.Importer{Q: q}
 
@@ -738,8 +662,7 @@ func TestUpdateFolderTileChain_HierarchyUntilExistingTile(t *testing.T) {
 }
 
 func TestUpdateFolderTileChain_HierarchyToRoot(t *testing.T) {
-	db, q, ctx := setupTestDB(t)
-	defer db.Close()
+	_, q, ctx := setupTestDB(t)
 
 	imp := &gallerylib.Importer{Q: q}
 
@@ -823,8 +746,7 @@ func TestUpdateFolderTileChain_HierarchyToRoot(t *testing.T) {
 }
 
 func TestUpdateFolderTileChain_RootFolder(t *testing.T) {
-	db, q, ctx := setupTestDB(t)
-	defer db.Close()
+	_, q, ctx := setupTestDB(t)
 
 	imp := &gallerylib.Importer{Q: q}
 
@@ -862,8 +784,7 @@ func TestUpdateFolderTileChain_RootFolder(t *testing.T) {
 }
 
 func TestUpdateFolderTileChain_MissingFolderNoError(t *testing.T) {
-	db, q, ctx := setupTestDB(t)
-	defer db.Close()
+	_, q, ctx := setupTestDB(t)
 
 	imp := &gallerylib.Importer{Q: q}
 
@@ -873,8 +794,7 @@ func TestUpdateFolderTileChain_MissingFolderNoError(t *testing.T) {
 }
 
 func TestUpdateFolderTileChain_ExistingTileStops(t *testing.T) {
-	db, q, ctx := setupTestDB(t)
-	defer db.Close()
+	_, q, ctx := setupTestDB(t)
 
 	imp := &gallerylib.Importer{Q: q}
 
@@ -915,8 +835,12 @@ func TestUpdateFolderTileChain_ExistingTileStops(t *testing.T) {
 }
 
 func TestUpdateFolderTileChain_GetFolderError(t *testing.T) {
-	db, q, ctx := setupTestDB(t)
-
+	db := gallerydb.NewIsolatedTestSQLDBForTests(t)
+	ctx := context.Background()
+	q, err := gallerydb.PrepareCustomQueries(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
 	imp := &gallerylib.Importer{Q: q}
 
 	folderPathID, err := q.UpsertFolderPathReturningID(ctx, "/error_folder")
@@ -945,8 +869,7 @@ func TestUpdateFolderTileChain_GetFolderError(t *testing.T) {
 
 // TestCreateRootFolderEntry_StoreMtime verifies that root folder mtime is extracted and persisted.
 func TestCreateRootFolderEntry_StoreMtime(t *testing.T) {
-	db, q, ctx := setupTestDB(t)
-	defer db.Close()
+	_, q, ctx := setupTestDB(t)
 
 	// Create a temp directory to use as root
 	rootDir := t.TempDir()
@@ -985,8 +908,7 @@ func TestCreateRootFolderEntry_StoreMtime(t *testing.T) {
 
 // TestUpsertPathChain_FolderMtime verifies that intermediate folder mtimes are extracted and stored.
 func TestUpsertPathChain_FolderMtime(t *testing.T) {
-	db, q, ctx := setupTestDB(t)
-	defer db.Close()
+	_, q, ctx := setupTestDB(t)
 
 	imp := &gallerylib.Importer{Q: q}
 

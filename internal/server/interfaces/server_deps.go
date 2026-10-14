@@ -87,6 +87,6 @@ type ServerDeps interface {
 	GetConfig() *config.Config
 
 	// --- Template helpers ---
-	AddCommonTemplateData(w http.ResponseWriter, r *http.Request, data map[string]any, fullPage bool) map[string]any
+	AddCommonTemplateData(w http.ResponseWriter, r *http.Request, data map[string]any) map[string]any
 	ServerError(w http.ResponseWriter, r *http.Request, err error)
 }

@@ -13,8 +13,7 @@ import (
 // survive a save-then-load cycle, simulating what happens during a server restart
 // where config is saved to the database and then reloaded on startup.
 func TestRestartPersistence_SaveAndLoadCycle(t *testing.T) {
-	db, q, ctx := setupTestDB(t)
-	defer db.Close()
+	q, ctx, _ := setupTestDB(t)
 
 	// Create a config with non-default values
 	cfg := DefaultConfig()
@@ -84,8 +83,7 @@ func TestRestartPersistence_SaveAndLoadCycle(t *testing.T) {
 // loaded from the database take precedence over default values, matching the
 // expected behavior after restart where database-saved config is authoritative.
 func TestRestartPersistence_ConfigValueOverridesOpt(t *testing.T) {
-	db, q, ctx := setupTestDB(t)
-	defer db.Close()
+	q, ctx, _ := setupTestDB(t)
 
 	// Save cache=true in the database
 	now := time.Now().Unix()

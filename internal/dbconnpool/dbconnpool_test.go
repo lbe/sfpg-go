@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -16,56 +17,132 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 	_ "github.com/ncruces/go-sqlite3/driver"
-	"github.com/phsym/console-slog"
 
 	"github.com/lbe/sfpg-go/internal/gallerydb"
 	"github.com/lbe/sfpg-go/migrations"
 )
 
-func init() {
-	consoleHandler := console.NewHandler(os.Stderr, &console.HandlerOptions{
-		Level:      slog.LevelDebug,
-		AddSource:  true,
-		TimeFormat: "2006-01-02 15:04:05.000000",
-	})
+const testLogLevelEnv = "DBCONPOOL_LOG_LEVEL"
 
-	logger := slog.New(consoleHandler)
-	slog.SetDefault(logger)
-
-	slog.Info("dbconnpool tests starting")
+func testLogLevelFromEnv() slog.Level {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(testLogLevelEnv))) {
+	case "debug":
+		return slog.LevelDebug
+	case "info":
+		return slog.LevelInfo
+	case "warn", "warning":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	case "":
+		return slog.LevelError
+	default:
+		return slog.LevelError
+	}
 }
 
-// setupTestDB creates temporary main and thumbs databases for testing.
-// Migrations run via migrate.NewWithSourceInstance (modernc driver), matching
-// production migrateDB. Returns both database paths and a cleanup function.
-func setupTestDB(t testing.TB) (dbPath, thumbsDBPath string, cleanup func()) {
-	dbPath = filepath.Join(t.TempDir(), "test.db")
-	thumbsDBPath = filepath.Join(t.TempDir(), "thumbs.db")
+var (
+	testDBTemplateMain   string
+	testDBTemplateThumbs string
+)
+
+func initTestDBTemplates() error {
+	dir, err := os.MkdirTemp("", "dbconnpool-db-template-")
+	if err != nil {
+		return fmt.Errorf("mkdir template dir: %w", err)
+	}
+	mainPath := filepath.Join(dir, "test.db")
+	thumbsPath := filepath.Join(dir, "thumbs.db")
 
 	d, err := iofs.New(migrations.FS, "migrations")
 	if err != nil {
-		t.Fatalf("failed to create iofs source: %v", err)
+		return fmt.Errorf("iofs source: %w", err)
 	}
-	m, err := migrate.NewWithSourceInstance("iofs", d, "sqlite://"+filepath.ToSlash(dbPath))
+	m, err := migrate.NewWithSourceInstance("iofs", d, "sqlite://"+filepath.ToSlash(mainPath))
 	if err != nil {
-		t.Fatalf("failed to create migrate instance: %v", err)
+		return fmt.Errorf("migrate instance: %w", err)
 	}
 	if err = m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
-		t.Fatalf("failed to apply migrations: %v", err)
+		m.Close()
+		return fmt.Errorf("main migrations: %w", err)
 	}
 	m.Close()
 
-	m2, err := migrations.NewThumbsMigrator(thumbsDBPath)
+	m2, err := migrations.NewThumbsMigrator(thumbsPath)
 	if err != nil {
-		t.Fatalf("failed to create thumbs migrator: %v", err)
+		return fmt.Errorf("thumbs migrator: %w", err)
 	}
 	if err = m2.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		m2.Close()
-		t.Fatalf("failed to apply thumbs migrations: %v", err)
+		return fmt.Errorf("thumbs migrations: %w", err)
 	}
 	m2.Close()
+
+	testDBTemplateMain = mainPath
+	testDBTemplateThumbs = thumbsPath
+	return nil
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	_, err = io.Copy(out, in)
+	return err
+}
+
+func TestMain(m *testing.M) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: testLogLevelFromEnv(),
+	}))
+	slog.SetDefault(logger)
+	if err := initTestDBTemplates(); err != nil {
+		slog.Error("init test DB templates", "err", err)
+		os.Exit(1)
+	}
+	templateDir := filepath.Dir(testDBTemplateMain)
+	code := m.Run()
+	_ = os.RemoveAll(templateDir)
+	os.Exit(code)
+}
+
+// setupTestDB creates temporary main and thumbs databases for testing by
+// copying golden migrated templates (see initTestDBTemplates). Returns both
+// database paths and a cleanup function.
+func setupTestDB(t testing.TB) (dbPath, thumbsDBPath string, cleanup func()) {
+	t.Helper()
+	dir := t.TempDir()
+	dbPath = filepath.Join(dir, "test.db")
+	thumbsDBPath = filepath.Join(dir, "thumbs.db")
+	if err := copyFile(testDBTemplateMain, dbPath); err != nil {
+		t.Fatalf("copy main test db: %v", err)
+	}
+	if err := copyFile(testDBTemplateThumbs, thumbsDBPath); err != nil {
+		t.Fatalf("copy thumbs test db: %v", err)
+	}
 	return dbPath, thumbsDBPath, func() {}
 }
+
+// setPoolShutdownWaitForTest shortens Close()'s wait for checked-out connections.
+func setPoolShutdownWaitForTest(t *testing.T, pool *DbSQLConnPool, d time.Duration) {
+	t.Helper()
+	pool.shutdownWait = d
+}
+
+const testShutdownWait = 50 * time.Millisecond
+
+const (
+	testMonitorInterval    = 20 * time.Millisecond
+	testMonitorPollWait    = 5 * time.Millisecond
+	testMonitorWaitTimeout = 500 * time.Millisecond
+)
 
 func TestNewDbSQLConnPool(t *testing.T) {
 	tests := []struct {
@@ -127,7 +204,7 @@ func TestNewDbSQLConnPool(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dbPath, _, _ := setupTestDB(t)
+			dbPath := filepath.Join(t.TempDir(), "unused.db")
 
 			ctx := context.Background()
 			// Add DriverName to the test case config
@@ -190,8 +267,6 @@ func TestMonitor(t *testing.T) {
 		cpcQ := []*CpConn{}
 		// Add connections manually since we don't want to wait for the monitor
 		for i := int64(0); i < config.MinIdleConnections; i++ {
-			// Get a connection properly through the pool's internal method
-			slog.Debug("Creating connection for test", "i", i, "current", pool.NumConnections())
 			cpc, err := pool.Get()
 			if err != nil {
 				t.Fatalf("failed to create connection: %v", err)
@@ -211,22 +286,17 @@ func TestMonitor(t *testing.T) {
 
 		// Verify connection count and prepared statements
 		idleCount := pool.NumIdleConnections()
-		slog.Debug("Created connections and returned to pool", "NumIdleConnections", idleCount)
 		if idleCount < int(config.MinIdleConnections) {
 			t.Errorf("idle connections = %d, want >= %d", idleCount, config.MinIdleConnections)
 		}
 
 		// Verify a connection from the pool has prepared statements
-		slog.Debug("Getting connection for test")
 		cpc, err := pool.Get()
 		if err != nil {
 			t.Fatalf("failed to create connection: %v", err)
 		}
 
-		// Put the connection back
-		slog.Debug("Returning connection to pool")
 		pool.Put(cpc)
-		slog.Debug("Returned connection to pool")
 	})
 
 	t.Run("monitor stops on context cancel", func(t *testing.T) {
@@ -376,6 +446,7 @@ func TestPut_ClosedPoolClosesConnection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create pool: %v", err)
 	}
+	setPoolShutdownWaitForTest(t, pool, testShutdownWait)
 
 	cpc, err := pool.Get()
 	if err != nil {
@@ -428,7 +499,7 @@ func waitForIdle(t *testing.T, pool *DbSQLConnPool, want int, timeout time.Durat
 		if n := pool.NumIdleConnections(); n >= want {
 			return n
 		}
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(testMonitorPollWait)
 	}
 	return pool.NumIdleConnections()
 }
@@ -442,7 +513,7 @@ func waitForIdleAtMost(t *testing.T, pool *DbSQLConnPool, want int, timeout time
 		if n := pool.NumIdleConnections(); n <= want {
 			return n
 		}
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(testMonitorPollWait)
 	}
 	return pool.NumIdleConnections()
 }
@@ -458,7 +529,7 @@ func waitForNumConnectionsAtMost(t *testing.T, pool *DbSQLConnPool, want int64, 
 		if n := pool.NumConnections(); n <= want {
 			return n
 		}
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(testMonitorPollWait)
 	}
 	return pool.NumConnections()
 }
@@ -506,7 +577,7 @@ func TestMonitor_Scaling(t *testing.T) {
 			DriverName:         "sqlite3",
 			MaxConnections:     10,
 			MinIdleConnections: 4,
-			MonitorInterval:    200 * time.Millisecond,
+			MonitorInterval:    testMonitorInterval,
 			QueriesFunc:        gallerydb.NewCustomQueries,
 			ThumbsDBPath:       thumbsDBPath,
 		}
@@ -519,7 +590,7 @@ func TestMonitor_Scaling(t *testing.T) {
 
 		// Monitor auto-starts because MonitorInterval > 0.
 		// Poll until the monitor grows idle connections to minIdle.
-		if n := waitForIdle(t, pool, int(config.MinIdleConnections), 3*time.Second); n < int(config.MinIdleConnections) {
+		if n := waitForIdle(t, pool, int(config.MinIdleConnections), testMonitorWaitTimeout); n < int(config.MinIdleConnections) {
 			t.Errorf("pool did not grow to minIdleConnections. got %d, want %d", n, config.MinIdleConnections)
 		}
 	})
@@ -531,7 +602,7 @@ func TestMonitor_Scaling(t *testing.T) {
 			DriverName:         "sqlite3",
 			MaxConnections:     10,
 			MinIdleConnections: 2,
-			MonitorInterval:    200 * time.Millisecond,
+			MonitorInterval:    testMonitorInterval,
 			QueriesFunc:        gallerydb.NewCustomQueries,
 			ThumbsDBPath:       thumbsDBPath,
 		}
@@ -561,7 +632,7 @@ func TestMonitor_Scaling(t *testing.T) {
 
 		// Monitor auto-starts because MonitorInterval > 0.
 		// Poll until the monitor shrinks idle connections to minIdle.
-		if n := waitForIdleAtMost(t, pool, int(config.MinIdleConnections), 3*time.Second); n > int(config.MinIdleConnections) {
+		if n := waitForIdleAtMost(t, pool, int(config.MinIdleConnections), testMonitorWaitTimeout); n > int(config.MinIdleConnections) {
 			t.Errorf("pool did not shrink to minIdleConnections. got %d, want %d", n, config.MinIdleConnections)
 		}
 	})
@@ -573,7 +644,7 @@ func TestMonitor_Scaling(t *testing.T) {
 			DriverName:         "sqlite3",
 			MaxConnections:     10,
 			MinIdleConnections: 0,
-			MonitorInterval:    200 * time.Millisecond,
+			MonitorInterval:    testMonitorInterval,
 			QueriesFunc:        gallerydb.NewCustomQueries,
 			ThumbsDBPath:       thumbsDBPath,
 		}
@@ -600,12 +671,12 @@ func TestMonitor_Scaling(t *testing.T) {
 
 		// Monitor auto-starts because MonitorInterval > 0. Poll until it
 		// drains every surplus idle connection down to minIdle (0).
-		if n := waitForIdleAtMost(t, pool, 0, 3*time.Second); n > 0 {
+		if n := waitForIdleAtMost(t, pool, 0, testMonitorWaitTimeout); n > 0 {
 			t.Errorf("pool did not shrink idle connections to 0. got %d, want 0", n)
 		}
 		// Close runs after the channel receive; wait for the decrement, not
 		// the same tick that first sees idle == 0.
-		if total := waitForNumConnectionsAtMost(t, pool, 0, 3*time.Second); total != 0 {
+		if total := waitForNumConnectionsAtMost(t, pool, 0, testMonitorWaitTimeout); total != 0 {
 			t.Errorf("pool total connections after shrink = %d, want 0", total)
 		}
 	})
@@ -631,7 +702,7 @@ func TestMonitor_ContinuesAfterEmptyShrinkDefault(t *testing.T) {
 		DriverName:         "sqlite3",
 		MaxConnections:     8,
 		MinIdleConnections: 1,
-		MonitorInterval:    50 * time.Millisecond,
+		MonitorInterval:    testMonitorInterval,
 		QueriesFunc:        gallerydb.NewCustomQueries,
 		ThumbsDBPath:       thumbsDBPath,
 	}
@@ -672,7 +743,7 @@ func TestMonitor_ContinuesAfterEmptyShrinkDefault(t *testing.T) {
 	// The auto-started monitor must drain the surplus down to minIdle. On the
 	// old `default: return` the monitor is already dead, so the surplus
 	// remains and the assertion fails.
-	if n := waitForIdleAtMost(t, pool, 1, 3*time.Second); n > 1 {
+	if n := waitForIdleAtMost(t, pool, 1, testMonitorWaitTimeout); n > 1 {
 		t.Errorf("pool did not shrink to minIdleConnections. got %d, want %d", n, 1)
 	}
 }
@@ -686,7 +757,7 @@ func TestMonitor_StartsAutomatically(t *testing.T) {
 		DriverName:         "sqlite3",
 		MaxConnections:     10,
 		MinIdleConnections: 2,
-		MonitorInterval:    200 * time.Millisecond,
+		MonitorInterval:    testMonitorInterval,
 		QueriesFunc:        gallerydb.NewCustomQueries,
 		ThumbsDBPath:       thumbsDBPath,
 	}
@@ -711,10 +782,10 @@ func TestMonitor_StartsAutomatically(t *testing.T) {
 		pool.Put(c)
 	}
 
-	// Monitor should be auto-started (MonitorInterval=200ms > 0).
+	// Monitor should be auto-started (MonitorInterval > 0).
 	// Must NOT call pool.monitor() explicitly — that's the wiring we're testing.
 	// Wait for Monitor to drain all excess down to minIdle (2).
-	if n := waitForIdleAtMost(t, pool, 2, 3*time.Second); n > 2 {
+	if n := waitForIdleAtMost(t, pool, 2, testMonitorWaitTimeout); n > 2 {
 		t.Fatalf("Monitor did not drain excess idle connections within timeout: got %d idle, want <= 2", n)
 	}
 }
@@ -736,6 +807,7 @@ func TestGet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create pool: %v", err)
 	}
+	setPoolShutdownWaitForTest(t, pool, testShutdownWait)
 	defer func() {
 		if err := pool.Close(); err != nil {
 			t.Errorf("failed to close pool: %v", err)
@@ -796,7 +868,7 @@ func TestGet(t *testing.T) {
 		select {
 		case <-done:
 			t.Fatal("expected Get to block, but it returned immediately")
-		case <-time.After(time.Second):
+		case <-time.After(100 * time.Millisecond):
 			// Good - the Get call is blocked as expected
 		}
 
@@ -845,6 +917,7 @@ func TestPut(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create pool: %v", err)
 	}
+	setPoolShutdownWaitForTest(t, pool, testShutdownWait)
 
 	t.Run("put nil connection", func(t *testing.T) {
 		// Should not panic
@@ -1990,6 +2063,7 @@ func TestPut_DoneChannelDuringShutdown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create pool A: %v", err)
 	}
+	setPoolShutdownWaitForTest(t, poolA, testShutdownWait)
 	// Intentionally no defer Close; we close the done channel directly.
 
 	// Fill poolA's channel with both of its connections.
@@ -2027,6 +2101,7 @@ func TestPut_DoneChannelDuringShutdown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create pool B: %v", err)
 	}
+	setPoolShutdownWaitForTest(t, poolB, testShutdownWait)
 	defer poolB.Close()
 
 	cpcB, err := poolB.Get()
@@ -2059,6 +2134,7 @@ func TestPut_ChannelFullFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create pool A: %v", err)
 	}
+	setPoolShutdownWaitForTest(t, poolA, testShutdownWait)
 	defer poolA.Close()
 
 	// Fill poolA's channel with its own connection.
@@ -2087,6 +2163,7 @@ func TestPut_ChannelFullFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create pool B: %v", err)
 	}
+	setPoolShutdownWaitForTest(t, poolB, testShutdownWait)
 	defer poolB.Close()
 
 	cpcB, err := poolB.Get()

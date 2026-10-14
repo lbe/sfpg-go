@@ -99,7 +99,9 @@ func newClient() *http.Client {
 
 // doRequest sends an HTTP request through the provided client.
 // If body is non-nil, it is encoded as application/x-www-form-urlencoded.
-// If hx is true, Hx-Request: true header is added.
+// If hx is true, only Hx-Request: true is set (dashboard partial contract).
+// Dashboard polls and lightbox HX calls share this helper; lightbox cache
+// variant is path-based and does not require Hx-Target in e2eweb.
 // Origin header is always set to serverURL.
 func doRequest(t *testing.T, client *http.Client, method, path string, body url.Values, hx bool) *http.Response {
 	t.Helper()
@@ -118,7 +120,6 @@ func doRequest(t *testing.T, client *http.Client, method, path string, body url.
 	req.Header.Set("Origin", serverURL)
 	if hx {
 		req.Header.Set("Hx-Request", "true")
-		req.Header.Set("Hx-Target", "dashboard-container")
 	}
 	resp, err := client.Do(req)
 	if err != nil {

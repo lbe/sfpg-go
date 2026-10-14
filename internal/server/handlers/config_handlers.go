@@ -47,7 +47,7 @@ type ConfigHandlers struct {
 	credStore             interfaces.CredentialStore
 	cfgOps                interfaces.ConfigOps
 	galleryOps            interfaces.GalleryOps
-	AddCommonTemplateData func(w http.ResponseWriter, r *http.Request, data map[string]any, fullPage bool) map[string]any
+	AddCommonTemplateData func(w http.ResponseWriter, r *http.Request, data map[string]any) map[string]any
 }
 
 // NewConfigHandlers creates a new ConfigHandlers with the given dependencies.
@@ -62,7 +62,7 @@ func NewConfigHandlers(
 	credStore interfaces.CredentialStore,
 	cfgOps interfaces.ConfigOps,
 	galleryOps interfaces.GalleryOps,
-	addCommonTemplateData func(w http.ResponseWriter, r *http.Request, data map[string]any, fullPage bool) map[string]any,
+	addCommonTemplateData func(w http.ResponseWriter, r *http.Request, data map[string]any) map[string]any,
 	templates ConfigTemplates,
 	ctx context.Context,
 ) *ConfigHandlers {
@@ -172,7 +172,7 @@ func (h *ConfigHandlers) ConfigGet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.AddCommonTemplateData != nil {
-		data = h.AddCommonTemplateData(w, r, data, true)
+		data = h.AddCommonTemplateData(w, r, data)
 	}
 
 	// Render modal template

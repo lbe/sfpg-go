@@ -9,17 +9,12 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
-	"github.com/golang-migrate/migrate/v4"
-	"github.com/golang-migrate/migrate/v4/database/sqlite"
-	"github.com/golang-migrate/migrate/v4/source/iofs"
 	_ "github.com/ncruces/go-sqlite3/driver"
 
 	"github.com/lbe/sfpg-go/internal/dbconnpool"
 	"github.com/lbe/sfpg-go/internal/gallerydb"
 	"github.com/lbe/sfpg-go/internal/gallerylib"
-	"github.com/lbe/sfpg-go/migrations"
 )
 
 type mockUnifiedBatcher struct {
@@ -101,100 +96,23 @@ func (m *mockUnifiedBatcher) BumpFolderIndexGeneration() int64 {
 	return 0
 }
 
-// createTestPoolsAndDir creates a temporary DB with migrations, root folder, and Images dir.
-// Returns roPool, rwPool, imagesDir, and ctx. Used by createTestProcessor and by unit tests
-// that need raw pools (e.g. GenerateThumbnail_CallsImporterMethods, NeedsThumbnail).
+// createTestPoolsAndDir returns shared golden-restore memory-mode pools (reset per test), a temp Images dir, and ctx.
 func createTestPoolsAndDir(t *testing.T) (roPool *dbconnpool.DbSQLConnPool, rwPool *dbconnpool.DbSQLConnPool, imagesDir string, ctx context.Context) {
 	t.Helper()
+	ensureSharedFilesPools()
+	if sharedFilesInitErr != nil {
+		t.Fatalf("shared files pools: %v", sharedFilesInitErr)
+	}
+	sharedFilesMu.Lock()
+	t.Cleanup(func() { sharedFilesMu.Unlock() })
+	resetSharedFilesDB(t)
+
 	ctx = context.Background()
-	tempDir := t.TempDir()
-	tempDB := filepath.Join(tempDir, "test.db")
-
-	// Use simple DSN for migration - WAL will be set by first connection
-	db, err := sql.Open("sqlite3", "file:"+filepath.ToSlash(tempDB))
-	if err != nil {
-		t.Fatalf("open test db: %v", err)
-	}
-	driver, err := sqlite.WithInstance(db, &sqlite.Config{})
-	if err != nil {
-		db.Close()
-		t.Fatalf("sqlite driver: %v", err)
-	}
-	d, err := iofs.New(migrations.FS, "migrations")
-	if err != nil {
-		db.Close()
-		t.Fatalf("iofs source: %v", err)
-	}
-	m, err := migrate.NewWithInstance("iofs", d, "sqlite", driver)
-	if err != nil {
-		db.Close()
-		t.Fatalf("migrate instance: %v", err)
-	}
-	if upErr := m.Up(); upErr != nil && !errors.Is(upErr, migrate.ErrNoChange) {
-		db.Close()
-		t.Fatalf("migrate up: %v", upErr)
-	}
-	if closeErr := db.Close(); closeErr != nil {
-		t.Fatalf("close migration db: %v", closeErr)
-	}
-
-	thumbsDBPath := filepath.Join(tempDir, "thumbs.db")
-	m2, err := migrations.NewThumbsMigrator(thumbsDBPath)
-	if err != nil {
-		t.Fatalf("NewThumbsMigrator: %v", err)
-	}
-	if upErr := m2.Up(); upErr != nil && !errors.Is(upErr, migrate.ErrNoChange) {
-		m2.Close()
-		t.Fatalf("thumbs migrate up: %v", upErr)
-	}
-	m2.Close()
-
-	// Create RW pool first to set up WAL mode, then RO pool
-	rwDSN := "file:" + filepath.ToSlash(tempDB) + "?_txlock=immediate&mode=rwc&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
-	rwPool, err = dbconnpool.NewDbSQLConnPool(ctx, rwDSN, dbconnpool.Config{
-		DriverName:         "sqlite3",
-		MaxConnections:     10,
-		MinIdleConnections: 1,
-		ReadOnly:           false,
-		QueriesFunc:        gallerydb.NewCustomQueries,
-		ThumbsDBPath:       thumbsDBPath,
-	})
-	if err != nil {
-		t.Fatalf("create RW pool: %v", err)
-	}
-	t.Cleanup(func() { _ = rwPool.Close() })
-
-	// Now create RO pool (WAL is already set up by RW pool)
-	roDSN := "file:" + filepath.ToSlash(tempDB) + "?mode=ro"
-	roPool, err = dbconnpool.NewDbSQLConnPool(ctx, roDSN, dbconnpool.Config{
-		DriverName:         "sqlite3",
-		MaxConnections:     10,
-		MinIdleConnections: 1,
-		ReadOnly:           true,
-		QueriesFunc:        gallerydb.NewCustomQueries,
-		ThumbsDBPath:       thumbsDBPath,
-	})
-	if err != nil {
-		t.Fatalf("create RO pool: %v", err)
-	}
-	t.Cleanup(func() { _ = roPool.Close() })
-
-	cpcRw, err := rwPool.Get()
-	if err != nil {
-		t.Fatalf("get RW conn: %v", err)
-	}
-	imp := &gallerylib.Importer{Q: cpcRw.Queries}
-	if _, err := imp.CreateRootFolderEntry(ctx, time.Now().Unix()); err != nil {
-		rwPool.Put(cpcRw)
-		t.Fatalf("create root folder: %v", err)
-	}
-	rwPool.Put(cpcRw)
-
-	imagesDir = filepath.Join(tempDir, "Images")
+	imagesDir = filepath.Join(t.TempDir(), "Images")
 	if err := os.MkdirAll(imagesDir, 0o755); err != nil {
 		t.Fatalf("mkdir Images: %v", err)
 	}
-	return roPool, rwPool, imagesDir, ctx
+	return sharedFilesROP, sharedFilesRWP, imagesDir, ctx
 }
 
 // createTestProcessor creates a FileProcessor with a temporary DB, migrations applied,
@@ -283,8 +201,6 @@ func TestFileProcessor_ProcessDiscoveryFile(t *testing.T) {
 }
 
 // createTestImage writes a minimal 1x1 JPEG at dir/name and returns the relative path.
-//
-//nolint:unused // used in files_integration_test.go (same package)
 func createTestImage(t *testing.T, dir, name string) string {
 	t.Helper()
 	p := filepath.Join(dir, name)

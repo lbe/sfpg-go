@@ -21,6 +21,8 @@ import (
 	"github.com/lbe/sfpg-go/internal/server/database"
 	"github.com/lbe/sfpg-go/internal/server/files"
 	"github.com/lbe/sfpg-go/internal/writebatcher"
+
+	_ "github.com/ncruces/go-sqlite3/driver"
 )
 
 // TestFlushBatchedWrites_NilBatcherQueriesPanics is the regression guard:
@@ -67,8 +69,13 @@ func (s *syncLogBuffer) String() string {
 	return s.b.String()
 }
 
+// logCaptureMu serializes slog.SetDefault swaps; parallel server tests otherwise race under -race.
+var logCaptureMu sync.Mutex
+
 func withLogCapture(t *testing.T, level slog.Level, fn func()) string {
 	t.Helper()
+	logCaptureMu.Lock()
+	defer logCaptureMu.Unlock()
 	var buf syncLogBuffer
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: level}))
 	old := slog.Default()
@@ -1000,9 +1007,105 @@ func (f *fakeDatabaseInitializer) RecreatePoolsWithConfig(ctx context.Context, d
 	return f.recreateRw, f.recreateRo, f.recreateErr
 }
 
+// newRawSQLiteConn opens a raw *sql.Conn to a temporary SQLite database.
+// It avoids the custom query preparation performed by dbconnpool, making it
+// suitable for unit tests that only exercise low-level connection operations.
+func newRawSQLiteConn(t *testing.T, ctx context.Context) *sql.Conn {
+	t.Helper()
+	db, err := sql.Open("sqlite3", "file:"+t.TempDir()+"/test.db?_pragma=journal_mode(WAL)")
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatalf("get conn: %v", err)
+	}
+	return conn
+}
+
+func TestInfrastructureService_PerformWALCheckpoint(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		level      slog.Level
+		setup      func(t *testing.T) (*InfrastructureService, dbPoolForCheckpoint)
+		wantSubstr string
+		checkPut   bool
+	}{
+		{
+			name:  "success",
+			level: slog.LevelDebug,
+			setup: func(t *testing.T) (*InfrastructureService, dbPoolForCheckpoint) {
+				infra := NewInfrastructureService()
+				cpc := &dbconnpool.CpConn{Conn: newRawSQLiteConn(t, context.Background())}
+				fakePool := &fakeDBPoolForCheckpoint{getCpc: &fakeCpConn{CpConn: cpc}}
+				return infra, fakePool
+			},
+			wantSubstr: "wal_frames",
+			checkPut:   true,
+		},
+		{
+			name:  "connection_error",
+			level: slog.LevelError,
+			setup: func(t *testing.T) (*InfrastructureService, dbPoolForCheckpoint) {
+				infra := NewInfrastructureService()
+				fakePool := &fakeDBPoolForCheckpoint{getErr: errors.New("no connection")}
+				return infra, fakePool
+			},
+			wantSubstr: "failed to get connection for WAL checkpoint",
+		},
+		{
+			name:  "query_error",
+			level: slog.LevelError,
+			setup: func(t *testing.T) (*InfrastructureService, dbPoolForCheckpoint) {
+				infra := NewInfrastructureService()
+				cpc := &dbconnpool.CpConn{Conn: newRawSQLiteConn(t, context.Background())}
+				if err := cpc.Conn.Close(); err != nil {
+					t.Fatalf("close conn: %v", err)
+				}
+				fakePool := &fakeDBPoolForCheckpoint{getCpc: &fakeCpConn{CpConn: cpc}}
+				return infra, fakePool
+			},
+			wantSubstr: "WAL checkpoint failed",
+		},
+		{
+			name:  "scan_error",
+			level: slog.LevelWarn,
+			setup: func(t *testing.T) (*InfrastructureService, dbPoolForCheckpoint) {
+				infra := NewInfrastructureService()
+				cpc := &dbconnpool.CpConn{Conn: newRawSQLiteConn(t, context.Background())}
+				fakePool := &fakeDBPoolForCheckpoint{getCpc: &fakeCpConn{CpConn: cpc}}
+				infra.testSeams.WALCheckpointQuery = func(ctx context.Context, conn *sql.Conn) (*sql.Rows, error) {
+					return conn.QueryContext(ctx, "SELECT 1")
+				}
+				return infra, fakePool
+			},
+			wantSubstr: "failed to parse wal_checkpoint result",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			infra, pool := tt.setup(t)
+			var putPool *fakeDBPoolForCheckpoint
+			if fp, ok := pool.(*fakeDBPoolForCheckpoint); ok {
+				putPool = fp
+			}
+			logs := withLogCapture(t, tt.level, func() {
+				infra.performWALCheckpoint(context.Background(), pool)
+			})
+			if !strings.Contains(logs, tt.wantSubstr) {
+				t.Errorf("expected log containing %q, got: %s", tt.wantSubstr, logs)
+			}
+			if tt.checkPut && putPool != nil && !putPool.putCalled {
+				t.Error("Put should be called")
+			}
+		})
+	}
+}
+
 // fakeDBPoolForCheckpoint is a test double for dbPoolForCheckpoint.
-//
-//nolint:unused // used by integration tests behind build tag
 type fakeDBPoolForCheckpoint struct {
 	getCpc    *fakeCpConn
 	getErr    error
@@ -1010,8 +1113,6 @@ type fakeDBPoolForCheckpoint struct {
 	putCpc    *dbconnpool.CpConn
 }
 
-//
-//nolint:unused // used by integration tests behind build tag
 func (f *fakeDBPoolForCheckpoint) Get() (*dbconnpool.CpConn, error) {
 	if f.getErr != nil {
 		return nil, f.getErr
@@ -1019,16 +1120,12 @@ func (f *fakeDBPoolForCheckpoint) Get() (*dbconnpool.CpConn, error) {
 	return f.getCpc.CpConn, nil
 }
 
-//
-//nolint:unused // used by integration tests behind build tag
 func (f *fakeDBPoolForCheckpoint) Put(cpc *dbconnpool.CpConn) {
 	f.putCalled = true
 	f.putCpc = cpc
 }
 
 // fakeCpConn wraps a *sql.Conn with configurable hooks.
-//
-//nolint:unused // used by integration tests behind build tag
 type fakeCpConn struct {
 	CpConn           *dbconnpool.CpConn
 	QueryContextFn   func(ctx context.Context, query string, args ...any) (*sql.Rows, error)
@@ -1149,11 +1246,11 @@ func TestInfrastructureService_RealDBLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get RW connection: %v", err)
 	}
-	defer infra.dbRwPool.Put(cpc)
 
 	if infra.GetMetadataQueries(cpc) == nil {
 		t.Error("GetMetadataQueries returned nil")
 	}
+	infra.dbRwPool.Put(cpc)
 
 	infra.InvalidateHTTPCache()
 	infra.performWALCheckpoint(context.Background(), infra.dbRwPool)

@@ -12,7 +12,6 @@ func TestFile_GobRoundTrip(t *testing.T) {
 	t.Run("with thumbnail", func(t *testing.T) {
 		thumb := bytes.NewBuffer([]byte{1, 2, 3, 4})
 		original := File{
-			Ok:        true,
 			Exists:    true,
 			ImagesDir: "/tmp/Images",
 			Path:      "foo/bar.jpg",
@@ -46,8 +45,7 @@ func TestFile_GobRoundTrip(t *testing.T) {
 			t.Fatalf("GobDecode: %v", err)
 		}
 
-		if decoded.Ok != original.Ok ||
-			decoded.Exists != original.Exists ||
+		if decoded.Exists != original.Exists ||
 			decoded.ImagesDir != original.ImagesDir ||
 			decoded.Path != original.Path ||
 			decoded.File.ID != original.File.ID ||
@@ -74,7 +72,6 @@ func TestFile_GobRoundTrip(t *testing.T) {
 
 	t.Run("without thumbnail", func(t *testing.T) {
 		original := File{
-			Ok:        true,
 			Path:      "foo/bar.jpg",
 			File:      gallerydb.File{ID: 7},
 			Thumbnail: nil,

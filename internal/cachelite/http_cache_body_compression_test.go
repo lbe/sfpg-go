@@ -1,5 +1,3 @@
-//go:build integration
-
 package cachelite
 
 import (
@@ -678,8 +676,8 @@ func TestCacheBodyCompression_CodecSwitchGzip(t *testing.T) {
 	}
 
 	// Now switch back to zstd-1 and write another entry
-	if err := ConfigureBodyCodec("zstd-1"); err != nil {
-		t.Fatalf("ConfigureBodyCodec(zstd-1) restore: %v", err)
+	if cfgErr := ConfigureBodyCodec("zstd-1"); cfgErr != nil {
+		t.Fatalf("ConfigureBodyCodec(zstd-1) restore: %v", cfgErr)
 	}
 
 	handler2 := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -739,7 +737,7 @@ func TestCacheBodyCompression_NonHTMLGarbageFails(t *testing.T) {
 		t.Fatalf("Get: %v", err)
 	}
 	// ContentLength intentionally mismatched so length validation rejects the body.
-	if err := cpc.Queries.UpsertHttpCache(ctx, gallerydb.UpsertHttpCacheParams{
+	if upsertErr := cpc.Queries.UpsertHttpCache(ctx, gallerydb.UpsertHttpCacheParams{
 		Key:           key,
 		Method:        "GET",
 		Path:          "/non-html-garbage",
@@ -747,9 +745,9 @@ func TestCacheBodyCompression_NonHTMLGarbageFails(t *testing.T) {
 		Body:          garbage,
 		ContentLength: sql.NullInt64{Int64: int64(len(garbage)) + 999, Valid: true},
 		CreatedAt:     now,
-	}); err != nil {
+	}); upsertErr != nil {
 		db.Put(cpc)
-		t.Fatalf("UpsertHttpCache: %v", err)
+		t.Fatalf("UpsertHttpCache: %v", upsertErr)
 	}
 	db.Put(cpc)
 

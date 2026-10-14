@@ -2,6 +2,9 @@
 package testutil
 
 import (
+	"bytes"
+	"errors"
+	"fmt"
 	"io"
 	"slices"
 	"strings"
@@ -118,4 +121,30 @@ func IsDescendant(ancestor, descendant *html.Node) bool {
 // ParseHTML parses an io.Reader into an html.Node.
 func ParseHTML(r io.Reader) (*html.Node, error) {
 	return html.Parse(r)
+}
+
+// FirstLiteralDocumentShellTag scans raw HTML bytes for literal document shell
+// tags (html, head, body). HTMX partial responses often omit these tags on the
+// wire; html.Parse still synthesizes <html> and <body> in the parse tree, so
+// partial-vs-full checks must not use FindElementByTag(doc, "html") on a parsed
+// fragment. Returns the first shell tag name found, or "" when none are present.
+func FirstLiteralDocumentShellTag(body []byte) (string, error) {
+	z := html.NewTokenizer(bytes.NewReader(body))
+	for {
+		tt := z.Next()
+		if tt == html.ErrorToken {
+			if errors.Is(z.Err(), io.EOF) {
+				return "", nil
+			}
+			return "", fmt.Errorf("tokenize HTML body: %w", z.Err())
+		}
+		if tt != html.StartTagToken && tt != html.EndTagToken {
+			continue
+		}
+		name, _ := z.TagName()
+		switch string(name) {
+		case "html", "head", "body":
+			return string(name), nil
+		}
+	}
 }

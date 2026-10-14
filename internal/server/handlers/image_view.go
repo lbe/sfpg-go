@@ -52,7 +52,7 @@ func (h *GalleryHandlers) ImageByID(w http.ResponseWriter, r *http.Request) {
 		"CacheVersion": time.Now().Unix(),
 		"ImageCount":   1,
 	}
-	data = h.AddCommonTemplateData(w, r, data, false)
+	data = h.AddCommonTemplateData(w, r, data)
 	if err := ui.RenderPage(w, "image", data, false); err != nil {
 		h.ServerError(w, r, err)
 	}

@@ -76,7 +76,7 @@ type GalleryHandlers struct {
 	DBRoPool              dbconnpool.ConnectionPool
 	Ctx                   context.Context
 	galleryOps            interfaces.GalleryOps
-	AddCommonTemplateData func(w http.ResponseWriter, r *http.Request, data map[string]any, fullPage bool) map[string]any
+	AddCommonTemplateData func(w http.ResponseWriter, r *http.Request, data map[string]any) map[string]any
 	ServerError           func(w http.ResponseWriter, r *http.Request, err error)
 	PreloadService        cachepreload.PreloadService
 }
@@ -86,7 +86,7 @@ func NewGalleryHandlers(
 	dbRoPool dbconnpool.ConnectionPool,
 	ctx context.Context,
 	galleryOps interfaces.GalleryOps,
-	addCommonTemplateData func(w http.ResponseWriter, r *http.Request, data map[string]any, fullPage bool) map[string]any,
+	addCommonTemplateData func(w http.ResponseWriter, r *http.Request, data map[string]any) map[string]any,
 	serverError func(w http.ResponseWriter, r *http.Request, err error),
 ) *GalleryHandlers {
 	return &GalleryHandlers{

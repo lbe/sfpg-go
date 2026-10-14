@@ -1,10 +1,10 @@
-//go:build integration
-
+//nolint:govet // DB fixture tests reuse err in nested scopes
 package files
 
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path"
 	"testing"
 
@@ -251,7 +251,7 @@ func TestWriteFileInTx_E_ClearsStaleInvalidRow(t *testing.T) {
 	}
 	defer roPool.Put(cpcRo2)
 	_, err = cpcRo2.Queries.GetInvalidFileByPath(ctx, p)
-	if err != sql.ErrNoRows {
+	if !errors.Is(err, sql.ErrNoRows) {
 		t.Errorf("invalid_files row should be cleared after successful WriteFileInTx; got err=%v (want sql.ErrNoRows)", err)
 	}
 }

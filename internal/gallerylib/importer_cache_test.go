@@ -1,5 +1,3 @@
-//go:build integration
-
 package gallerylib_test
 
 import (
@@ -34,7 +32,6 @@ func (c *countingQueries) GetFolderByPath(ctx context.Context, path string) (gal
 // directory adds zero GetFolderByPath calls.
 func TestUpsertPathChain_FolderCacheDedup(t *testing.T) {
 	db, q, ctx := setupTestDB(t)
-	defer db.Close()
 
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {

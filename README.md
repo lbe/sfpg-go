@@ -217,7 +217,7 @@ git config core.hooksPath .githooks
 
 ### Development Workflow
 
-The project includes a Makefile with common development tasks:
+The project includes a Makefile with common development tasks. Package-level SQLite test DB setup (memory mode via `dbconnpool.Config.TestUseMemDB` plus an empty DSN vs file DSN, backed by `internal/testdb.MemoryDatabases`) is documented in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ```shell
 # Run tests

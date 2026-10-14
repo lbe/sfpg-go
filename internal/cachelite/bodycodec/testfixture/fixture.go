@@ -37,7 +37,7 @@ func Read(name string) ([]byte, error) {
 	if extractErr != nil {
 		return nil, extractErr
 	}
-	path := filepath.Join(testdataDir(), name)
+	path := filepath.Join(extractedDir(), name)
 	return os.ReadFile(path)
 }
 
@@ -83,31 +83,49 @@ func validateFixtureName(name string) error {
 	return nil
 }
 
-func testdataDir() string {
+func repoRoot() string {
 	_, filename, _, ok := runtime.Caller(0)
 	if !ok {
 		panic("testfixture: runtime.Caller failed")
 	}
-	return filepath.Join(filepath.Dir(filename), "..", "testdata")
+	dir := filepath.Dir(filename)
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			panic("testfixture: could not find repo root (go.mod)")
+		}
+		dir = parent
+	}
+}
+
+func archiveDir() string {
+	return filepath.Join(repoRoot(), "internal", "cachelite", "bodycodec", "testdata")
+}
+
+func extractedDir() string {
+	return filepath.Join(repoRoot(), "tmp", "bodycodec", "testdata")
 }
 
 func ensureExtracted() error {
-	dir := testdataDir()
-	marker := filepath.Join(dir, markerName)
-	if _, err := os.Stat(marker); err == nil {
+	dir := extractedDir()
+	if allFixturesPresent(dir) {
 		return nil
 	}
-	if allFixturesPresent(dir) {
-		return os.WriteFile(marker, []byte("ok\n"), 0o644)
-	}
-	archivePath := filepath.Join(dir, archiveName)
+
+	archivePath := filepath.Join(archiveDir(), archiveName)
 	if _, err := os.Stat(archivePath); err != nil {
 		return fmt.Errorf("testfixture: %s: %w (run scripts/extract_bodycodec_testdata.sh to regenerate)", archivePath, err)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
 	}
 	if err := extractArchive(archivePath, dir); err != nil {
 		return err
 	}
-	return os.WriteFile(marker, []byte("ok\n"), 0o644)
+	return os.WriteFile(filepath.Join(dir, markerName), []byte("ok\n"), 0o644)
 }
 
 var fixtureNames = []string{

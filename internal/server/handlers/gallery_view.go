@@ -30,19 +30,14 @@ func (h *GalleryHandlers) GalleryByID(w http.ResponseWriter, r *http.Request) {
 	h.setCacheHeaders(w, etag)
 	w.Header().Set("HX-Push-URL", fmt.Sprintf("/gallery/%d?v=%s", folderID, etagVersion))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	// Vary on HTMX headers so the browser does not serve a cached partial for a full page request (e.g. breadcrumb).
-	w.Header().Add("Vary", "HX-Request")
-	w.Header().Add("Vary", "HX-Target")
+	ui.SetLayoutPartialVary(w, true)
 
-	hxRequest := r.Header.Get("HX-Request") == "true"
+	partial := ui.IsPartialRequest(r, ui.PartialRuleHXRequestTarget, ui.HXTargetGalleryContent)
 	hxTarget := r.Header.Get("HX-Target")
-	// Return partial only for folder tile (hx-get, target #gallery-content). Boosted links (breadcrumbs) target body and send HX-Boosted.
-	isHTMX := hxRequest && hxTarget == "gallery-content"
-	// Partial responses must not be cached or stored in bfcache (gallery is public, so no auth middleware).
-	if isHTMX {
-		w.Header().Set("Cache-Control", "no-store")
+	if partial {
+		ui.SetPartialNoStore(w)
 	}
-	slog.Debug("galleryByIDHandler", "folderID", folderID, "isHTMX", isHTMX, "hxTarget", hxTarget, "url", r.URL.Path)
+	slog.Debug("galleryByIDHandler", "folderID", folderID, "isHTMX", partial, "hxTarget", hxTarget, "url", r.URL.Path)
 
 	data := map[string]any{
 		"Breadcrumbs": gd.Breadcrumbs,
@@ -51,8 +46,8 @@ func (h *GalleryHandlers) GalleryByID(w http.ResponseWriter, r *http.Request) {
 		"IsImageView": gd.IsImageView,
 		"Thumbs":      gd.Thumbs,
 	}
-	data = h.AddCommonTemplateData(w, r, data, isHTMX)
-	if err := ui.RenderPage(w, "gallery", data, isHTMX); err != nil {
+	data = h.AddCommonTemplateData(w, r, data)
+	if err := ui.RenderPage(w, "gallery", data, partial); err != nil {
 		h.ServerError(w, r, err)
 		return
 	}

@@ -1,5 +1,4 @@
-//go:build integration
-
+//nolint:staticcheck // tests assert embedded Queries field wiring explicitly
 package gallerydb
 
 import (

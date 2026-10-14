@@ -2,95 +2,11 @@ package config
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"path/filepath"
 	"testing"
 
-	"github.com/golang-migrate/migrate/v4"
-	"github.com/golang-migrate/migrate/v4/database/sqlite"
-	"github.com/golang-migrate/migrate/v4/source/iofs"
-
-	"github.com/lbe/sfpg-go/internal/dbconnpool"
 	"github.com/lbe/sfpg-go/internal/gallerydb"
-	"github.com/lbe/sfpg-go/migrations"
-	_ "github.com/ncruces/go-sqlite3/driver"
 )
-
-// createBootstrapQueries creates a migrated test database (including thumbs.db)
-// and returns its gallerydb.Querier for direct testing of EnsureBootstrapDefaults.
-func createBootstrapQueries(t *testing.T) (gallerydb.Querier, func()) {
-	t.Helper()
-	ctx := context.Background()
-
-	tempDir := t.TempDir()
-	tempDB := filepath.Join(tempDir, "test.db")
-	thumbsDBPath := filepath.Join(tempDir, "thumbs.db")
-
-	db, err := sql.Open("sqlite3", "file:"+filepath.ToSlash(tempDB))
-	if err != nil {
-		t.Fatalf("failed to open test database: %v", err)
-	}
-
-	driver, err := sqlite.WithInstance(db, &sqlite.Config{})
-	if err != nil {
-		db.Close()
-		t.Fatalf("failed to create sqlite driver instance: %v", err)
-	}
-
-	d, err := iofs.New(migrations.FS, "migrations")
-	if err != nil {
-		db.Close()
-		t.Fatalf("failed to create iofs source driver: %v", err)
-	}
-
-	m, err := migrate.NewWithInstance("iofs", d, "sqlite", driver)
-	if err != nil {
-		db.Close()
-		t.Fatalf("failed to create migrate instance: %v", err)
-	}
-
-	if upErr := m.Up(); upErr != nil && !errors.Is(upErr, migrate.ErrNoChange) {
-		db.Close()
-		t.Fatalf("failed to run migrations: %v", upErr)
-	}
-	db.Close()
-
-	m2, err := migrations.NewThumbsMigrator(thumbsDBPath)
-	if err != nil {
-		t.Fatalf("failed to create thumbs migrator: %v", err)
-	}
-	if thumbsErr := m2.Up(); thumbsErr != nil && !errors.Is(thumbsErr, migrate.ErrNoChange) {
-		m2.Close()
-		t.Fatalf("failed to run thumbs migrations: %v", thumbsErr)
-	}
-	m2.Close()
-
-	pool, err := dbconnpool.NewDbSQLConnPool(ctx, "file:"+filepath.ToSlash(tempDB), dbconnpool.Config{
-		DriverName:     "sqlite3",
-		MaxConnections: 2,
-		QueriesFunc:    gallerydb.NewCustomQueries,
-		ThumbsDBPath:   thumbsDBPath,
-	})
-	if err != nil {
-		t.Fatalf("failed to create pool: %v", err)
-	}
-
-	cpcRw, err := pool.Get()
-	if err != nil {
-		pool.Close()
-		t.Fatalf("failed to get connection: %v", err)
-	}
-
-	cleanup := func() {
-		pool.Put(cpcRw)
-		pool.Close()
-	}
-	return cpcRw.Queries, cleanup
-}
-
-// createBootstrapQueries creates a migrated test database and returns its
-// gallerydb.Querier for direct testing of EnsureBootstrapDefaults.
 
 func TestEnsureBootstrapDefaults_CreatesAdminDefaults(t *testing.T) {
 	queries, cleanup := createBootstrapQueries(t)
@@ -242,7 +158,6 @@ func TestEnsureBootstrapDefaults_PreservesExistingValue(t *testing.T) {
 	rootDir := t.TempDir()
 	now := int64(1)
 
-	// Set existing value before initialization
 	err := queries.UpsertConfigValueOnly(ctx, gallerydb.UpsertConfigValueOnlyParams{
 		Key: "listener_port", Value: "9999", CreatedAt: now, UpdatedAt: now,
 	})
@@ -250,12 +165,10 @@ func TestEnsureBootstrapDefaults_PreservesExistingValue(t *testing.T) {
 		t.Fatalf("failed to set existing config: %v", err)
 	}
 
-	// Initialize defaults (should not overwrite existing)
 	if err = EnsureBootstrapDefaults(ctx, rootDir, queries); err != nil {
 		t.Fatalf("EnsureBootstrapDefaults failed: %v", err)
 	}
 
-	// Verify existing value is preserved
 	portValue, err := queries.GetConfigValueByKey(ctx, "listener_port")
 	if err != nil {
 		t.Fatalf("failed to get listener_port: %v", err)
@@ -273,7 +186,6 @@ func TestEnsureBootstrapDefaults_OnlyMissingKeysAdded(t *testing.T) {
 	rootDir := t.TempDir()
 	now := int64(1)
 
-	// Set one existing value
 	err := queries.UpsertConfigValueOnly(ctx, gallerydb.UpsertConfigValueOnlyParams{
 		Key: "log_level", Value: "info", CreatedAt: now, UpdatedAt: now,
 	})
@@ -281,12 +193,10 @@ func TestEnsureBootstrapDefaults_OnlyMissingKeysAdded(t *testing.T) {
 		t.Fatalf("failed to set existing config: %v", err)
 	}
 
-	// Initialize defaults
 	if err = EnsureBootstrapDefaults(ctx, rootDir, queries); err != nil {
 		t.Fatalf("EnsureBootstrapDefaults failed: %v", err)
 	}
 
-	// Verify existing value is preserved
 	logLevelValue, err := queries.GetConfigValueByKey(ctx, "log_level")
 	if err != nil {
 		t.Fatalf("failed to get log_level: %v", err)
@@ -295,7 +205,6 @@ func TestEnsureBootstrapDefaults_OnlyMissingKeysAdded(t *testing.T) {
 		t.Errorf("expected log_level to be preserved as 'info', got %q", logLevelValue)
 	}
 
-	// Verify a missing key was added
 	portValue, err := queries.GetConfigValueByKey(ctx, "listener_port")
 	if err != nil {
 		t.Fatalf("listener_port should have been added: %v", err)

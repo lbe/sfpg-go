@@ -2,7 +2,8 @@
 <div
   id="config-modal-container"
   _="init
-  set #config_modal.checked to true
+  set toggle to me.querySelector('#config_modal')
+  set toggle.checked to true
   call snapshotConfigOriginals()
 "
 >
@@ -346,14 +347,9 @@
             hx-target="#config-success-message"
             hx-swap="outerHTML"
             _="on htmx:afterRequest
-                 -- Close the restart dialog
                  set #restart-diff-modal.checked to false
-                 -- Close the config modal
-                 set #config_modal.checked to false
-                 -- Remove the config modal container after a brief delay
                  wait 100ms
-                 remove #config-modal-container from body
-                 -- Show the restart overlay
+                 call closeConfigModalContainer(me)
                  send showRestartOverlay to #restart-overlay"
           >
             Restart Server

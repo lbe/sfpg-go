@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"os/exec"
-	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -174,11 +173,13 @@ func TestLightbox_NextAndPrevLinks(t *testing.T) {
 
 	nextHref := GetAttr(nextBtn, "hx-get")
 	prevHref := GetAttr(prevBtn, "hx-get")
-	if !strings.Contains(nextHref, fmt.Sprintf("/lightbox/%d", second.ID)) {
-		t.Fatalf("next button hx-get expected to contain /lightbox/%d, got %q", second.ID, nextHref)
+	wantNext := fmt.Sprintf("/lightbox/%d", second.ID)
+	wantPrev := fmt.Sprintf("/lightbox/%d", last.ID)
+	if !strings.HasPrefix(nextHref, wantNext) {
+		t.Fatalf("next button hx-get expected prefix %q, got %q", wantNext, nextHref)
 	}
-	if !strings.Contains(prevHref, fmt.Sprintf("/lightbox/%d", last.ID)) {
-		t.Fatalf("prev button hx-get expected to contain /lightbox/%d, got %q", last.ID, prevHref)
+	if !strings.HasPrefix(prevHref, wantPrev) {
+		t.Fatalf("prev button hx-get expected prefix %q, got %q", wantPrev, prevHref)
 	}
 }
 
@@ -365,12 +366,62 @@ func extractLightboxInitArgs(t *testing.T, doc *html.Node) (current, next, prev 
 	}
 	script := GetAttr(ui, "_")
 
-	re := regexp.MustCompile(`initLightboxRouter\s*\(\s*me\s*,\s*'([^']+)'\s*,\s*'([^']+)'\s*,\s*'([^']+)'\s*,\s*'([^']+)'\s*\)`)
-	matches := re.FindStringSubmatch(script)
-	if len(matches) != 5 {
-		t.Fatalf("could not parse initLightboxRouter args from: %s", script)
+	args, err := quotedStringsFromInitLightboxRouter(script)
+	if err != nil {
+		t.Fatalf("could not parse initLightboxRouter args from: %s: %v", script, err)
 	}
-	return matches[2], matches[3], matches[4]
+	return args[1], args[2], args[3]
+}
+
+// quotedStringsFromInitLightboxRouter extracts the four single-quoted args after
+// me in initLightboxRouter(me, 'id', 'curr', 'next', 'prev').
+func quotedStringsFromInitLightboxRouter(script string) ([]string, error) {
+	const marker = "initLightboxRouter"
+	idx := strings.Index(script, marker)
+	if idx < 0 {
+		return nil, fmt.Errorf("initLightboxRouter not found")
+	}
+	rest := script[idx+len(marker):]
+	open := strings.Index(rest, "(")
+	if open < 0 {
+		return nil, fmt.Errorf("missing (")
+	}
+	rest = rest[open+1:]
+
+	var out []string
+	for {
+		rest = strings.TrimSpace(rest)
+		if len(rest) == 0 {
+			return nil, fmt.Errorf("unexpected end of script")
+		}
+		if rest[0] == ')' {
+			break
+		}
+		if strings.HasPrefix(rest, "me") {
+			rest = strings.TrimSpace(rest[2:])
+			if strings.HasPrefix(rest, ",") {
+				rest = rest[1:]
+			}
+			continue
+		}
+		if rest[0] != '\'' {
+			return nil, fmt.Errorf("expected quoted arg, got %.20q", rest)
+		}
+		close := strings.Index(rest[1:], "'")
+		if close < 0 {
+			return nil, fmt.Errorf("unterminated quoted arg")
+		}
+		out = append(out, rest[1:1+close])
+		rest = rest[1+close+1:]
+		rest = strings.TrimSpace(rest)
+		if strings.HasPrefix(rest, ",") {
+			rest = rest[1:]
+		}
+	}
+	if len(out) != 4 {
+		return nil, fmt.Errorf("expected 4 quoted args, got %d", len(out))
+	}
+	return out, nil
 }
 
 // extractIDFromRawImagePath parses "/raw-image/{id}" and returns the id.

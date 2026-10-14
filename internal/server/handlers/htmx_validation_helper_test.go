@@ -5,11 +5,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lbe/sfpg-go/internal/testutil"
 	"golang.org/x/net/html"
 )
 
 func validateHTMXResponseStructure(body string, swapType string, targetID string) error {
-	doc, err := html.Parse(strings.NewReader(body))
+	doc, err := testutil.ParseHTML(strings.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("failed to parse HTML: %w", err)
 	}

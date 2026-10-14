@@ -1,9 +1,18 @@
 import { test, expect } from "@playwright/test";
-import { ensureGallerySession, openMenu } from "./helpers";
+import {
+  ensureGallerySession,
+  openMenu,
+  openConfigTab,
+  waitForConfigModalDismissed,
+} from "./helpers";
 import {
   makeSnapshotRestore,
   expectRestartDialogOpen,
   openConfigPerformanceTab,
+  waitForServerDown,
+  waitForServer,
+  authenticatedAPIContext,
+  exportConfig,
 } from "./config-helpers";
 import fs from "fs";
 import os from "os";
@@ -15,6 +24,11 @@ test.describe.configure({ timeout: 90000 });
 test.describe.serial("Configuration", () => {
   test.beforeEach(async ({ page }) => {
     await ensureGallerySession(page);
+    await page.evaluate(() => {
+      document
+        .querySelectorAll("#config-modal-container")
+        .forEach((el) => el.remove());
+    });
   });
 
   test("1: Config modal opens from menu", async ({ page }) => {
@@ -23,8 +37,11 @@ test.describe.serial("Configuration", () => {
     await page.waitForSelector("#config-form", { timeout: 5000 });
     await expect(page.locator("#config_modal")).toBeChecked({ timeout: 3000 });
     // Switch to Application tab (site_name lives there, Server tab is default)
-    await page.locator("#tab-application-btn").click();
-    await page.waitForTimeout(200);
+    await openConfigTab(
+      page,
+      "#tab-application-btn",
+      'input[name="site_name"]',
+    );
     // Expect site-name field to be pre-filled
     await expect(page.locator('input[name="site_name"]')).toBeVisible();
   });
@@ -36,9 +53,7 @@ test.describe.serial("Configuration", () => {
     await expect(page.locator("#config_modal")).toBeChecked({ timeout: 3000 });
 
     await page.locator("#config-cancel-btn").click();
-    await expect(page.locator("#config_modal")).not.toBeChecked({
-      timeout: 3000,
-    });
+    await waitForConfigModalDismissed(page);
   });
 
   test("3: Config save (site name)", async ({ page }) => {
@@ -46,8 +61,11 @@ test.describe.serial("Configuration", () => {
     await openMenu(page);
     await page.locator('a[aria-label="Configuration"]').click();
     await page.waitForSelector("#config-form", { timeout: 5000 });
-    await page.locator("#tab-application-btn").click();
-    await page.waitForTimeout(200);
+    await openConfigTab(
+      page,
+      "#tab-application-btn",
+      'input[name="site_name"]',
+    );
 
     const siteNameInput = page.locator('input[name="site_name"]');
     const originalName = await siteNameInput.inputValue();
@@ -64,15 +82,16 @@ test.describe.serial("Configuration", () => {
       timeout: 10000,
     });
 
-    // Reopen and verify the saved value
-    await page.locator("#config-cancel-btn").click();
-    await page.waitForTimeout(200);
+    await waitForConfigModalDismissed(page);
 
     await openMenu(page);
     await page.locator('a[aria-label="Configuration"]').click();
     await page.waitForSelector("#config-form", { timeout: 5000 });
-    await page.locator("#tab-application-btn").click();
-    await page.waitForTimeout(200);
+    await openConfigTab(
+      page,
+      "#tab-application-btn",
+      'input[name="site_name"]',
+    );
 
     const savedName = await page
       .locator('input[name="site_name"]')
@@ -93,8 +112,11 @@ test.describe.serial("Configuration", () => {
     await openMenu(page);
     await page.locator('a[aria-label="Configuration"]').click();
     await page.waitForSelector("#config-form", { timeout: 5000 });
-    await page.locator("#tab-session-btn").click();
-    await page.waitForTimeout(200);
+    await openConfigTab(
+      page,
+      "#tab-session-btn",
+      'input[name="login_rate_limit_per_ip"]',
+    );
 
     const ipLimit = page.locator('input[name="login_rate_limit_per_ip"]');
     const threshold = page.locator('input[name="lockout_threshold"]');
@@ -113,14 +135,16 @@ test.describe.serial("Configuration", () => {
       timeout: 10000,
     });
 
-    await page.locator("#config-cancel-btn").click();
-    await page.waitForTimeout(200);
+    await waitForConfigModalDismissed(page);
 
     await openMenu(page);
     await page.locator('a[aria-label="Configuration"]').click();
     await page.waitForSelector("#config-form", { timeout: 5000 });
-    await page.locator("#tab-session-btn").click();
-    await page.waitForTimeout(200);
+    await openConfigTab(
+      page,
+      "#tab-session-btn",
+      'input[name="login_rate_limit_per_ip"]',
+    );
 
     await expect(
       page.locator('input[name="login_rate_limit_per_ip"]'),
@@ -157,8 +181,7 @@ test.describe.serial("Configuration", () => {
       timeout: 10000,
     });
 
-    await page.locator("#config-cancel-btn").click();
-    await page.waitForTimeout(200);
+    await waitForConfigModalDismissed(page);
 
     await openConfigPerformanceTab(page);
     const dqueReopen = page.locator('input[name="dque_max_disk_bytes"]');
@@ -177,8 +200,11 @@ test.describe.serial("Configuration", () => {
     await openMenu(page);
     await page.locator('a[aria-label="Configuration"]').click();
     await page.waitForSelector("#config-form", { timeout: 5000 });
-    await page.locator("#tab-application-btn").click();
-    await page.waitForTimeout(200);
+    await openConfigTab(
+      page,
+      "#tab-application-btn",
+      'input[name="site_name"]',
+    );
 
     // Clear the site name (required field) to trigger validation
     const siteNameInput = page.locator('input[name="site_name"]');
@@ -223,10 +249,9 @@ test.describe.serial("Configuration", () => {
     );
     await incrementBtn.click();
 
-    // Wait for etag display to update
-    await page.waitForTimeout(500);
-    const etagV1 = await etagVersionInput.inputValue();
-    expect(etagV1).not.toBe(etagV0);
+    await expect
+      .poll(async () => etagVersionInput.inputValue(), { timeout: 10000 })
+      .not.toBe(etagV0);
   });
 
   test("7: Config export to file", async ({ page }) => {
@@ -355,16 +380,10 @@ test.describe.serial("Configuration", () => {
     await expect(commitBtn).toBeVisible({ timeout: 3000 });
     await commitBtn.click();
 
-    // The commit POST succeeds (server applies config). Wait for settle.
-    await page.waitForTimeout(1000);
-
-    // Verify the import via the API (export endpoint) — it should reflect the new site_name.
-    // Use a fresh authenticated API context (separate cookie jar from the UI page).
-    const { authenticatedAPIContext, exportConfig } =
-      await import("./config-helpers");
     const api = await authenticatedAPIContext(request);
-    const exportedYAML = await exportConfig(api);
-    expect(exportedYAML).toContain("site-name: SmokeTestImported");
+    await expect
+      .poll(async () => exportConfig(api), { timeout: 15000 })
+      .toContain("site-name: SmokeTestImported");
 
     fs.unlinkSync(tmpFile);
   });
@@ -377,9 +396,9 @@ test.describe.serial("Configuration", () => {
     const restoreBtn = page.locator("text=Restore").first();
     if (await restoreBtn.isVisible().catch(() => false)) {
       await restoreBtn.click();
-      await page.waitForTimeout(500);
-      // Verify non-destructive — still on config page
-      await expect(page.locator("#config-form")).toBeVisible();
+      await expect(page.locator("#config-form")).toBeVisible({
+        timeout: 10000,
+      });
     } else {
       test.skip(true, "Restore control not visible");
     }
@@ -493,25 +512,8 @@ test.describe.serial("Configuration", () => {
       await expect(restartBtn).toBeVisible({ timeout: 5000 });
       await restartBtn.click();
 
-      // Wait for restart to begin
-      await page.waitForTimeout(1000);
-
-      // Poll health endpoint until server recovers (up to 20s).
-      // The server restarts on the same port (we only toggled http-cache,
-      // not the listener port), so baseURL remains valid.
-      let recovered = false;
-      for (let i = 0; i < 20; i++) {
-        try {
-          const resp = await page.request.get("/health", { timeout: 2000 });
-          if (resp.status() === 200) {
-            recovered = true;
-            break;
-          }
-        } catch {
-          // Server still restarting
-        }
-        await page.waitForTimeout(1000);
-      }
+      await waitForServerDown(page.request);
+      const recovered = await waitForServer(page.request, 30000);
       expect(recovered).toBeTruthy();
 
       // Verify the app is fully functional after restart

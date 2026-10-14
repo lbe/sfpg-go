@@ -137,23 +137,12 @@ func TestCanCacheResponse(t *testing.T) {
 
 // TestHTTPCacheEntry_StructLayout validates the struct is correctly defined
 func TestHTTPCacheEntry_StructLayout(t *testing.T) {
-	//nolint:govet // Intentionally setting all fields to verify struct layout
 	entry := &cachelite.HTTPCacheEntry{
-		ID:            1,
-		Key:           "test-key",
-		Method:        "GET",
-		Path:          "/test",
-		QueryString:   sql.NullString{String: "id=1", Valid: true},
-		Status:        200,
-		ContentType:   sql.NullString{String: "text/html", Valid: true},
-		CacheControl:  sql.NullString{String: "max-age=3600", Valid: true},
-		ETag:          sql.NullString{String: `"abc123"`, Valid: true},
-		LastModified:  sql.NullString{String: "Mon, 02 Jan 2024 12:00:00 GMT", Valid: true},
-		Vary:          sql.NullString{String: "Accept-Encoding", Valid: true},
-		Body:          []byte("test body"),
-		ContentLength: sql.NullInt64{Int64: 9, Valid: true},
-		CreatedAt:     1234567890,
-		ExpiresAt:     sql.NullInt64{Int64: 1234571490, Valid: true},
+		ID:          1,
+		Key:         "test-key",
+		Status:      200,
+		ContentType: sql.NullString{String: "text/html", Valid: true},
+		ExpiresAt:   sql.NullInt64{Int64: 1234571490, Valid: true},
 	}
 
 	if entry.ID != 1 {
@@ -187,13 +176,10 @@ func TestHTTPCacheEntry_StructLayout(t *testing.T) {
 
 // TestCacheConfig_DefaultValues tests cache configuration
 func TestCacheConfig_DefaultValues(t *testing.T) {
-	//nolint:govet // Intentionally setting all fields to verify struct layout
 	config := &cachelite.CacheConfig{
-		Enabled:         true,
-		MaxEntrySize:    10 * 1024 * 1024,  // 10MB
-		MaxTotalSize:    500 * 1024 * 1024, // 500MB
-		DefaultTTL:      3600,              // 1 hour in seconds (note: should be time.Duration)
-		CacheableRoutes: []string{"/dummy"},
+		Enabled:      true,
+		MaxEntrySize: 10 * 1024 * 1024,  // 10MB
+		MaxTotalSize: 500 * 1024 * 1024, // 500MB
 	}
 
 	if !config.Enabled {

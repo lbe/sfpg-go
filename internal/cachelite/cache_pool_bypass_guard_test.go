@@ -79,7 +79,6 @@ func TestCacheRuntimeHelpers_NoRawDBBypass(t *testing.T) {
 // remains stable under preload-like concurrent reads to the same key.
 func TestHTTPCacheMiddleware_ConcurrentLookupPath(t *testing.T) {
 	db := createTestDBPool(t)
-	defer db.Close()
 
 	var handlerCalls atomic.Int64
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

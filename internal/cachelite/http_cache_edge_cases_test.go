@@ -37,7 +37,6 @@ func createTestMiddlewareForEdgeCases(t *testing.T, db *dbconnpool.DbSQLConnPool
 // TestContentTypePreservation verifies that Content-Type is preserved through cache.
 func TestContentTypePreservation(t *testing.T) {
 	db := createTestDBPool(t)
-	defer db.Close()
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/jpeg")
@@ -82,7 +81,6 @@ func TestContentTypePreservation(t *testing.T) {
 // TestHEADRequest_CacheHeaders verifies HEAD returns correct headers without body.
 func TestHEADRequest_CacheHeaders(t *testing.T) {
 	db := createTestDBPool(t)
-	defer db.Close()
 
 	handlerCalls := 0
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -129,7 +127,6 @@ func TestHEADRequest_CacheHeaders(t *testing.T) {
 // TestEmptyBody verifies empty responses are handled correctly.
 func TestEmptyBody(t *testing.T) {
 	db := createTestDBPool(t)
-	defer db.Close()
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
@@ -164,7 +161,6 @@ func TestEmptyBody(t *testing.T) {
 // TestSmallBody verifies tiny payloads preserve Content-Type.
 func TestSmallBody(t *testing.T) {
 	db := createTestDBPool(t)
-	defer db.Close()
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
@@ -203,7 +199,6 @@ func TestSmallBody(t *testing.T) {
 // TestWeakETag_304 verifies weak ETag matching for 304 responses.
 func TestWeakETag_304(t *testing.T) {
 	db := createTestDBPool(t)
-	defer db.Close()
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
@@ -253,7 +248,6 @@ func TestWeakETag_304(t *testing.T) {
 // TestCacheIntegrity verifies cached content matches original.
 func TestCacheIntegrity(t *testing.T) {
 	db := createTestDBPool(t)
-	defer db.Close()
 
 	originalContent := "<html><body>This is test content that should be cached</body></html>"
 

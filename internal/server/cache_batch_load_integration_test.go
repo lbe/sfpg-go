@@ -3,6 +3,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"flag"
@@ -25,7 +26,6 @@ import (
 	"github.com/lbe/sfpg-go/internal/server/config"
 	"github.com/lbe/sfpg-go/internal/testutil"
 	"github.com/lbe/sfpg-go/internal/writebatcher"
-	"golang.org/x/net/html"
 )
 
 // --- moved from server_e2e_test.go (cache batch load) ---
@@ -111,7 +111,7 @@ func TestIntegration_CacheBatchLoad_HTTP_BlockedWhenDiscoveryActive(t *testing.T
 		t.Errorf("POST /server/cache-batch-load when discovery active: status = %d, want 409", resp.StatusCode)
 	}
 
-	doc, err := html.Parse(strings.NewReader(string(body)))
+	doc, err := testutil.ParseHTML(bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("Failed to parse HTML: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestIntegration_CacheBatchLoad_HTTP_StartsWhenIdle(t *testing.T) {
 		t.Errorf("POST /server/cache-batch-load when idle: status = %d, want 200", resp.StatusCode)
 	}
 
-	doc, err := html.Parse(strings.NewReader(string(body)))
+	doc, err := testutil.ParseHTML(bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("Failed to parse HTML: %v", err)
 	}

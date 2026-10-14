@@ -1,13 +1,18 @@
 import { test, expect, request as apiRequest } from "@playwright/test";
 import {
   goToGallery,
+  guestStorageState,
   loginViaUI,
   logoutViaUI,
   openMenu,
   menu,
+  waitForAuthenticatedGalleryShell,
+  waitForDashboardPollCycles,
+  waitForDashboardShell,
 } from "./helpers";
 
-test.describe.configure({ timeout: 60000 });
+test.describe.configure({ timeout: 120000 });
+test.use({ storageState: guestStorageState });
 
 test.describe("Authentication", () => {
   test("1: Login form renders from menu", async ({ page }) => {
@@ -96,7 +101,8 @@ test.describe("Authentication", () => {
 
     // Go back and verify menu still shows authenticated state
     await page.goBack();
-    await page.waitForTimeout(500);
+    await page.waitForURL("**/gallery/**", { timeout: 10000 });
+    await waitForAuthenticatedGalleryShell(page);
     await openMenu(page);
     await expect(
       menu(page).getByText("Dashboard", { exact: true }),
@@ -113,15 +119,14 @@ test.describe("Authentication", () => {
 
     // Navigate to dashboard
     await page.goto("/dashboard");
-    await page.waitForSelector("#dashboard-container", { timeout: 10000 });
+    await waitForDashboardShell(page);
 
-    // Wait for 3+ polling cycles (dashboard polls every 5s)
-    await page.waitForTimeout(16_000);
+    await waitForDashboardPollCycles(page, 3);
 
     // Navigate back — in Chromium this serves gallery from bfcache
     await page.goBack();
-    await page.waitForURL("**/gallery/1", { timeout: 10000 });
-    await page.waitForTimeout(500);
+    await page.waitForURL("**/gallery/**", { timeout: 10000 });
+    await waitForAuthenticatedGalleryShell(page);
 
     // Menu should show authenticated state
     await openMenu(page);

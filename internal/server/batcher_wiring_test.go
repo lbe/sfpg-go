@@ -273,7 +273,11 @@ func TestFileBatcher_SubmitFolderIndex(t *testing.T) {
 			wb.Close()
 		})
 		var prot folderIndexProtocol
-		fb := newFileBatcher(wb, &prot)
+		fb := &fileBatcher{
+			wb:          wb,
+			protocol:    &prot,
+			submitStall: 10 * time.Millisecond,
+		}
 
 		// First submit consumes the single channel slot (flush blocked).
 		if err := fb.SubmitFolderIndex(makeFolderIndexRow(1, 1)); err != nil {

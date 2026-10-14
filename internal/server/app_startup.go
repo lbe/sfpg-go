@@ -13,7 +13,6 @@ import (
 	"github.com/lbe/sfpg-go/internal/dbconnpool"
 	"github.com/lbe/sfpg-go/internal/profiler"
 	"github.com/lbe/sfpg-go/internal/rssmonitor"
-	"github.com/lbe/sfpg-go/internal/scheduler"
 	"github.com/lbe/sfpg-go/internal/server/cachebatch"
 	"github.com/lbe/sfpg-go/internal/server/config"
 	"github.com/lbe/sfpg-go/internal/server/files"
@@ -120,8 +119,7 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 	app.setupBootstrapLogging()
 	// Log file closing is handled by Shutdown() via logger.Shutdown()
 
-	// Initialize scheduler (defaults to runtime.NumCPU() when maxConcurrentTasks is 0)
-	app.SubsystemManager.scheduler = scheduler.NewScheduler(0)
+	// Start scheduler created in NewSubsystemManager (maxConcurrentTasks 0 → NumCPU).
 	go func() {
 		if err := app.SubsystemManager.scheduler.Start(app.RuntimeManager.ctx); err != nil && !errors.Is(err, context.Canceled) {
 			slog.Error("scheduler error", "err", err)

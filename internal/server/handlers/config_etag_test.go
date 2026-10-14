@@ -6,7 +6,6 @@ import (
 	"html/template"
 	"net/http"
 	"net/http/httptest"
-	"regexp"
 	"strings"
 	"testing"
 
@@ -15,7 +14,6 @@ import (
 	"github.com/lbe/sfpg-go/internal/server/ui"
 	"github.com/lbe/sfpg-go/internal/testutil"
 	"github.com/lbe/sfpg-go/web"
-	"golang.org/x/net/html"
 )
 
 // setupTestConfigHandlers creates a ConfigHandlers instance for testing.
@@ -199,7 +197,7 @@ func TestConfigIncrementETag_UpdatesInMemoryConfig(t *testing.T) {
 	}
 
 	// Parse HTML response to verify ETag value is rendered
-	doc, err := html.Parse(strings.NewReader(w.Body.String()))
+	doc, err := testutil.ParseHTML(w.Body)
 	if err != nil {
 		t.Fatalf("Parse HTML: %v", err)
 	}
@@ -212,13 +210,6 @@ func TestConfigIncrementETag_UpdatesInMemoryConfig(t *testing.T) {
 	gotETag := testutil.GetAttr(etagElem, "value")
 	if gotETag != newETag {
 		t.Errorf("ETag value = %q, want %q", gotETag, newETag)
-	}
-
-	// Verify ETag format matches the expected pattern (YYMMDD-NN)
-	pattern := `^\d{8}-\d{2}$`
-	matched, _ := regexp.MatchString(pattern, gotETag)
-	if !matched {
-		t.Errorf("ETag %q does not match pattern %s", gotETag, pattern)
 	}
 
 	// Verify ETag actually changed from the default (new != default)

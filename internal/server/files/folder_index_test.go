@@ -1,5 +1,4 @@
-//go:build integration
-
+//nolint:govet // DB fixture tests reuse err in nested scopes
 package files
 
 import (
