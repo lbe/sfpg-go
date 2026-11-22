@@ -58,10 +58,11 @@ SELECT *
  WHERE id = ?;
 
 -- name: GetGalleryFolderThumbRowsByParentID :many
-SELECT fv.id AS id, fv.name AS name
-  FROM folder_view fv
- WHERE fv.parent_id = ?
- ORDER BY fv.name;
+SELECT f.id AS id, f.name AS name
+  FROM folders f
+ WHERE f.parent_id = ?
+   AND f.tile_id IS NOT NULL
+ ORDER BY f.name;
 
 -- name: GetFolderTileExistsViewByPath :one 
 SELECT found 
@@ -71,8 +72,9 @@ SELECT found
 -- name: GetFolderInfoCountsByID :one
 SELECT
   CAST((
-    SELECT COUNT(*) FROM folder_view sf
+    SELECT COUNT(*) FROM folders sf
      WHERE sf.parent_id = f.id
+       AND sf.tile_id IS NOT NULL
   ) AS INTEGER) AS dir_count,
   CAST((
     SELECT COUNT(*) FROM file_view fv

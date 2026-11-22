@@ -24,12 +24,13 @@ func TestFolderInfoCounts(t *testing.T) {
 		t.Fatalf("UpsertFolderReturningFolder failed: %v", err)
 	}
 	// Create 2 child subfolders
+	var children []int64
 	for _, name := range []string{"child_a", "child_b"} {
 		childPathID, err := q.UpsertFolderPathReturningID(ctx, "/folder_info_test/"+name)
 		if err != nil {
 			t.Fatalf("UpsertFolderPathReturningID for %s failed: %v", name, err)
 		}
-		_, err = q.UpsertFolderReturningFolder(ctx, UpsertFolderReturningFolderParams{
+		child, err := q.UpsertFolderReturningFolder(ctx, UpsertFolderReturningFolderParams{
 			ParentID:  sql.NullInt64{Int64: parent.ID, Valid: true},
 			PathID:    childPathID,
 			Name:      name,
@@ -39,9 +40,11 @@ func TestFolderInfoCounts(t *testing.T) {
 		if err != nil {
 			t.Fatalf("UpsertFolderReturningFolder for %s failed: %v", name, err)
 		}
+		children = append(children, child.ID)
 	}
 	// Create files: 2 images (a.jpg, b.png), 1 non-image (notes.txt)
 	now := time.Now().Unix()
+	var tileID int64
 	testFiles := []struct {
 		path     string
 		filename string
@@ -55,7 +58,7 @@ func TestFolderInfoCounts(t *testing.T) {
 		if err != nil {
 			t.Fatalf("UpsertFilePathReturningID for %s failed: %v", tf.filename, err)
 		}
-		_, err = q.UpsertFileReturningFile(ctx, UpsertFileReturningFileParams{
+		file, err := q.UpsertFileReturningFile(ctx, UpsertFileReturningFileParams{
 			FolderID:  sql.NullInt64{Int64: parent.ID, Valid: true},
 			PathID:    fpID,
 			Filename:  tf.filename,
@@ -64,6 +67,13 @@ func TestFolderInfoCounts(t *testing.T) {
 		})
 		if err != nil {
 			t.Fatalf("UpsertFileReturningFile for %s failed: %v", tf.filename, err)
+		}
+		tileID = file.ID
+	}
+	// Only subfolders with an image in them or below are counted.
+	for _, childID := range children {
+		if err := q.UpdateFolderTileId(ctx, UpdateFolderTileIdParams{TileID: sql.NullInt64{Int64: tileID, Valid: true}, ID: childID}); err != nil {
+			t.Fatalf("UpdateFolderTileId failed: %v", err)
 		}
 	}
 	// Test: Folder + 2 children + a.jpg, b.png, notes.txt → Dir=2, Image=2, File=1

@@ -914,7 +914,7 @@ func TestUpsertPathChain_FolderMtime(t *testing.T) {
 
 	// Create root folder first
 	rootMtime := time.Now().Unix()
-	rootID, err := imp.CreateRootFolderEntry(ctx, rootMtime)
+	_, err := imp.CreateRootFolderEntry(ctx, rootMtime)
 	if err != nil {
 		t.Fatalf("CreateRootFolderEntry failed: %v", err)
 	}
@@ -952,17 +952,13 @@ func TestUpsertPathChain_FolderMtime(t *testing.T) {
 		t.Fatal("expected non-zero file ID")
 	}
 
-	// Get the intermediate folder and verify mtime was stored
-	rows, err := q.GetGalleryFolderThumbRowsByParentID(ctx, sql.NullInt64{Int64: rootID, Valid: true})
+	// Get the intermediate folder by its path and verify mtime was stored
+	subFolder, err := q.GetFolderByPath(ctx, filepath.Dir(normalizedPath))
 	if err != nil {
-		t.Fatalf("failed to get folder thumb rows: %v", err)
+		t.Fatalf("failed to get intermediate folder: %v", err)
 	}
-	if len(rows) != 1 {
-		t.Fatalf("expected 1 intermediate folder, got %d", len(rows))
-	}
-	subFolder, err := q.GetFolderViewByID(ctx, rows[0].ID)
-	if err != nil {
-		t.Fatalf("failed to get folder view: %v", err)
+	if file.FolderID != (sql.NullInt64{Int64: subFolder.ID, Valid: true}) {
+		t.Fatalf("file folder = %+v, want intermediate folder %d", file.FolderID, subFolder.ID)
 	}
 	if !subFolder.Mtime.Valid {
 		t.Error("expected intermediate folder Mtime to be valid, got NULL")

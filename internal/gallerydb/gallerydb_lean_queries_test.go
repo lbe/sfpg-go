@@ -400,7 +400,7 @@ func TestLeanFileQueries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("UpsertFolderPathReturningID failed: %v", err)
 		}
-		_, err = q.UpsertFolderReturningFolder(ctx, UpsertFolderReturningFolderParams{
+		alpha, err := q.UpsertFolderReturningFolder(ctx, UpsertFolderReturningFolderParams{
 			ParentID:  sql.NullInt64{Int64: folder.ID, Valid: true},
 			PathID:    alphaPathID,
 			Name:      "Alpha",
@@ -409,6 +409,10 @@ func TestLeanFileQueries(t *testing.T) {
 		})
 		if err != nil {
 			t.Fatalf("UpsertFolderReturningFolder Alpha failed: %v", err)
+		}
+		// Only folders with an image in them or below are listed.
+		if err = q.UpdateFolderTileId(ctx, UpdateFolderTileIdParams{TileID: sql.NullInt64{Int64: fileA.ID, Valid: true}, ID: alpha.ID}); err != nil {
+			t.Fatalf("UpdateFolderTileId Alpha failed: %v", err)
 		}
 		rows, err := q.GetGalleryFolderThumbRowsByParentID(ctx, sql.NullInt64{Int64: folder.ID, Valid: true})
 		if err != nil {
