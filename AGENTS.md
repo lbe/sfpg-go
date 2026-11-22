@@ -33,6 +33,9 @@ See [.cursor/rules/approval-before-action.mdc](.cursor/rules/approval-before-act
 - Follow existing architecture and idiomatic Go. Keep solutions simple; introduce
   interfaces for concrete needs. Avoid speculative abstractions and premature
   optimization, while addressing obvious costs such as heavy allocation in loops.
+- Avoid reflection (`reflect.DeepEqual`, the `reflect` package) in code and tests.
+  Compare with `==` on comparable values, `slices.Equal` or `bytes.Equal`, or field by
+  field.
 - Stay within the requested scope. Preserve unrelated work, including existing
   uncommitted changes.
 - Keep responses concise and on point. Lead with the answer; include only details
@@ -121,6 +124,15 @@ inspect the implementation and nearby tests for current behavior.
 
 ## Planning and execution
 
+- Refactoring removes what it replaces. When a task moves, replaces, or supersedes
+  code, delete the old code and every test that exercises only that code in the same
+  workstream. Keep no compatibility wrappers, aliases, fallbacks, or functions kept
+  only for tests. A test caller is not a caller: production code must be reachable
+  from `.` or `./cmd/sfpg-go-dashboard`. Before a refactor or cleanup is reported
+  complete, run `deadcode . ./cmd/sfpg-go-dashboard` and
+  `staticcheck -tests=false -checks U1000 ./...` and resolve every finding outside
+  the vendored packages (`internal/dque`, `internal/queue`, `internal/humanize`,
+  `internal/osza`). Plans for such work must include this check in their done-when.
 - Plans must specify behavior, concrete file scope, dependencies, verification
   commands, and stop conditions. Each committing task must leave a buildable,
   verifiable tree; do not depend on later tasks to fix unused code or broken tests.
@@ -134,6 +146,26 @@ inspect the implementation and nearby tests for current behavior.
   [the Pi runbook](plans/pi-runbook-sfpg-go.md) for its role boundaries, task format,
   review gates, and test budget. Do not duplicate its full-suite checks before
   every commit.
+
+## refactorv3 image-stack rebuild
+
+Applies to work on `refactorv3/image-stack`, which rebuilds the image stack from
+`dev` with `refactorv2/image-stack` as the behavior and performance spec.
+
+- Read `docs/v3-review-rules.md` before designing, writing, or reviewing code. Every
+  review finding cites one of its rules.
+- Use the `go-*` skills that apply when writing or reviewing Go code, and
+  `thermo-nuclear-code-quality-review` when reviewing.
+- A new package, a rename, an exported API change in a package that exists in
+  `dev`, and a `go.mod` change each need the user's approval first. After approval,
+  add the change to `docs/v3-approvals.txt` exactly as `scripts/v3-check.sh` prints
+  it. Never add a line the user has not approved.
+- A task is complete when `scripts/v3-check.sh` passes, `scripts/v3-parity.sh` has
+  been run on a corpus from `tools/gencorpus` if the task changes image-stack
+  behavior, every parity difference is one rule R4 allows or the user has accepted,
+  and the final review from `scripts/v3-review.sh` has no unresolved MUST findings.
+  The orchestrator verifies each finding against the code and takes disagreements to
+  the user.
 
 ## Commits
 

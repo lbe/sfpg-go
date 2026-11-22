@@ -133,6 +133,30 @@ func Setup(ctx context.Context, rootDir string, cfg *config.Config) (DatabasePat
 	return DatabasePaths{Main: dbPath, Thumbs: thumbsDBPath}, dbRwPool, dbRoPool, nil
 }
 
+// phashMigration is the migration that clears pHashes made by the old pHash
+// algorithm.
+const phashMigration = 25
+
+// discardOldHashQueue removes the write overflow queue, dbPath + "-dque",
+// when the database has not reached phashMigration yet: its queued writes
+// carry old pHashes, which would land after the migration cleared them. A
+// dirty database is left alone for m.Up, which refuses it.
+func discardOldHashQueue(m *migrate.Migrate, dbPath string) error {
+	version, dirty, err := m.Version()
+	switch {
+	case errors.Is(err, migrate.ErrNilVersion):
+		// A new database.
+	case err != nil:
+		return fmt.Errorf("read schema version: %w", err)
+	case dirty || version >= phashMigration:
+		return nil
+	}
+	if err := os.RemoveAll(dbPath + "-dque"); err != nil {
+		return fmt.Errorf("remove write overflow queue: %w", err)
+	}
+	return nil
+}
+
 func migrateDB(dbPath string) (bool, error) {
 	// Open a temporary connection to ensure file exists
 	db, err := osOpenFile(dbPath, os.O_RDWR|os.O_CREATE, 0o664)
@@ -145,12 +169,6 @@ func migrateDB(dbPath string) (bool, error) {
 	if err = osChmod(dbPath, 0o664); err != nil {
 		return false, fmt.Errorf("failed to set database file permissions: %w", err)
 	}
-
-	dbConn, err := sql.Open("sqlite3", dbPath)
-	if err != nil {
-		return false, fmt.Errorf("failed to open sqlite connection: %w", err)
-	}
-	defer dbConn.Close()
 
 	d, err := iofs.New(migrations.FS, "migrations")
 	if err != nil {
@@ -165,6 +183,9 @@ func migrateDB(dbPath string) (bool, error) {
 
 	logMigrationStart("main", dbPath, m)
 
+	if err = discardOldHashQueue(m, dbPath); err != nil {
+		return false, err
+	}
 	if err := m.Up(); err != nil {
 		if errors.Is(err, migrate.ErrNoChange) {
 			logMigrationFinish("main", false, m)

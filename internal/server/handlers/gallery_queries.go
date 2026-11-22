@@ -9,12 +9,14 @@ import (
 )
 
 // getSessionIDForPreload extracts a session identifier for cache preloading.
-// Uses the session cookie if available, otherwise falls back to RemoteAddr.
+// Returns the session cookie value, or "" when there is no session cookie.
+// RemoteAddr is not used: it includes an ephemeral port and, behind a reverse proxy,
+// names the proxy, so anonymous visitors would share or churn tracker entries.
 func getSessionIDForPreload(r *http.Request) string {
-	if c, err := r.Cookie(session.SessionName); err == nil && c.Value != "" {
+	if c, err := r.Cookie(session.SessionName); err == nil {
 		return c.Value
 	}
-	return r.RemoteAddr
+	return ""
 }
 
 // generateBreadcrumbsByID returns breadcrumbs for a folder ID.

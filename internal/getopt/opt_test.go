@@ -720,7 +720,7 @@ func TestParse_SessionSecret_MissingTriggersError(t *testing.T) {
 		if r := recover(); r == nil {
 			t.Fatal("expected usageExit panic when session secret is missing")
 		}
-		if !strings.Contains(exitMsg, "session-secret is required") {
+		if !strings.Contains(exitMsg, "session secret is required: set SEPG_SESSION_SECRET") {
 			t.Fatalf("expected error message about session-secret being required, got: %s", exitMsg)
 		}
 	}()

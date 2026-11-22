@@ -12,7 +12,6 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/lbe/sfpg-go/internal/dbconnpool"
 	"github.com/lbe/sfpg-go/internal/queue"
 )
 
@@ -204,7 +203,7 @@ func TestStartWorkerPool_BasicProcessing(t *testing.T) {
 		q := queue.NewQueue[string](100)
 		var processedTasks atomic.Int64
 
-		mockPoolFunc := func(ctx context.Context, wc WorkerContext, dbRo, dbRw dbconnpool.ConnectionPool, qLen func() int, id int) error {
+		mockPoolFunc := func(ctx context.Context, wc WorkerContext, qLen func() int, id int) error {
 			for {
 				select {
 				case <-ctx.Done():
@@ -228,7 +227,7 @@ func TestStartWorkerPool_BasicProcessing(t *testing.T) {
 			}
 		}
 
-		go pool.StartWorkerPool(mockPoolFunc, nil, nil, q.Len)
+		go pool.StartWorkerPool(mockPoolFunc, q.Len)
 
 		numTasks := 50
 		for range numTasks {
@@ -256,7 +255,7 @@ func TestStartWorkerPool_Scaling(t *testing.T) {
 		q := queue.NewQueue[string](100)
 		var wg sync.WaitGroup
 
-		mockPoolFunc := func(ctx context.Context, wc WorkerContext, dbRo, dbRw dbconnpool.ConnectionPool, qLen func() int, id int) error {
+		mockPoolFunc := func(ctx context.Context, wc WorkerContext, qLen func() int, id int) error {
 			wg.Done() // Signal that a worker has started
 			for {
 				select {
@@ -289,7 +288,7 @@ func TestStartWorkerPool_Scaling(t *testing.T) {
 		}
 
 		wg.Add(1) // Expect one initial worker
-		go pool.StartWorkerPool(mockPoolFunc, nil, nil, q.Len)
+		go pool.StartWorkerPool(mockPoolFunc, q.Len)
 		wg.Wait()       // Wait for the initial worker to start
 		synctest.Wait() // Flush RunningWorkers.Add(1) in the pool goroutine
 
@@ -347,7 +346,7 @@ func TestStartWorkerPool_MinWorkersZero_EmptyStaysZeroThenScales(t *testing.T) {
 		q := queue.NewQueue[string](100)
 		var wg sync.WaitGroup
 
-		mockPoolFunc := func(ctx context.Context, wc WorkerContext, dbRo, dbRw dbconnpool.ConnectionPool, qLen func() int, id int) error {
+		mockPoolFunc := func(ctx context.Context, wc WorkerContext, qLen func() int, id int) error {
 			wg.Done() // Signal that a worker has started
 			for {
 				select {
@@ -379,7 +378,7 @@ func TestStartWorkerPool_MinWorkersZero_EmptyStaysZeroThenScales(t *testing.T) {
 			}
 		}
 
-		go pool.StartWorkerPool(mockPoolFunc, nil, nil, q.Len)
+		go pool.StartWorkerPool(mockPoolFunc, q.Len)
 		synctest.Wait() // Let the monitor start
 
 		// Empty queue: no worker may be spawned across several monitor ticks.
@@ -427,7 +426,7 @@ func TestStartWorkerPool_ContextCancellation(t *testing.T) {
 	var workerStarted sync.WaitGroup
 	workerStarted.Add(1)
 
-	mockPoolFunc := func(ctx context.Context, wc WorkerContext, dbRo, dbRw dbconnpool.ConnectionPool, qLen func() int, id int) error {
+	mockPoolFunc := func(ctx context.Context, wc WorkerContext, qLen func() int, id int) error {
 		workerStarted.Done() // Signal that at least one worker has started
 		<-ctx.Done()         // Wait for cancellation
 		return nil
@@ -436,7 +435,7 @@ func TestStartWorkerPool_ContextCancellation(t *testing.T) {
 	var poolExited sync.WaitGroup
 
 	poolExited.Go(func() {
-		pool.StartWorkerPool(mockPoolFunc, nil, nil, q.Len)
+		pool.StartWorkerPool(mockPoolFunc, q.Len)
 	})
 
 	// Wait for the initial worker to start before we cancel
@@ -471,7 +470,7 @@ func TestStartWorkerPool_ErrorHandling(t *testing.T) {
 		var wg sync.WaitGroup
 
 		// This worker will run once and exit with an error.
-		mockPoolFunc := func(ctx context.Context, wc WorkerContext, dbRo, dbRw dbconnpool.ConnectionPool, qLen func() int, id int) error {
+		mockPoolFunc := func(ctx context.Context, wc WorkerContext, qLen func() int, id int) error {
 			wg.Done()
 			return testErr
 		}
@@ -481,7 +480,7 @@ func TestStartWorkerPool_ErrorHandling(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer poolDone.Done()
-			pool.StartWorkerPool(mockPoolFunc, nil, nil, q.Len)
+			pool.StartWorkerPool(mockPoolFunc, q.Len)
 		}()
 		wg.Wait() // worker started and immediately returns testErr
 

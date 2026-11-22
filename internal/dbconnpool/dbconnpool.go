@@ -213,6 +213,9 @@ type DbSQLConnPool struct {
 	// done channel for graceful shutdown of Monitor.
 	done chan struct{}
 
+	// monitorWG tracks the monitor goroutine; Close waits for it.
+	monitorWG sync.WaitGroup
+
 	// closed indicates if the pool has been closed (atomic for lock-free fast path).
 	closed atomic.Bool
 
@@ -449,7 +452,7 @@ func NewDbSQLConnPool(
 
 	// Auto-start monitor if interval is configured.
 	if p.monitorInterval > 0 {
-		go p.monitor()
+		p.monitorWG.Go(p.monitor)
 	}
 
 	return p, nil
@@ -654,8 +657,9 @@ func (p *DbSQLConnPool) Close() error {
 		return ErrPoolClosed
 	}
 
-	// Signal Monitor goroutine to stop.
+	// Stop the monitor and wait for a tick in progress.
 	close(p.done)
+	p.monitorWG.Wait()
 
 	// Force sql.DB to close idle connections by setting limits to 0.
 	// This helps ensure a clean shutdown.

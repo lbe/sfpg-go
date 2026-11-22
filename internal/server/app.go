@@ -2,23 +2,18 @@ package server
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
-	"sync/atomic"
 
 	"github.com/lbe/sfpg-go/internal/cachelite"
 	"github.com/lbe/sfpg-go/internal/dbconnpool"
-	"github.com/lbe/sfpg-go/internal/gallerydb"
-	"github.com/lbe/sfpg-go/internal/gallerylib"
 	"github.com/lbe/sfpg-go/internal/getopt"
 	"github.com/lbe/sfpg-go/internal/log"
 	"github.com/lbe/sfpg-go/internal/server/config"
 	"github.com/lbe/sfpg-go/internal/server/database"
-	"github.com/lbe/sfpg-go/internal/server/files"
 	"github.com/lbe/sfpg-go/internal/server/logging"
 	"github.com/lbe/sfpg-go/internal/server/security"
 	"github.com/lbe/sfpg-go/internal/server/ui"
@@ -52,10 +47,6 @@ type App struct {
 	// testSeams holds optional test doubles for App lifecycle paths.
 	// The zero value means use production implementations.
 	testSeams AppTestSeams
-
-	// discoveryRunning is true while TriggerDiscovery is walking, draining, or rebuilding.
-	// Used by cache size calibration quiet checks (independent of module_state DB).
-	discoveryRunning atomic.Bool
 
 	// manualDiscoveryError is the in-memory error from a manual POST /server/discovery
 	// rebuild failure. It is shown on the dashboard until acknowledged and is cleared
@@ -95,12 +86,6 @@ func New(opt getopt.Opt, version string) *App {
 	}
 	app.RuntimeManager.version = version
 	app.testSeams = defaultNewTestSeams
-
-	// Default ImporterFactory constructs a normal gallerylib.Importer and
-	// returns it as the Importer interface.
-	app.ImporterFactory = func(conn *sql.Conn, q *gallerydb.CustomQueries) files.Importer {
-		return &gallerylib.Importer{Conn: conn, Q: q, OnFolderCreated: app.OnFolderCreated}
-	}
 
 	// Initialize templates using the embedded filesystem
 	var parseErr error
@@ -321,7 +306,7 @@ func (app *App) ApplyConfig() {
 	app.ConfigManager.ConfigMu.RLock()
 	dqueMaxDiskBytes := app.ConfigManager.Config.DQueMaxDiskBytes
 	app.ConfigManager.ConfigMu.RUnlock()
-	if app.writeBatcher != nil {
-		app.writeBatcher.SetMaxDiskBytes(dqueMaxDiskBytes)
+	if app.writer != nil {
+		app.writer.SetMaxDiskBytes(dqueMaxDiskBytes)
 	}
 }

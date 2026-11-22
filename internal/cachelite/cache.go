@@ -300,6 +300,7 @@ func CountCacheEntries(ctx context.Context, db *dbconnpool.DbSQLConnPool) (int64
 }
 
 // CleanupExpired removes all expired cache entries from the database.
+// It returns how many it removed.
 func CleanupExpired(ctx context.Context, db *dbconnpool.DbSQLConnPool) (int64, error) {
 	cpc, err := db.Get()
 	if err != nil {
@@ -307,9 +308,7 @@ func CleanupExpired(ctx context.Context, db *dbconnpool.DbSQLConnPool) (int64, e
 	}
 	defer db.Put(cpc)
 
-	err = cpc.Queries.DeleteHttpCacheExpired(ctx)
-	// sqlc does not return affected rows; return 1 to signal attempt.
-	return 1, err
+	return cpc.Queries.DeleteHttpCacheExpired(ctx)
 }
 
 // CanCacheResponse determines if an HTTP response is eligible for caching.

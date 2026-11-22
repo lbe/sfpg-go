@@ -13,6 +13,7 @@ import (
 	"github.com/lbe/sfpg-go/internal/server/config"
 	"github.com/lbe/sfpg-go/internal/server/files"
 	"github.com/lbe/sfpg-go/internal/server/metrics"
+	"github.com/lbe/sfpg-go/internal/server/modulestate"
 )
 
 // recordingFileProcessor is a test fake that records ProcessDiscoveryFile calls.
@@ -23,23 +24,11 @@ type recordingFileProcessor struct {
 	events         *[]string
 }
 
-func (f *recordingFileProcessor) ProcessDiscoveryFile(ctx context.Context, file *files.File) (*files.File, error) {
+func (f *recordingFileProcessor) ProcessDiscoveryFile(_ context.Context, path string, _, _ int64) (*files.File, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.processedPaths = append(f.processedPaths, file.Path)
-	return &files.File{Path: file.Path, Exists: false}, nil
-}
-
-func (f *recordingFileProcessor) RecordInvalidFile(ctx context.Context, path string, mtime, size int64, reason string, folderID int64) error {
-	return nil
-}
-
-func (f *recordingFileProcessor) SubmitFileForWrite(file *files.File) error {
-	return nil
-}
-
-func (f *recordingFileProcessor) PendingWriteCount() int64 {
-	return 0
+	f.processedPaths = append(f.processedPaths, path)
+	return &files.File{Path: path}, nil
 }
 
 func (f *recordingFileProcessor) Close() error {
@@ -113,7 +102,7 @@ func newUnitSubsystemManager(t *testing.T) *SubsystemManager {
 func startUnitSubsystemManager(t *testing.T, mgr *SubsystemManager, cfg *config.Config) {
 	t.Helper()
 	ctx := context.Background()
-	mgr.Start(ctx, cfg, 1, 2, "", "", nil, nil, nil, nil)
+	mgr.Start(ctx, cfg, 1, 2, "", "", nil, nil, nil, nil, nil, nil)
 }
 
 // TestSubsystemManager_Shutdown_NilFields verifies Shutdown doesn't panic with nil fields.
@@ -178,83 +167,50 @@ func TestSubsystemManager_Shutdown_Idempotent(t *testing.T) {
 }
 
 // TestSubsystemManager_Start_WipesPreviousDiscoveryBacklog verifies that Start
-// discards a previous run's discovery backlog: a seeded dque with items plus a
-// stray file in the queue directory are gone after wipe+reopen, and the new
-// queue is usable for fresh discovery.
+// wipes the discovery backlog directory: a stray file left there is gone after
+// Start, which opens a fresh backlog.
 func TestSubsystemManager_Start_WipesPreviousDiscoveryBacklog(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "discovery-dque")
-
-	// Seed a previous run's backlog: a real dque containing an item plus a
-	// stray file in the queue directory.
-	seed, seedErr := newDiscoveryDQueAdapter(dir)
-	if seedErr != nil {
-		t.Fatalf("seed adapter: %v", seedErr)
-	}
-	if err := seed.Enqueue(files.DiscoveryPathWork{Path: []byte("stale-path.jpg"), MtimeUnix: 1, SizeBytes: 1}); err != nil {
-		t.Fatalf("seed enqueue: %v", err)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("seed dir: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "leftover.txt"), []byte("junk"), 0o644); err != nil {
 		t.Fatalf("seed stray file: %v", err)
 	}
-	seed.Close() // release the flock so Start can wipe and reopen
 
 	mgr := newUnitSubsystemManager(t)
-	// Reuse the seeded directory as the discovery queue directory.
 	mgr.infra.discoveryDQueDirPath = dir
 	WithFileProcessor(&recordingFileProcessor{})(mgr)
 	WithPreloadManager(&recordingPreloadManager{})(mgr)
 
 	startUnitSubsystemManager(t, mgr, nil)
 
-	// Old queue contents are gone: the queue opens empty and the stray file
-	// was removed by the wipe.
-	if got := mgr.q.Len(); got != 0 {
-		t.Errorf("queue Len after wipe = %d, want 0 (previous backlog discarded)", got)
+	if got := mgr.discovery.QueueLen(); got != 0 {
+		t.Errorf("QueueLen after Start = %d, want 0", got)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "leftover.txt")); !os.IsNotExist(err) {
 		t.Errorf("leftover file should be wiped; stat err = %v", err)
 	}
-
-	// The fresh queue is usable for new discovery.
-	if err := mgr.q.Enqueue(files.DiscoveryPathWork{Path: []byte("fresh.jpg"), MtimeUnix: 1, SizeBytes: 1}); err != nil {
-		t.Fatalf("enqueue after wipe: %v", err)
-	}
-	got, err := mgr.q.Dequeue()
-	if err != nil {
-		t.Fatalf("dequeue after wipe: %v", err)
-	}
-	if string(got.Path) != "fresh.jpg" {
-		t.Errorf("dequeued %q, want %q", string(got.Path), "fresh.jpg")
-	}
 }
 
-// TestSubsystemManager_Start_DoubleStart verifies Start re-entry: when a
-// discovery queue is already open, a second Start closes it first, then wipes
-// and reopens (once-per-process lifetime for the discovery dque).
-func TestSubsystemManager_Start_DoubleStart(t *testing.T) {
+// TestSubsystemManager_Start_ReopensBacklog verifies a second Start closes the
+// open discovery backlog before it reopens the directory; otherwise the
+// backlog's lock would make the second Start fail.
+func TestSubsystemManager_Start_ReopensBacklog(t *testing.T) {
 	mgr := newUnitSubsystemManager(t)
 	WithFileProcessor(&recordingFileProcessor{})(mgr)
 	WithPreloadManager(&recordingPreloadManager{})(mgr)
 
 	startUnitSubsystemManager(t, mgr, nil)
-	if mgr.q == nil {
-		t.Fatal("queue should be initialized after first Start")
-	}
-	if err := mgr.q.Enqueue(files.DiscoveryPathWork{Path: []byte("first.jpg"), MtimeUnix: 1, SizeBytes: 1}); err != nil {
-		t.Fatalf("enqueue after first Start: %v", err)
-	}
+	first := mgr.discovery
 
-	startUnitSubsystemManager(t, mgr, nil) // must close the open queue before wipe
+	startUnitSubsystemManager(t, mgr, nil)
 
-	if mgr.q == nil {
-		t.Fatal("queue should be re-initialized after second Start")
+	if mgr.discovery == nil || mgr.discovery == first {
+		t.Fatal("second Start should replace the discovery Service")
 	}
-	// Wipe-on-start: items from the first run are discarded.
-	if got := mgr.q.Len(); got != 0 {
-		t.Errorf("queue Len after second Start = %d, want 0", got)
-	}
-	if err := mgr.q.Enqueue(files.DiscoveryPathWork{Path: []byte("second.jpg"), MtimeUnix: 1, SizeBytes: 1}); err != nil {
-		t.Fatalf("enqueue after second Start: %v", err)
+	if got := mgr.discovery.QueueLen(); got != 0 {
+		t.Errorf("QueueLen after second Start = %d, want 0", got)
 	}
 }
 
@@ -277,46 +233,9 @@ func TestSubsystemManager_Start_PanicsOnEmptyDiscoveryDQueDirPath(t *testing.T) 
 					t.Errorf("panic value = %v, want %q", r, "main")
 				}
 			}()
-			mgr.Start(context.Background(), nil, 1, 2, "", "", nil, nil, nil, nil)
+			mgr.Start(context.Background(), nil, 1, 2, "", "", nil, nil, nil, nil, nil, nil)
 		})
 	}
-}
-
-// TestSubsystemManager_ResetStats verifies ResetStats resets all counters.
-func TestSubsystemManager_ResetStats(t *testing.T) {
-	mgr := newUnitSubsystemManager(t)
-
-	// Wire processing stats directly (no Start needed).
-	ensureProcessingStats(mgr)
-	mgr.processingStats.TotalFound.Store(5)
-	mgr.processingStats.AlreadyExisting.Store(4)
-	mgr.processingStats.NewlyInserted.Store(3)
-	mgr.processingStats.SkippedInvalid.Store(2)
-	mgr.processingStats.InFlight.Store(1)
-
-	mgr.ResetStats()
-
-	if mgr.processingStats.TotalFound.Load() != 0 {
-		t.Errorf("TotalFound = %d, want 0", mgr.processingStats.TotalFound.Load())
-	}
-	if mgr.processingStats.AlreadyExisting.Load() != 0 {
-		t.Errorf("AlreadyExisting = %d, want 0", mgr.processingStats.AlreadyExisting.Load())
-	}
-	if mgr.processingStats.NewlyInserted.Load() != 0 {
-		t.Errorf("NewlyInserted = %d, want 0", mgr.processingStats.NewlyInserted.Load())
-	}
-	if mgr.processingStats.SkippedInvalid.Load() != 0 {
-		t.Errorf("SkippedInvalid = %d, want 0", mgr.processingStats.SkippedInvalid.Load())
-	}
-	if mgr.processingStats.InFlight.Load() != 0 {
-		t.Errorf("InFlight = %d, want 0", mgr.processingStats.InFlight.Load())
-	}
-}
-
-// TestSubsystemManager_ResetStats_Nil verifies ResetStats doesn't panic when stats are nil.
-func TestSubsystemManager_ResetStats_Nil(t *testing.T) {
-	mgr := newUnitSubsystemManager(t)
-	mgr.ResetStats() // should not panic
 }
 
 // TestSubsystemManager_SetPreloadEnabled verifies SetPreloadEnabled works.
@@ -360,7 +279,7 @@ func TestSubsystemManager_WireMetrics_SkipsNilFields(t *testing.T) {
 func TestSubsystemManager_StartCacheBatchLoad_NotAvailable(t *testing.T) {
 	app := newAppForUnlock(t)
 	mgr := NewSubsystemManager(app.InfrastructureService)
-	ensureModuleStateService(mgr, app.dbRwPool)
+	mgr.moduleStateService = modulestate.NewService(app.dbRwPool)
 
 	res, err := mgr.StartCacheBatchLoad(context.Background())
 	if err != nil {

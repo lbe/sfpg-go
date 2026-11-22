@@ -19,12 +19,12 @@ func (q *Queries) DeleteIPTC(ctx context.Context, fileID int64) error {
 	return err
 }
 
-const deleteIPTCKeyword = `-- name: DeleteIPTCKeyword :exec
-DELETE FROM iptc_keywords WHERE id = ?
+const deleteIPTCKeywords = `-- name: DeleteIPTCKeywords :exec
+DELETE FROM iptc_keywords WHERE file_id = ?
 `
 
-func (q *Queries) DeleteIPTCKeyword(ctx context.Context, id int64) error {
-	_, err := q.exec(ctx, q.deleteIPTCKeywordStmt, deleteIPTCKeyword, id)
+func (q *Queries) DeleteIPTCKeywords(ctx context.Context, fileID int64) error {
+	_, err := q.exec(ctx, q.deleteIPTCKeywordsStmt, deleteIPTCKeywords, fileID)
 	return err
 }
 
@@ -77,18 +77,17 @@ func (q *Queries) GetIPTCKeywords(ctx context.Context, fileID int64) ([]IptcKeyw
 }
 
 const insertIPTCKeyword = `-- name: InsertIPTCKeyword :exec
-INSERT INTO iptc_keywords (id, file_id, keyword)
-VALUES (?, ?, ?)
+INSERT INTO iptc_keywords (file_id, keyword)
+VALUES (?, ?)
 `
 
 type InsertIPTCKeywordParams struct {
-	ID      int64
 	FileID  int64
 	Keyword string
 }
 
 func (q *Queries) InsertIPTCKeyword(ctx context.Context, arg InsertIPTCKeywordParams) error {
-	_, err := q.exec(ctx, q.insertIPTCKeywordStmt, insertIPTCKeyword, arg.ID, arg.FileID, arg.Keyword)
+	_, err := q.exec(ctx, q.insertIPTCKeywordStmt, insertIPTCKeyword, arg.FileID, arg.Keyword)
 	return err
 }
 

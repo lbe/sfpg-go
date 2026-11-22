@@ -2,37 +2,16 @@ package files
 
 import (
 	"bytes"
-	"context"
 
 	"github.com/lbe/sfpg-go/internal/gallerydb"
+	"github.com/lbe/sfpg-go/internal/metadata"
 )
 
 // File represents a file being processed, including its metadata and status.
 type File struct {
-	Exists              bool
-	ImagesDir           string
-	Path                string
-	File                gallerydb.File
-	Thumbnail           *bytes.Buffer
-	Exif                gallerydb.UpsertExifParams
-	Itpc                gallerydb.UpsertIPTCParams
-	XmpProps            []gallerydb.UpsertXMPPropertyParams
-	XmpRaw              gallerydb.UpsertXMPRawParams
-	HasValidJpegMarkers bool // Set by DetectMimeType for JPEG files
-}
-
-// ThumbnailTx contains the minimal transaction-scoped methods used by
-// the thumbnail upsert logic. This interface is used within database transactions
-// to perform thumbnail-related operations atomically.
-type ThumbnailTx interface {
-	UpsertThumbnailReturningID(ctx context.Context, p gallerydb.UpsertThumbnailReturningIDParams) (int64, error)
-	UpsertThumbnailBlob(ctx context.Context, p gallerydb.UpsertThumbnailBlobParams) error
-}
-
-// Importer is the minimal interface used by application code that needs to interact
-// with the gallery importer. Defining it here allows tests to provide lightweight
-// fakes without depending on the concrete type in internal/gallerylib.
-type Importer interface {
-	UpsertPathChain(ctx context.Context, path string, mtime, size int64, md5 string, phash, width, height int64, mimeType string) (gallerydb.File, error)
-	UpdateFolderTileChain(ctx context.Context, folderID, tileFileID int64) error
+	ImagesDir string
+	Path      string
+	File      gallerydb.File
+	Thumbnail *bytes.Buffer
+	Metadata  metadata.Info
 }

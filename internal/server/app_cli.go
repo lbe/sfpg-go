@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/lbe/sfpg-go/internal/discovery"
 	"github.com/lbe/sfpg-go/internal/getopt"
 	"github.com/lbe/sfpg-go/internal/server/cachebatch"
 	"github.com/lbe/sfpg-go/internal/server/cachepreload"
 	"github.com/lbe/sfpg-go/internal/server/config"
-	"github.com/lbe/sfpg-go/internal/server/files"
 	"github.com/lbe/sfpg-go/web"
 )
 
@@ -100,11 +100,7 @@ func (app *App) InitForBatchLoad(opt getopt.Opt) error {
 	app.ApplyConfig()
 	app.initializeHTTPCache()
 
-	routes := []string{"/gallery/", "/lightbox/", "/info/folder/", "/info/image/"}
-	if app.cacheMW != nil {
-		routes = app.cacheMW.Config().CacheableRoutes
-	}
-	app.SubsystemManager.preloadManager = cachepreload.NewPreloadManager(routes, false)
+	app.SubsystemManager.preloadManager = cachepreload.NewPreloadManager(app.preloadRoutes(), false)
 	app.SubsystemManager.preloadManager.Configure(cachepreload.PreloadConfig{
 		TaskTracker:    &cachepreload.TaskTracker{},
 		SessionTracker: &cachepreload.SessionTracker{},
@@ -115,7 +111,7 @@ func (app *App) InitForBatchLoad(opt getopt.Opt) error {
 		Metrics:        &cachepreload.PreloadMetrics{},
 	})
 
-	app.SubsystemManager.processingStats = &files.ProcessingStats{}
+	app.SubsystemManager.stats = &discovery.Stats{}
 	app.ensureSession()
 	if err := app.buildHandlers(web.FS); err != nil {
 		return fmt.Errorf("build handlers: %w", err)

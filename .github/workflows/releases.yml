@@ -67,6 +67,9 @@ jobs:
           pattern: binaries-*
           merge-multiple: true
 
+      - name: Package licence notices
+        run: zip -r artifacts/sfpg-notices.zip LICENSE THIRD_PARTY_NOTICES.md licenses
+
       - name: Create Release
         uses: softprops/action-gh-release@v3
         with:

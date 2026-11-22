@@ -178,21 +178,19 @@ func (pm *PreloadManager) ScheduleFolderPreload(ctx context.Context, folderID in
 
 	slog.Debug("cache preload run started", "folder_id", folderID, "session_id", truncateSessionID(sessionID, 8))
 
-	// Cancel previous folder's tasks for this session
-	if sessionTracker != nil {
-		prevFolderID := sessionTracker.OnFolderOpen(sessionID, folderID)
-		if prevFolderID != 0 && taskTracker != nil {
-			taskIDs := taskTracker.CancelSessionTasks(sessionID)
-			for _, id := range taskIDs {
-				var err error
-				if seams.SchedulerRemoveTask != nil {
-					err = seams.SchedulerRemoveTask(sched, id)
-				} else {
-					err = sched.RemoveTask(id)
-				}
-				if err != nil {
-					slog.Debug("cache preload remove task error", "id", id, "err", err)
-				}
+	// Cancel previous folder's tasks for this session. Anonymous requests (no
+	// session ID) are not tracked, so their preloads are never cancelled by navigation.
+	if sessionTracker != nil && sessionID != "" &&
+		sessionTracker.OnFolderOpen(sessionID, folderID) != 0 && taskTracker != nil {
+		for _, id := range taskTracker.CancelSessionTasks(sessionID) {
+			var err error
+			if seams.SchedulerRemoveTask != nil {
+				err = seams.SchedulerRemoveTask(sched, id)
+			} else {
+				err = sched.RemoveTask(id)
+			}
+			if err != nil {
+				slog.Debug("cache preload remove task error", "id", id, "err", err)
 			}
 		}
 	}

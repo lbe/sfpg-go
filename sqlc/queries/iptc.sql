@@ -19,11 +19,11 @@ SELECT * FROM iptc_metadata WHERE file_id = ?;
 DELETE FROM iptc_metadata WHERE file_id = ?;
 
 -- name: InsertIPTCKeyword :exec
-INSERT INTO iptc_keywords (id, file_id, keyword)
-VALUES (?, ?, ?);
+INSERT INTO iptc_keywords (file_id, keyword)
+VALUES (?, ?);
 
 -- name: GetIPTCKeywords :many
 SELECT * FROM iptc_keywords WHERE file_id = ?;
 
--- name: DeleteIPTCKeyword :exec
-DELETE FROM iptc_keywords WHERE id = ?;
+-- name: DeleteIPTCKeywords :exec
+DELETE FROM iptc_keywords WHERE file_id = ?;

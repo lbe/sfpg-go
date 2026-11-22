@@ -105,12 +105,18 @@ wait_for_health() {
 }
 
 wait_for_discovery() {
-  login_admin
   local deadline=$((SECONDS + 120))
+  until login_admin; do
+    [[ "${SECONDS}" -lt "${deadline}" ]] || die "Admin login did not succeed within 120s"
+    sleep 1
+  done
   local triggered=0
   while [[ "${SECONDS}" -lt "${deadline}" ]]; do
     local html
-    html="$(dashboard_html)"
+    html="$(dashboard_html)" || {
+      sleep 1
+      continue
+    }
     if [[ "$(discovery_complete "${html}")" == "1" ]]; then
       log "Discovery complete"
       return 0
@@ -127,12 +133,18 @@ wait_for_discovery() {
 }
 
 wait_for_cache_batch_load() {
-  login_admin
   local deadline=$((SECONDS + 120))
+  until login_admin; do
+    [[ "${SECONDS}" -lt "${deadline}" ]] || die "Admin login did not succeed within 120s"
+    sleep 1
+  done
   local triggered=0
   while [[ "${SECONDS}" -lt "${deadline}" ]]; do
     local html
-    html="$(dashboard_html)"
+    html="$(dashboard_html)" || {
+      sleep 1
+      continue
+    }
     if [[ "$(cache_batch_complete "${html}")" == "1" ]]; then
       local http_status
       http_status="$(extract_field "$html" "http-status")"

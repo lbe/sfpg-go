@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -11,13 +10,9 @@ import (
 
 	"github.com/lbe/sfpg-go/internal/cachelite"
 	"github.com/lbe/sfpg-go/internal/dbconnpool"
-	"github.com/lbe/sfpg-go/internal/gallerydb"
-	"github.com/lbe/sfpg-go/internal/gallerylib"
 	"github.com/lbe/sfpg-go/internal/server/config"
 	"github.com/lbe/sfpg-go/internal/server/database"
-	"github.com/lbe/sfpg-go/internal/server/files"
 	"github.com/lbe/sfpg-go/internal/server/interfaces"
-	"github.com/lbe/sfpg-go/internal/writebatcher"
 )
 
 // InfrastructureService owns database pools, HTTP cache, write batcher,
@@ -31,15 +26,12 @@ type InfrastructureService struct {
 	cacheSizeBytes       atomic.Int64
 	cacheEntryCount      atomic.Int64
 	cacheMW              *cachelite.HTTPCacheMiddleware
-	writeBatcher         *writebatcher.WriteBatcher[BatchedWrite]
-	batcherQueries       *gallerydb.CustomQueries
-	dqueDirPath          string
+	writer               *database.Writer
 	discoveryDQueDirPath string
 	rootDir              string
 	imagesDir            string
 	normalizedImagesDir  string
 	OnFolderCreated      func()
-	ImporterFactory      func(conn *sql.Conn, q *gallerydb.CustomQueries) files.Importer
 	dbInitializer        databaseInitializer
 	cacheMWForEvict      cacheMiddlewareForEvict
 	cacheRotator         cacheRotator
@@ -48,17 +40,6 @@ type InfrastructureService struct {
 
 	startupPragmaOptimizeStarted atomic.Bool
 	pragmaOptimizeListening      atomic.Bool
-
-	lastPragmaOptimizeRun atomic.Value // time.Time
-	dbOptimizeInterval    atomic.Int64 // nanoseconds; 0 means default 1h
-
-	folderIndex folderIndexProtocol
-
-	// lastFlushWroteDML is set by flushBatchedWrites: true when the flush
-	// committed at least one INSERT (File/Cache/FolderIndex); false when
-	// the flush performed no DML (skip-only BeginTx). walCheckpointAfterCommit
-	// skips post-flush size-based TRUNCATE when this is false.
-	lastFlushWroteDML atomic.Bool
 }
 
 // NewInfrastructureService constructs the infrastructure service with production defaults.
@@ -71,9 +52,6 @@ func NewInfrastructureService() *InfrastructureService {
 			GetCacheEntryCount: cachelite.CountCacheEntries,
 			EvictLRU:           cachelite.EvictLRU,
 		},
-	}
-	s.ImporterFactory = func(conn *sql.Conn, q *gallerydb.CustomQueries) files.Importer {
-		return &gallerylib.Importer{Conn: conn, Q: q, OnFolderCreated: s.OnFolderCreated}
 	}
 	return s
 }
@@ -88,11 +66,6 @@ func (s *InfrastructureService) DBRwPool() *dbconnpool.DbSQLConnPool { return s.
 // DBRoPool returns the read-only database connection pool.
 func (s *InfrastructureService) DBRoPool() *dbconnpool.DbSQLConnPool { return s.dbRoPool }
 
-// WriteBatcher returns the unified write batcher, if initialized.
-func (s *InfrastructureService) WriteBatcher() *writebatcher.WriteBatcher[BatchedWrite] {
-	return s.writeBatcher
-}
-
 // CacheMW returns the HTTP cache middleware, if initialized.
 func (s *InfrastructureService) CacheMW() *cachelite.HTTPCacheMiddleware { return s.cacheMW }
 
@@ -104,23 +77,14 @@ func (s *InfrastructureService) CacheMW() *cachelite.HTTPCacheMiddleware { retur
 // times. App.Shutdown performs discovery drain and subsystem teardown before
 // calling shutdownWriteBatcher, runShutdownPragmaOptimize, and
 // closeDatabasePools; tests that need full infra teardown call this directly.
-// The real writeBatcher.Close error branch is unreachable in production
-// because WriteBatcher.Close always returns nil; it is exercised via
-// testSeams.ShutdownWriteBatcher.
 func (s *InfrastructureService) Shutdown() {
 	s.shutdownWriteBatcher()
 	s.closeDatabasePools()
 }
 
 func (s *InfrastructureService) shutdownWriteBatcher() {
-	if s.testSeams.ShutdownWriteBatcher != nil {
-		if err := s.testSeams.ShutdownWriteBatcher(); err != nil {
-			slog.Error("error closing write batcher", "err", err)
-		}
-		return
-	}
-	if s.writeBatcher != nil {
-		if err := s.writeBatcher.Close(); err != nil {
+	if s.writer != nil {
+		if err := s.writer.Close(); err != nil {
 			slog.Error("error closing write batcher", "err", err)
 		}
 	}
@@ -195,7 +159,9 @@ func (s *InfrastructureService) IncrementETag(ctx context.Context, cfgService co
 // =====================================================================
 
 func (s *InfrastructureService) setDBOptimizeInterval(d time.Duration) {
-	s.dbOptimizeInterval.Store(int64(d))
+	if s.writer != nil {
+		s.writer.SetOptimizeInterval(d)
+	}
 }
 
 func (s *InfrastructureService) logDBPoolConfiguredVsEffective(source string, configuredMax, configuredMinIdle int, configuredInterval time.Duration) {

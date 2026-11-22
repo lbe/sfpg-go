@@ -89,11 +89,11 @@ else
   exit 1
 fi
 
-SFPG_WALK_BENCH_ROOT="$root" go test ./internal/server -run=^$ -bench=BenchmarkDiscoveryWalk_memoryEnqueue -benchmem -benchtime=1s -count=1 \
+SFPG_WALK_BENCH_ROOT="$root" go test ./internal/discovery -run=^$ -bench=BenchmarkDiscoveryWalk_memoryEnqueue -benchmem -benchtime=1s -count=1 \
   >> "$out" 2>&1
-SFPG_WALK_BENCH_ROOT="$root" go test ./internal/server -run=^$ -bench=BenchmarkDiscoveryWalk_diskDqueEnqueueOnly -benchmem -benchtime=1s -count=1 \
+SFPG_WALK_BENCH_ROOT="$root" go test ./internal/discovery -run=^$ -bench=BenchmarkDiscoveryWalk_diskDqueEnqueueOnly -benchmem -benchtime=1s -count=1 \
   >> "$out" 2>&1
-SFPG_WALK_BENCH_ROOT="$root" go test ./internal/server -run=^$ -bench=BenchmarkDiscoveryWalk_diskDqueWithDrainWorkers -benchmem -benchtime=1s -count=1 \
+SFPG_WALK_BENCH_ROOT="$root" go test ./internal/discovery -run=^$ -bench=BenchmarkDiscoveryWalk_diskDqueWithDrainWorkers -benchmem -benchtime=1s -count=1 \
   >> "$out" 2>&1
 
 echo "discovery walk benches ok"

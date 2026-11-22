@@ -8,6 +8,7 @@ This guide explains how to deploy SFPG to production securely behind a reverse p
 - Place it behind a TLS-terminating reverse proxy (e.g., Nginx or Caddy).
 - Keep default-secure session cookie flags; only relax in local dev/test.
 - Store the SQLite DB and Images on persistent storage and back them up.
+- When you redistribute the binary, include `LICENSE`, `THIRD_PARTY_NOTICES.md`, and `licenses/`: the binary embeds ExifTool, Perl, zeroperl and Wuffs under their own licenses.
 
 ## Runtime Configuration
 

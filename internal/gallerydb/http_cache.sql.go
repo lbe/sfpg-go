@@ -48,14 +48,17 @@ func (q *Queries) DeleteHttpCacheByKey(ctx context.Context, key string) error {
 	return err
 }
 
-const deleteHttpCacheExpired = `-- name: DeleteHttpCacheExpired :exec
+const deleteHttpCacheExpired = `-- name: DeleteHttpCacheExpired :execrows
 DELETE FROM http_cache 
 WHERE expires_at IS NOT NULL AND expires_at <= unixepoch()
 `
 
-func (q *Queries) DeleteHttpCacheExpired(ctx context.Context) error {
-	_, err := q.exec(ctx, q.deleteHttpCacheExpiredStmt, deleteHttpCacheExpired)
-	return err
+func (q *Queries) DeleteHttpCacheExpired(ctx context.Context) (int64, error) {
+	result, err := q.exec(ctx, q.deleteHttpCacheExpiredStmt, deleteHttpCacheExpired)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const getHttpCacheByKey = `-- name: GetHttpCacheByKey :one

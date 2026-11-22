@@ -31,15 +31,12 @@ type CustomQuerier interface {
 	GetPreloadRoutesByFolderID(ctx context.Context, parent_id sql.NullInt64) ([]string, error)
 	GetThumbnailBlobDataByID(ctx context.Context, thumbnailID int64) ([]byte, error)
 	UpsertThumbnailBlob(ctx context.Context, arg UpsertThumbnailBlobParams) error
-	// QueryFilesForFolderIndexRebuild streams every folder-bearing file ordered so
-	// Go can compute per-folder navigation columns in one pass. It reads the files
-	// table (which exists at pool init), so it is prepared at PrepareCustomQueries.
-	QueryFilesForFolderIndexRebuild(ctx context.Context) (*sql.Rows, error)
-	// CountFilesForFolderIndexRebuild returns the number of folder-bearing files
-	// (same WHERE as the stream) so the rebuild can pre-size its pairs slice. It
+	// QueryFilesForFolderIndexRebuild streams folder-bearing files with folder_id >
+	// afterFolderID, ordered so Go can compute per-folder navigation columns. The
+	// rebuild reads one chunk per call, resuming after its last complete folder. It
 	// reads the files table (which exists at pool init), so it is prepared at
 	// PrepareCustomQueries.
-	CountFilesForFolderIndexRebuild(ctx context.Context) (int64, error)
+	QueryFilesForFolderIndexRebuild(ctx context.Context, afterFolderID int64) (*sql.Rows, error)
 	// InsertFileFolderIndexNewRows bulk-inserts rows into file_folder_index_new. The
 	// dest table is runtime CloneEmpty, so the INSERT is prepared on the batcher
 	// transaction, not at pool Prepare. It requires WithTx (a non-nil tx).
@@ -67,10 +64,6 @@ type CustomQueries struct {
 	// It reads the files table (exists at pool init), so it is prepared at
 	// PrepareCustomQueries, unlike the dest INSERT below.
 	queryFilesForFolderIndexRebuildStmt *sql.Stmt
-	// countFilesForFolderIndexRebuildStmt counts folder-bearing files for the
-	// folder-index rebuild pairs slice cap. It reads the files table (exists at
-	// pool init), so it is prepared at PrepareCustomQueries.
-	countFilesForFolderIndexRebuildStmt *sql.Stmt
 }
 
 // Ensure CustomQueries implements CustomQuerier.
@@ -135,9 +128,6 @@ func PrepareCustomQueries(ctx context.Context, db DBTX) (*CustomQueries, error) 
 	if cq.queryFilesForFolderIndexRebuildStmt, err = prepareContextFn(ctx, db, stripSQLComments(sqlcqueries.QueryFilesForFolderIndexRebuildSQL())); err != nil {
 		return nil, fmt.Errorf("error preparing query QueryFilesForFolderIndexRebuild: %w", err)
 	}
-	if cq.countFilesForFolderIndexRebuildStmt, err = prepareContextFn(ctx, db, stripSQLComments(sqlcqueries.CountFilesForFolderIndexRebuildSQL())); err != nil {
-		return nil, fmt.Errorf("error preparing query CountFilesForFolderIndexRebuild: %w", err)
-	}
 
 	ct_prepares.Add(1)
 	slog.Debug("Prepared CustomQueries", "total_prepares", ct_prepares.Load())
@@ -186,11 +176,6 @@ func (cq *CustomQueries) Close() error {
 	if cq.queryFilesForFolderIndexRebuildStmt != nil {
 		if err := stmtCloseFn(cq.queryFilesForFolderIndexRebuildStmt); err != nil {
 			errs = append(errs, fmt.Errorf("error closing queryFilesForFolderIndexRebuildStmt: %w", err))
-		}
-	}
-	if cq.countFilesForFolderIndexRebuildStmt != nil {
-		if err := stmtCloseFn(cq.countFilesForFolderIndexRebuildStmt); err != nil {
-			errs = append(errs, fmt.Errorf("error closing countFilesForFolderIndexRebuildStmt: %w", err))
 		}
 	}
 
@@ -431,7 +416,6 @@ func (cq *CustomQueries) WithTx(tx *sql.Tx) *CustomQueries {
 		getThumbnailBlobDataByIDStmt:             cq.getThumbnailBlobDataByIDStmt,
 		upsertThumbnailBlobStmt:                  cq.upsertThumbnailBlobStmt,
 		queryFilesForFolderIndexRebuildStmt:      cq.queryFilesForFolderIndexRebuildStmt,
-		countFilesForFolderIndexRebuildStmt:      cq.countFilesForFolderIndexRebuildStmt,
 	}
 }
 
@@ -466,23 +450,13 @@ type InsertFileFolderIndexNewParams struct {
 	LastID     int64
 }
 
-// QueryFilesForFolderIndexRebuild streams every folder-bearing file ordered by
-// folder, filename, then id so the rebuild can compute per-folder navigation
-// columns in Go without materializing all rows. The statement is prepared at
-// PrepareCustomQueries because it reads the files table (exists at pool init).
-func (cq *CustomQueries) QueryFilesForFolderIndexRebuild(ctx context.Context) (*sql.Rows, error) {
-	return cq.query(ctx, cq.queryFilesForFolderIndexRebuildStmt, sqlcqueries.QueryFilesForFolderIndexRebuildSQL())
-}
-
-// CountFilesForFolderIndexRebuild returns the number of folder-bearing files,
-// the same WHERE as the streaming SELECT. It is prepared at pool init because it
-// reads the files table (exists at pool init).
-func (cq *CustomQueries) CountFilesForFolderIndexRebuild(ctx context.Context) (int64, error) {
-	var count int64
-	if err := cq.countFilesForFolderIndexRebuildStmt.QueryRowContext(ctx).Scan(&count); err != nil {
-		return 0, fmt.Errorf("count files for folder-index rebuild: %w", err)
-	}
-	return count, nil
+// QueryFilesForFolderIndexRebuild streams folder-bearing files with folder_id >
+// afterFolderID, ordered by folder, filename, then id, so the rebuild can compute
+// per-folder navigation columns in Go one chunk at a time. The statement is
+// prepared at PrepareCustomQueries because it reads the files table (exists at
+// pool init).
+func (cq *CustomQueries) QueryFilesForFolderIndexRebuild(ctx context.Context, afterFolderID int64) (*sql.Rows, error) {
+	return cq.query(ctx, cq.queryFilesForFolderIndexRebuildStmt, sqlcqueries.QueryFilesForFolderIndexRebuildSQL(), afterFolderID)
 }
 
 // FileFolderIndexNewExists reports whether the file_folder_index_new dest table

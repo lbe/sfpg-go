@@ -222,14 +222,14 @@ func TestCreateDatabasePools(t *testing.T) {
 		t.Fatalf("pools not created")
 	}
 
-	// Nil config must fall back to DefaultConfig limits (100/10/1m).
+	// Nil config must fall back to DefaultConfig limits (100/1/1m).
 	defaultInterval := config.DefaultConfig().DBPoolMonitorInterval
 	for name, pool := range map[string]*dbconnpool.DbSQLConnPool{"RW": dbRwPool, "RO": dbRoPool} {
 		if got := pool.Config.MaxConnections; got != 100 {
 			t.Errorf("%s pool MaxConnections = %d, want 100", name, got)
 		}
-		if got := pool.Config.MinIdleConnections; got != 10 {
-			t.Errorf("%s pool MinIdleConnections = %d, want 10", name, got)
+		if got := pool.Config.MinIdleConnections; got != 1 {
+			t.Errorf("%s pool MinIdleConnections = %d, want 1", name, got)
 		}
 		if got := pool.Config.MonitorInterval; got != defaultInterval {
 			t.Errorf("%s pool MonitorInterval = %s, want %s", name, got, defaultInterval)

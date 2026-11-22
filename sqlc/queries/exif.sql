@@ -20,3 +20,6 @@ ON CONFLICT(file_id) DO UPDATE SET
 -- name: GetExifByFile :one
 SELECT * FROM exif_metadata WHERE file_id = ?;
 
+
+-- name: DeleteExif :exec
+DELETE FROM exif_metadata WHERE file_id = ?;

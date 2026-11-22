@@ -2,200 +2,122 @@ package files
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"image"
 	"image/jpeg"
 	"os"
 	"path/filepath"
 	"testing"
-
-	_ "github.com/ncruces/go-sqlite3/driver"
-
-	"github.com/lbe/sfpg-go/internal/dbconnpool"
-	"github.com/lbe/sfpg-go/internal/gallerydb"
-	"github.com/lbe/sfpg-go/internal/gallerylib"
 )
 
-type mockUnifiedBatcher struct {
-	SubmitFileFunc                    func(file *File) error
-	SubmitFolderIndexFunc             func(row FolderIndexRow) error
-	PendingCountFunc                  func() int64
-	FolderIndexInflightFunc           func() int64
-	SetFolderIndexRebuildActiveFunc   func(active bool)
-	SetFolderIndexRebuildScanHeldFunc func(held bool)
-	BumpFolderIndexGenerationFunc     func() int64
-	rwPool                            *dbconnpool.DbSQLConnPool // For integration tests that need real writes
-}
-
-func (m *mockUnifiedBatcher) SubmitFile(file *File) error {
-	if m.SubmitFileFunc != nil {
-		return m.SubmitFileFunc(file)
-	}
-	// If rwPool is set, write synchronously (for integration tests)
-	if m.rwPool != nil {
-		cpcRw, err := m.rwPool.Get()
-		if err != nil {
-			return err
-		}
-		defer m.rwPool.Put(cpcRw)
-
-		tx, err := cpcRw.Conn.BeginTx(context.Background(), nil)
-		if err != nil {
-			return err
-		}
-		defer tx.Rollback()
-
-		qtx := cpcRw.Queries.WithTx(tx)
-		imp := &gallerylib.Importer{Q: qtx}
-		if err := WriteFileInTx(context.Background(), imp, file); err != nil {
-			return err
-		}
-		return tx.Commit()
-	}
-	return nil
-}
-
-func (m *mockUnifiedBatcher) SubmitFolderIndex(row FolderIndexRow) error {
-	if m.SubmitFolderIndexFunc != nil {
-		return m.SubmitFolderIndexFunc(row)
-	}
-	return nil
-}
-
-func (m *mockUnifiedBatcher) PendingCount() int64 {
-	if m.PendingCountFunc != nil {
-		return m.PendingCountFunc()
-	}
-	return 0
-}
-
-func (m *mockUnifiedBatcher) FolderIndexInflight() int64 {
-	if m.FolderIndexInflightFunc != nil {
-		return m.FolderIndexInflightFunc()
-	}
-	return 0
-}
-
-func (m *mockUnifiedBatcher) SetFolderIndexRebuildActive(active bool) {
-	if m.SetFolderIndexRebuildActiveFunc != nil {
-		m.SetFolderIndexRebuildActiveFunc(active)
-	}
-}
-
-func (m *mockUnifiedBatcher) SetFolderIndexRebuildScanHeld(held bool) {
-	if m.SetFolderIndexRebuildScanHeldFunc != nil {
-		m.SetFolderIndexRebuildScanHeldFunc(held)
-	}
-}
-
-func (m *mockUnifiedBatcher) BumpFolderIndexGeneration() int64 {
-	if m.BumpFolderIndexGenerationFunc != nil {
-		return m.BumpFolderIndexGenerationFunc()
-	}
-	return 0
-}
-
-// createTestPoolsAndDir returns shared golden-restore memory-mode pools (reset per test), a temp Images dir, and ctx.
-func createTestPoolsAndDir(t *testing.T) (roPool *dbconnpool.DbSQLConnPool, rwPool *dbconnpool.DbSQLConnPool, imagesDir string, ctx context.Context) {
+// discoveryFields returns the mtime and size a walk reports for the file at fullPath.
+func discoveryFields(t *testing.T, fullPath string) (mtime, size int64) {
 	t.Helper()
-	ensureSharedFilesPools()
-	if sharedFilesInitErr != nil {
-		t.Fatalf("shared files pools: %v", sharedFilesInitErr)
-	}
-	sharedFilesMu.Lock()
-	t.Cleanup(func() { sharedFilesMu.Unlock() })
-	resetSharedFilesDB(t)
-
-	ctx = context.Background()
-	imagesDir = filepath.Join(t.TempDir(), "Images")
-	if err := os.MkdirAll(imagesDir, 0o755); err != nil {
-		t.Fatalf("mkdir Images: %v", err)
-	}
-	return sharedFilesROP, sharedFilesRWP, imagesDir, ctx
-}
-
-// createTestProcessor creates a FileProcessor with a temporary DB, migrations applied,
-// root folder ensured, and a temporary Images directory. Also returns roPool, rwPool,
-// and imagesDir for tests that need to pre-process files (e.g. for GenerateThumbnail).
-// The processor is closed via t.Cleanup.
-func createTestProcessor(t *testing.T, ub UnifiedBatcher) (processor FileProcessor, roPool *dbconnpool.DbSQLConnPool, rwPool *dbconnpool.DbSQLConnPool, imagesDir string) {
-	t.Helper()
-	roPool, rwPool, imagesDir, _ = createTestPoolsAndDir(t)
-	importerFactory := func(conn *sql.Conn, q *gallerydb.CustomQueries) Importer {
-		return &gallerylib.Importer{Conn: conn, Q: q}
-	}
-	if ub == nil {
-		// For integration tests, create a mock that writes synchronously
-		ub = &mockUnifiedBatcher{rwPool: rwPool}
-	}
-	processor = NewFileProcessor(roPool, rwPool, importerFactory, imagesDir, ub)
-	t.Cleanup(func() { _ = processor.Close() })
-	return processor, roPool, rwPool, imagesDir
-}
-
-func fileWithWalkMetadata(t *testing.T, imagesDir, path string) *File {
-	t.Helper()
-	info, err := os.Stat(filepath.Join(imagesDir, path))
+	info, err := os.Stat(fullPath)
 	if err != nil {
-		t.Fatalf("stat %s: %v", path, err)
+		t.Fatalf("stat %s: %v", fullPath, err)
 	}
-	return &File{
-		Path: path,
-		File: gallerydb.File{
-			Mtime:     sql.NullInt64{Int64: info.ModTime().Unix(), Valid: true},
-			SizeBytes: sql.NullInt64{Int64: info.Size(), Valid: true},
-		},
-	}
+	return info.ModTime().Unix(), info.Size()
 }
 
 func TestFileProcessor_ProcessDiscoveryFile(t *testing.T) {
 	t.Run("cancelled context", func(t *testing.T) {
-		processor, _, _, _ := createTestProcessor(t, nil)
+		processor := NewFileProcessor(t.TempDir())
+		t.Cleanup(func() { _ = processor.Close() })
 
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
-		_, err := processor.ProcessDiscoveryFile(ctx, &File{Path: "test.jpg"})
-		if err == nil {
-			t.Fatal("expected error for cancelled context")
-		}
+		_, err := processor.ProcessDiscoveryFile(ctx, "test.jpg", 1, 1)
 		if !errors.Is(err, context.Canceled) {
 			t.Errorf("expected context.Canceled, got %v", err)
 		}
 	})
 
 	t.Run("empty file path", func(t *testing.T) {
-		processor, _, _, _ := createTestProcessor(t, nil)
+		processor := NewFileProcessor(t.TempDir())
+		t.Cleanup(func() { _ = processor.Close() })
 
-		_, err := processor.ProcessDiscoveryFile(context.Background(), &File{Path: ""})
-		if err == nil {
+		if _, err := processor.ProcessDiscoveryFile(context.Background(), "", 1, 1); err == nil {
 			t.Fatal("expected error for empty path")
 		}
 	})
 
-	t.Run("success with real file", func(t *testing.T) {
-		processor, _, _, imagesDir := createTestProcessor(t, nil)
+	t.Run("missing file", func(t *testing.T) {
+		processor := NewFileProcessor(t.TempDir())
+		t.Cleanup(func() { _ = processor.Close() })
 
-		path := createTestImage(t, imagesDir, "process-discovery-success.jpg")
-		file, err := processor.ProcessDiscoveryFile(context.Background(), fileWithWalkMetadata(t, imagesDir, path))
-		if err != nil {
-			t.Fatalf("ProcessDiscoveryFile: %v", err)
+		_, err := processor.ProcessDiscoveryFile(context.Background(), "missing.jpg", 1, 1)
+		if err == nil {
+			t.Fatal("expected error for missing file")
 		}
-		if file == nil {
-			t.Fatal("expected non-nil file")
-		}
-		if file.Path != path {
-			t.Errorf("Path = %q, want %q", file.Path, path)
+		if got := InvalidReason(err); got != "open" {
+			t.Errorf("InvalidReason = %q, want %q", got, "open")
 		}
 	})
 
-	t.Run("missing walk metadata", func(t *testing.T) {
-		processor, _, _, _ := createTestProcessor(t, nil)
+}
 
-		_, err := processor.ProcessDiscoveryFile(context.Background(), &File{Path: "test.jpg"})
-		if err == nil {
-			t.Fatal("expected error for missing walk metadata")
+// TestFileProcessor_ProcessDiscoveryFileSucceeds processes a small real JPEG.
+func TestFileProcessor_ProcessDiscoveryFileSucceeds(t *testing.T) {
+	imagesDir := t.TempDir()
+	processor := NewFileProcessor(imagesDir)
+	t.Cleanup(func() { _ = processor.Close() })
+
+	path := createTestImage(t, imagesDir, "process-discovery-success.jpg")
+	mtime, size := discoveryFields(t, filepath.Join(imagesDir, path))
+
+	file, err := processor.ProcessDiscoveryFile(context.Background(), path, mtime, size)
+	if err != nil {
+		t.Fatalf("ProcessDiscoveryFile: %v", err)
+	}
+	if file.ImagesDir != imagesDir || file.Path != path {
+		t.Errorf("ImagesDir, Path = %q, %q; want %q, %q", file.ImagesDir, file.Path, imagesDir, path)
+	}
+	if !file.File.Mtime.Valid || file.File.Mtime.Int64 != mtime {
+		t.Errorf("Mtime = %+v, want %d", file.File.Mtime, mtime)
+	}
+	if !file.File.SizeBytes.Valid || file.File.SizeBytes.Int64 != size {
+		t.Errorf("SizeBytes = %+v, want %d", file.File.SizeBytes, size)
+	}
+	if file.File.MimeType.String != "image/jpeg" {
+		t.Errorf("MimeType = %q, want image/jpeg", file.File.MimeType.String)
+	}
+	if !file.File.Width.Valid || file.File.Width.Int64 != 1 || !file.File.Height.Valid || file.File.Height.Int64 != 1 {
+		t.Errorf("dimensions = %+v x %+v, want 1 x 1", file.File.Width, file.File.Height)
+	}
+	if !file.File.Md5.Valid || file.File.Md5.String == "" {
+		t.Error("expected Md5 populated")
+	}
+	if !file.File.Phash.Valid {
+		t.Error("expected Phash populated")
+	}
+	if file.Thumbnail == nil || file.Thumbnail.Len() == 0 {
+		t.Error("expected Thumbnail populated")
+	}
+}
+
+// TestFileProcessor_Close verifies Close returns nil, also when called twice.
+func TestFileProcessor_Close(t *testing.T) {
+	t.Run("close returns nil", func(t *testing.T) {
+		processor := NewFileProcessor(t.TempDir())
+
+		if err := processor.Close(); err != nil {
+			t.Errorf("Close returned error: %v", err)
+		}
+	})
+
+	t.Run("multiple close is safe", func(t *testing.T) {
+		processor := NewFileProcessor(t.TempDir())
+
+		err1 := processor.Close()
+		err2 := processor.Close()
+
+		if err1 != nil {
+			t.Errorf("First Close returned error: %v", err1)
+		}
+		if err2 != nil {
+			t.Errorf("Second Close returned error: %v", err2)
 		}
 	})
 }
@@ -217,4 +139,53 @@ func createTestImage(t *testing.T, dir, name string) string {
 		t.Fatalf("close test image: %v", err)
 	}
 	return name
+}
+
+// TestFileProcessor_ProcessDiscoveryFileReadsMetadata processes a real photo
+// with EXIF, IPTC and XMP and checks what the processor fills in.
+func TestFileProcessor_ProcessDiscoveryFileReadsMetadata(t *testing.T) {
+	imagesDir := t.TempDir()
+	input, err := os.ReadFile(filepath.Join("..", "..", "..", "testdata", "Metadata_test_file_-_includes_data_in_IIM,_XMP,_and_Exif.jpg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(imagesDir, "photo.jpg"), input, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p := NewFileProcessor(imagesDir)
+	t.Cleanup(func() { _ = p.Close() })
+
+	f, err := p.ProcessDiscoveryFile(context.Background(), "photo.jpg", 1700000000, int64(len(input)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.File.MimeType.String != "image/jpeg" {
+		t.Errorf("MimeType = %q, want image/jpeg", f.File.MimeType.String)
+	}
+	if f.Metadata.Exif.CameraMake != "samsung" {
+		t.Errorf("CameraMake = %q, want samsung", f.Metadata.Exif.CameraMake)
+	}
+	if f.File.Md5.String == "" || f.File.Phash.Int64 == 0 || f.Thumbnail == nil || f.Thumbnail.Len() == 0 {
+		t.Errorf("md5 %q, phash %d, thumbnail set %v: want all set", f.File.Md5.String, f.File.Phash.Int64, f.Thumbnail != nil)
+	}
+}
+
+// TestFileProcessor_PoisonJPEGIsDecodeFailure checks that a file with a JPEG
+// signature and a broken body fails with reason decode.
+func TestFileProcessor_PoisonJPEGIsDecodeFailure(t *testing.T) {
+	imagesDir := t.TempDir()
+	data := []byte{0xFF, 0xD8, 0xFF, 0x00}
+	if err := os.WriteFile(filepath.Join(imagesDir, "poison.jpg"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p := NewFileProcessor(imagesDir)
+	t.Cleanup(func() { _ = p.Close() })
+
+	_, err := p.ProcessDiscoveryFile(context.Background(), "poison.jpg", 1, int64(len(data)))
+	if err == nil {
+		t.Fatal("ProcessDiscoveryFile accepted a broken JPEG")
+	}
+	if got := InvalidReason(err); got != "decode" {
+		t.Errorf("InvalidReason = %q, want decode (err %v)", got, err)
+	}
 }

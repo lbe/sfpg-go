@@ -177,9 +177,23 @@ func TestCleanupExpired_RemovesOnlyExpired(t *testing.T) {
 	if err := StoreCacheEntry(ctx, db, live); err != nil {
 		t.Fatalf("StoreCacheEntry live: %v", err)
 	}
+	for _, key := range []string{"expired-2", "expired-3"} {
+		more := *expired
+		more.Key, more.Path = key, "/"+key
+		if err := StoreCacheEntry(ctx, db, &more); err != nil {
+			t.Fatalf("StoreCacheEntry %s: %v", key, err)
+		}
+	}
 
-	if _, err := CleanupExpired(ctx, db); err != nil {
+	deleted, err := CleanupExpired(ctx, db)
+	if err != nil {
 		t.Fatalf("CleanupExpired: %v", err)
+	}
+	if deleted != 3 {
+		t.Errorf("CleanupExpired deleted %d entries, want 3", deleted)
+	}
+	if deleted, err = CleanupExpired(ctx, db); err != nil || deleted != 0 {
+		t.Errorf("second CleanupExpired = %d, %v; want 0, nil", deleted, err)
 	}
 
 	got, err := GetCacheEntry(ctx, db, "expired-key")

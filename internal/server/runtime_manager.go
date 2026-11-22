@@ -33,11 +33,14 @@ type RuntimeManager struct {
 
 	restartRequired  atomic.Bool
 	restartRequested atomic.Bool
-	httpServerMu     sync.Mutex
-	httpServer       *http.Server
-	execCommand      func(path string, args []string, env []string) error
-	shutdownOnce     sync.Once
-	poolDone         chan struct{}
+	// stopMu orders a restart request against stop: once the app is stopping,
+	// a restart is not requested.
+	stopMu       sync.Mutex
+	httpServerMu sync.Mutex
+	httpServer   *http.Server
+	execCommand  func(path string, args []string, env []string) error
+	shutdownOnce sync.Once
+	poolDone     chan struct{}
 
 	galleryStats *GalleryStats
 
@@ -137,10 +140,28 @@ func (m *RuntimeManager) IsRestartRequested() bool { return m.restartRequested.L
 // RestartRequired reports whether configuration changes require a restart.
 func (m *RuntimeManager) RestartRequired() bool { return m.restartRequired.Load() }
 
-// TriggerRestart gracefully shuts down the HTTP server to prepare for exec restart.
+// stop cancels the app context. A restart requested afterwards is refused.
+func (m *RuntimeManager) stop() {
+	m.stopMu.Lock()
+	defer m.stopMu.Unlock()
+	if m.cancel != nil {
+		m.cancel()
+	}
+}
+
+// TriggerRestart gracefully shuts down the HTTP server to prepare for exec
+// restart. Once the app is stopping, it does nothing: a stop is not turned
+// into a restart.
 func (m *RuntimeManager) TriggerRestart() {
+	m.stopMu.Lock()
+	if m.ctx != nil && m.ctx.Err() != nil {
+		m.stopMu.Unlock()
+		slog.Info("process restart not requested: the app is stopping")
+		return
+	}
 	slog.Info("process restart requested")
 	m.restartRequested.Store(true)
+	m.stopMu.Unlock()
 	m.httpServerMu.Lock()
 	srv := m.httpServer
 	m.httpServerMu.Unlock()

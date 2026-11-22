@@ -54,12 +54,11 @@ type GalleryOps interface {
 }
 
 // ServerControl provides server lifecycle operations — shutdown, discovery,
-// stats reset, and cache batch loading. Extracted as a narrow interface
+// and cache batch loading. Extracted as a narrow interface
 // from ServerDeps.
 type ServerControl interface {
 	Shutdown()
 	TriggerDiscovery(ctx context.Context) error
-	ResetStats()
 	StartCacheBatchLoad() (StartCacheBatchLoadResult, error)
 	// ManualDiscoveryError returns the in-memory error from a manual
 	// POST /server/discovery rebuild failure, or "" when none. Cleared on

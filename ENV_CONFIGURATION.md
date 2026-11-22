@@ -90,14 +90,14 @@ Existing entries decode automatically via magic-prefix detection.
 ### `restart_after_discovery` (config, not `SEPG_*`)
 
 **Type**: Boolean
-**Default**: `false`
+**Default**: `true`
 **Keys**: DB `restart_after_discovery`, YAML `restart-after-discovery`
 **Apply**: Hot-reloadable (`restart: false`). Read when startup
 `TriggerDiscovery` returns, not only at process start.
 **Description**: After **startup** discovery finishes (walk, drain, and
 `file_folder_index` rebuild), request a process restart (`TriggerRestart`)
 so the new image can reclaim RSS from image-decode churn. Brief downtime.
-Default off.
+Default on.
 
 - Does **not** apply to `POST /server/discovery`. Use `POST /server/restart` if
   a manual walk should be followed by a restart.

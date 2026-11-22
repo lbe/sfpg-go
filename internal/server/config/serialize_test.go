@@ -119,13 +119,16 @@ func TestConfig_ToMap_EnableCachePreload(t *testing.T) {
 }
 
 func TestApplyYAMLValues_RestartAfterDiscovery(t *testing.T) {
-	raw := map[string]any{"restart-after-discovery": true}
+	raw := map[string]any{"restart-after-discovery": false}
 	cfg := DefaultConfig()
+	if !cfg.RestartAfterDiscovery {
+		t.Fatal("DefaultConfig RestartAfterDiscovery = false, want true")
+	}
 	if err := applyYAMLValues(cfg, raw); err != nil {
 		t.Fatalf("applyYAMLValues failed: %v", err)
 	}
-	if !cfg.RestartAfterDiscovery {
-		t.Fatalf("expected RestartAfterDiscovery true, got false")
+	if cfg.RestartAfterDiscovery {
+		t.Fatal("YAML false must override the default true; RestartAfterDiscovery = true")
 	}
 }
 

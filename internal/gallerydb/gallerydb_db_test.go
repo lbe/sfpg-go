@@ -179,9 +179,8 @@ func TestIPTCKeywordQueries(t *testing.T) {
 	t.Run("InsertIPTCKeyword and GetIPTCKeywords", func(t *testing.T) {
 		// Insert keywords
 		keywords := []string{"sunset", "beach", "vacation"}
-		for i, kw := range keywords {
+		for _, kw := range keywords {
 			err := q.InsertIPTCKeyword(ctx, InsertIPTCKeywordParams{
-				ID:      int64(i + 1),
 				FileID:  file.ID,
 				Keyword: kw,
 			})
@@ -226,10 +225,9 @@ func TestIPTCKeywordQueries(t *testing.T) {
 			t.Errorf("Expected 0 keywords, got %d", len(keywords))
 		}
 	})
-	t.Run("DeleteIPTCKeyword", func(t *testing.T) {
+	t.Run("DeleteIPTCKeywords", func(t *testing.T) {
 		// Insert a keyword to delete
 		err := q.InsertIPTCKeyword(ctx, InsertIPTCKeywordParams{
-			ID:      999,
 			FileID:  file.ID,
 			Keyword: "toberemoved",
 		})
@@ -249,9 +247,9 @@ func TestIPTCKeywordQueries(t *testing.T) {
 			t.Error("Keyword 'toberemoved' should exist before delete")
 		}
 		// Delete the keyword
-		err = q.DeleteIPTCKeyword(ctx, 999)
+		err = q.DeleteIPTCKeywords(ctx, file.ID)
 		if err != nil {
-			t.Fatalf("DeleteIPTCKeyword failed: %v", err)
+			t.Fatalf("DeleteIPTCKeywords failed: %v", err)
 		}
 		// Verify it's gone
 		keywords, _ = q.GetIPTCKeywords(ctx, file.ID)
@@ -290,17 +288,17 @@ func TestXMPPropertyQueries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create file for XMP property test: %v", err)
 	}
-	t.Run("UpsertXMPProperty and GetXMPPropertiesByFile", func(t *testing.T) {
+	t.Run("InsertXMPProperty and GetXMPPropertiesByFile", func(t *testing.T) {
 		// Insert XMP properties
-		properties := []UpsertXMPPropertyParams{
-			{ID: 1, FileID: file.ID, Namespace: "dc", Property: "title", Value: sql.NullString{String: "My Photo", Valid: true}},
-			{ID: 2, FileID: file.ID, Namespace: "dc", Property: "description", Value: sql.NullString{String: "A nice photo", Valid: true}},
-			{ID: 3, FileID: file.ID, Namespace: "exif", Property: "FNumber", Value: sql.NullString{String: "2.8", Valid: true}},
+		properties := []InsertXMPPropertyParams{
+			{FileID: file.ID, Namespace: "dc", Property: "title", Value: sql.NullString{String: "My Photo", Valid: true}},
+			{FileID: file.ID, Namespace: "dc", Property: "description", Value: sql.NullString{String: "A nice photo", Valid: true}},
+			{FileID: file.ID, Namespace: "exif", Property: "FNumber", Value: sql.NullString{String: "2.8", Valid: true}},
 		}
 		for _, prop := range properties {
-			err := q.UpsertXMPProperty(ctx, prop)
+			err := q.InsertXMPProperty(ctx, prop)
 			if err != nil {
-				t.Fatalf("UpsertXMPProperty failed: %v", err)
+				t.Fatalf("InsertXMPProperty failed: %v", err)
 			}
 		}
 		// Get all properties for the file
@@ -363,46 +361,16 @@ func TestXMPPropertyQueries(t *testing.T) {
 			t.Errorf("Expected 0 properties, got %d", len(props))
 		}
 	})
-	t.Run("UpsertXMPProperty_Update", func(t *testing.T) {
-		// Update the title property
-		err := q.UpsertXMPProperty(ctx, UpsertXMPPropertyParams{
-			ID:        1,
-			FileID:    file.ID,
-			Namespace: "dc",
-			Property:  "title",
-			Value:     sql.NullString{String: "Updated Title", Valid: true},
-		})
-		if err != nil {
-			t.Fatalf("UpsertXMPProperty (update) failed: %v", err)
-		}
-		props, err := q.GetXMPPropertiesByFile(ctx, file.ID)
-		if err != nil {
-			t.Fatalf("GetXMPPropertiesByFile (after update) failed: %v", err)
-		}
-		foundUpdated := false
-		for _, prop := range props {
-			if prop.Namespace == "dc" && prop.Property == "title" {
-				foundUpdated = true
-				if !prop.Value.Valid || prop.Value.String != "Updated Title" {
-					t.Errorf("Expected updated title 'Updated Title', got %v", prop.Value)
-				}
-			}
-		}
-		if !foundUpdated {
-			t.Error("Did not find updated XMP title property")
-		}
-	})
-	t.Run("DeleteXMPProperty", func(t *testing.T) {
+	t.Run("DeleteXMPProperties", func(t *testing.T) {
 		// Insert a property to delete
-		err := q.UpsertXMPProperty(ctx, UpsertXMPPropertyParams{
-			ID:        888,
+		err := q.InsertXMPProperty(ctx, InsertXMPPropertyParams{
 			FileID:    file.ID,
 			Namespace: "test",
 			Property:  "toberemoved",
 			Value:     sql.NullString{String: "remove me", Valid: true},
 		})
 		if err != nil {
-			t.Fatalf("UpsertXMPProperty for delete test failed: %v", err)
+			t.Fatalf("InsertXMPProperty for delete test failed: %v", err)
 		}
 		// Verify it exists
 		props, _ := q.GetXMPPropertiesByFile(ctx, file.ID)
@@ -417,9 +385,9 @@ func TestXMPPropertyQueries(t *testing.T) {
 			t.Error("Property 'toberemoved' should exist before delete")
 		}
 		// Delete the property
-		err = q.DeleteXMPProperty(ctx, 888)
+		err = q.DeleteXMPProperties(ctx, file.ID)
 		if err != nil {
-			t.Fatalf("DeleteXMPProperty failed: %v", err)
+			t.Fatalf("DeleteXMPProperties failed: %v", err)
 		}
 		// Verify it's gone
 		props, _ = q.GetXMPPropertiesByFile(ctx, file.ID)

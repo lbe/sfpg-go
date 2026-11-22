@@ -14,13 +14,14 @@ type Querier interface {
 	ClearLoginAttempts(ctx context.Context, username string) error
 	ConfigKeyExists(ctx context.Context, key string) (bool, error)
 	CountHttpCacheEntries(ctx context.Context) (int64, error)
+	DeleteExif(ctx context.Context, fileID int64) error
 	DeleteHttpCacheByID(ctx context.Context, id int64) error
 	DeleteHttpCacheByKey(ctx context.Context, key string) error
-	DeleteHttpCacheExpired(ctx context.Context) error
+	DeleteHttpCacheExpired(ctx context.Context) (int64, error)
 	DeleteIPTC(ctx context.Context, fileID int64) error
-	DeleteIPTCKeyword(ctx context.Context, id int64) error
+	DeleteIPTCKeywords(ctx context.Context, fileID int64) error
 	DeleteInvalidFileByPath(ctx context.Context, path string) error
-	DeleteXMPProperty(ctx context.Context, id int64) error
+	DeleteXMPProperties(ctx context.Context, fileID int64) error
 	DeleteXMPRaw(ctx context.Context, fileID int64) error
 	GetConfigValueByKey(ctx context.Context, key string) (string, error)
 	GetConfigs(ctx context.Context) ([]Config, error)
@@ -76,6 +77,7 @@ type Querier interface {
 	HttpCacheExistsByKey(ctx context.Context, key string) (bool, error)
 	InsertConfigIfNotExists(ctx context.Context, arg InsertConfigIfNotExistsParams) error
 	InsertIPTCKeyword(ctx context.Context, arg InsertIPTCKeywordParams) error
+	InsertXMPProperty(ctx context.Context, arg InsertXMPPropertyParams) error
 	ListDiscoveryFilesByFolderID(ctx context.Context, folderID sql.NullInt64) ([]ListDiscoveryFilesByFolderIDRow, error)
 	ListDiscoveryInvalidByFolderID(ctx context.Context, folderID int64) ([]ListDiscoveryInvalidByFolderIDRow, error)
 	SetModuleState(ctx context.Context, arg SetModuleStateParams) error
@@ -93,7 +95,6 @@ type Querier interface {
 	UpsertInvalidFile(ctx context.Context, arg UpsertInvalidFileParams) error
 	UpsertLoginAttempt(ctx context.Context, arg UpsertLoginAttemptParams) error
 	UpsertThumbnailReturningID(ctx context.Context, arg UpsertThumbnailReturningIDParams) (int64, error)
-	UpsertXMPProperty(ctx context.Context, arg UpsertXMPPropertyParams) error
 	UpsertXMPRaw(ctx context.Context, arg UpsertXMPRawParams) error
 }
 

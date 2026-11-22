@@ -86,8 +86,8 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.DBMaxPoolSize != 100 {
 		t.Errorf("expected DBMaxPoolSize to be 100, got %d", cfg.DBMaxPoolSize)
 	}
-	if cfg.DBMinIdleConnections != 10 {
-		t.Errorf("expected DBMinIdleConnections to be 10, got %d", cfg.DBMinIdleConnections)
+	if cfg.DBMinIdleConnections != 1 {
+		t.Errorf("expected DBMinIdleConnections to be 1, got %d", cfg.DBMinIdleConnections)
 	}
 	if cfg.DBPoolMonitorInterval != 1*time.Minute {
 		t.Errorf("expected DBPoolMonitorInterval to be 1m, got %v", cfg.DBPoolMonitorInterval)
@@ -154,8 +154,8 @@ func TestDiscoveryEnabled_ByDefault(t *testing.T) {
 
 func TestDefaultConfig_RestartAfterDiscovery(t *testing.T) {
 	defaults := DefaultConfig()
-	if defaults.RestartAfterDiscovery {
-		t.Fatal("RestartAfterDiscovery should be false by default in config.DefaultConfig()")
+	if !defaults.RestartAfterDiscovery {
+		t.Fatal("RestartAfterDiscovery should be true by default in config.DefaultConfig()")
 	}
 }
 

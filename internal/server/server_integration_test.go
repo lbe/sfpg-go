@@ -25,7 +25,6 @@ import (
 	"github.com/lbe/sfpg-go/internal/gallerydb"
 	"github.com/lbe/sfpg-go/internal/getopt"
 	"github.com/lbe/sfpg-go/internal/server/config"
-	"github.com/lbe/sfpg-go/internal/server/files"
 	"github.com/lbe/sfpg-go/internal/server/session"
 	"github.com/lbe/sfpg-go/internal/server/ui"
 	"github.com/lbe/sfpg-go/internal/testutil"
@@ -413,8 +412,8 @@ func TestIntegration_ConfigCache_ServerUsesConfig(t *testing.T) {
 	app.opt.EnableHTTPCache = getopt.OptBool{Bool: true, IsSet: true}
 
 	// Release the existing batcher's dque flock before recreating pools.
-	if app.writeBatcher != nil {
-		app.writeBatcher.Close()
+	if app.writer != nil {
+		_ = app.writer.Close()
 	}
 
 	app.setDB() // This will call createDatabasePools which initializes cache middleware
@@ -1242,20 +1241,11 @@ func TestIntegration_TriggerDiscovery_RebuildsFileFolderIndex(t *testing.T) {
 	app := CreateApp(t)
 	defer app.Shutdown()
 
-	// ensureProcessingStats so waitForFileProcessingDrain does not short-circuit.
-	ensureProcessingStats(app.SubsystemManager)
-
-	// Start pool with processingStats wired in so drain polls real counters.
+	// The run's workers process the walked files before the rebuild.
 	app.SubsystemManager.pool.MinWorkers = 1
 	app.SubsystemManager.pool.MaxWorkers = 1
 	app.RuntimeManager.poolDone = make(chan struct{})
-	pf := files.NewPoolFuncWithProcessor(app.SubsystemManager.fileProcessor,
-		app.SubsystemManager.q, app.normalizedImagesDir, removeImagesDirPrefix,
-		app.SubsystemManager.processingStats, nil)
-	go func() {
-		defer close(app.RuntimeManager.poolDone)
-		app.SubsystemManager.pool.StartWorkerPool(pf, app.dbRoPool, app.dbRwPool, app.SubsystemManager.q.Len)
-	}()
+	app.SubsystemManager.StartPool(app.RuntimeManager.poolDone)
 
 	// Copy 3 JPEGs into a subfolder so they share a folder_id.
 	src := "../../testdata/thumbnail/no-exif-thumb.jpg"
@@ -1283,8 +1273,6 @@ func TestIntegration_TriggerDiscovery_RebuildsFileFolderIndex(t *testing.T) {
 	copyJPEG(filepath.Join(subDir, "a-first.jpg"))
 	copyJPEG(filepath.Join(subDir, "b-middle.jpg"))
 	copyJPEG(filepath.Join(subDir, "c-last.jpg"))
-
-	app.testSeams.RebuildFileFolderIndex = nil // real rebuild
 
 	// Single TriggerDiscovery: walk → drain (pool processes files) → rebuild.
 	if err := app.TriggerDiscovery(context.Background()); err != nil {

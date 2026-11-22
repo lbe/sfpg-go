@@ -1881,3 +1881,94 @@ func TestWritePathBuf(t *testing.T) {
 		t.Fatal("expected error when path exceeds buffer")
 	}
 }
+
+func TestReadDirBuffersTrim_KeepsBuffersAtThreshold(t *testing.T) {
+	b := newReadDirBuffers()
+	b.entries = make([]osza.Entry, retainReadDirEntries)
+	b.nameBuf = make([]byte, retainReadDirNameBytes)
+	entriesPtr := &b.entries[0]
+	namePtr := &b.nameBuf[0]
+
+	b.trim()
+
+	if len(b.entries) != retainReadDirEntries || len(b.nameBuf) != retainReadDirNameBytes {
+		t.Fatalf("lengths changed: entries=%d nameBuf=%d", len(b.entries), len(b.nameBuf))
+	}
+	if &b.entries[0] != entriesPtr {
+		t.Fatal("entries backing array replaced at threshold")
+	}
+	if &b.nameBuf[0] != namePtr {
+		t.Fatal("nameBuf backing array replaced at threshold")
+	}
+}
+
+func TestReadDirBuffersTrim_ResetsOversizedEntries(t *testing.T) {
+	b := newReadDirBuffers()
+	b.entries = make([]osza.Entry, 4096)
+	b.nameBuf = make([]byte, 1<<20)
+	oldEntriesPtr := &b.entries[0]
+	oldNamePtr := &b.nameBuf[0]
+
+	b.trim()
+
+	if len(b.entries) != initialReadDirEntries || len(b.nameBuf) != initialReadDirNameBytes {
+		t.Fatalf("lengths after trim: entries=%d nameBuf=%d, want %d and %d",
+			len(b.entries), len(b.nameBuf), initialReadDirEntries, initialReadDirNameBytes)
+	}
+	if &b.entries[0] == oldEntriesPtr || &b.nameBuf[0] == oldNamePtr {
+		t.Fatal("oversized buffers were not replaced")
+	}
+}
+
+func TestReadDirBuffersTrim_ResetsBothWhenOnlyNameBufOversized(t *testing.T) {
+	b := newReadDirBuffers()
+	b.nameBuf = make([]byte, 1<<20)
+
+	b.trim()
+
+	if len(b.entries) != initialReadDirEntries || len(b.nameBuf) != initialReadDirNameBytes {
+		t.Fatalf("lengths after trim: entries=%d nameBuf=%d, want %d and %d",
+			len(b.entries), len(b.nameBuf), initialReadDirEntries, initialReadDirNameBytes)
+	}
+}
+
+// TestParallelWalk_GrownReadDirBuffersTrimmedBetweenDirs walks a directory large
+// enough to grow the entries buffer past the retain threshold, followed by a
+// small sibling directory, using one worker so both are read with the same buffers.
+func TestParallelWalk_GrownReadDirBuffersTrimmedBetweenDirs(t *testing.T) {
+	root := t.TempDir()
+	const bigCount = 2000
+	var want []string
+	mustMkdir(t, root, "big")
+	for i := range bigCount {
+		name := fmt.Sprintf("file%04d.dat", i)
+		mustWriteFile(t, root, name, "big")
+		want = append(want, filepath.Join(root, "big", name))
+	}
+	mustMkdir(t, root, "small")
+	for i := range 3 {
+		name := fmt.Sprintf("s%d.dat", i)
+		mustWriteFile(t, root, name, "small")
+		want = append(want, filepath.Join(root, "small", name))
+	}
+
+	walker := NewWalker(WithMaxWorkers(1))
+	resultsChan, errChan := walker.ParallelWalk(root)
+	got, errs := drainChannels(t, resultsChan, errChan, 30*time.Second)
+	if len(errs) != 0 {
+		t.Fatalf("unexpected walk errors: %v", errs)
+	}
+
+	counts := make(map[string]int, len(got))
+	for _, p := range got {
+		counts[p]++
+	}
+	for _, p := range want {
+		if counts[p] != 1 {
+			t.Errorf("%s reported %d times, want 1", p, counts[p])
+		}
+	}
+	if len(got) != len(want) {
+		t.Fatalf("reported %d files, want %d", len(got), len(want))
+	}
+}

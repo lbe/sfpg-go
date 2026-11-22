@@ -25,7 +25,7 @@ ON CONFLICT(key) DO UPDATE SET
 -- name: DeleteHttpCacheByKey :exec
 DELETE FROM http_cache WHERE key = ?;
 
--- name: DeleteHttpCacheExpired :exec
+-- name: DeleteHttpCacheExpired :execrows
 DELETE FROM http_cache 
 WHERE expires_at IS NOT NULL AND expires_at <= unixepoch();
 

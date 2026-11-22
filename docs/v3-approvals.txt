@@ -1,0 +1,318 @@
+# Changes the user has approved for refactorv3, one per line, exactly as
+# scripts/v3-check.sh prints them (api: ..., module + ..., module - ...).
+# Only add a line after the user approves that change.
+
+# metadata component (docs/v3-design/metadata.md), approved by the user on 2026-11-18.
+api: ./internal/gallerydb.(*Queries).DeleteIPTCKeyword, method set of *CustomQueries: removed
+api: ./internal/gallerydb.(*Queries).DeleteIPTCKeyword: removed
+api: ./internal/gallerydb.(*Queries).DeleteXMPProperty, method set of *CustomQueries: removed
+api: ./internal/gallerydb.(*Queries).DeleteXMPProperty: removed
+api: ./internal/gallerydb.(*Queries).UpsertXMPProperty, method set of *CustomQueries: removed
+api: ./internal/gallerydb.(*Queries).UpsertXMPProperty: removed
+api: ./internal/gallerydb.InsertIPTCKeywordParams.ID: removed
+api: ./internal/gallerydb.InsertXMPPropertyParams: 	FileID    int64
+api: ./internal/gallerydb.InsertXMPPropertyParams: 	Namespace string
+api: ./internal/gallerydb.InsertXMPPropertyParams: 	Property  string
+api: ./internal/gallerydb.InsertXMPPropertyParams: 	Value     sql.NullString
+api: ./internal/gallerydb.InsertXMPPropertyParams: type InsertXMPPropertyParams struct {
+api: ./internal/gallerydb.InsertXMPPropertyParams: }
+api: ./internal/gallerydb.Querier.DeleteExif: 	DeleteExif(ctx context.Context, fileID int64) error
+api: ./internal/gallerydb.Querier.DeleteExif: type Querier interface {
+api: ./internal/gallerydb.Querier.DeleteExif: }
+api: ./internal/gallerydb.Querier.DeleteIPTCKeyword: removed
+api: ./internal/gallerydb.Querier.DeleteIPTCKeywords: 	DeleteIPTCKeywords(ctx context.Context, fileID int64) error
+api: ./internal/gallerydb.Querier.DeleteIPTCKeywords: type Querier interface {
+api: ./internal/gallerydb.Querier.DeleteIPTCKeywords: }
+api: ./internal/gallerydb.Querier.DeleteXMPProperties: 	DeleteXMPProperties(ctx context.Context, fileID int64) error
+api: ./internal/gallerydb.Querier.DeleteXMPProperties: type Querier interface {
+api: ./internal/gallerydb.Querier.DeleteXMPProperties: }
+api: ./internal/gallerydb.Querier.DeleteXMPProperty: removed
+api: ./internal/gallerydb.Querier.InsertXMPProperty: 	InsertXMPProperty(ctx context.Context, arg InsertXMPPropertyParams) error
+api: ./internal/gallerydb.Querier.InsertXMPProperty: type Querier interface {
+api: ./internal/gallerydb.Querier.InsertXMPProperty: }
+api: ./internal/gallerydb.Querier.UpsertXMPProperty: removed
+api: ./internal/gallerydb.Queries.DeleteExif: func (q *Queries) DeleteExif(ctx context.Context, fileID int64) error
+api: ./internal/gallerydb.Queries.DeleteIPTCKeywords: func (q *Queries) DeleteIPTCKeywords(ctx context.Context, fileID int64) error
+api: ./internal/gallerydb.Queries.DeleteXMPProperties: func (q *Queries) DeleteXMPProperties(ctx context.Context, fileID int64) error
+api: ./internal/gallerydb.Queries.InsertXMPProperty: func (q *Queries) InsertXMPProperty(ctx context.Context, arg InsertXMPPropertyParams) error
+api: ./internal/gallerydb.UpsertXMPPropertyParams: removed
+api: ./internal/gallerylib.importerQueries.UpsertXMPProperty: removed
+api: ./internal/server/files.BufPool: removed
+api: ./internal/server/files.DetectMimeType: removed
+api: ./internal/server/files.ExtractExifData: removed
+api: ./internal/server/files.File.Exif: removed
+api: ./internal/server/files.File.HasValidJpegMarkers: removed
+api: ./internal/server/files.File.Itpc: removed
+api: ./internal/server/files.File.Metadata:     Metadata metadata.Info
+api: ./internal/server/files.File.Metadata: type File struct {
+api: ./internal/server/files.File.Metadata: }
+api: ./internal/server/files.File.XmpProps: removed
+api: ./internal/server/files.File.XmpRaw: removed
+api: ./internal/server/files.ValidateJpegMarkers: removed
+api: github.com/lbe/sfpg-go/internal/metadata.ErrClosed: var ErrClosed = errors.New("metadata: extractor closed")
+api: github.com/lbe/sfpg-go/internal/metadata.Exif: 	Altitude    float64
+api: github.com/lbe/sfpg-go/internal/metadata.Exif: 	Aperture     string
+api: github.com/lbe/sfpg-go/internal/metadata.Exif: 	CameraMake   string
+api: github.com/lbe/sfpg-go/internal/metadata.Exif: 	CameraModel  string
+api: github.com/lbe/sfpg-go/internal/metadata.Exif: 	CaptureDate  time.Time
+api: github.com/lbe/sfpg-go/internal/metadata.Exif: 	FocalLength  string
+api: github.com/lbe/sfpg-go/internal/metadata.Exif: 	HasAltitude bool
+api: github.com/lbe/sfpg-go/internal/metadata.Exif: 	ISO          int64
+api: github.com/lbe/sfpg-go/internal/metadata.Exif: 	Latitude    float64
+api: github.com/lbe/sfpg-go/internal/metadata.Exif: 	LensModel    string
+api: github.com/lbe/sfpg-go/internal/metadata.Exif: 	Longitude   float64
+api: github.com/lbe/sfpg-go/internal/metadata.Exif: 	Orientation  int64
+api: github.com/lbe/sfpg-go/internal/metadata.Exif: 	ShutterSpeed string
+api: github.com/lbe/sfpg-go/internal/metadata.Exif: type Exif struct {
+api: github.com/lbe/sfpg-go/internal/metadata.Exif: }
+api: github.com/lbe/sfpg-go/internal/metadata.Extractor: func (e *Extractor) Close() error
+api: github.com/lbe/sfpg-go/internal/metadata.Extractor: func (e *Extractor) Extract(ctx context.Context, path string) (Info, error)
+api: github.com/lbe/sfpg-go/internal/metadata.Extractor: func New() *Extractor
+api: github.com/lbe/sfpg-go/internal/metadata.Extractor: type Extractor struct {
+api: github.com/lbe/sfpg-go/internal/metadata.Extractor: }
+api: github.com/lbe/sfpg-go/internal/metadata.IPTC: 	Copyright   string
+api: github.com/lbe/sfpg-go/internal/metadata.IPTC: 	Created     time.Time
+api: github.com/lbe/sfpg-go/internal/metadata.IPTC: 	Creator     string
+api: github.com/lbe/sfpg-go/internal/metadata.IPTC: 	Credit      string
+api: github.com/lbe/sfpg-go/internal/metadata.IPTC: 	Description string
+api: github.com/lbe/sfpg-go/internal/metadata.IPTC: 	Keywords    []string
+api: github.com/lbe/sfpg-go/internal/metadata.IPTC: 	Source      string
+api: github.com/lbe/sfpg-go/internal/metadata.IPTC: 	Title       string
+api: github.com/lbe/sfpg-go/internal/metadata.IPTC: type IPTC struct {
+api: github.com/lbe/sfpg-go/internal/metadata.IPTC: }
+api: github.com/lbe/sfpg-go/internal/metadata.Info: 	Exif Exif
+api: github.com/lbe/sfpg-go/internal/metadata.Info: 	IPTC IPTC
+api: github.com/lbe/sfpg-go/internal/metadata.Info: 	XMP  XMP
+api: github.com/lbe/sfpg-go/internal/metadata.Info: type Info struct {
+api: github.com/lbe/sfpg-go/internal/metadata.Info: }
+api: github.com/lbe/sfpg-go/internal/metadata.XMP: 	GPSLatitude  string
+api: github.com/lbe/sfpg-go/internal/metadata.XMP: 	GPSLongitude string
+api: github.com/lbe/sfpg-go/internal/metadata.XMP: 	Packet []byte
+api: github.com/lbe/sfpg-go/internal/metadata.XMP: type XMP struct {
+api: github.com/lbe/sfpg-go/internal/metadata.XMP: }
+api: package github.com/lbe/sfpg-go/internal/metadata: added
+module + {"Require":{"Path":"github.com/lbe/cfsread","Version":"v0.1.0","Indirect":true}}
+module + {"Require":{"Path":"github.com/lbe/go-exiftool-wasm","Version":"v0.6.0"}}
+module + {"Require":{"Path":"github.com/lbe/wasm2go-wasi-host","Version":"v0.0.0-20260607151207-5e095ad9072e","Indirect":true}}
+module + {"Require":{"Path":"github.com/pierrec/lz4/v4","Version":"v4.1.33","Indirect":true}}
+module + {"Require":{"Path":"golang.org/x/sync","Version":"v0.25.0"}}
+module + {"Require":{"Path":"golang.org/x/sys","Version":"v0.50.0"}}
+module - {"Require":{"Path":"golang.org/x/sync","Version":"v0.21.0"}}
+module - {"Require":{"Path":"golang.org/x/sys","Version":"v0.49.0"}}
+package + github.com/lbe/sfpg-go/internal/metadata metadata
+api: ./internal/server/files.SetGPSFromStrings: removed
+
+# thumbnail and memlimit component (docs/v3-design/thumbnail.md), approved by the user on 2026-11-18.
+api: ./internal/thumbnail.GenerateThumbnailAndHashes: removed
+api: ./internal/thumbnail.Generator: func (g *Generator) GenerateThumbnailAndHashes(ctx context.Context, srcW, srcH int) (thumb *bytes.Buffer, md5Hex string, phash int64, err error)
+api: ./internal/thumbnail.Generator: func (g *Generator) Read(ctx context.Context, r io.Reader, size int64) ([]byte, error)
+api: ./internal/thumbnail.Generator: type Generator struct {
+api: ./internal/thumbnail.Generator: }
+api: ./internal/thumbnail.GetMD5: removed
+api: ./internal/thumbnail.GetNullInt64: removed
+api: ./internal/thumbnail.GetNullString: removed
+api: ./internal/thumbnail.NewPool: func NewPool() *Pool
+api: ./internal/thumbnail.Pool: func (p *Pool) Close()
+api: ./internal/thumbnail.Pool: func (p *Pool) Get() *Generator
+api: ./internal/thumbnail.Pool: func (p *Pool) Put(g *Generator)
+api: ./internal/thumbnail.Pool: func NewPool() *Pool
+api: ./internal/thumbnail.Pool: type Pool struct {
+api: ./internal/thumbnail.Pool: }
+api: ./internal/thumbnail.PutMD5: removed
+api: ./internal/thumbnail.PutNullInt64: removed
+api: ./internal/thumbnail.PutNullString: removed
+api: ./internal/thumbnail.RetainedBytes: const RetainedBytes = 256 << 20
+api: ./internal/workerpool.DefaultMaxWorkers: func DefaultMaxWorkers() int
+api: github.com/lbe/sfpg-go/internal/memlimit.Limit: 	Workers int
+api: github.com/lbe/sfpg-go/internal/memlimit.Limit: func Apply(need Need) *Limit
+api: github.com/lbe/sfpg-go/internal/memlimit.Limit: type Limit struct {
+api: github.com/lbe/sfpg-go/internal/memlimit.Limit: }
+api: github.com/lbe/sfpg-go/internal/memlimit.Need: 	ExifToolServers int
+api: github.com/lbe/sfpg-go/internal/memlimit.Need: 	RetainedBytes   int64
+api: github.com/lbe/sfpg-go/internal/memlimit.Need: 	Workers         int
+api: github.com/lbe/sfpg-go/internal/memlimit.Need: type Need struct {
+api: github.com/lbe/sfpg-go/internal/memlimit.Need: }
+api: github.com/lbe/sfpg-go/internal/metadata.PoolSize: func PoolSize() int
+api: package github.com/lbe/sfpg-go/internal/memlimit: added
+module + {"Require":{"Path":"github.com/lbe/go-image-phash","Version":"v0.2.0"}}
+module + {"Require":{"Path":"github.com/lbe/wuffs-wasm","Version":"v0.6.0"}}
+module + {"Require":{"Path":"golang.org/x/crypto","Version":"v0.55.0"}}
+module + {"Require":{"Path":"golang.org/x/image","Version":"v0.46.0"}}
+module + {"Require":{"Path":"golang.org/x/net","Version":"v0.58.0"}}
+module + {"Require":{"Path":"golang.org/x/text","Version":"v0.42.0","Indirect":true}}
+module - {"Replace":{"Old":{"Path":"github.com/evanoberholster/imagemeta"},"New":{"Path":"./internal/imagemeta"}}}
+module - {"Require":{"Path":"github.com/evanoberholster/imagemeta","Version":"v1.0.0"}}
+module - {"Require":{"Path":"github.com/klauspost/cpuid/v2","Version":"v2.4.0","Indirect":true}}
+module - {"Require":{"Path":"github.com/philhofer/fwd","Version":"v1.2.0","Indirect":true}}
+module - {"Require":{"Path":"github.com/pkg/errors","Version":"v0.9.1","Indirect":true}}
+module - {"Require":{"Path":"github.com/tinylib/msgp","Version":"v1.6.5","Indirect":true}}
+module - {"Require":{"Path":"golang.org/x/crypto","Version":"v0.53.0"}}
+module - {"Require":{"Path":"golang.org/x/image","Version":"v0.42.0"}}
+module - {"Require":{"Path":"golang.org/x/net","Version":"v0.56.0"}}
+module - {"Require":{"Path":"golang.org/x/text","Version":"v0.38.0","Indirect":true}}
+module - {"Require":{"Path":"golang.org/x/tools","Version":"v0.46.0","Indirect":true}}
+package + github.com/lbe/sfpg-go/internal/memlimit memlimit
+module - {"Require":{"Path":"github.com/nfnt/resize","Version":"v0.0.0-20180221191011-83c6a9932646"}}
+
+# write-path component (docs/v3-design/write-path.md), approved by the user on 2026-11-19.
+api: ./internal/gallerydb.(*CustomQueries).CountFilesForFolderIndexRebuild: removed
+api: ./internal/gallerydb.(*CustomQueries).QueryFilesForFolderIndexRebuild: changed from func(context.Context) (*database/sql.Rows, error) to func(context.Context, int64) (*database/sql.Rows, error)
+api: ./internal/gallerydb.CustomQuerier.CountFilesForFolderIndexRebuild: removed
+api: ./internal/gallerydb.CustomQuerier.QueryFilesForFolderIndexRebuild: changed from func(context.Context) (*database/sql.Rows, error) to func(context.Context, int64) (*database/sql.Rows, error)
+api: ./internal/gallerylib.Importer.UpsertFolderChain: func (imp *Importer) UpsertFolderChain(ctx context.Context, dir string) (int64, error)
+api: ./internal/server.App.ImporterFactory: removed
+api: ./internal/server.AppTestSeams.RebuildFileFolderIndex: removed
+api: ./internal/server.BatchedWrite: removed
+api: ./internal/server.InfrastructureService.ImporterFactory: removed
+api: ./internal/server.InfrastructureTestSeams.BeginTxPoolGetErr: removed
+api: ./internal/server.InfrastructureTestSeams.BuildWriteBatcher: removed
+api: ./internal/server.InfrastructureTestSeams.FlushBatchedWrites: removed
+api: ./internal/server.InfrastructureTestSeams.OnBeginTx: removed
+api: ./internal/server.InfrastructureTestSeams.OnPut: removed
+api: ./internal/server.InfrastructureTestSeams.PerformWALCheckpoint: removed
+api: ./internal/server.InfrastructureTestSeams.ShutdownWriteBatcher: removed
+api: ./internal/server.InfrastructureTestSeams.WALCheckpointQuery: removed
+api: ./internal/server/database.ErrFolderIndexRebuild: var ErrFolderIndexRebuild = errors.New("file_folder_index rebuild failed")
+api: ./internal/server/database.NewWriter: func NewWriter(ctx context.Context, cfg WriterConfig) (*Writer, error)
+api: ./internal/server/database.Writer: func (w *Writer) Close() error
+api: ./internal/server/database.Writer: func (w *Writer) PendingCount() int64
+api: ./internal/server/database.Writer: func (w *Writer) RebuildFolderIndex(ctx context.Context) error
+api: ./internal/server/database.Writer: func (w *Writer) SetMaxDiskBytes(n int64)
+api: ./internal/server/database.Writer: func (w *Writer) SetOptimizeInterval(d time.Duration)
+api: ./internal/server/database.Writer: func (w *Writer) StartDQueDrain()
+api: ./internal/server/database.Writer: func (w *Writer) SubmitCacheEntry(e *cachelite.HTTPCacheEntry)
+api: ./internal/server/database.Writer: func (w *Writer) SubmitFile(f *files.File) error
+api: ./internal/server/database.Writer: func (w *Writer) SubmitInvalidFile(f files.InvalidFile) error
+api: ./internal/server/database.Writer: func NewWriter(ctx context.Context, cfg WriterConfig) (*Writer, error)
+api: ./internal/server/database.Writer: type Writer struct {
+api: ./internal/server/database.Writer: }
+api: ./internal/server/database.WriterConfig: 	DeferDQueDrain bool
+api: ./internal/server/database.WriterConfig: 	MaxDiskBytes   int64
+api: ./internal/server/database.WriterConfig: 	OnCacheFailed   func()
+api: ./internal/server/database.WriterConfig: 	OnCacheStored   func(bytes, entries int64)
+api: ./internal/server/database.WriterConfig: 	OnFolderCreated func()
+api: ./internal/server/database.WriterConfig: 	Paths          DatabasePaths
+api: ./internal/server/database.WriterConfig: 	RW, RO         *dbconnpool.DbSQLConnPool
+api: ./internal/server/database.WriterConfig: type WriterConfig struct {
+api: ./internal/server/database.WriterConfig: }
+api: ./internal/server/files.ErrFolderIndexRebuild: removed
+api: ./internal/server/files.FolderIndexRow: removed
+api: ./internal/server/files.Importer: removed
+api: ./internal/server/files.ImporterFactory: removed
+api: ./internal/server/files.InvalidFile: 	Mtime  int64
+api: ./internal/server/files.InvalidFile: 	Path   string
+api: ./internal/server/files.InvalidFile: 	Reason string
+api: ./internal/server/files.InvalidFile: 	Size   int64
+api: ./internal/server/files.InvalidFile: type InvalidFile struct {
+api: ./internal/server/files.InvalidFile: }
+api: ./internal/server/files.RebuildFileFolderIndex: removed
+api: ./internal/server/files.ThumbnailTx: removed
+api: ./internal/server/files.UpsertThumbnailTxOnly: removed
+api: ./internal/server/files.WriteFileInTx: removed
+api: ./sqlc/queries.CountFilesForFolderIndexRebuildSQL: removed
+api: ./internal/gallerydb.(*Queries).DeleteHttpCacheExpired: changed from func(context.Context) error to func(context.Context) (int64, error)
+api: ./internal/gallerydb.Querier.DeleteHttpCacheExpired: changed from func(context.Context) error to func(context.Context) (int64, error)
+api: ./internal/server.(*InfrastructureService).WriteBatcher, method set of *App: removed
+api: ./internal/server.(*InfrastructureService).WriteBatcher: removed
+api: ./internal/server.InfrastructureTestSeams.PragmaOptimize: changed from func(context.Context, dbPoolForCheckpoint) to func(context.Context, *github.com/lbe/sfpg-go/internal/dbconnpool.DbSQLConnPool)
+api: ./internal/server/database.Writer: func (w *Writer) GetStats() writebatcher.Stats
+api: ./internal/gallerylib.importerQueries.DeleteInvalidFileByPath: removed
+api: ./internal/gallerylib.importerQueries.GetFolderTileExistsViewByPath: removed
+api: ./internal/gallerylib.importerQueries.GetThumbnailExistsViewByID: removed
+api: ./internal/gallerylib.importerQueries.UpsertExif: removed
+api: ./internal/gallerylib.importerQueries.UpsertThumbnailBlob: removed
+api: ./internal/gallerylib.importerQueries.UpsertThumbnailReturningID: removed
+api: ./internal/gallerylib.importerQueries.UpsertXMPRaw: removed
+api: ./internal/gallerylib.Importer.Conn: removed
+
+# discovery component (docs/v3-design/discovery.md), approved by the user on 2026-11-19.
+api: ./internal/server.(*App).ResetStats: removed
+api: ./internal/server.(*SubsystemManager).HydrateFileProcessingStats: removed
+api: ./internal/server.(*SubsystemManager).ResetStats: removed
+api: ./internal/server.AppTestSeams.OnDiscoveryProcessingMonitorComplete: removed
+api: ./internal/server.AppTestSeams.OnDiscoveryProcessingMonitorPhase1Tick: removed
+api: ./internal/server/database.NewDiscoveryDirEntMapFunc: 	normalizedImagesDir string,
+api: ./internal/server/database.NewDiscoveryDirEntMapFunc: 	removePrefix func(string, string) (string, error),
+api: ./internal/server/database.NewDiscoveryDirEntMapFunc: 	roPool *dbconnpool.DbSQLConnPool,
+api: ./internal/server/database.NewDiscoveryDirEntMapFunc: ) parallelwalkdir.GetDirEntMapFunc
+api: ./internal/server/database.NewDiscoveryDirEntMapFunc: func NewDiscoveryDirEntMapFunc(
+api: ./internal/server/files.DiscoveryCompareInput: removed
+api: ./internal/server/files.DiscoveryDirEntModifiedWithStats: removed
+api: ./internal/server/files.DiscoveryPathWork: removed
+api: ./internal/server/files.DiscoveryWalkOutcome: removed
+api: ./internal/server/files.DiscoveryWalkProcess: removed
+api: ./internal/server/files.DiscoveryWalkSkipUnchangedInvalid: removed
+api: ./internal/server/files.DiscoveryWalkSkipUnchangedValid: removed
+api: ./internal/server/files.FileProcessor.PendingWriteCount: removed
+api: ./internal/server/files.FileProcessor.ProcessDiscoveryFile: changed from func(context.Context, *File) (*File, error) to func(context.Context, string, int64, int64) (*File, error)
+api: ./internal/server/files.FileProcessor.RecordInvalidFile: removed
+api: ./internal/server/files.FileProcessor.SubmitFileForWrite: removed
+api: ./internal/server/files.NewDiscoveryDirEntMapFunc: removed
+api: ./internal/server/files.NewFileProcessor: changed from func(*github.com/lbe/sfpg-go/internal/dbconnpool.DbSQLConnPool, *github.com/lbe/sfpg-go/internal/dbconnpool.DbSQLConnPool, ImporterFactory, string, UnifiedBatcher) FileProcessor to func(string) FileProcessor
+api: ./internal/server/files.NewPoolFuncWithProcessor: removed
+api: ./internal/server/files.ProcessingStats: removed
+api: ./internal/server/files.UnifiedBatcher: removed
+api: ./internal/server/files.WalkDeps: removed
+api: ./internal/server/files.WalkImageDir: removed
+api: ./internal/workerpool.(*Pool).MonitorPool: changed from func(context.Context, *golang.org/x/sync/errgroup.Group, PoolFunc, github.com/lbe/sfpg-go/internal/dbconnpool.ConnectionPool, github.com/lbe/sfpg-go/internal/dbconnpool.ConnectionPool, func() int) error to func(context.Context, *golang.org/x/sync/errgroup.Group, PoolFunc, func() int) error
+api: ./internal/workerpool.(*Pool).StartWorkerPool: changed from func(PoolFunc, github.com/lbe/sfpg-go/internal/dbconnpool.ConnectionPool, github.com/lbe/sfpg-go/internal/dbconnpool.ConnectionPool, func() int) to func(PoolFunc, func() int)
+api: ./internal/workerpool.PoolFunc: changed from func(context.Context, WorkerContext, github.com/lbe/sfpg-go/internal/dbconnpool.ConnectionPool, github.com/lbe/sfpg-go/internal/dbconnpool.ConnectionPool, func() int, int) error to func(context.Context, WorkerContext, func() int, int) error
+api: github.com/lbe/sfpg-go/internal/discovery.Config: 	BacklogDir          string
+api: github.com/lbe/sfpg-go/internal/discovery.Config: 	ImagesDir           string
+api: github.com/lbe/sfpg-go/internal/discovery.Config: 	NormalizedImagesDir string
+api: github.com/lbe/sfpg-go/internal/discovery.Config: 	RemovePrefix        func(normalizedDir, path string) (string, error)
+api: github.com/lbe/sfpg-go/internal/discovery.Config: type Config struct {
+api: github.com/lbe/sfpg-go/internal/discovery.Config: }
+api: github.com/lbe/sfpg-go/internal/discovery.Deps: 	Catalog   parallelwalkdir.GetDirEntMapFunc
+api: github.com/lbe/sfpg-go/internal/discovery.Deps: 	OnFileInserted func(size int64)
+api: github.com/lbe/sfpg-go/internal/discovery.Deps: 	OnRunning      func(delta int)
+api: github.com/lbe/sfpg-go/internal/discovery.Deps: 	Pool      *workerpool.Pool
+api: github.com/lbe/sfpg-go/internal/discovery.Deps: 	Processor files.FileProcessor
+api: github.com/lbe/sfpg-go/internal/discovery.Deps: 	State     *modulestate.Service
+api: github.com/lbe/sfpg-go/internal/discovery.Deps: 	Stats     *Stats
+api: github.com/lbe/sfpg-go/internal/discovery.Deps: 	Writer    Writer
+api: github.com/lbe/sfpg-go/internal/discovery.Deps: type Deps struct {
+api: github.com/lbe/sfpg-go/internal/discovery.Deps: }
+api: github.com/lbe/sfpg-go/internal/discovery.PathWork: 	MtimeUnix int64
+api: github.com/lbe/sfpg-go/internal/discovery.PathWork: 	Path      []byte
+api: github.com/lbe/sfpg-go/internal/discovery.PathWork: 	SizeBytes int64
+api: github.com/lbe/sfpg-go/internal/discovery.PathWork: func (w *PathWork) GobDecode(data []byte) error
+api: github.com/lbe/sfpg-go/internal/discovery.PathWork: func (w PathWork) GobEncode() ([]byte, error)
+api: github.com/lbe/sfpg-go/internal/discovery.PathWork: type PathWork struct {
+api: github.com/lbe/sfpg-go/internal/discovery.PathWork: }
+api: github.com/lbe/sfpg-go/internal/discovery.Service: func (s *Service) Close() error
+api: github.com/lbe/sfpg-go/internal/discovery.Service: func (s *Service) Hydrate(ctx context.Context)
+api: github.com/lbe/sfpg-go/internal/discovery.Service: func (s *Service) Run(ctx context.Context) error
+api: github.com/lbe/sfpg-go/internal/discovery.Service: func (s *Service) Wait()
+api: github.com/lbe/sfpg-go/internal/discovery.Service: func New(cfg Config, deps Deps) (*Service, error)
+api: github.com/lbe/sfpg-go/internal/discovery.Service: type Service struct {
+api: github.com/lbe/sfpg-go/internal/discovery.Service: }
+api: github.com/lbe/sfpg-go/internal/discovery.Stats: 	AlreadyExisting atomic.Uint64
+api: github.com/lbe/sfpg-go/internal/discovery.Stats: 	InFlight        atomic.Int64
+api: github.com/lbe/sfpg-go/internal/discovery.Stats: 	NewlyInserted   atomic.Uint64
+api: github.com/lbe/sfpg-go/internal/discovery.Stats: 	SkippedInvalid  atomic.Uint64
+api: github.com/lbe/sfpg-go/internal/discovery.Stats: 	TotalFound      atomic.Uint64
+api: github.com/lbe/sfpg-go/internal/discovery.Stats: func (s *Stats) GetStats() metrics.FileProcessingMetrics
+api: github.com/lbe/sfpg-go/internal/discovery.Stats: type Stats struct {
+api: github.com/lbe/sfpg-go/internal/discovery.Stats: }
+api: github.com/lbe/sfpg-go/internal/discovery.Writer: 	PendingCount() int64
+api: github.com/lbe/sfpg-go/internal/discovery.Writer: 	RebuildFolderIndex(ctx context.Context) error
+api: github.com/lbe/sfpg-go/internal/discovery.Writer: 	SubmitFile(f *files.File) error
+api: github.com/lbe/sfpg-go/internal/discovery.Writer: 	SubmitInvalidFile(f files.InvalidFile) error
+api: github.com/lbe/sfpg-go/internal/discovery.Writer: type Writer interface {
+api: github.com/lbe/sfpg-go/internal/discovery.Writer: }
+api: package github.com/lbe/sfpg-go/internal/discovery: added
+package + github.com/lbe/sfpg-go/internal/discovery discovery
+api: ./internal/server.(*SubsystemManager).Start: changed from func(context.Context, *github.com/lbe/sfpg-go/internal/server/config.Config, int, int, string, string, func(string, string) (string, error), func() net/http.Handler, func(*github.com/lbe/sfpg-go/internal/dbconnpool.CpConn) github.com/lbe/sfpg-go/internal/server/interfaces.HandlerQueries, func() string) to func(context.Context, *github.com/lbe/sfpg-go/internal/server/config.Config, int, int, string, string, func(string, string) (string, error), func() net/http.Handler, func(*github.com/lbe/sfpg-go/internal/dbconnpool.CpConn) github.com/lbe/sfpg-go/internal/server/interfaces.HandlerQueries, func() string, func(delta int), func(size int64))
+api: ./internal/server.(*SubsystemManager).StartPool: changed from func(context.Context, chan struct{}, string, func(string, string) (string, error), github.com/lbe/sfpg-go/internal/server/files.FileProcessor, func(int64)) to func(chan struct{})
+api: ./internal/server/files.File.Exists: removed
+api: ./internal/server/files.InvalidReason: func InvalidReason(err error) string
+api: ./internal/server/interfaces.ServerControl.ResetStats: removed
+api: github.com/lbe/sfpg-go/internal/discovery.Service: func (s *Service) Idle() bool
+api: github.com/lbe/sfpg-go/internal/discovery.Service: func (s *Service) QueueLen() int
+api: github.com/lbe/sfpg-go/internal/discovery.Service: func (s *Service) Start()
+
+# server-wiring component (docs/v3-design/server-wiring.md), approved by the user on 2026-11-19.
+api: ./internal/server.(*App).StartPool: removed
+api: ./internal/server.AppTestSeams.OnStartupDiscoveryRebuildFailedShutdown: removed
+api: ./internal/server.AppTestSeams.TriggerDiscovery: removed

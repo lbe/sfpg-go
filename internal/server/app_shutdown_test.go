@@ -3,35 +3,27 @@ package server
 import (
 	"log/slog"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 )
 
-// Regression for thermos R-002: pools must stay open until discoveryRunning clears.
-func TestApp_Shutdown_KeepsPoolsOpenUntilDiscoveryFinishes(t *testing.T) {
+// Regression for thermos R-002: Shutdown must wait for an in-flight discovery
+// run before the database pools close.
+func TestApp_Shutdown_WaitsForDiscoveryBeforeClosingPools(t *testing.T) {
 	app := CreateApp(t)
 
-	app.discoveryRunning.Store(true)
+	done := startBlockedDiscovery(t, app)
 
-	poolsOpenBeforeClose := atomic.Bool{}
+	discoveryIdleBeforeClose := false
 	app.InfrastructureService.testSeams.BeforeCloseDatabasePools = func() {
-		if app.dbRwPool == nil {
-			t.Error("dbRwPool nil before closeDatabasePools")
-			return
-		}
-		poolsOpenBeforeClose.Store(true)
+		discoveryIdleBeforeClose = app.SubsystemManager.discovery.Idle()
 	}
 
-	go func() {
-		time.Sleep(50 * time.Millisecond)
-		app.discoveryRunning.Store(false)
-	}()
-
 	app.Shutdown()
+	<-done
 
-	if !poolsOpenBeforeClose.Load() {
-		t.Fatal("shutdown did not observe open pools before closeDatabasePools")
+	if !discoveryIdleBeforeClose {
+		t.Fatal("discovery was still running when database pools closed")
 	}
 }
 

@@ -12,8 +12,6 @@ import (
 	"time"
 
 	"golang.org/x/sync/errgroup"
-
-	"github.com/lbe/sfpg-go/internal/dbconnpool"
 )
 
 var (
@@ -86,21 +84,25 @@ func (p *Pool) AddSuccessful() {
 	p.Stats.SuccessfulTasks.Add(1)
 }
 
-// getMinMaxPoolWorkers determines the default minimum and maximum number of
-// workers based on the number of available CPU cores. Only a max of 0 is
-// auto-calculated; a min of 0 is honored as "no idle workers".
-func (p *Pool) getMinMaxPoolWorkers(minPoolWorkers, maxPoolWorkers int) (int, int) {
-	numCPU := runtimeNumCPU()
+// DefaultMaxWorkers returns the worker count used when none is configured:
+// two fewer than the CPUs above four, 2 for three or four CPUs, and 1 otherwise.
+func DefaultMaxWorkers() int {
+	switch numCPU := runtimeNumCPU(); {
+	case numCPU > 4:
+		return numCPU - 2
+	case numCPU > 2:
+		return 2
+	default:
+		return 1
+	}
+}
 
+// getMinMaxPoolWorkers determines the default minimum and maximum number of
+// workers. Only a max of 0 is auto-calculated; a min of 0 is honored as "no
+// idle workers".
+func (p *Pool) getMinMaxPoolWorkers(minPoolWorkers, maxPoolWorkers int) (int, int) {
 	if maxPoolWorkers == 0 {
-		switch {
-		case numCPU > 4:
-			maxPoolWorkers = numCPU - 2
-		case numCPU > 2 && numCPU <= 4:
-			maxPoolWorkers = 2
-		default:
-			maxPoolWorkers = 1
-		}
+		maxPoolWorkers = DefaultMaxWorkers()
 	}
 
 	return minPoolWorkers, maxPoolWorkers
@@ -116,10 +118,7 @@ func shouldScaleUp(queueLength, runningWorkers, maxWorkers int) bool {
 // MonitorPool dynamically adjusts the number of workers based on the queue length
 // and pool state. It runs in a separate goroutine and periodically checks
 // whether to scale up the number of workers.
-func (p *Pool) MonitorPool(ctx context.Context, eg *errgroup.Group,
-	poolFunc PoolFunc,
-	dbRoPool, dbRwPool dbconnpool.ConnectionPool, queueLenFunc func() int,
-) error {
+func (p *Pool) MonitorPool(ctx context.Context, eg *errgroup.Group, poolFunc PoolFunc, queueLenFunc func() int) error {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -134,7 +133,7 @@ func (p *Pool) MonitorPool(ctx context.Context, eg *errgroup.Group,
 			}
 			eg.Go(func() error {
 				defer p.Stats.RunningWorkers.Add(-1)
-				return poolFunc(ctx, p, dbRoPool, dbRwPool, queueLenFunc, runningWorkers+1)
+				return poolFunc(ctx, p, queueLenFunc, runningWorkers+1)
 			})
 			p.Stats.RunningWorkers.Add(1)
 		}
@@ -158,25 +157,21 @@ func (p *Pool) ShouldIStop(queueLength int) bool {
 
 // StartWorkerPool initializes and starts the worker pool. It launches the initial
 // set of workers and the pool monitor goroutine.
-func (p *Pool) StartWorkerPool(
-	poolFunc PoolFunc,
-	dbRoPool, dbRwPool dbconnpool.ConnectionPool,
-	queueLenFunc func() int,
-) {
+func (p *Pool) StartWorkerPool(poolFunc PoolFunc, queueLenFunc func() int) {
 	eg, ctx := errgroup.WithContext(p.ctx)
 	p.G = eg
 
 	for i := range p.MinWorkers {
 		p.G.Go(func() error {
 			defer p.Stats.RunningWorkers.Add(-1)
-			return poolFunc(ctx, p, dbRoPool, dbRwPool, queueLenFunc, i)
+			return poolFunc(ctx, p, queueLenFunc, i)
 		})
 		p.Stats.RunningWorkers.Add(1)
 		time.Sleep(time.Duration(rand.Intn(100)+50) * time.Millisecond) // Stagger worker starts slightly
 	}
 
 	p.G.Go(func() error {
-		return p.MonitorPool(ctx, eg, poolFunc, dbRoPool, dbRwPool, queueLenFunc)
+		return p.MonitorPool(ctx, eg, poolFunc, queueLenFunc)
 	})
 
 	err := p.G.Wait()

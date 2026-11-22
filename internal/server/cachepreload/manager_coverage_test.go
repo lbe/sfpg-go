@@ -383,3 +383,42 @@ func TestScheduleFolderPreload_AddTaskError(t *testing.T) {
 	// Should not panic when AddTask returns an error.
 	pm.ScheduleFolderPreload(context.Background(), 1, "session-1")
 }
+
+// TestScheduleFolderPreload_EmptySessionSkipsTracker verifies anonymous requests
+// (empty sessionID) still schedule preload work without recording session state.
+func TestScheduleFolderPreload_EmptySessionSkipsTracker(t *testing.T) {
+	pm := NewPreloadManager([]string{"/gallery/"}, true)
+	defer pm.Shutdown()
+	requireScheduler(t, pm)
+
+	addCalls := 0
+	pm.testSeams.SchedulerAddTask = func(_ *scheduler.Scheduler, _ scheduler.Task, _ scheduler.ExecutionMode, _ time.Time) (string, error) {
+		addCalls++
+		return "anon-task-id", nil
+	}
+
+	st := &SessionTracker{}
+	pm.Configure(PreloadConfig{
+		TaskTracker:    &TaskTracker{},
+		SessionTracker: st,
+		DBRoPool:       &dbconnpool.DbSQLConnPool{},
+		GetQueries:     func(*dbconnpool.CpConn) interfaces.HandlerQueries { return nil },
+		GetHandler:     func() http.Handler { return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}) },
+		GetETagVersion: func() string { return "v1" },
+	})
+
+	pm.ScheduleFolderPreload(context.Background(), 1, "")
+	pm.ScheduleFolderPreload(context.Background(), 2, "")
+
+	if addCalls != 2 {
+		t.Errorf("expected 2 scheduled tasks for anonymous requests, got %d", addCalls)
+	}
+	entries := 0
+	st.sessions.Range(func(_, _ any) bool {
+		entries++
+		return true
+	})
+	if entries != 0 {
+		t.Errorf("expected no session tracker entries for empty sessionID, got %d", entries)
+	}
+}

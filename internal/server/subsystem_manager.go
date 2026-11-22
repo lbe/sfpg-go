@@ -5,21 +5,23 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"os"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/lbe/sfpg-go/internal/dbconnpool"
-	"github.com/lbe/sfpg-go/internal/queue"
+	"github.com/lbe/sfpg-go/internal/discovery"
+	"github.com/lbe/sfpg-go/internal/memlimit"
+	"github.com/lbe/sfpg-go/internal/metadata"
 	"github.com/lbe/sfpg-go/internal/scheduler"
 	"github.com/lbe/sfpg-go/internal/server/cachebatch"
 	"github.com/lbe/sfpg-go/internal/server/cachepreload"
 	"github.com/lbe/sfpg-go/internal/server/config"
+	"github.com/lbe/sfpg-go/internal/server/database"
 	"github.com/lbe/sfpg-go/internal/server/files"
 	"github.com/lbe/sfpg-go/internal/server/interfaces"
 	"github.com/lbe/sfpg-go/internal/server/metrics"
 	"github.com/lbe/sfpg-go/internal/server/modulestate"
+	"github.com/lbe/sfpg-go/internal/thumbnail"
 	"github.com/lbe/sfpg-go/internal/workerpool"
 )
 
@@ -37,16 +39,13 @@ type preloadManager interface {
 // SubsystemManager owns background processing subsystems.
 type SubsystemManager struct {
 	pool               *workerpool.Pool
-	q                  queue.Queuer[files.DiscoveryPathWork]
-	qSendersActive     atomic.Int64
+	discovery          *discovery.Service
 	fileProcessor      files.FileProcessor
-	processingStats    *files.ProcessingStats
+	stats              *discovery.Stats
 	scheduler          *scheduler.Scheduler
 	preloadManager     preloadManager
 	batchLoadManager   *cachebatch.Manager
 	moduleStateService *modulestate.Service
-
-	unifiedBatcher files.UnifiedBatcher
 
 	infra *InfrastructureService
 }
@@ -72,46 +71,40 @@ func (m *SubsystemManager) Start(
 	getRouter func() http.Handler,
 	getHandlerQueries func(*dbconnpool.CpConn) interfaces.HandlerQueries,
 	getETagVersion func() string,
+	onRunning func(delta int),
+	onFileInserted func(size int64),
 ) {
+	// Worker pool size: App.Run parameters are the base defaults; config
+	// overrides only when explicitly positive (> 0). Min idle 0 means no idle
+	// workers; max 0 sizes from CPU cores. The memory limit may then cut the
+	// workers to 1.
+	maxWorkers := maxPoolWorkers
+	minIdle := minPoolWorkers
+	if cfg != nil {
+		if cfg.WorkerPoolMax > 0 {
+			maxWorkers = cfg.WorkerPoolMax
+		}
+		if cfg.WorkerPoolMinIdle > 0 {
+			minIdle = cfg.WorkerPoolMinIdle
+		}
+	}
+	if maxWorkers == 0 {
+		maxWorkers = workerpool.DefaultMaxWorkers()
+	}
+	limit := memlimit.Apply(memlimit.Need{
+		Workers:         maxWorkers,
+		ExifToolServers: metadata.PoolSize(),
+		RetainedBytes:   thumbnail.RetainedBytes,
+	})
+	maxWorkers = limit.Workers
+	minIdle = min(minIdle, maxWorkers)
+
 	// Module state service
 	m.moduleStateService = modulestate.NewService(m.infra.DBRwPool())
 
-	// Discovery backlog queue: a dedicated disk-backed dque, wiped on every
-	// start (a full re-walk is the recovery); the backlog is not bounded in-memory.
-	//
-	// Start is once-per-process for the discovery dque: if a queue is already
-	// open, close it before wiping its directory so the flock is released.
-	if m.q != nil {
-		m.q.Close()
-		m.q = nil
-	}
-	discoveryDQueDir := strings.TrimSpace(m.infra.discoveryDQueDirPath)
-	if discoveryDQueDir == "" {
-		slog.Error("discovery dque: discoveryDQueDirPath is empty or whitespace-only; cannot open discovery backlog")
-		panic("main")
-	}
-	if err := os.RemoveAll(discoveryDQueDir); err != nil {
-		slog.Error("discovery dque: failed to wipe queue directory", "path", discoveryDQueDir, "err", err)
-		panic("main")
-	}
-	discoveryQ, err := newDiscoveryDQueAdapter(discoveryDQueDir)
-	if err != nil {
-		slog.Error("discovery dque: failed to open discovery backlog", "path", discoveryDQueDir, "err", err)
-		panic("main")
-	}
-	m.q = discoveryQ
-
-	// Unified batcher adapter: always stored, even when a test injected a fake
-	// fileProcessor, so TriggerDiscovery can use the same adapter and the same
-	// InfrastructureService atomics the flush/OnSuccess path uses.
-	m.unifiedBatcher = newFileBatcher(m.infra.WriteBatcher(), &m.infra.folderIndex)
-
 	// File processor (tests may inject a fake via m.fileProcessor)
 	if m.fileProcessor == nil {
-		m.fileProcessor = files.NewFileProcessor(
-			m.infra.DBRoPool(), m.infra.DBRwPool(),
-			m.infra.ImporterFactory, imagesDir, m.unifiedBatcher,
-		)
+		m.fileProcessor = files.NewFileProcessor(imagesDir)
 	}
 
 	// Cache preload manager (tests may inject a fake via m.preloadManager)
@@ -120,11 +113,7 @@ func (m *SubsystemManager) Start(
 		if cfg != nil {
 			enablePreload = cfg.EnableCachePreload
 		}
-		routes := []string{"/gallery/", "/lightbox/", "/info/folder/", "/info/image/"}
-		if m.infra.CacheMW() != nil {
-			routes = m.infra.CacheMW().Config().CacheableRoutes
-		}
-		pm := cachepreload.NewPreloadManager(routes, enablePreload)
+		pm := cachepreload.NewPreloadManager(m.infra.preloadRoutes(), enablePreload)
 		pm.Configure(cachepreload.PreloadConfig{
 			TaskTracker:    &cachepreload.TaskTracker{},
 			SessionTracker: &cachepreload.SessionTracker{},
@@ -144,56 +133,72 @@ func (m *SubsystemManager) Start(
 		}
 	})
 
-	// Worker pool: App.Run parameters are the base defaults; config overrides
-	// only when explicitly positive (> 0). Min idle 0 means no idle workers;
-	// max 0 still auto-sizes from CPU cores.
-	maxWorkers := maxPoolWorkers
-	minIdle := minPoolWorkers
-	if cfg != nil {
-		if cfg.WorkerPoolMax > 0 {
-			maxWorkers = cfg.WorkerPoolMax
-		}
-		if cfg.WorkerPoolMinIdle > 0 {
-			minIdle = cfg.WorkerPoolMinIdle
-		}
-	}
 	maxIdleTime := 10 * time.Second
 	if cfg != nil {
 		maxIdleTime = cfg.WorkerPoolMaxIdleTime
 	}
 	m.pool = workerpool.NewPool(ctx, maxWorkers, minIdle, maxIdleTime)
 
-	m.processingStats = &files.ProcessingStats{}
+	// Discovery. Start runs once per process; a second call replaces the
+	// Service, so the first one's backlog is closed to release its lock.
+	if m.discovery != nil {
+		if err := m.discovery.Close(); err != nil {
+			slog.Error("close discovery backlog", "err", err)
+		}
+	}
+	backlogDir := strings.TrimSpace(m.infra.discoveryDQueDirPath)
+	if backlogDir == "" {
+		slog.Error("discovery dque: discoveryDQueDirPath is empty or whitespace-only; cannot open discovery backlog")
+		panic("main")
+	}
+	m.stats = &discovery.Stats{}
+	svc, err := discovery.New(discovery.Config{
+		ImagesDir:           imagesDir,
+		NormalizedImagesDir: normalizedImagesDir,
+		BacklogDir:          backlogDir,
+		RemovePrefix:        removeImagesDirPrefixFn,
+	}, discovery.Deps{
+		Processor:      m.fileProcessor,
+		Writer:         m.infra.writer,
+		Catalog:        database.NewDiscoveryDirEntMapFunc(m.infra.DBRoPool(), normalizedImagesDir, removeImagesDirPrefixFn),
+		State:          m.moduleStateService,
+		Pool:           m.pool,
+		Stats:          m.stats,
+		OnRunning:      onRunning,
+		OnFileInserted: onFileInserted,
+	})
+	if err != nil {
+		slog.Error("discovery: failed to open backlog", "path", backlogDir, "err", err)
+		panic("main")
+	}
+	m.discovery = svc
 }
 
-// StartPool launches the worker pool goroutine.
-func (m *SubsystemManager) StartPool(ctx context.Context, poolDone chan struct{}, normalizedImagesDir string, removeImagesDirPrefixFn func(string, string) (string, error), processor files.FileProcessor, onFileInserted func(int64)) {
-	pf := files.NewPoolFuncWithProcessor(
-		processor, m.q, normalizedImagesDir, removeImagesDirPrefixFn, m.processingStats, onFileInserted,
-	)
+// StartPool starts the discovery workers and closes poolDone when they and
+// any run have stopped.
+func (m *SubsystemManager) StartPool(poolDone chan struct{}) {
+	m.discovery.Start()
 	go func() {
 		defer close(poolDone)
-		m.pool.StartWorkerPool(pf, m.infra.DBRoPool(), m.infra.DBRwPool(), m.q.Len)
+		m.discovery.Wait()
 	}()
 }
 
-// Shutdown stops preload and file-processing subsystems and releases the
-// discovery dque flock.
-//
-// App.Shutdown orders cancel → poolDone → Shutdown, so production workers have
-// already exited before the queue is closed; Close is for flock release, not a
-// worker signal. SubsystemManager.Shutdown itself does not wait on poolDone, so
-// direct tests that call Shutdown while workers are still live may observe
-// ErrClosedQueue from workers — that is expected. Close is idempotent.
+// Shutdown stops preload, closes the discovery backlog and the file
+// processor. App.Shutdown calls it after discovery has stopped.
 func (m *SubsystemManager) Shutdown() {
 	if m.preloadManager != nil {
 		m.preloadManager.Shutdown()
 	}
 	if m.fileProcessor != nil {
-		m.fileProcessor.Close()
+		if err := m.fileProcessor.Close(); err != nil {
+			slog.Error("close file processor", "err", err)
+		}
 	}
-	if m.q != nil {
-		m.q.Close()
+	if m.discovery != nil {
+		if err := m.discovery.Close(); err != nil {
+			slog.Error("close discovery backlog", "err", err)
+		}
 	}
 }
 
@@ -226,35 +231,6 @@ func (m *SubsystemManager) StartCacheBatchLoad(ctx context.Context) (interfaces.
 	return interfaces.StartCacheBatchLoadResult{Blocked: false, Message: "Cache batch load started"}, nil
 }
 
-// ResetStats clears file-processing counters.
-func (m *SubsystemManager) ResetStats() {
-	if m.processingStats != nil {
-		m.processingStats.Reset()
-	}
-}
-
-// HydrateFileProcessingStats loads the persisted last-run file processing
-// counters into processingStats. Only the skip-startup-discovery incident path
-// calls this (runDiscovery is false): when a startup walk runs, the walk and
-// Run()'s completion monitor own the counters, and a hydrated TotalFound would
-// make the monitor treat the run as started on stale data. InFlight is never
-// hydrated — it is live state and is not persisted. Nil service or nil stats
-// makes this a no-op.
-func (m *SubsystemManager) HydrateFileProcessingStats(ctx context.Context) {
-	if m == nil || m.processingStats == nil || m.moduleStateService == nil {
-		return
-	}
-	fp, err := m.moduleStateService.LoadFileProcessing(ctx, "discovery")
-	if err != nil {
-		slog.Error("failed to hydrate file processing stats", "err", err)
-		return
-	}
-	m.processingStats.TotalFound.Store(fp.TotalFound)
-	m.processingStats.AlreadyExisting.Store(fp.AlreadyExisting)
-	m.processingStats.NewlyInserted.Store(fp.NewlyInserted)
-	m.processingStats.SkippedInvalid.Store(fp.SkippedInvalid)
-}
-
 // SetPreloadEnabled enables or disables cache preload scheduling.
 func (m *SubsystemManager) SetPreloadEnabled(enabled bool) {
 	if m.preloadManager != nil {
@@ -268,8 +244,8 @@ func (m *SubsystemManager) SetPreloadEnabled(enabled bool) {
 
 // WireMetrics connects subsystem components to the metrics collector.
 func (m *SubsystemManager) WireMetrics(collector *metrics.Collector) {
-	if m.infra.WriteBatcher() != nil {
-		collector.SetWriteBatcher(m.infra.WriteBatcher())
+	if m.infra.writer != nil {
+		collector.SetWriteBatcher(m.infra.writer)
 	}
 	if m.pool != nil {
 		collector.SetWorkerPool(m.pool)
@@ -280,7 +256,7 @@ func (m *SubsystemManager) WireMetrics(collector *metrics.Collector) {
 	if m.infra.CacheMW() != nil {
 		collector.SetHTTPCache(m.infra.CacheMW())
 	}
-	if m.processingStats != nil {
-		collector.SetFileProcessor(m.processingStats)
+	if m.stats != nil {
+		collector.SetFileProcessor(m.stats)
 	}
 }

@@ -164,12 +164,12 @@ func TestGetSessionIDForPreload_UsesCookie(t *testing.T) {
 	}
 }
 
-func TestGetSessionIDForPreload_FallsBackToRemoteAddr(t *testing.T) {
+func TestGetSessionIDForPreload_NoCookieReturnsEmpty(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.RemoteAddr = "192.0.2.1:1234"
 
-	if got := getSessionIDForPreload(req); got != "192.0.2.1:1234" {
-		t.Errorf("getSessionIDForPreload = %q, want %q", got, "192.0.2.1:1234")
+	if got := getSessionIDForPreload(req); got != "" {
+		t.Errorf("getSessionIDForPreload = %q, want empty string", got)
 	}
 }
 

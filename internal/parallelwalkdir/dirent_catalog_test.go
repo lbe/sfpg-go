@@ -12,7 +12,6 @@ import (
 	"testing"
 
 	"github.com/lbe/sfpg-go/internal/parallelwalkdir"
-	"github.com/lbe/sfpg-go/internal/server/files"
 )
 
 var catalogWalkImageInclude = regexp.MustCompile(`(?i)(?:jpe?g|gif|png)$`)
@@ -169,7 +168,7 @@ func TestParallelWalk_DirEntCatalog_unchangedSkipsReport(t *testing.T) {
 			parallelwalkdir.HashPathBytes([]byte("photo.jpg")): dirEntUnchangedState(info),
 		}, nil
 	}
-	opts := catalogOpts(getMap, files.DiscoveryDirEntModifiedWithStats(nil))
+	opts := catalogOpts(getMap, unchangedCheck)
 	results, errs := drainParallelWalk(root, opts...)
 	if len(errs) != 0 || len(results) != 0 {
 		t.Fatalf("results=%d errs=%v", len(results), errs)
@@ -193,7 +192,7 @@ func TestParallelWalk_DirEntCatalog_modifiedReports(t *testing.T) {
 			parallelwalkdir.HashPathBytes([]byte("photo.jpg")): st,
 		}, nil
 	}
-	opts := catalogOpts(getMap, files.DiscoveryDirEntModifiedWithStats(nil))
+	opts := catalogOpts(getMap, unchangedCheck)
 	results, errs := drainParallelWalk(root, opts...)
 	if len(errs) != 0 || len(results) != 1 {
 		t.Fatalf("results=%d errs=%v", len(results), errs)
@@ -216,7 +215,7 @@ func TestParallelWalk_DirEntCatalog_getMapError(t *testing.T) {
 	getMap := func(_ context.Context, _ []byte) (map[parallelwalkdir.PathHash]parallelwalkdir.DirEntState, error) {
 		return nil, errors.New("boom")
 	}
-	opts := catalogOpts(getMap, files.DiscoveryDirEntModifiedWithStats(nil))
+	opts := catalogOpts(getMap, unchangedCheck)
 	results, errs := drainParallelWalk(root, opts...)
 	if len(results) != 0 || len(errs) < 1 {
 		t.Fatalf("results=%d errs=%v", len(results), errs)
@@ -256,7 +255,7 @@ func TestParallelWalk_DirEntCatalog_readDirFailOnFilePath(t *testing.T) {
 			parallelwalkdir.HashPathBytes([]byte("solo.jpg")): dirEntUnchangedState(info),
 		}, nil
 	}
-	opts := catalogOpts(getMap, files.DiscoveryDirEntModifiedWithStats(nil))
+	opts := catalogOpts(getMap, unchangedCheck)
 	results, errs := drainParallelWalk(solo, opts...)
 	if len(errs) != 0 || len(results) != 0 {
 		t.Fatalf("results=%d errs=%v", len(results), errs)
@@ -285,7 +284,7 @@ func TestParallelWalk_DirEntCatalog_symlinkToFileUsesBasenameKey(t *testing.T) {
 			parallelwalkdir.HashPathBytes([]byte("link.jpg")): dirEntUnchangedState(info),
 		}, nil
 	}
-	opts := catalogOpts(getMap, files.DiscoveryDirEntModifiedWithStats(nil))
+	opts := catalogOpts(getMap, unchangedCheck)
 	results, errs := drainParallelWalk(root, opts...)
 	if len(errs) != 0 || len(results) != 0 {
 		t.Fatalf("results=%d errs=%v", len(results), errs)
@@ -315,7 +314,7 @@ func TestParallelWalk_DirEntCatalog_noSendReportedAllocs(t *testing.T) {
 		parallelwalkdir.WithBasenameInclude(catalogWalkImageInclude),
 		parallelwalkdir.WithSizeNotZero(),
 		parallelwalkdir.WithWalkPathStore(parallelwalkdir.NewWalkPathStore()),
-		parallelwalkdir.WithDirEntCatalog(getMap, files.DiscoveryDirEntModifiedWithStats(nil)),
+		parallelwalkdir.WithDirEntCatalog(getMap, unchangedCheck),
 	}
 	baseline := testing.AllocsPerRun(5, func() { drainParallelWalk(emptyRoot, opts...) })
 	catalog := testing.AllocsPerRun(5, func() { drainParallelWalk(treeRoot, opts...) })
@@ -334,4 +333,11 @@ func TestNewWalker_DirEntCatalog_panicsWithoutSizeNotZero(t *testing.T) {
 		parallelwalkdir.WithBasenameInclude(catalogWalkImageInclude),
 		parallelwalkdir.WithDirEntCatalog(noopGetMap, noopCheck),
 	)
+}
+
+// unchangedCheck reports a file unless the catalog has it with the same mtime
+// and size, as discovery does for valid files.
+func unchangedCheck(_ []byte, info fs.FileInfo, st parallelwalkdir.DirEntState, inMap bool) (bool, error) {
+	unchanged := inMap && st.FileIDValid && st.FileMtime == info.ModTime().Unix() && st.FileSize == info.Size()
+	return !unchanged, nil
 }

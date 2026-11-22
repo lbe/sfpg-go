@@ -369,3 +369,22 @@ func TestRuntimeManager_Serve_SkipsListenWhenRestartRequested(t *testing.T) {
 		t.Fatal("timed out waiting for Serve to skip listen and return")
 	}
 }
+
+// TestRuntimeManager_TriggerRestart_RefusedAfterStop verifies that a restart
+// requested before stop is recorded, and one requested after stop is not.
+func TestRuntimeManager_TriggerRestart_RefusedAfterStop(t *testing.T) {
+	t.Parallel()
+
+	running := NewRuntimeManager(context.Background())
+	running.TriggerRestart()
+	if !running.IsRestartRequested() {
+		t.Error("TriggerRestart before stop must request a restart")
+	}
+
+	stopped := NewRuntimeManager(context.Background())
+	stopped.stop()
+	stopped.TriggerRestart()
+	if stopped.IsRestartRequested() {
+		t.Error("TriggerRestart after stop must not request a restart")
+	}
+}

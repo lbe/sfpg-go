@@ -1,0 +1,129 @@
+version: "2"
+run:
+  # Paths relative to the directory lint runs in, so scripts/v3-check.sh can
+  # compare findings from the dev checkout with the working tree.
+  relative-path-mode: wd
+linters:
+  default: none
+  # Base set, kept in step with .golangci.yml.
+  enable:
+    - bodyclose
+    - errcheck
+    - errorlint
+    - gocritic
+    - govet
+    - ineffassign
+    - nilerr
+    - staticcheck
+    - testifylint
+    - unused
+    # refactorv3 additions (docs/v3-review-rules.md).
+    - containedctx
+    - depguard
+    - forcetypeassert
+    - gochecknoglobals
+    - gocognit
+    - interfacebloat
+    - ireturn
+    - nestif
+    - unparam
+  settings:
+    ireturn:
+      # The defaults plus generic: returning a type parameter is a concrete type
+      # at each call site.
+      allow: [anon, error, empty, stdlib, generic]
+    depguard:
+      rules:
+        # R16: database types stay in the database packages.
+        image-stack:
+          files:
+            - "**/internal/discovery/**"
+            - "**/internal/memlimit/**"
+            - "**/internal/metadata/**"
+            - "**/internal/parallelwalkdir/**"
+            - "**/internal/thumbnail/**"
+            - "!$test"
+          deny:
+            - pkg: database/sql
+              desc: database types stay in the database packages (R16)
+            - pkg: github.com/lbe/sfpg-go/internal/gallerydb
+              desc: database types stay in the database packages (R16)
+            - pkg: github.com/lbe/sfpg-go/internal/dbconnpool
+              desc: database types stay in the database packages (R16)
+    errcheck:
+      check-blank: true
+      exclude-functions:
+        # Common low-risk writes / closes
+        - (*os.File).Close
+        - (io.Closer).Close
+        - (*net/http.Response).Body.Close
+        - (*bytes.Buffer).Write
+        - (*strings.Builder).WriteString
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - fmt.Fprint
+        # net/http ResponseWriter.Write: best-effort in handlers, never fails in test recorders
+        - (net/http.ResponseWriter).Write
+        # Test helpers that often intentionally ignore errors
+        - (*testing.T).Fatalf
+        - (*testing.T).Errorf
+    govet:
+      disable:
+        - fieldalignment
+      enable-all: true
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - linters:
+          - bodyclose
+        path: .*_test.go
+      - linters:
+          - errcheck
+        path: .*_test.go
+      - linters:
+          - bodyclose
+        path: router/timeout_response.go
+      # False positives on CGO generated code
+      - linters:
+          - staticcheck
+        path: vips/.*
+        text: "SA4000:"
+      # False positives on CGO generated code
+      - linters:
+          - gocritic
+        path: vips/.*
+        text: dupSubExpr
+      # False positives on CGO generated code
+      - linters:
+          - staticcheck
+        text: "ST1005:"
+    paths:
+      - .tmp
+      - vendor
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  enable:
+    - goimports
+  exclusions:
+    generated: lax
+    paths:
+      - .tmp
+      - tmp
+      - vendor
+      - third_party$
+      - builtin$
+      - examples$
+issues:
+  # Print every finding: no per-linter, per-message or per-line limits.
+  # scripts/v3-check.sh compares the findings with dev's, so code refactorv3
+  # does not touch is not held to the new rules.
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  uniq-by-line: false

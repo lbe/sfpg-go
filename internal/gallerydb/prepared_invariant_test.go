@@ -36,9 +36,6 @@ func TestPreparedStatementsRoutingInvariant(t *testing.T) {
 	if unprepared.queryFilesForFolderIndexRebuildStmt != nil {
 		t.Error("NewCustomQueries should leave custom statements nil; queryFilesForFolderIndexRebuildStmt is non-nil")
 	}
-	if unprepared.countFilesForFolderIndexRebuildStmt != nil {
-		t.Error("NewCustomQueries should leave custom statements nil; countFilesForFolderIndexRebuildStmt is non-nil")
-	}
 	if unprepared.Queries.tx != nil {
 		t.Error("NewCustomQueries should not bind a transaction; tx is non-nil")
 	}
@@ -68,9 +65,6 @@ func TestPreparedStatementsRoutingInvariant(t *testing.T) {
 	}
 	if qtx.queryFilesForFolderIndexRebuildStmt == nil {
 		t.Error("WithTx must propagate prepared custom statements; queryFilesForFolderIndexRebuildStmt is nil")
-	}
-	if qtx.countFilesForFolderIndexRebuildStmt == nil {
-		t.Error("WithTx must propagate prepared custom statements; countFilesForFolderIndexRebuildStmt is nil")
 	}
 	if qtx.Queries.tx == nil {
 		t.Error("WithTx must bind the transaction so routing uses tx.StmtContext; tx is nil")

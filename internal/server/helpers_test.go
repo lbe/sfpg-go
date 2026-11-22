@@ -1,6 +1,8 @@
 package server
 
 import (
+	"database/sql"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,9 +12,10 @@ import (
 	"time"
 
 	"github.com/lbe/sfpg-go/internal/dbconnpool"
+	"github.com/lbe/sfpg-go/internal/discovery"
 	"github.com/lbe/sfpg-go/internal/getopt"
-	"github.com/lbe/sfpg-go/internal/queue"
 	"github.com/lbe/sfpg-go/internal/server/config"
+	"github.com/lbe/sfpg-go/internal/server/database"
 	"github.com/lbe/sfpg-go/internal/server/files"
 	"github.com/lbe/sfpg-go/internal/server/modulestate"
 	"github.com/lbe/sfpg-go/internal/workerpool"
@@ -43,7 +46,21 @@ func seedTestDBIfAbsent(rootDir string) error {
 		_ = os.Remove(thumbsPath)
 		return err
 	}
-	return nil
+	return disableRestartAfterDiscovery(dbPath)
+}
+
+// disableRestartAfterDiscovery stores restart_after_discovery = false in the
+// seeded database. The default is true, and a test app that requested a
+// restart would re-exec the test binary; tests that want the restart set it.
+func disableRestartAfterDiscovery(dbPath string) error {
+	db, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	_, err = db.Exec(`INSERT INTO config (key, value) VALUES ('restart_after_discovery', 'false')
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
+	return err
 }
 
 // Thumb is a minimal test struct used across server test files.
@@ -71,6 +88,19 @@ func setenvForTest(tb testing.TB, key, value string) {
 			os.Unsetenv(key)
 		}
 	})
+}
+
+// failOnExec makes a re-exec of the test binary fail the test. Run reads the
+// developer's config, which can enable restart_after_discovery, so a test that
+// does not expect a restart must not reach syscall.Exec. Exit is stubbed too:
+// a failed exec would otherwise end the test process.
+func failOnExec(t *testing.T, app *App) {
+	t.Helper()
+	app.RuntimeManager.testSeams.ExecCommand = func(string, []string, []string) error {
+		t.Error("unexpected process exec")
+		return errors.New("unexpected process exec")
+	}
+	app.RuntimeManager.testSeams.Exit = func(int) {}
 }
 
 // AppOption configures the application test instance created by CreateApp.
@@ -105,15 +135,13 @@ func WithGetoptOpt(opt getopt.Opt) AppOption {
 }
 
 // CreateApp sets up a fast, isolated application instance for testing.
-// It wires ConfigService (setDB), writebatcher, in-memory discovery queue,
-// fileProcessor/unifiedBatcher, session/store (ensureSession), and handlers
-// (buildHandlers). It deliberately does not call SubsystemManager.Start (no
-// disk-backed discovery dque, preload manager, moduleStateService, or
-// processingStats) so most tests stay lightweight.
+// It wires ConfigService (setDB), writebatcher, the discovery Service,
+// session/store (ensureSession), and handlers (buildHandlers). It deliberately
+// does not call SubsystemManager.Start (no preload manager or pool
+// reconfiguration) so most tests stay lightweight.
 //
-// Tests that need discovery drain/persist/hydrate should call
-// wireDiscoveryTestDeps. Tests that need full production subsystem wiring
-// should use startTestManager (subsystem_manager_integration_test.go).
+// Tests that need full production subsystem wiring should use
+// startTestManager (subsystem_manager_integration_test.go).
 //
 // Options:
 //   - WithPool() — start the background worker pool
@@ -243,24 +271,13 @@ func CreateApp(t testing.TB, opts ...AppOption) *App {
 	}
 	app.normalizedImagesDir = filepath.ToSlash(app.imagesDir)
 
-	app.SubsystemManager.q = queue.NewQueue[files.DiscoveryPathWork](10_000)
-
-	// Initialize FileProcessor for tests with the SAME adapter and the SAME
-	// InfrastructureService atomics used by SubsystemManager.Start, so the
-	// OnSuccess inflight decrement and a rebuild wait target the live counters.
-	fb := newFileBatcher(app.writeBatcher, &app.folderIndex)
-	app.SubsystemManager.unifiedBatcher = fb
-	app.SubsystemManager.fileProcessor = files.NewFileProcessor(app.dbRoPool, app.dbRwPool, app.ImporterFactory, app.imagesDir, fb)
+	wireDiscovery(app)
 
 	if cfg.startPool {
 		app.SubsystemManager.pool.MinWorkers = 1
 		app.SubsystemManager.pool.MaxWorkers = 1
 		app.RuntimeManager.poolDone = make(chan struct{})
-		pf := files.NewPoolFuncWithProcessor(app.SubsystemManager.fileProcessor, app.SubsystemManager.q, app.normalizedImagesDir, removeImagesDirPrefix, nil, nil)
-		go func() {
-			defer close(app.RuntimeManager.poolDone)
-			app.SubsystemManager.pool.StartWorkerPool(pf, app.dbRoPool, app.dbRwPool, app.SubsystemManager.q.Len)
-		}()
+		app.SubsystemManager.StartPool(app.RuntimeManager.poolDone)
 	}
 
 	// Session: ensureSession creates store and sessionManager.
@@ -276,28 +293,31 @@ func CreateApp(t testing.TB, opts ...AppOption) *App {
 	return app
 }
 
-// ensureProcessingStats allocates processingStats when nil. Idempotent.
-func ensureProcessingStats(sm *SubsystemManager) {
-	if sm.processingStats == nil {
-		sm.processingStats = &files.ProcessingStats{}
+// wireDiscovery builds the discovery Service the way SubsystemManager.Start
+// does, without the preload manager and pool reconfiguration. Discovery runs
+// need a pool, so it reads app.SubsystemManager.pool. CreateApp calls it once.
+func wireDiscovery(app *App) {
+	sm := app.SubsystemManager
+	sm.fileProcessor = files.NewFileProcessor(app.imagesDir)
+	sm.moduleStateService = modulestate.NewService(app.dbRwPool)
+	sm.stats = &discovery.Stats{}
+	svc, err := discovery.New(discovery.Config{
+		ImagesDir:           app.imagesDir,
+		NormalizedImagesDir: app.normalizedImagesDir,
+		BacklogDir:          app.discoveryDQueDirPath,
+		RemovePrefix:        removeImagesDirPrefix,
+	}, discovery.Deps{
+		Processor: sm.fileProcessor,
+		Writer:    app.writer,
+		Catalog:   database.NewDiscoveryDirEntMapFunc(app.dbRoPool, app.normalizedImagesDir, removeImagesDirPrefix),
+		State:     sm.moduleStateService,
+		Pool:      sm.pool,
+		Stats:     sm.stats,
+	})
+	if err != nil {
+		panic(err)
 	}
-}
-
-// ensureModuleStateService allocates moduleStateService when nil. Idempotent.
-func ensureModuleStateService(sm *SubsystemManager, dbRwPool *dbconnpool.DbSQLConnPool) {
-	if sm.moduleStateService == nil {
-		sm.moduleStateService = modulestate.NewService(dbRwPool)
-	}
-}
-
-// wireDiscoveryTestDeps allocates processingStats and moduleStateService the way
-// SubsystemManager.Start does, without the heavier Start path (dque wipe/open,
-// preload manager, pool reconfiguration). Use after CreateApp when a test
-// exercises waitForFileProcessingDrain, persist/hydrate, or TriggerDiscovery
-// with real counters.
-func wireDiscoveryTestDeps(app *App) {
-	ensureProcessingStats(app.SubsystemManager)
-	ensureModuleStateService(app.SubsystemManager, app.dbRwPool)
+	sm.discovery = svc
 }
 
 // MakeAuthCookie creates an authenticated session cookie for testing.

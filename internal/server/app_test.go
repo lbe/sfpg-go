@@ -43,11 +43,6 @@ func TestNew(t *testing.T) {
 			t.Errorf("Expected sessionSecret to be %q, got %q", ss, app.SessionAuthFacade.sessionSecret)
 		}
 	})
-	t.Run("RebuildFileFolderIndex seam is nil", func(t *testing.T) {
-		if app.testSeams.RebuildFileFolderIndex != nil {
-			t.Fatal("New() must not stub RebuildFileFolderIndex; TriggerDiscovery would skip files.RebuildFileFolderIndex")
-		}
-	})
 }
 
 func TestNew_DoesNotCreatePool(t *testing.T) {
@@ -600,6 +595,8 @@ func (r *reconfigureFailConfigService) IncrementETag(ctx context.Context) (strin
 func validConfigWithImageDir(rootDir string) *config.Config {
 	cfg := config.DefaultConfig()
 	cfg.ImageDirectory = filepath.Join(rootDir, "Images")
+	// A startup run must not re-exec the test binary; tests that restart set it.
+	cfg.RestartAfterDiscovery = false
 	return cfg
 }
 
@@ -607,6 +604,7 @@ func TestApp_Run_ReconfigurePoolsFails(t *testing.T) {
 	tempDir := t.TempDir()
 	opt := getopt.Opt{SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true}}
 	app := New(opt, "x.y.z")
+	failOnExec(t, app)
 	defer app.Shutdown()
 
 	app.setRootDir(&tempDir)
@@ -636,6 +634,7 @@ func TestApp_Run_RestoreLastKnownGood_Success(t *testing.T) {
 		RestoreLastKnownGood: getopt.OptBool{Bool: true, IsSet: true},
 	}
 	app := New(opt, "x.y.z")
+	failOnExec(t, app)
 	defer app.Shutdown()
 
 	app.setRootDir(&tempDir)
@@ -676,6 +675,7 @@ func TestApp_Run_RestoreLastKnownGood_ValidateFails(t *testing.T) {
 		RestoreLastKnownGood: getopt.OptBool{Bool: true, IsSet: true},
 	}
 	app := New(opt, "x.y.z")
+	failOnExec(t, app)
 	defer app.Shutdown()
 
 	app.setRootDir(&tempDir)
@@ -705,6 +705,7 @@ func TestApp_Run_RestoreLastKnownGood_SaveFails(t *testing.T) {
 		RestoreLastKnownGood: getopt.OptBool{Bool: true, IsSet: true},
 	}
 	app := New(opt, "x.y.z")
+	failOnExec(t, app)
 	defer app.Shutdown()
 
 	app.setRootDir(&tempDir)
@@ -734,6 +735,7 @@ func TestApp_Run_ProfilerEnabled(t *testing.T) {
 		Profile:       getopt.OptString{String: "cpu", IsSet: true},
 	}
 	app := New(opt, "x.y.z")
+	failOnExec(t, app)
 	defer app.Shutdown()
 
 	app.setRootDir(&tempDir)
@@ -769,6 +771,7 @@ func TestApp_Run_ProfilerStartError(t *testing.T) {
 		Profile:       getopt.OptString{String: "cpu", IsSet: true},
 	}
 	app := New(opt, "x.y.z")
+	failOnExec(t, app)
 	defer app.Shutdown()
 
 	app.setRootDir(&tempDir)
@@ -793,6 +796,7 @@ func TestApp_Run_BuildHandlersError(t *testing.T) {
 	tempDir := t.TempDir()
 	opt := getopt.Opt{SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true}}
 	app := New(opt, "x.y.z")
+	failOnExec(t, app)
 	defer app.Shutdown()
 
 	app.setRootDir(&tempDir)
@@ -820,6 +824,7 @@ func TestApp_Run_NoDiscovery_RefreshesGalleryStats(t *testing.T) {
 		RunFileDiscovery: getopt.OptBool{Bool: false, IsSet: true},
 	}
 	app := New(opt, "x.y.z")
+	failOnExec(t, app)
 	defer app.Shutdown()
 
 	app.setRootDir(&tempDir)
@@ -888,6 +893,7 @@ func TestApp_Run_Shutdown_DoesNotLogCanceledScheduler(t *testing.T) {
 	tempDir := t.TempDir()
 	opt := getopt.Opt{SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true}}
 	app := New(opt, "x.y.z")
+	failOnExec(t, app)
 	defer app.Shutdown()
 
 	app.setRootDir(&tempDir)
@@ -1009,6 +1015,7 @@ func TestApp_Run_ServeErrorPanics(t *testing.T) {
 	tempDir := t.TempDir()
 	opt := getopt.Opt{SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true}}
 	app := New(opt, "x.y.z")
+	failOnExec(t, app)
 	defer app.Shutdown()
 
 	app.setRootDir(&tempDir)
@@ -1038,6 +1045,7 @@ func TestApp_Run_RestoreLastKnownGood_DBGetFails(t *testing.T) {
 		RestoreLastKnownGood: getopt.OptBool{Bool: true, IsSet: true},
 	}
 	app := New(opt, "x.y.z")
+	failOnExec(t, app)
 	defer app.Shutdown()
 
 	app.setRootDir(&tempDir)
@@ -1126,6 +1134,7 @@ func TestApp_Run_RestoreLastKnownGood_RestoreFails(t *testing.T) {
 		RestoreLastKnownGood: getopt.OptBool{Bool: true, IsSet: true},
 	}
 	app := New(opt, "x.y.z")
+	failOnExec(t, app)
 	defer app.Shutdown()
 
 	app.setRootDir(&tempDir)
@@ -1155,6 +1164,7 @@ func TestApp_Run_RestoreLastKnownGood_ReconfigureFails(t *testing.T) {
 		RestoreLastKnownGood: getopt.OptBool{Bool: true, IsSet: true},
 	}
 	app := New(opt, "x.y.z")
+	failOnExec(t, app)
 	defer app.Shutdown()
 
 	app.setRootDir(&tempDir)
@@ -1187,6 +1197,7 @@ func TestApp_Run_LoadConfigFails_ReconfigureDefaultsFails(t *testing.T) {
 	tempDir := t.TempDir()
 	opt := getopt.Opt{SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true}}
 	app := New(opt, "x.y.z")
+	failOnExec(t, app)
 	defer app.Shutdown()
 
 	app.setRootDir(&tempDir)

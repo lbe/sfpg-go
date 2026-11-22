@@ -542,12 +542,6 @@ func TestApp_RestartRequired(t *testing.T) {
 	}
 }
 
-func TestApp_ResetStats(t *testing.T) {
-	app := New(getopt.Opt{SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true}}, "x.y.z")
-	defer app.Shutdown()
-	app.ResetStats()
-}
-
 // --- merged from bench_test.go ---
 func BenchmarkRemoveImagesDirPrefix(b *testing.B) {
 	normalizedImagesDir := "Images"

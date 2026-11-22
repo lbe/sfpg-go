@@ -5,14 +5,14 @@ import (
 	"testing"
 
 	"github.com/lbe/sfpg-go/internal/cachelite"
-	"github.com/lbe/sfpg-go/internal/server/files"
+	"github.com/lbe/sfpg-go/internal/discovery"
 	"github.com/lbe/sfpg-go/internal/server/metrics"
 )
 
 // Compile-time assertions: the source types satisfy the metrics interfaces directly.
 var (
 	_ metrics.HTTPCacheSource     = (*cachelite.HTTPCacheMiddleware)(nil)
-	_ metrics.FileProcessorSource = (*files.ProcessingStats)(nil)
+	_ metrics.FileProcessorSource = (*discovery.Stats)(nil)
 )
 
 // TestHTTPCacheMiddleware_MetricsMethods verifies that HTTPCacheMiddleware exposes
@@ -106,65 +106,10 @@ func TestHTTPCacheMiddleware_MetricsMethods(t *testing.T) {
 	})
 }
 
-// TestProcessingStats_GetStats verifies that ProcessingStats produces the metrics
-// snapshot expected by the dashboard.
-func TestProcessingStats_GetStats(t *testing.T) {
-	t.Run("returns stats from underlying processing stats", func(t *testing.T) {
-		stats := &files.ProcessingStats{}
-		stats.TotalFound.Store(100)
-		stats.AlreadyExisting.Store(50)
-		stats.NewlyInserted.Store(30)
-		stats.SkippedInvalid.Store(10)
-		stats.InFlight.Store(5)
-
-		metrics := stats.GetStats()
-
-		if metrics.TotalFound != 100 {
-			t.Errorf("TotalFound: got %d, want 100", metrics.TotalFound)
-		}
-		if metrics.AlreadyExisting != 50 {
-			t.Errorf("AlreadyExisting: got %d, want 50", metrics.AlreadyExisting)
-		}
-		if metrics.NewlyInserted != 30 {
-			t.Errorf("NewlyInserted: got %d, want 30", metrics.NewlyInserted)
-		}
-		if metrics.SkippedInvalid != 10 {
-			t.Errorf("SkippedInvalid: got %d, want 10", metrics.SkippedInvalid)
-		}
-		if metrics.InFlight != 5 {
-			t.Errorf("InFlight: got %d, want 5", metrics.InFlight)
-		}
-	})
-
-	t.Run("returns zeros for empty stats", func(t *testing.T) {
-		stats := &files.ProcessingStats{}
-
-		metrics := stats.GetStats()
-
-		if metrics.TotalFound != 0 {
-			t.Errorf("TotalFound: got %d, want 0", metrics.TotalFound)
-		}
-		if metrics.AlreadyExisting != 0 {
-			t.Errorf("AlreadyExisting: got %d, want 0", metrics.AlreadyExisting)
-		}
-		if metrics.NewlyInserted != 0 {
-			t.Errorf("NewlyInserted: got %d, want 0", metrics.NewlyInserted)
-		}
-		if metrics.SkippedInvalid != 0 {
-			t.Errorf("SkippedInvalid: got %d, want 0", metrics.SkippedInvalid)
-		}
-		if metrics.InFlight != 0 {
-			t.Errorf("InFlight: got %d, want 0", metrics.InFlight)
-		}
-	})
-}
-
-// TestSubsystemManager_WireMetrics_UsesSourceTypes verifies that WireMetrics passes
-// the concrete source types directly instead of wrapping them in adapter structs.
 func TestSubsystemManager_WireMetrics_UsesSourceTypes(t *testing.T) {
 	app := newAppForUnlock(t)
 	m := NewSubsystemManager(app.InfrastructureService)
-	ensureProcessingStats(m)
+	m.stats = &discovery.Stats{}
 
 	collector := metrics.NewCollector()
 	m.WireMetrics(collector)

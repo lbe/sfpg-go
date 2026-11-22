@@ -37,16 +37,16 @@ SFPG (Simple Fast Photo Gallery) is a high-performance, self-hosted photo galler
 
 ### 1.1 Technology Stack
 
-| Component            | Technology                                                                            |
-| -------------------- | ------------------------------------------------------------------------------------- |
-| **Language**         | Go 1.27+                                                                              |
-| **Database**         | SQLite (with separate read/write pools)                                               |
-| **Web Framework**    | net/http (standard library)                                                           |
-| **UI**               | HTMX + Go html/template                                                               |
-| **Image Processing** | go-scaled-jpeg (JPEG decode), stdlib `image` (non-JPEG decode), `image/jpeg` (encode) |
-| **Metadata**         | imagemeta (EXIF, IPTC, XMP)                                                           |
-| **HTTP Cache**       | Custom SQLite-backed cache with async eviction                                        |
-| **Write Overflow**   | Persistent on-disk first-in, first-out (FIFO) queue (`dque`)                          |
+| Component            | Technology                                                                                                                                                      |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Language**         | Go 1.27+                                                                                                                                                        |
+| **Database**         | SQLite (with separate read/write pools)                                                                                                                         |
+| **Web Framework**    | net/http (standard library)                                                                                                                                     |
+| **UI**               | HTMX + Go html/template                                                                                                                                         |
+| **Image Processing** | go-scaled-jpeg (JPEG decode), wuffs-wasm (PNG and GIF decode), `golang.org/x/image/webp` (WebP decode), `image/jpeg` (encode), go-image-phash (perceptual hash) |
+| **Metadata**         | ExifTool through go-exiftool-wasm (EXIF, IPTC, XMP)                                                                                                             |
+| **HTTP Cache**       | Custom SQLite-backed cache with async eviction                                                                                                                  |
+| **Write Overflow**   | Persistent on-disk first-in, first-out (FIFO) queue (`dque`)                                                                                                    |
 
 ### 1.2 Architecture Principles
 
@@ -84,35 +84,39 @@ See [System Architecture](#3-system-architecture), [Web Server Layer](#6-web-ser
 
 ### 2.2 Discovery and file processing
 
-| Process                                                                           | Package           | Directory                                                                    |
-| --------------------------------------------------------------------------------- | ----------------- | ---------------------------------------------------------------------------- |
-| `SubsystemManager`, discovery disk queue adapter, `TriggerDiscovery`              | `server`          | `internal/server` (`subsystem_manager.go`, `discovery_dque.go`, `server.go`) |
-| Bounded parallel directory walk (`ReportedFile`)                                  | `parallelwalkdir` | `internal/parallelwalkdir`                                                   |
-| `WalkImageDir`, file processor, discovery work items, `file_folder_index` rebuild | `files`           | `internal/server/files`                                                      |
-| Discovery worker pool scaling and idle workers                                    | `workerpool`      | `internal/workerpool`                                                        |
-| Segment-backed on-disk FIFO (discovery backlog and write overflow)                | `dque`            | `internal/dque`                                                              |
-| In-memory deque (tests and helpers; not production discovery backlog)             | `queue`           | `internal/queue`                                                             |
-| Thumbnail generation and perceptual hash                                          | `thumbnail`       | `internal/thumbnail`                                                         |
-| EXIF metadata extraction                                                          | `imagemeta`       | `internal/imagemeta`                                                         |
-| Folder/path upserts during batched file writes                                    | `gallerylib`      | `internal/gallerylib`                                                        |
-| Background module active flags (discovery, cache batch load)                      | `modulestate`     | `internal/server/modulestate`                                                |
+| Process                                                               | Package           | Directory                                                                 |
+| --------------------------------------------------------------------- | ----------------- | ------------------------------------------------------------------------- |
+| `SubsystemManager`, `TriggerDiscovery`, startup discovery             | `server`          | `internal/server` (`subsystem_manager.go`, `server.go`, `app_startup.go`) |
+| Discovery `Service`: walk, disk backlog, workers, run counters        | `discovery`       | `internal/discovery`                                                      |
+| Bounded parallel directory walk (`ReportedFile`)                      | `parallelwalkdir` | `internal/parallelwalkdir`                                                |
+| File processing only: `FileProcessor`, `File`, `InvalidFile`          | `files`           | `internal/server/files`                                                   |
+| Discovery worker pool scaling and idle workers                        | `workerpool`      | `internal/workerpool`                                                     |
+| Segment-backed on-disk FIFO (discovery backlog and write overflow)    | `dque`            | `internal/dque`                                                           |
+| In-memory deque (tests and helpers; not production discovery backlog) | `queue`           | `internal/queue`                                                          |
+| Thumbnail generation, MD5 and perceptual hash                         | `thumbnail`       | `internal/thumbnail`                                                      |
+| EXIF, IPTC and XMP extraction with ExifTool                           | `metadata`        | `internal/metadata`                                                       |
+| Process memory limit and worker count                                 | `memlimit`        | `internal/memlimit`                                                       |
+| Folder/path upserts during batched file writes                        | `gallerylib`      | `internal/gallerylib`                                                     |
+| Background module active flags (discovery, cache batch load)          | `modulestate`     | `internal/server/modulestate`                                             |
 
 See [Background Processing](#7-background-processing).
 
 ### 2.3 Database, batching, and schema
 
-| Process                                                                | Package        | Directory                                                                                                                                                                |
-| ---------------------------------------------------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| SQLite pool create/reconfigure, bootstrap DB wiring                    | `database`     | `internal/server/database`                                                                                                                                               |
-| Connection pools (read-only / read-write leases)                       | `dbconnpool`   | `internal/dbconnpool`                                                                                                                                                    |
-| Test memory database setup (process-local seeds)                       | `testdb`       | `internal/testdb`                                                                                                                                                        |
-| Generated SQL access (sqlc)                                            | `gallerydb`    | `internal/gallerydb`                                                                                                                                                     |
-| SQL query sources (not a Go package)                                   | —              | `sqlc/queries/`                                                                                                                                                          |
-| Schema migrations                                                      | `migrations`   | `migrations/`                                                                                                                                                            |
-| Unified write batching worker and overflow                             | `writebatcher` | `internal/writebatcher`                                                                                                                                                  |
-| `BatchedWrite` union, flush transaction, folder-index protocol atomics | `server`       | `internal/server` (`batched_write.go`, `batched_write_flush.go`, `batcher_wiring.go`, `folder_index_protocol.go`, `infrastructure_batcher.go`, `infrastructure_pool.go`) |
-| Atomic table swap (`http_cache`, `file_folder_index`)                  | `tableswap`    | `internal/tableswap`                                                                                                                                                     |
-| `PRAGMA optimize` / pool maintenance helpers                           | `dbconnpool`   | `internal/dbconnpool` (`pragma.go`)                                                                                                                                      |
+| Process                                                           | Package        | Directory                                                                                             |
+| ----------------------------------------------------------------- | -------------- | ----------------------------------------------------------------------------------------------------- |
+| SQLite pool create/reconfigure, bootstrap DB wiring               | `database`     | `internal/server/database`                                                                            |
+| Connection pools (read-only / read-write leases)                  | `dbconnpool`   | `internal/dbconnpool`                                                                                 |
+| Test memory database setup (process-local seeds)                  | `testdb`       | `internal/testdb`                                                                                     |
+| Generated SQL access (sqlc)                                       | `gallerydb`    | `internal/gallerydb`                                                                                  |
+| SQL query sources (not a Go package)                              | —              | `sqlc/queries/`                                                                                       |
+| Schema migrations                                                 | `migrations`   | `migrations/`                                                                                         |
+| Generic batching worker and overflow (used by `database.Writer`)  | `writebatcher` | `internal/writebatcher`                                                                               |
+| Write path: `Writer`, batch envelope, flush, folder-index rebuild | `database`     | `internal/server/database` (`writer.go`, `batch.go`, `flush.go`, `folder_index.go`, `maintenance.go`) |
+| Per-directory catalog the discovery walk reads                    | `database`     | `internal/server/database` (`catalog.go`)                                                             |
+| Writer and pool wiring on `App`                                   | `server`       | `internal/server` (`infrastructure_pool.go`)                                                          |
+| Atomic table swap (`http_cache`, `file_folder_index`)             | `tableswap`    | `internal/tableswap`                                                                                  |
+| `PRAGMA optimize` / pool maintenance helpers                      | `dbconnpool`   | `internal/dbconnpool` (`pragma.go`)                                                                   |
 
 See [Data Layer](#5-data-layer).
 
@@ -170,13 +174,14 @@ graph TB
 
     subgraph "Application Services"
         ConfigSvc[Config Service]
-        FileProc[File Processor]
+        FileProc[File Processor<br/>metadata, thumbnail, hashes]
         SessionMgr[Session Manager]
+        MemLimit[memlimit<br/>memory limit, worker count]
     end
 
     subgraph "Background Workers"
-        FileWorkerPool[File Worker Pool]
-        CacheWorker[Unified WriteBatcher<br/>File metadata + cache writes]
+        Discovery[Discovery Service<br/>walk, backlog, workers]
+        Writer[database.Writer<br/>file, cache, and index writes]
         PreloadWorker[Cache Preload Worker]
         Scheduler[Task Scheduler]
     end
@@ -198,17 +203,19 @@ graph TB
     Middleware --> Handlers
 
     Handlers --> ConfigSvc
-    Handlers --> FileProc
     Handlers --> SessionMgr
-
-    Handlers <--> CacheWorker
-    CacheWorker --> PreloadWorker
+    Handlers -->|cache entries| Writer
+    Handlers --> PreloadWorker
     PreloadWorker --> ROConn
 
-    FileProc --> FileWorkerPool
-    FileWorkerPool --> Images
-    FileWorkerPool --> Thumbnails
-    FileWorkerPool --> RWConn
+    MemLimit --> Discovery
+    MemLimit --> FileProc
+    Discovery --> Images
+    Discovery --> FileProc
+    Discovery -->|catalog reads| ROConn
+    Discovery -->|processed files| Writer
+    Writer --> Thumbnails
+    Writer --> RWConn
 
     Handlers --> ROConn
     ROConn --> SQLite
@@ -255,58 +262,60 @@ Authentication is applied route-specifically (e.g., `/config`, `/dashboard`, `/s
 
 The application is organized into domain-driven packages under `internal/`:
 
-| Package                 | Purpose                                                                                                             | Key Exports                                                                                                                                                                                                                                                                                      |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **server**              | HTTP server, routing, orchestration                                                                                 | `App`, `getRouter`, middleware                                                                                                                                                                                                                                                                   |
-| **server** (managers)   | Orchestration structs on `App` (infra embedded; others pointer fields)                                              | `InfrastructureService`, `RuntimeManager`, `HandlerManager`, `SubsystemManager`                                                                                                                                                                                                                  |
-| **server** (test seams) | Optional test doubles (production pkg)                                                                              | `testseams.go`: `AppTestSeams`, `*TestSeams` structs                                                                                                                                                                                                                                             |
-| **server/auth**         | Authentication service                                                                                              | `AuthService`, `Authenticate`                                                                                                                                                                                                                                                                    |
-| **server/cachebatch**   | Cache batch-load coordination                                                                                       | batch loader helpers                                                                                                                                                                                                                                                                             |
-| **server/cachepreload** | Cache preload manager & tasks                                                                                       | `Manager`, preload tasks                                                                                                                                                                                                                                                                         |
-| **server/config**       | Configuration management                                                                                            | `Config`, `ConfigService`                                                                                                                                                                                                                                                                        |
-| **server/database**     | Database setup, migrations, pools                                                                                   | `Setup`, `RecreatePoolsWithConfig`                                                                                                                                                                                                                                                               |
-| **server/files**        | File processing pipeline                                                                                            | `FileProcessor`, `ProcessDiscoveryFile`, `GenerateThumbnailAndUpdateDbIfNeeded`                                                                                                                                                                                                                  |
-| **server/handlers**     | Route handlers                                                                                                      | `GalleryHandlers`, `AuthHandlers`, `MenuHandlers`, `ThemeHandlers`, `ConfigHandlers`, `DashboardHandlers`, `ServerHandlers`, `HealthHandlers`                                                                                                                                                    |
-| **server/interfaces**   | Dependency interfaces for handlers                                                                                  | `ServerDeps`, `HandlerQueries`                                                                                                                                                                                                                                                                   |
-| **server/logging**      | Request logging helpers                                                                                             | logging middleware wrappers                                                                                                                                                                                                                                                                      |
-| **server/metrics**      | Runtime metrics collection                                                                                          | `Collector`                                                                                                                                                                                                                                                                                      |
-| **server/middleware**   | HTTP middleware (auth, conditional, logging, loopback, pprof access)                                                | `AuthMiddleware`, `ConditionalMiddleware`, `LoopbackOnly`, `PprofAccess`                                                                                                                                                                                                                         |
-| **server/modulestate**  | Module active-state tracking                                                                                        | `ModuleStateService`                                                                                                                                                                                                                                                                             |
-| **server/pathutil**     | Image-directory path utilities                                                                                      | `SafeImagePath`, `RemoveImagesDirPrefix`                                                                                                                                                                                                                                                         |
-| **server/conditional**  | Pure ETag/304 helper package                                                                                        | conditional request helpers                                                                                                                                                                                                                                                                      |
-| **server/security**     | Lockout calculations                                                                                                | `CalculateLockout`, `IsLocked`                                                                                                                                                                                                                                                                   |
-| **server/session**      | Session management only                                                                                             | `SessionManager`, `Manager`                                                                                                                                                                                                                                                                      |
-| **server/template**     | Shared template data helpers                                                                                        | `AddCommonData`                                                                                                                                                                                                                                                                                  |
-| **server/ui**           | Template rendering helpers                                                                                          | `RenderTemplate`                                                                                                                                                                                                                                                                                 |
-| **server/validation**   | Config validation helpers                                                                                           | validators                                                                                                                                                                                                                                                                                       |
-| **cachelite**           | HTTP response caching                                                                                               | `HTTPCacheMiddleware`, `EvictLRU`                                                                                                                                                                                                                                                                |
-| **tableswap**           | Atomic SQLite table rotation                                                                                        | `CloneEmpty`, `CreateIndexes`, `Swap`                                                                                                                                                                                                                                                            |
-| **rssmonitor**          | Optional Linux process RSS monitor                                                                                  | `Run`                                                                                                                                                                                                                                                                                            |
-| **sqlite3stat**         | SQLite connection memory-status helpers                                                                             | `DBStatusMem`, `PutDebugAttrs`                                                                                                                                                                                                                                                                   |
-| **workerpool**          | Concurrent task processing                                                                                          | `Pool`, `Worker`                                                                                                                                                                                                                                                                                 |
-| **scheduler**           | Cron-like task scheduling                                                                                           | `Scheduler`, `Task` interface                                                                                                                                                                                                                                                                    |
-| **queue**               | Thread-safe deque                                                                                                   | `Queue`                                                                                                                                                                                                                                                                                          |
-| **writebatcher**        | Batch database operations                                                                                           | `WriteBatcher`, `Config`                                                                                                                                                                                                                                                                         |
-| **dque**                | Persistent on-disk FIFO queue (writebatcher overflow + discovery backlog)                                           | `New`, `Queue`                                                                                                                                                                                                                                                                                   |
-| **flock**               | Cross-platform file locking                                                                                         | `Flock`                                                                                                                                                                                                                                                                                          |
-| **errors**              | Error sentinels for dque                                                                                            | `ErrXxx` sentinels                                                                                                                                                                                                                                                                               |
-| **dbconnpool**          | SQLite connection pools                                                                                             | `DbSQLConnPool`                                                                                                                                                                                                                                                                                  |
-| **testdb**              | Memory-backed main/thumbs test databases (`MemoryDatabases`, caller-supplied schema key, process-local seeds)       | `NewMemoryDatabases`, `MainURI`, `ThumbsURI`, `Close`                                                                                                                                                                                                                                            |
-| **gallerydb**           | Database queries (sqlc)                                                                                             | `Queries`, `CustomQueries`                                                                                                                                                                                                                                                                       |
-| **gallerylib**          | File import / path-chain upserts                                                                                    | `Importer`                                                                                                                                                                                                                                                                                       |
-| **thumbnail**           | Thumbnail generation (go-scaled-jpeg JPEG decode)                                                                   | `GenerateThumbnailAndHashes`                                                                                                                                                                                                                                                                     |
-| **imagemeta**           | EXIF extraction (local `replace`)                                                                                   | Metadata parsers                                                                                                                                                                                                                                                                                 |
-| **multihandler**        | Multi-handler structured logging                                                                                    | `MultiHandler`                                                                                                                                                                                                                                                                                   |
-| **profiler**            | Optional CPU/mem/block profiling                                                                                    | `Start`                                                                                                                                                                                                                                                                                          |
-| **coords**              | Geographic coordinate parsing                                                                                       | `Parse`                                                                                                                                                                                                                                                                                          |
-| **humanize**            | Human-readable formatting                                                                                           | formatters                                                                                                                                                                                                                                                                                       |
-| **log**                 | Structured logging                                                                                                  | `Logger`                                                                                                                                                                                                                                                                                         |
-| **gensyncpool**         | Reset-enforcing `sync.Pool` wrappers                                                                                | `NewPool`                                                                                                                                                                                                                                                                                        |
-| **osza**                | Zero-allocation `os` helpers (facade); subpackages hold syscall implementations                                     | `ReadDir`, `Entry` (`IsDir`, `Type`, `Info`), `ErrOverflow`; stat: `FileMeta`, `LstatAt`, `StatAt`, `LstatJoin`, `StatJoin`, `ErrPathBuffer`, `ErrNilFileMeta` — import `internal/osza` only ([README](../internal/osza/README.md); stat sign-off: [osza-stat-signoff.md](osza-stat-signoff.md)) |
-| **getopt**              | Config from flags/env                                                                                               | config loader                                                                                                                                                                                                                                                                                    |
-| **parallelwalkdir**     | Bounded `GOMAXPROCS` workers; unbounded schedule queue + feeder → `dirCh`; emits `ReportedFile` (path, mtime, size) | `ParallelWalk`, `NewWalker`, `Option`, `WalkDirFunc`, `WithDirChCapacity`, `ReportedFile`, `WithMaxReportedFiles` (bench/tests only)                                                                                                                                                             |
-| **testutil**            | Shared test helpers                                                                                                 | `Equals`, `HTMLContains`                                                                                                                                                                                                                                                                         |
-| **gen-test-files**      | Synthetic test file generation                                                                                      | `Generate`                                                                                                                                                                                                                                                                                       |
+| Package                 | Purpose                                                                                                                                                                   | Key Exports                                                                                                                                                                                                                                                                                      |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **server**              | HTTP server, routing, orchestration                                                                                                                                       | `App`, `getRouter`, middleware                                                                                                                                                                                                                                                                   |
+| **server** (managers)   | Orchestration structs on `App` (infra embedded; others pointer fields)                                                                                                    | `InfrastructureService`, `RuntimeManager`, `HandlerManager`, `SubsystemManager`                                                                                                                                                                                                                  |
+| **server** (test seams) | Optional test doubles (production pkg)                                                                                                                                    | `testseams.go`: `AppTestSeams`, `*TestSeams` structs                                                                                                                                                                                                                                             |
+| **server/auth**         | Authentication service                                                                                                                                                    | `AuthService`, `Authenticate`                                                                                                                                                                                                                                                                    |
+| **server/cachebatch**   | Cache batch-load coordination                                                                                                                                             | batch loader helpers                                                                                                                                                                                                                                                                             |
+| **server/cachepreload** | Cache preload manager & tasks                                                                                                                                             | `Manager`, preload tasks                                                                                                                                                                                                                                                                         |
+| **server/config**       | Configuration management                                                                                                                                                  | `Config`, `ConfigService`                                                                                                                                                                                                                                                                        |
+| **server/database**     | Database setup, migrations, pools; the write path (`Writer`, batch flush, folder-index rebuild, WAL checkpoint and `PRAGMA optimize`) and the discovery directory catalog | `Setup`, `RecreatePoolsWithConfig`, `Writer`, `NewWriter`, `ErrFolderIndexRebuild`, `NewDiscoveryDirEntMapFunc`                                                                                                                                                                                  |
+| **server/files**        | File processing: metadata, thumbnail, and hashes for one file                                                                                                             | `FileProcessor`, `NewFileProcessor`, `File`, `InvalidFile`, `InvalidReason`                                                                                                                                                                                                                      |
+| **server/handlers**     | Route handlers                                                                                                                                                            | `GalleryHandlers`, `AuthHandlers`, `MenuHandlers`, `ThemeHandlers`, `ConfigHandlers`, `DashboardHandlers`, `ServerHandlers`, `HealthHandlers`                                                                                                                                                    |
+| **server/interfaces**   | Dependency interfaces for handlers                                                                                                                                        | `ServerDeps`, `HandlerQueries`                                                                                                                                                                                                                                                                   |
+| **server/logging**      | Request logging helpers                                                                                                                                                   | logging middleware wrappers                                                                                                                                                                                                                                                                      |
+| **server/metrics**      | Runtime metrics collection                                                                                                                                                | `Collector`                                                                                                                                                                                                                                                                                      |
+| **server/middleware**   | HTTP middleware (auth, conditional, logging, loopback, pprof access)                                                                                                      | `AuthMiddleware`, `ConditionalMiddleware`, `LoopbackOnly`, `PprofAccess`                                                                                                                                                                                                                         |
+| **server/modulestate**  | Module active-state tracking                                                                                                                                              | `ModuleStateService`                                                                                                                                                                                                                                                                             |
+| **server/pathutil**     | Image-directory path utilities                                                                                                                                            | `SafeImagePath`, `RemoveImagesDirPrefix`                                                                                                                                                                                                                                                         |
+| **server/conditional**  | Pure ETag/304 helper package                                                                                                                                              | conditional request helpers                                                                                                                                                                                                                                                                      |
+| **server/security**     | Lockout calculations                                                                                                                                                      | `CalculateLockout`, `IsLocked`                                                                                                                                                                                                                                                                   |
+| **server/session**      | Session management only                                                                                                                                                   | `SessionManager`, `Manager`                                                                                                                                                                                                                                                                      |
+| **server/template**     | Shared template data helpers                                                                                                                                              | `AddCommonData`                                                                                                                                                                                                                                                                                  |
+| **server/ui**           | Template rendering helpers                                                                                                                                                | `RenderTemplate`                                                                                                                                                                                                                                                                                 |
+| **server/validation**   | Config validation helpers                                                                                                                                                 | validators                                                                                                                                                                                                                                                                                       |
+| **cachelite**           | HTTP response caching                                                                                                                                                     | `HTTPCacheMiddleware`, `EvictLRU`                                                                                                                                                                                                                                                                |
+| **tableswap**           | Atomic SQLite table rotation                                                                                                                                              | `CloneEmpty`, `CreateIndexes`, `Swap`                                                                                                                                                                                                                                                            |
+| **rssmonitor**          | Optional Linux process RSS monitor                                                                                                                                        | `Run`                                                                                                                                                                                                                                                                                            |
+| **sqlite3stat**         | SQLite connection memory-status helpers                                                                                                                                   | `DBStatusMem`, `PutDebugAttrs`                                                                                                                                                                                                                                                                   |
+| **workerpool**          | Concurrent task processing                                                                                                                                                | `Pool`, `Worker`                                                                                                                                                                                                                                                                                 |
+| **scheduler**           | Cron-like task scheduling                                                                                                                                                 | `Scheduler`, `Task` interface                                                                                                                                                                                                                                                                    |
+| **queue**               | Thread-safe deque                                                                                                                                                         | `Queue`                                                                                                                                                                                                                                                                                          |
+| **writebatcher**        | Generic batching worker with disk overflow; `database.Writer` is its user                                                                                                 | `WriteBatcher`, `Config`                                                                                                                                                                                                                                                                         |
+| **dque**                | Persistent on-disk FIFO queue (Writer overflow + discovery backlog)                                                                                                       | `New`, `Queue`                                                                                                                                                                                                                                                                                   |
+| **flock**               | Cross-platform file locking                                                                                                                                               | `Flock`                                                                                                                                                                                                                                                                                          |
+| **errors**              | Error sentinels for dque                                                                                                                                                  | `ErrXxx` sentinels                                                                                                                                                                                                                                                                               |
+| **dbconnpool**          | SQLite connection pools                                                                                                                                                   | `DbSQLConnPool`                                                                                                                                                                                                                                                                                  |
+| **testdb**              | Memory-backed main/thumbs test databases (`MemoryDatabases`, caller-supplied schema key, process-local seeds)                                                             | `NewMemoryDatabases`, `MainURI`, `ThumbsURI`, `Close`                                                                                                                                                                                                                                            |
+| **gallerydb**           | Database queries (sqlc)                                                                                                                                                   | `Queries`, `CustomQueries`                                                                                                                                                                                                                                                                       |
+| **gallerylib**          | File import / path-chain upserts                                                                                                                                          | `Importer`                                                                                                                                                                                                                                                                                       |
+| **thumbnail**           | Thumbnail and pHash from decoded pixels, MD5 of the source bytes; shared memory budgets                                                                                   | `Pool`, `Generator`, `GenerateThumbnailAndHashes`                                                                                                                                                                                                                                                |
+| **metadata**            | EXIF, IPTC, and XMP through a pool of ExifTool servers                                                                                                                    | `Extractor`, `Info`, `PoolSize`                                                                                                                                                                                                                                                                  |
+| **memlimit**            | Go soft memory limit from RAM and need; sizes the worker count                                                                                                            | `Apply`, `Need`, `Limit`                                                                                                                                                                                                                                                                         |
+| **discovery**           | Finds new and changed images and imports them: walk, disk backlog, workers, run counters                                                                                  | `Service`, `Config`, `Deps`, `Stats`, `Writer`                                                                                                                                                                                                                                                   |
+| **multihandler**        | Multi-handler structured logging                                                                                                                                          | `MultiHandler`                                                                                                                                                                                                                                                                                   |
+| **profiler**            | Optional CPU/mem/block profiling                                                                                                                                          | `Start`                                                                                                                                                                                                                                                                                          |
+| **coords**              | Geographic coordinate parsing                                                                                                                                             | `Parse`                                                                                                                                                                                                                                                                                          |
+| **humanize**            | Human-readable formatting                                                                                                                                                 | formatters                                                                                                                                                                                                                                                                                       |
+| **log**                 | Structured logging                                                                                                                                                        | `Logger`                                                                                                                                                                                                                                                                                         |
+| **gensyncpool**         | Reset-enforcing `sync.Pool` wrappers                                                                                                                                      | `NewPool`                                                                                                                                                                                                                                                                                        |
+| **osza**                | Zero-allocation `os` helpers (facade); subpackages hold syscall implementations                                                                                           | `ReadDir`, `Entry` (`IsDir`, `Type`, `Info`), `ErrOverflow`; stat: `FileMeta`, `LstatAt`, `StatAt`, `LstatJoin`, `StatJoin`, `ErrPathBuffer`, `ErrNilFileMeta` — import `internal/osza` only ([README](../internal/osza/README.md); stat sign-off: [osza-stat-signoff.md](osza-stat-signoff.md)) |
+| **getopt**              | Config from flags/env                                                                                                                                                     | config loader                                                                                                                                                                                                                                                                                    |
+| **parallelwalkdir**     | Bounded `GOMAXPROCS` workers; unbounded schedule queue + feeder → `dirCh`; emits `ReportedFile` (path, mtime, size)                                                       | `ParallelWalk`, `NewWalker`, `Option`, `WalkDirFunc`, `WithDirChCapacity`, `ReportedFile`, `WithMaxReportedFiles` (bench/tests only)                                                                                                                                                             |
+| **testutil**            | Shared test helpers                                                                                                                                                       | `Equals`, `HTMLContains`                                                                                                                                                                                                                                                                         |
+| **gen-test-files**      | Synthetic test file generation                                                                                                                                            | `Generate`                                                                                                                                                                                                                                                                                       |
 
 ### 4.2 Component Diagram
 
@@ -325,9 +334,12 @@ graph TB
     end
 
     subgraph "Infrastructure"
+        Discovery[discovery.Service]
         WorkerPool[workerpool.Pool]
+        MemLimit[memlimit.Limit]
         CacheMW[cachelite.HTTPCacheMiddleware]
         Scheduler[scheduler.Scheduler]
+        Writer[server/database.Writer]
         WriteBatcher[writebatcher.WriteBatcher]
     end
 
@@ -339,13 +351,19 @@ graph TB
     Server --> Router
     Router --> Handlers
     Handlers --> ConfigSvc
-    Handlers --> FileProc
     Handlers --> SessionMgr
 
-    Server --> WorkerPool
+    Server --> Discovery
+    Server --> Writer
     Server --> CacheMW
     Server --> Scheduler
-    FileProc --> WriteBatcher
+    Server --> MemLimit
+    Discovery --> WorkerPool
+    Discovery --> FileProc
+    Discovery --> Writer
+    MemLimit --> FileProc
+    Writer --> WriteBatcher
+    Writer --> DBConn
 
     Handlers --> DBConn
     DBConn --> Queries
@@ -355,59 +373,70 @@ graph TB
 
 ## 5. Data Layer
 
-**Packages:** [Process-to-package map § Database, batching, and schema](#23-database-batching-and-schema) (`writebatcher`, `dque`, `gallerydb`, `dbconnpool`, `database`, `tableswap`, `server` flush wiring).
+**Packages:** [Process-to-package map § Database, batching, and schema](#23-database-batching-and-schema) (`database` including the Writer, `writebatcher`, `dque`, `gallerydb`, `dbconnpool`, `tableswap`, `server` pool wiring).
 
-### 5.1 Unified WriteBatcher Architecture
+### 5.1 Database writer
 
-The application uses a **single unified WriteBatcher** at the App level that handles all high-volume database writes. This architecture eliminates SQLite lock contention by ensuring that only one component is attempting to write to the database at any given time, while still allowing high throughput through efficient batching.
+`database.Writer` ([`internal/server/database/writer.go`](../internal/server/database/writer.go)) is the one component that writes high-volume data to the main database. The process starts a single Writer after the pools are configured (`InfrastructureService.StartWriteBatcher`), so these writes share one write lease; other operations, such as config saves, write through their own RW connections. It sends four kinds of write through one `writebatcher.WriteBatcher`:
 
-- **File metadata:** Complete file records including path chain, EXIF, and thumbnails.
-- **HTTP cache entries:** Full HTTP responses cached with route-specific strategies.
+- **Files:** a processed file with its path chain, metadata (EXIF, IPTC, XMP), thumbnail, and folder tile.
+- **Invalid files:** a file the processor could not import, recorded in `invalid_files`.
+- **HTTP cache entries:** responses queued by the cache middleware.
+- **Folder-index rows:** rows of the `file_folder_index` rebuild.
 
-**Benefits:**
+**Batching:**
 
-- **Reduced Lock Contention:** File-metadata and cache writes share one batched writer instead of competing for the SQLite exclusive lock (invalid-file records are written directly to the RW pool as failures occur).
-- **Improved Throughput:** Batching reduces transaction overhead and filesystem syncs.
-- **Memory Safety:** Batches are bounded by both count and total memory volume (bytes).
-- **Graceful Degradation:** Automatic cleanup of pooled resources (HTTP bodies, thumbnails) on both successful flush and failure.
-- **Burst Absorption:** When the in-memory channel fills, excess writes spill to a persistent on-disk queue (`dque`) instead of being dropped, so preload/discovery bursts are fully absorbed.
-- **Crash Recovery:** Pending overflow writes persist across process restarts and are flushed on the next startup.
+- Each batch is one transaction on a connection leased from the read-write (RW) pool. A batch is flushed when it reaches 10,000 writes or 8 MiB, checked after each write is added, and normally when its 50 ms timer fires (a `dque` drain in progress can delay the timer).
+- Within a batch, `flush.write` writes files, then invalid files, then gallery cache entries, then other cache entries, then folder-index rows.
+- Thumbnail buffers and cache entries return to their pools only after the batch commits (`release` in `batch.go`), so a failed batch can be written again.
+- `Close` stops new submits (`writebatcher.ErrClosed`) and then attempts a final flush of the writes held in memory; if that flush fails, its batch cannot be requeued and is lost. A cache entry that cannot be queued returns to its pool.
 
-**Persistent Overflow Queue (`dque`):**
+**Overflow queue (`dque`):**
 
-When the WriteBatcher's in-memory channel is full and `DQueDirPath` is configured, `Submit` overflows items to `dque` — a generic, segment-backed on-disk first-in, first-out (FIFO) queue stored in `<db>-dque/` (sibling to the SQLite database). Its maximum on-disk size is capped by the config quota `dque_max_disk_bytes` (default 50 GiB; `0` = unlimited). Each overflow increments `OverflowCount`/`pendingCount` and signals a buffer-1 `dqNotify` channel. The worker's main `select` gains a `dqNotify` case and a drain loop that:
+When the batcher's in-memory channel is full, `Submit` writes the item to `dque`, a segment-backed on-disk first-in, first-out (FIFO) queue in `<db>-dque/` beside the SQLite database, instead of dropping it. The quota is the config key `dque_max_disk_bytes` (default 50 GiB; `0` is unlimited); at the quota, `Submit` returns `writebatcher.ErrQuotaExceeded` and the write is not queued. The quota is set at start and on config changes through `Writer.SetMaxDiskBytes`. The worker drains `dque` in batches between channel items, so new submissions are not starved. `dque` holds a `flock` on its directory.
 
-- Pulls items from `dque` and flushes them in `MaxBatchSize` batches **during** the drain (trigger reason `size_limit`), not only after.
-- Interleaves channel items with `dque` items so new channel submissions are never starved during a drain.
-- Drains `dque` on context cancel, channel close, and `Close()` so no items are lost on shutdown.
+- `Close` does not drain `dque`: records still queued on disk are replayed after the next start, subject to the replay checks: folder-index rows are dropped outside an active rebuild or from an earlier rebuild generation, and an invalid-file record is skipped when the file has since been imported with the same mtime and size. The worker takes items off `dque` before their batch commits, so a crash can lose the items of the batch in progress.
+- `App.Run` starts the Writer with the drain deferred. The drain is enabled when `Serve` starts the HTTP server goroutine (`onServerListening` calls `StartDQueDrain`), without waiting for the bind to succeed.
+- `database.Setup` deletes `<db>-dque/` when the database is migrated across the pHash migration (25), because queued writes would carry hashes from the old algorithm.
 
-Crash recovery: `New()` seeds `pendingCount` from the existing `dque` size, and the worker's `drainDQueAll` loop flushes any recovered `dque` items into batches on its first iteration (no startup memory buffering). `overflowMu` guards the overflow path and `overflowWG` plus `Close` acquiring `mu`-then-`overflowMu` guarantee in-flight overflow `Submit`s finish before `Close` drains, so concurrent `Submit`-during-`Close` loses nothing. `dque` acquires a `flock` on its directory, so reconfiguration closes the old batcher before creating a new one to release the lock.
+`gob` encodes queued writes: `batchedWrite` and `files.File` implement `GobEncode`/`GobDecode` (the `*bytes.Buffer` thumbnail travels as raw bytes), and an `init()` in `batch.go` registers `int64` and `sql.Null*` types stored inside sqlc-generated `interface{}` fields.
 
-**`internal/queue` vs `internal/dque`:** These are unrelated. `internal/queue` is a generic in-memory deque (goroutine-safe, resizable ring buffer); it no longer backs the production discovery work queue (tests and bounded-queue helpers may still use it). `internal/dque` is a segment-backed on-disk FIFO with two distinct uses:
+**`internal/queue` vs `internal/dque`:** These are unrelated. `internal/queue` is a generic in-memory deque (goroutine-safe, resizable ring buffer) used by tests and helpers. `internal/dque` is a segment-backed on-disk FIFO with two uses:
 
-- The WriteBatcher keeps a **durable** queue (`<db>-dque/`) for overflow when its in-memory submit channel is full — pending batched DB writes survive restarts.
-- Production discovery uses a **dedicated** queue (`discovery-dque/` in the database directory, e.g. `DB/discovery-dque/` beside `sfpg.db`) as the work backlog the walker fills and the file workers drain. Items are **`files.DiscoveryPathWork`** (path plus mtime/size from the walk), persisted via gob in `discovery_dque.go` — not bare path strings. It is a **disposable wipe-on-start backlog**: `SubsystemManager.Start` deletes the directory and recreates the queue on every start, and a full re-walk is the recovery — it is **not** durable like the writebatcher `…-dque`. The discovery backlog is not bounded in-memory.
+- The Writer keeps an on-disk queue (`<db>-dque/`) for overflow. Records still on disk at shutdown are replayed after the next start, with the replay checks and the pHash-migration deletion described above.
+- Discovery keeps a **disposable** backlog (`discovery-dque/` in the database directory, beside `sfpg.db`) that the walk fills and the file workers drain. Items are `discovery.PathWork` (path plus mtime and size from the walk), encoded in [`internal/discovery/backlog.go`](../internal/discovery/backlog.go). `discovery.New` deletes the directory and opens a new queue, so a full re-walk is the recovery after an interrupted run.
 
-To make `BatchedWrite` items persistable, `BatchedWrite` and `files.File` implement `GobEncode`/`GobDecode` via gob-safe wire structs (separately encoding the `File` and `CacheEntry` blobs, and replacing the un-exported `*bytes.Buffer` thumbnail with raw `[]byte`). An `init()` registers `int64` and `sql.Null*` types stored inside sqlc-generated `interface{}` fields.
+**Write-path details:**
 
-**Write-Path Throughput Optimizations:**
+- **Prepared-statement threading:** `flush.begin` leases an RW connection and `flush.write` calls `WithTx(tx)` on that connection's prepared `*gallerydb.CustomQueries`, so the file and invalid-file statements reuse their compiled plans. Cache writes run through `gallerydb.New(tx)`, and folder-index inserts prepare their statement on the transaction. `flush.succeeded` and `flush.failed` return the connection to the pool.
+- **Intra-batch memoization:** One `gallerylib.Importer` is made per batch and reused for all its files. Its `folderCache` (path to folder ID) avoids repeated `GetFolderByPath` queries in `UpsertPathChain`, and `tiledDirs` skips repeated folder-tile queries for files in the same directory.
+- **Metadata replacement:** `writeMetadata` replaces a file's stored EXIF, IPTC, and XMP rows, so a value removed from the file is removed from the database.
+- **Thumbnail check:** `writeFile` queries `thumbnail_exists_view` only for a file row that already existed; a new row cannot have a thumbnail yet. An existing thumbnail is kept.
+- **Invalid-file replay:** `writeInvalidFile` skips a record when a file with the same path, mtime, and size was imported since, which happens when an older record replays from `dque`.
 
-- **Prepared-statement threading:** `BeginTx` borrows a pooled connection, captures its prepared `*gallerydb.CustomQueries` (`app.batcherQueries`), and `flushBatchedWrites` calls `WithTx(tx)` to propagate all prepared statements onto the transaction. Every statement reuses its compiled plan instead of recompiling raw SQL per call. (`TestPreparedStatementsRoutingInvariant` pins this routing.)
-- **Folder-index rebuild protocol:** [`folderIndexProtocol`](internal/server/folder_index_protocol.go) (one instance on `InfrastructureService`, shared with `fileBatcher` and flush/write-ahead log (WAL) paths) owns rebuild **active**, **generation**, submit/flush **inflight**, and read-only (RO) scan-**held** atomics. It implements the shared index-only classifier (`indexOnlyAndRebuildInactive`), `ShouldDropIndexOnlyBatch` (DropWithoutFlush), `PrepareFolderIndexFlush` (generation/dest filters for INSERT), `OnFolderIndexBatchSuccess` (inflight decrement after batch completion), and `RebuildScanHeld()` (WAL checkpoint gate). [`infrastructure_batcher.go`](internal/server/infrastructure_batcher.go) and [`infrastructure_pool.go`](internal/server/infrastructure_pool.go) delegate folder-index decisions to the protocol; they do not load protocol atomics directly. [`files.RebuildFileFolderIndex`](internal/server/files/folder_index.go) still drives rebuild via [`files.UnifiedBatcher`](internal/server/files/service.go) (`SetFolderIndexRebuildActive`, `BumpFolderIndexGeneration`, `SetFolderIndexRebuildScanHeld`, `SubmitFolderIndex`, `FolderIndexInflight`).
-- **Folder-index rebuild INSERT is tx-prepared, not pool-prepared:** `file_folder_index_new` is created at runtime by `CloneEmpty`, so it does not exist at pool Prepare time and cannot be compiled by `PrepareCustomQueries`. `flushBatchedWrites` calls `folderIndexProtocol.PrepareFolderIndexFlush`, then `CustomQueries.InsertFileFolderIndexNewRows` on `WithTx(tx)`: one `PrepareContext` of the INSERT on that transaction, then per-row `Exec` (≤ `MaxBatchSize`), never a per-row `tx.ExecContext`. The streaming rebuild scan `QueryFilesForFolderIndexRebuild` reads `files` (which exists at pool init) and is prepared once at pool Prepare; populate loads the stream into a `[][2]int64` and closes the RO cursor before `SubmitFolderIndex`. Both statements' SQL text lives in `sqlc/queries/file_folder_index_rebuild.sql`, which is embed-only and not part of `sqlc generate` (see § Query Generation). While the rebuild RO scan cursor is open, `walCheckpointAfterCommit` skips `wal_checkpoint(TRUNCATE)` when `folderIndexProtocol.RebuildScanHeld()` is true so it does not busy-wait on the open cursor; G4 applies only while that cursor is open, not during Submit/wait.
-- **Intra-batch memoization:** One `gallerylib.Importer` is constructed per batch and reused across all files. Its `folderCache` (path → folder ID) eliminates repeated per-segment `GetFolderByPath` queries in `UpsertPathChain`, and `tiledDirs` skips redundant folder-tile view queries and tile-chain updates for subsequent files in the same directory.
-- **Skip guaranteed no-op deletes:** The processor records `File.HadInvalidEntry`; `WriteFileInTx` only issues `DeleteInvalidFileByPath` when a row actually existed, removing a per-file no-op round-trip during fresh preloads.
+**Folder-index rebuild:** `Writer.RebuildFolderIndex` rebuilds `file_folder_index` in a new table and swaps it in (see [Database Schema](#54-database-schema)). It reads `files` on the read-only (RO) pool in chunks: a chunk ends at the first folder boundary after 2^18 `(file_id, folder_id)` pairs, so no folder is split, or at the end of the rows. The RO connection is returned before the chunk's rows are submitted to the batcher, and the RW connection is held only to clone the table and to swap, so the batcher keeps writing.
 
-**Implementation Details:**
+- A generation (from the clock) ties rows to one rebuild. Rows of another generation, from an earlier process or rebuild, are skipped.
+- Folder-index batches are dropped before `BeginTx` while no rebuild is active, and rows are skipped when `file_folder_index_new` does not exist.
+- The rebuild waits until every submitted row is committed, and fails when that count has not changed for 30 s.
+- `InsertFileFolderIndexNewRows` prepares its INSERT on the batch transaction, because `file_folder_index_new` is created at runtime by `tableswap.CloneEmpty` and does not exist at pool preparation. The SQL lives in `sqlc/queries/file_folder_index_rebuild.sql`, which is embedded and not part of `sqlc generate`.
+- Every failure except cancellation wraps `database.ErrFolderIndexRebuild`. Shutdown cancels a rebuild and returns the bare context error.
 
-- **[internal/server/batched_write.go](internal/server/batched_write.go)**: Defines the `BatchedWrite` union type (`File` and `CacheEntry` variants), its memory estimation logic, and `GobEncode`/`GobDecode` for persistence in `dque`.
-- **[internal/server/batched_write_flush.go](internal/server/batched_write_flush.go)**: Contains the unified transactional flush logic, prepared-statement threading (`WithTx`), per-batch `Importer` construction, and resource cleanup.
-- **[internal/server/folder_index_protocol.go](internal/server/folder_index_protocol.go)**: Folder-index rebuild lifecycle atomics and flush/drop/WAL classification (see **Folder-index rebuild protocol** above).
-- **[internal/server/infrastructure_batcher.go](internal/server/infrastructure_batcher.go)**: Builds the app `WriteBatcher[BatchedWrite]` config (drop/flush/`OnSuccess` hooks) and calls `folderIndexProtocol` for folder-index batches.
-- **[internal/server/batcher_wiring.go](internal/server/batcher_wiring.go)**: Thin `fileBatcher` wiring that implements `files.UnifiedBatcher` by delegating lifecycle/inflight to `*folderIndexProtocol` and submits on the app-level `WriteBatcher[BatchedWrite]`; returns `ErrClosed` when the batcher is nil. Cache entries are submitted directly on `WriteBatcher` from `InfrastructureService.submitCacheWrite` (no separate cache adapter).
-- **[internal/server/files/gob.go](internal/server/files/gob.go)**: `GobEncode`/`GobDecode` for `files.File` (handles the `*bytes.Buffer` thumbnail as raw `[]byte`).
-- **[internal/gallerylib/importer.go](internal/gallerylib/importer.go)**: File import logic with per-batch `folderCache`/`tiledDirs` memoization.
-- **[internal/server/files/service.go](internal/server/files/service.go)**: Consumes the batcher via the `UnifiedBatcher` interface.
+**Maintenance** (`maintenance.go`) runs after each commit and every 5 minutes, with no transaction open:
+
+- A `wal_checkpoint(TRUNCATE)` when the WAL exceeds 256 MiB, checked after each commit and on the batcher's maintenance timer; and, on the maintenance timer, when 5 minutes have passed since the previous maintenance run (checkpoint or not). Both are skipped while the rebuild's RO cursor is open. The post-commit check is also skipped after a batch with no folder-index rows and no file, invalid-file, or cache entry.
+- `PRAGMA optimize` when the optimize interval has passed (default 1 hour; `Writer.SetOptimizeInterval`).
+
+**Implementation files:**
+
+- [`internal/server/database/writer.go`](../internal/server/database/writer.go): `Writer`, `NewWriter`, submit methods, `Close`.
+- [`internal/server/database/batch.go`](../internal/server/database/batch.go): `batchedWrite` union, gob encoding, `release`.
+- [`internal/server/database/flush.go`](../internal/server/database/flush.go): transaction callbacks and per-write SQL.
+- [`internal/server/database/folder_index.go`](../internal/server/database/folder_index.go): rebuild and its generation state.
+- [`internal/server/database/maintenance.go`](../internal/server/database/maintenance.go): WAL checkpoint and `PRAGMA optimize`.
+- [`internal/server/infrastructure_pool.go`](../internal/server/infrastructure_pool.go): starts the Writer and reconfigures pools.
+- [`internal/server/files/gob.go`](../internal/server/files/gob.go): `GobEncode`/`GobDecode` for `files.File`.
+- [`internal/gallerylib/importer.go`](../internal/gallerylib/importer.go): file import with `folderCache` and `tiledDirs`.
 
 ### 5.2 Database Architecture
 
@@ -476,7 +505,9 @@ graph TB
 
 **Pool Configuration:**
 
-Both pools share the same configurable size, controlled by the database configuration keys `db_max_pool_size` (default `100`) and `db_min_idle_connections` (default `10`), with a pool monitor interval `db_pool_monitor_interval` (default `1m`). Pool sizing is reconciled against effective values at startup/restart via `reconfigurePoolsFromConfig()`.
+Both pools share the same configurable size, controlled by the database configuration keys `db_max_pool_size` (default `100`) and `db_min_idle_connections` (default `1`), with a pool monitor interval `db_pool_monitor_interval` (default `1m`). Startup sizes the pools from the loaded config through `reconfigurePoolsFromConfig()`.
+
+Pools are reconfigured only before the Writer starts. `InfrastructureService.ReconfigurePools` returns an error once the Writer has started, because the Writer keeps the pools it was started with. A saved change to a pool setting therefore takes effect after an explicit restart (these three keys are marked as requiring a restart).
 
 The live pools always get a positive monitor interval: creating pools with a nil `Config` (e.g. the early `setDB()` bootstrap before config load) or with `db_pool_monitor_interval <= 0` falls back to the `1m` default — a `0` interval never disables the idle grow/shrink monitor.
 
@@ -508,7 +539,7 @@ Read-Write Pool: MaxConnections = db_max_pool_size  (journal_mode=WAL, _txlock=i
 
 **Views:** `folder_view`, `file_view`, `thumbnail_exists_view`, `folder_tile_exists_view` (plus quality-control views `qc_file_path_subset_file_name` and `qc_folder_path_subset_file_path`).
 
-**file_folder_index rebuild:** Populate COUNTs folder-bearing files, streams `(id, folder_id)` on the RO pool (`ORDER BY folder_id, filename, id`) into a `[][2]int64` (cap from COUNT), closes the cursor and Puts the RO conn, then computes nav columns in Go per folder and `SubmitFolderIndex`s rows to the unified writebatcher which INSERTs into `file_folder_index_new` (subject to `folderIndexProtocol` drop/flush/generation rules; leftover index-only dque batches drop when rebuild is inactive). The RW pool conn is Put after `CloneEmpty` and before Submit/wait; folder-index inflight reaches 0; then `CreateIndexes` + `Swap` on a new RW conn. `CreateIndexes` sets `PRAGMA temp_store=FILE` on the leased RW connection before `CREATE INDEX`, then restores the previous `temp_store` (the connection data source name (DSN) stays `memory` for other work). `Swap` `DROP TABLE`s `{active}_to_be_dropped` before it returns (prior leftover stale is dropped inside the cutover transaction before the renames). Explicit index names after the first copy are `idx_*_1` until a later rotate reuses the base name once stale is gone.
+**file_folder_index rebuild:** `Writer.RebuildFolderIndex` ([`folder_index.go`](../internal/server/database/folder_index.go)) leases an RW connection, creates an empty `file_folder_index_new` with `tableswap.CloneEmpty`, starts a new generation, and returns the connection. It then reads `(file_id, folder_id)` pairs from `files` on the RO pool (`ORDER BY folder_id, filename, id`) in chunks that end at the first folder boundary after 2^18 pairs, or at the end of the rows. For each chunk the RO cursor is closed and its connection returned before the rows are computed in Go per folder and submitted to the Writer's batcher, which inserts them into `file_folder_index_new`. Rows of another generation are skipped, and folder-index-only batches are dropped while no rebuild is active (see [§5.1](#51-database-writer)). When every submitted row has committed, the rebuild takes an RW connection again, runs `CreateIndexes`, then `Swap`. `CreateIndexes` sets `PRAGMA temp_store=FILE` on the leased RW connection before `CREATE INDEX`, then restores the previous `temp_store` (the connection data source name (DSN) stays `memory` for other work). `Swap` `DROP TABLE`s `{active}_to_be_dropped` before it returns (prior leftover stale is dropped inside the cutover transaction before the renames). Explicit index names after the first copy are `idx_*_1` until a later rotate reuses the base name once stale is gone.
 
 ### 5.5 Query Generation (sqlc)
 
@@ -523,7 +554,7 @@ sqlc/queries/
 └── ...
 ```
 
-**Embed-only, not generated:** `sqlc/queries/file_folder_index_rebuild.sql` (COUNT + folder-index rebuild SELECT + dest INSERT) is intentionally omitted from the `sqlc.yaml` generate list and loaded via `go:embed` (package `sqlcqueries`) into `gallerydb` — see § Prepared-statement threading. It is split on `-- statement-break` into `parts[0]` (SELECT), `parts[1]` (INSERT), and `parts[2]` (COUNT). Its dest table is created at runtime by `CloneEmpty`, so a generated pool-prepared INSERT would fail at pool init.
+**Embed-only, not generated:** `sqlc/queries/file_folder_index_rebuild.sql` (folder-index rebuild SELECT + dest INSERT) is intentionally omitted from the `sqlc.yaml` generate list and loaded via `go:embed` (package `sqlcqueries`) into `gallerydb` (see [§5.1](#51-database-writer)). It is split on `-- statement-break` into `parts[0]` (SELECT) and `parts[1]` (INSERT). Its dest table is created at runtime by `CloneEmpty`, so a generated pool-prepared INSERT would fail at pool init.
 
 **Benefits:**
 
@@ -574,59 +605,52 @@ Production code uses optional test doubles in `internal/server/testseams.go`. Ea
 - **Nil func seam:** zero value → production path (`if seam != nil` in caller).
 - **Infrastructure cache func seams:** `NewInfrastructureService` seeds `GetCacheSizeBytes`, `GetCacheEntryCount`, and `EvictLRU` with `cachelite` production functions. Call sites invoke these fields directly (no nil-check); tests override the fields on the struct.
 - **Pre-`New()` injection:** set package-level `defaultNewTestSeams` before `New()`; `New()` copies it into `app.testSeams`. The committed variable must stay the **zero value**; prefer `app.testSeams.*` after `New()` when possible.
-- **Observe-then-production hooks:** some seams run a nil-checked observer first, then the real implementation always follows (see `OnBeginTx` / `OnPut` below).
+- **Discovery and the write path:** no seam replaces a discovery run, the folder-index rebuild, or the Writer. Tests run real discovery on a small images directory (see `trigger_discovery_integration_test.go`).
 
 **Field inventory** (keep in sync with `testseams.go` when adding seams):
 
-| Struct                      | Field                        | Replaces / use                                                                                                                                                           |
-| --------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **AppTestSeams**            | `NewParseTemplates`          | `ui.ParseTemplates` in `New()`                                                                                                                                           |
-|                             | `NewExit`                    | `os.Exit` on template parse failure                                                                                                                                      |
-|                             | `Serve`                      | `App.Serve` / `RuntimeManager.Serve`                                                                                                                                     |
-|                             | `ProfilerStart`              | `profiler.Start` in `Run()`                                                                                                                                              |
-|                             | `MemoryReclaimer`            | memory reclaimer goroutine in `Run()`                                                                                                                                    |
-|                             | `ModuleStateActive`          | `moduleStateService.IsActive` in cache batch load                                                                                                                        |
-|                             | `BatchLoadManagerRun`        | `batchLoadManager.Run`                                                                                                                                                   |
-|                             | `GalleryStatsStartup`        | async gallery stats goroutine at startup                                                                                                                                 |
-|                             | `TriggerDiscovery`           | seam checked inside `app.TriggerDiscovery()` (in lieu of walk/drain/rebuild); startup and `ServerDiscoveryPost` dispatch `go app.TriggerDiscovery(context.Background())` |
-|                             | `RebuildFileFolderIndex`     | `files.RebuildFileFolderIndex` at discovery completion in `TriggerDiscovery`                                                                                             |
-|                             | `FallbackConfig`             | config when `loadConfig` fails in `Run()`                                                                                                                                |
-|                             | `ConfigService`              | `config.NewService` in `setDB` / reconfigure                                                                                                                             |
-|                             | `LoadConfig`                 | `config.Load` in `loadConfig`                                                                                                                                            |
-|                             | `Executable`                 | `os.Executable` in `setRootDir`                                                                                                                                          |
-|                             | `SetupBootstrapLogging`      | `logging.SetupBootstrap`                                                                                                                                                 |
-|                             | `DatabaseSetup`              | `database.Setup` in CLI unlock / ETag paths                                                                                                                              |
-| **InfrastructureTestSeams** | `BuildWriteBatcher`          | `buildWriteBatcher`                                                                                                                                                      |
-|                             | `ShutdownWriteBatcher`       | `writeBatcher.Close`                                                                                                                                                     |
-|                             | `PerformWALCheckpoint`       | WAL checkpoint after pool recreate                                                                                                                                       |
-|                             | `PragmaOptimize`             | `PRAGMA optimize` path                                                                                                                                                   |
-|                             | `WALCheckpointQuery`         | WAL checkpoint SQL query                                                                                                                                                 |
-|                             | `GetCacheSizeBytes`          | cache size calibration (default: `cachelite.GetCacheSizeBytes`)                                                                                                          |
-|                             | `GetCacheEntryCount`         | cache entry count (default: `cachelite.CountCacheEntries`)                                                                                                               |
-|                             | `EvictLRU`                   | cache eviction (default: `cachelite.EvictLRU`)                                                                                                                           |
-|                             | `FlushBatchedWrites`         | `flushBatchedWrites` in batcher                                                                                                                                          |
-|                             | `HandlerQueries`             | live `HandlerQueries` from pool connection                                                                                                                               |
-|                             | `RecreatePoolsWithConfig`    | pool recreate on config change                                                                                                                                           |
-|                             | `PragmaOptimizePollInterval` | test tuning (non-zero overrides poll interval)                                                                                                                           |
-|                             | `PragmaOptimizeMaxWait`      | test tuning (non-zero overrides max wait)                                                                                                                                |
-|                             | `OnBeginTx`                  | observe-then-production: optional counter/signal before pool `Get` + `BeginTx` in write batcher (`infrastructure_batcher.go`); nil → skip hook only                      |
-|                             | `OnPut`                      | observe-then-production: optional counter/signal before `dbRwPool.Put` on batch success/error; nil → skip hook only                                                      |
-| **RuntimeManagerTestSeams** | `Executable`                 | `os.Executable` for restart                                                                                                                                              |
-|                             | `ExecCommand`                | `exec` for restart                                                                                                                                                       |
-|                             | `Exit`                       | `os.Exit` for restart failure                                                                                                                                            |
-|                             | `BeforeListen`               | hook immediately before `ListenAndServe`                                                                                                                                 |
-|                             | `Shutdown`                   | HTTP server shutdown                                                                                                                                                     |
-| **HandlerManagerTestSeams** | `BuildHandlers`              | `HandlerManager.buildHandlers`                                                                                                                                           |
+| Struct                      | Field                        | Replaces / use                                                                                |
+| --------------------------- | ---------------------------- | --------------------------------------------------------------------------------------------- |
+| **AppTestSeams**            | `NewParseTemplates`          | `ui.ParseTemplates` in `New()`                                                                |
+|                             | `NewExit`                    | `os.Exit` on template parse failure                                                           |
+|                             | `Serve`                      | `App.Serve` / `RuntimeManager.Serve`                                                          |
+|                             | `ProfilerStart`              | `profiler.Start` in `Run()`                                                                   |
+|                             | `MemoryReclaimer`            | memory reclaimer goroutine in `Run()`                                                         |
+|                             | `ModuleStateActive`          | `moduleStateService.IsActive` in cache batch load                                             |
+|                             | `BatchLoadManagerRun`        | `batchLoadManager.Run`                                                                        |
+|                             | `GalleryStatsStartup`        | async gallery stats goroutine at startup                                                      |
+|                             | `OnTriggerRestart`           | runs after a restart is requested through `App.TriggerRestart`                                |
+|                             | `FallbackConfig`             | config when `loadConfig` fails in `Run()`                                                     |
+|                             | `ConfigService`              | `config.NewService` in `setDB` / reconfigure                                                  |
+|                             | `LoadConfig`                 | `config.Load` in `loadConfig`                                                                 |
+|                             | `Executable`                 | `os.Executable` in `setRootDir`                                                               |
+|                             | `SetupBootstrapLogging`      | `logging.SetupBootstrap`                                                                      |
+|                             | `DatabaseSetup`              | `database.Setup` in CLI unlock / ETag paths                                                   |
+| **InfrastructureTestSeams** | `GetCacheSizeBytes`          | cache size calibration (default: `cachelite.GetCacheSizeBytes`)                               |
+|                             | `GetCacheEntryCount`         | cache entry count (default: `cachelite.CountCacheEntries`)                                    |
+|                             | `EvictLRU`                   | cache eviction (default: `cachelite.EvictLRU`)                                                |
+|                             | `PragmaOptimize`             | `PRAGMA optimize` path                                                                        |
+|                             | `HandlerQueries`             | live `HandlerQueries` from pool connection                                                    |
+|                             | `RecreatePoolsWithConfig`    | pool recreate in `ReconfigurePools`                                                           |
+|                             | `PragmaOptimizePollInterval` | test tuning (non-zero overrides poll interval)                                                |
+|                             | `PragmaOptimizeMaxWait`      | test tuning (non-zero overrides max wait)                                                     |
+|                             | `BeforeCloseDatabasePools`   | hook on the `App.Shutdown` goroutine immediately before the database pools close (tests only) |
+| **RuntimeManagerTestSeams** | `Executable`                 | `os.Executable` for restart                                                                   |
+|                             | `ExecCommand`                | `exec` for restart                                                                            |
+|                             | `Exit`                       | `os.Exit` for restart failure                                                                 |
+|                             | `BeforeListen`               | hook immediately before `ListenAndServe`                                                      |
+|                             | `Shutdown`                   | HTTP server shutdown                                                                          |
+| **HandlerManagerTestSeams** | `BuildHandlers`              | `HandlerManager.buildHandlers`                                                                |
 
 **Discouraged patterns** (do not add new instances; migrate legacy when touching the area):
 
 - **Package-level func swaps** in production `.go` files (e.g. `var somethingFn = …` mutated from tests). They are not parallel-safe, easy to leak across tests, and are absent from this inventory. Prefer unexported `testSeams` on the type under test. Legacy examples outside `internal/server` include `gallerydb/custom_seams.go`, `migrations/migrations.go`, `internal/profiler/profiler.go`, and `internal/server/database/app.go`. In **`internal/server/cachepreload`**, **`PreloadManager`** uses instance **`testSeams`** for scheduler hooks (manager path); **`folder_preload_task.go`** still has package-level `*Fn` wrappers — migrate when touching that file (see target state below).
 - **Unexported handler func hooks** when `interfaces.ServerDeps`, `ConfigOps`, or `GalleryOps` already expose the dependency. Do not add new ones. **`ConfigHandlers`** uses wired **`GalleryOps.GetConfigQueries`** (same as `cpc.Queries` on `*App`); the old `getConfigQueries` struct field was removed.
-- **`defaultNewTestSeams`:** must remain zero in committed code. If a test sets it before `New()`, use `t.Cleanup(func() { defaultNewTestSeams = AppTestSeams{} })`. Do not put a non-nil `RebuildFileFolderIndex` (or other discovery seams) on the package var; set `app.testSeams.RebuildFileFolderIndex` after `New()` instead.
+- **`defaultNewTestSeams`:** must remain zero in committed code. If a test sets it before `New()`, use `t.Cleanup(func() { defaultNewTestSeams = AppTestSeams{} })`. Set seams that `New()` does not read on `app.testSeams` after `New()`.
 
 **`cachepreload` seams:** **`PreloadManager`** holds unexported **`testSeams`** (`SchedulerAddTask` / `SchedulerRemoveTask`; nil → real scheduler methods). **Remaining follow-up:** `folder_preload_task.go` package globals (`dbPoolGetFn`, `dbPoolPutFn`, `getPreloadRoutesByFolderIDFn`, `httpCacheExistsByKeyFn`, `folderSchedulerAddTaskFn`) should move to struct-local seams on the task or manager that runs the code, same nil → production semantics.
 
-Typical test assignments: `app.testSeams.Serve`, `app.testSeams.LoadConfig`, `app.testSeams.GalleryStatsStartup`, `app.InfrastructureService.testSeams.HandlerQueries`, `app.RuntimeManager.testSeams.BeforeListen`, `app.HandlerManager.testSeams.BuildHandlers`. For write-batcher observability: `app.InfrastructureService.testSeams.OnBeginTx`, `OnPut`.
+Typical test assignments: `app.testSeams.Serve`, `app.testSeams.LoadConfig`, `app.testSeams.GalleryStatsStartup`, `app.InfrastructureService.testSeams.HandlerQueries`, `app.RuntimeManager.testSeams.BeforeListen`, `app.HandlerManager.testSeams.BuildHandlers`.
 
 Do **not** add `testHook*` fields to production structs or use promoted `app.testHook*` assignments in tests (embedding made those ambiguous; they were removed in favor of explicit `*.testSeams.*` paths).
 
@@ -637,19 +661,29 @@ stateDiagram-v2
     [*] --> Initialization: main()
     Initialization --> LoadConfig: Parse CLI/env
     LoadConfig --> OpenDatabase: Open SQLite
-    OpenDatabase --> CreatePools: Create conn pools
-    CreatePools --> InitializeServices: Wire services
-    InitializeServices --> StartWorkers: Start bg workers
+    OpenDatabase --> CreatePools: Create and size conn pools
+    CreatePools --> StartWriter: Start database.Writer
+    StartWriter --> InitializeServices: Wire services, apply memlimit
+    InitializeServices --> StartWorkers: Start discovery workers
     StartWorkers --> Running: Serve HTTP
 
-    Running --> Restart: Config changed
+    Running --> Restart: Restart requested
     Restart --> Running: Re-exec process
 
     Running --> Shutdown: SIGTERM/SIGINT
-    Shutdown --> DrainWorkers: Stop accepting
-    DrainWorkers --> CloseConnections: Close pools
+    Shutdown --> DrainWorkers: Cancel context, wait for discovery
+    DrainWorkers --> CloseWriter: Flush writes held in memory
+    CloseWriter --> CloseConnections: Close pools
     CloseConnections --> [*]: Exit
 ```
+
+**Startup discovery:** When `run_file_discovery` is true and the process was not started by a config or server restart, `App.Run` starts `App.runStartupDiscovery` ([`app_startup.go`](../internal/server/app_startup.go)) on the runtime wait group (`RuntimeManager.wg`), which `Shutdown` waits for. The goroutine calls `TriggerDiscovery` and then:
+
+- **Folder-index rebuild failed** (`errors.Is(err, database.ErrFolderIndexRebuild)`): it logs the failure, sends the error to `Run`, and cancels the app context. `Serve` returns, `Run` returns the error, and the process exits with status 1 after `main` calls `Shutdown`. The goroutine never calls `Shutdown` itself.
+- **Another error, or the app is stopping:** it returns without further action.
+- **Success:** it schedules `PRAGMA optimize` and, when `restart_after_discovery` is true (the default), requests a process restart. See [§7.1](#71-worker-pool-architecture).
+
+`App.Shutdown` runs in this order: cancel the app context, wait for the runtime goroutines, the discovery workers, and any run in progress, shut down the preload manager, the file processor, and the discovery backlog, close the Writer, run `PRAGMA optimize`, then close the pools ([`app_lifecycle.go`](../internal/server/app_lifecycle.go)).
 
 ### 6.4 Request Middleware Stack
 
@@ -745,17 +779,19 @@ All other `RenderPage` call sites use `partial: false` (full layout only). Galle
 
 ## 7. Background Processing
 
-**Packages:** [Process-to-package map § Discovery and file processing](#22-discovery-and-file-processing) (`server`, `parallelwalkdir`, `files`, `workerpool`, `dque`, `thumbnail`, `imagemeta`).
+**Packages:** [Process-to-package map § Discovery and file processing](#22-discovery-and-file-processing) (`discovery`, `server`, `parallelwalkdir`, `files`, `metadata`, `thumbnail`, `memlimit`, `workerpool`, `dque`, `database`).
 
 ### 7.1 Worker Pool Architecture
 
-End-to-end discovery and per-item processing (package subgraphs, code symbols, legend): [§7.2 File Processing Pipeline](#72-file-processing-pipeline). The discovery disk queue is created in `SubsystemManager.Start` (wiped each start), not inside `TriggerDiscovery`.
+End-to-end discovery and per-item processing (package subgraphs, code symbols, legend): [§7.2 File Processing Pipeline](#72-file-processing-pipeline). `discovery.New`, called from `SubsystemManager.Start`, opens the discovery disk backlog and wipes it on every start; `TriggerDiscovery` does not.
 
 **Worker Pool Configuration:**
 
 ```go
 Max Workers:  NumCPU - 2 (when NumCPU > 4); 2 (3-4 cores); 1 otherwise
               // overridable via config: WorkerPoolMax; 0 (default) keeps CPU auto
+              // memlimit.Apply may then cut it to 1 when RAM cannot hold the
+              // configured workers (GOMEMLIMIT set: unchanged)
 Min Workers:  0 by default — no idle file workers
               // overridable via config: WorkerPoolMinIdle; 0 = no idle workers
               // (not auto-sizing). Workers are spawned only while the discovery
@@ -778,27 +814,27 @@ still triggers a manual walk.
 
 #### 7.1.1 Discovery walk metadata and walk-only gate
 
-Discovery avoids a per-file `os.Stat` on the worker hot path by carrying mtime and size from the directory walk through the backlog into file workers. **Modification decisions happen once at walk time** via the per-directory DirEnt catalog; workers do not re-compare disk metadata to the database to skip unchanged files.
+Discovery workers do not stat a file to decide whether it changed or to record an imported file's mtime and size: those come from the directory walk through the backlog. A file that fails processing is the exception: `Service.recordInvalid` stats it again and records the fresh mtime and size, and records nothing if that stat fails. (`metadata.Extractor` still stats each file it sends to ExifTool, because a file over the size limit retires its server.) **Modification decisions happen once at walk time** via the per-directory DirEnt catalog; workers do not re-compare disk metadata to the database to skip unchanged files.
 
-1. **`parallelwalkdir`** emits [`ReportedFile`](internal/parallelwalkdir/parallelwalkdir.go) on the `results` channel (`ModTimeUnix`, `SizeBytes` from `fs.FileInfo` at filter time) only for paths that pass the catalog gate.
-2. **`WalkImageDir`** maps each report to [`DiscoveryPathWork`](internal/server/files/discovery_work.go) and enqueues on the disk-backed discovery `dque`. A nil [`WalkDeps.CatalogROPool`](internal/server/files/walker.go) aborts the walk (catalog required).
-3. **`runPoolWorkerWithProcessor`** dequeues `DiscoveryPathWork`, normalizes the path, builds `*File` with valid `Mtime` / `SizeBytes` from the work item, and calls **`ProcessDiscoveryFile`**, which invokes **`processDiscoveryWorkerFile`** → **`processFileContents`** for every dequeued item (no per-file discovery-state SQL or existence lookup on the worker path).
-4. **`WriteFileInTx`** sets **`f.Exists`** (and file id when applicable) from upsert / **`UpsertPathChain`** outcome before the B1 thumbnail-exists branch — not from a pre-write **`GetFileByPath`** on the discovery worker path.
+1. **`parallelwalkdir`** emits [`ReportedFile`](../internal/parallelwalkdir/parallelwalkdir.go) on the `results` channel (`ModTimeUnix`, `SizeBytes` from `fs.FileInfo` at filter time) only for paths that pass the catalog gate.
+2. **`Service.walk`** ([`walk.go`](../internal/discovery/walk.go)) maps each report to a [`PathWork`](../internal/discovery/backlog.go) and enqueues it on the disk-backed discovery backlog. The walk reads the catalog through `Deps.Catalog`, which production sets to `database.NewDiscoveryDirEntMapFunc` on the RO pool.
+3. **`Service.work`** ([`worker.go`](../internal/discovery/worker.go)) takes a `PathWork` with `claim`, and `importFile` converts the path to a gallery path and calls **`ProcessDiscoveryFile`** with the walk's mtime and size. The processor builds a `*File` with valid `Mtime` / `SizeBytes` from the work item and calls **`processFileContents`** for every dequeued item (no per-file discovery-state SQL or existence lookup on the worker path).
+4. **`writeFile`** in the Writer ([`flush.go`](../internal/server/database/flush.go)) decides whether the file row existed from the `UpsertPathChain` result (`existedBeforeUpsert`), not from a pre-write `GetFileByPath` on the discovery worker path.
 
-**Time-of-check to time-of-use (TOCTOU) tradeoff (accepted):** Discovery records each file's modification time and size during the directory walk, when the path is evaluated against the catalog. If the file changes on disk after the walk but before a worker runs, the worker still uses the values from the walk metadata on the queue item. The walk may omit re-enqueue when it should, or may enqueue using stale metadata. Re-statting in workers would close that window but reintroduce one disk syscall per file—the cost this design avoids at the expense of pushing the decision to walk time only.
+**Time-of-check to time-of-use (TOCTOU) tradeoff (accepted):** Discovery records each file's modification time and size during the directory walk, when the path is evaluated against the catalog. If the file changes on disk after the walk but before a worker runs, the worker still uses the values from the walk metadata on the queue item (an invalid record uses a fresh stat, as above). The walk may omit re-enqueue when it should, or may enqueue using stale metadata. A stat in workers would refresh the metadata of queued files, though not find changes to files the walk skipped, which need a later walk; it would also reintroduce one disk syscall per file—the cost this design avoids at the expense of pushing the decision to walk time only.
 
-#### 7.1.2 Discovery modification decision (`files`)
+#### 7.1.2 Discovery modification decision (`discovery`)
 
-Walk-time comparison logic lives in [`discovery_modification.go`](internal/server/files/discovery_modification.go):
+Walk-time comparison logic lives in [`walk.go`](../internal/discovery/walk.go):
 
-- **`discoveryModificationDecision`** / **`DiscoveryModificationDecisionForWalk`** — single evaluation order for invalid-only rows, file rows (mtime/size/md5), and not-in-catalog paths.
-- **`DiscoveryDirEntModified`** — adapter passed to **`WithDirEntCatalog`** as **`CheckIfFileModifiedFunc`** from [`WalkImageDir`](internal/server/files/walker.go).
+- **`decide`**: single evaluation order: a file not in the catalog is processed; an `invalid_files` row with the same mtime and size is skipped (`skipUnchangedInvalid`) and wins over a valid file row; a `files` row with the same mtime, size, and a stored MD5 is skipped (`skipUnchangedValid`); anything else is processed.
+- **`Service.modified`**: the `CheckIfFileModifiedFunc` passed to **`WithDirEntCatalog`**. It counts the file in `TotalFound`, then in `AlreadyExisting` or `SkippedInvalid` when `decide` says skip.
 
-Per-directory catalog state is loaded by [`NewDiscoveryDirEntMapFunc`](internal/server/files/discovery_catalog.go): one read-only pool **Get**/**Put** per visited directory on a single connection — [`GetFolderIDByPath`](sqlc/queries/folders.sql) for the gallery-relative directory prefix, then **Query A** [`ListDiscoveryFilesByFolderID`](sqlc/queries/files.sql) and **Query B** [`ListDiscoveryInvalidByFolderID`](sqlc/queries/invalid_files.sql) keyed by that `folder_id`. Rows merge into `map[PathHash]DirEntState` in Go (`buildDirEntMapFromRows`). Missing folder row → empty catalog map. That merged map is the read model for walk-time modification decisions; discovery workers do **not** run additional per-path discovery-state lookups to skip unchanged files.
+Per-directory catalog state is loaded by [`NewDiscoveryDirEntMapFunc`](../internal/server/database/catalog.go): one read-only pool **Get**/**Put** per visited directory on a single connection: [`GetFolderIDByPath`](../sqlc/queries/folders.sql) for the gallery-relative directory prefix, then **Query A** [`ListDiscoveryFilesByFolderID`](../sqlc/queries/files.sql) and **Query B** [`ListDiscoveryInvalidByFolderID`](../sqlc/queries/invalid_files.sql) keyed by that `folder_id`. Rows merge into `map[PathHash]DirEntState` in Go (`buildDirEntMapFromRows`). Missing folder row → empty catalog map. That merged map is the read model for walk-time modification decisions; discovery workers do **not** run additional per-path discovery-state lookups to skip unchanged files.
 
 #### 7.1.3 parallelwalkdir (discovery directory walk)
 
-`files.WalkImageDir` calls `parallelwalkdir.ParallelWalk` with `GOMAXPROCS(0)`
+`Service.walk` calls `parallelwalkdir.ParallelWalk` with `GOMAXPROCS(0)`
 workers (no `WithMaxWorkers` in production). Directory workers read `dirWork`
 only from a **bounded** `dirCh` (default capacity `workers × 1024`; tests may
 set `WithDirChCapacity`). When a worker finds subdirectories it pushes `dirWork`
@@ -813,30 +849,27 @@ inside `processDir` on a send (pre-feeder deadlock).
 Per-worker `readDirBuffers` (`pathBuf`, `reportedBuf`, `joinBuf`) build child
 paths without per-entry `filepath.Join`; `osza.ReadDir` + `Entry.Info(joinBuf)`
 supply file metadata on the hot path. `ReportedFile.Path` is a subslice of the
-walk's [`WalkPathStore`](internal/parallelwalkdir/walk_path_store.go) bump arena
-(one store per discovery walk via `files.WalkDeps.WalkPathStore` and
-`WithWalkPathStore`). Subslices stay valid until `waitForFileProcessingDrain`
-returns; the processor converts with `string(work.Path)` at dequeue. Do not
-`Reset()` the store until drain completes. `WithValidationFunc` filters on
-reported path bytes without stringifying on the hot path; production discovery
-uses `WithBasenameInclude` only.
+walk's [`WalkPathStore`](../internal/parallelwalkdir/walk_path_store.go) bump arena
+(`Service.Run` creates one store per run and passes it with `WithWalkPathStore`).
+Subslices stay valid until `waitDrained` returns; `importFile` converts with
+`string(w.Path)` when a worker takes the item. `Service.Run` calls `Reset()` on
+the store only after the drain completes. Production discovery
+filters with `WithBasenameInclude` and `WithSizeNotZero`, which the catalog mode
+requires.
 
 ##### DirEnt catalog filter (production)
 
 Production discovery always wires
-[`WithDirEntCatalog`](internal/parallelwalkdir/dirent_catalog.go) from
-[`WalkImageDir`](internal/server/files/walker.go) with
-[`WalkDeps.CatalogROPool`](internal/server/files/walker.go) required
-(`internal/server/server.go` passes `app.dbRoPool`). A nil pool logs an error and
-the walk does not start.
+[`WithDirEntCatalog`](../internal/parallelwalkdir/dirent_catalog.go) from
+`Service.walk` with `Deps.Catalog`.
 
-`GetDirEntMapFunc` is [`NewDiscoveryDirEntMapFunc`](internal/server/files/discovery_catalog.go):
+`GetDirEntMapFunc` is [`NewDiscoveryDirEntMapFunc`](../internal/server/database/catalog.go):
 one read-only pool checkout per visited directory (same connection for folder resolve +
 file + invalid queries). Gallery-relative directory prefix comes from the reported path;
-[`GetFolderIDByPath`](sqlc/queries/folders.sql) resolves `folder_id`, then
-[`ListDiscoveryFilesByFolderID`](sqlc/queries/files.sql) and
-[`ListDiscoveryInvalidByFolderID`](sqlc/queries/invalid_files.sql) load indexed rows for
-that folder. Map keys use [`HashPathBytes`](internal/parallelwalkdir/fnv128.go) on file
+[`GetFolderIDByPath`](../sqlc/queries/folders.sql) resolves `folder_id`, then
+[`ListDiscoveryFilesByFolderID`](../sqlc/queries/files.sql) and
+[`ListDiscoveryInvalidByFolderID`](../sqlc/queries/invalid_files.sql) load indexed rows for
+that folder. Map keys use [`HashPathBytes`](../internal/parallelwalkdir/fnv128.go) on file
 `filename` (Query A) or `path.Base(invalid_path)` (Query B), matching walk
 `catalogBasename`. The loader runs **before**
 `readDirAllFn` in `processDir`. `GetDirEntMapFunc` receives reported directory path
@@ -845,12 +878,11 @@ basename lookup still uses the final segment). ReadDir-fail on a file path hashe
 basename after the final `/` in the reported path. A `getMap` error is sent on `errs`
 and the directory worker returns without descending further.
 
-`CheckIfFileModifiedFunc` in production is
-[`files.DiscoveryDirEntModified`](internal/server/files/discovery_modification.go)
-(same semantics as **`discoveryModificationDecision`**). It decides whether to
+`CheckIfFileModifiedFunc` in production is `Service.modified`
+(same semantics as **`decide`**). It decides whether to
 `sendReported` after include/size filters (regular files, symlink-to-file, and
 ReadDir-fail file paths). Unchanged files are dropped at walk time so they never
-hit the discovery `dque`; dequeued items always run **`processFileContents`**.
+hit the discovery backlog; dequeued items always run **`processFileContents`**.
 
 Catalog mode requires `WithBasenameInclude` and `WithSizeNotZero` (production
 discovery filters) and does not compose with `WithRegexpInclude` or
@@ -871,133 +903,145 @@ flowchart LR
     W -->|ReportedFile path+mtime+size| Results[(results channel)]
 ```
 
-If `restart_after_discovery` is true (default false, hot-reloadable), startup
-`TriggerDiscovery` — after walk, drain, and `file_folder_index` rebuild —
-calls `TriggerRestart()` (log reason `discovery-complete`). The completion
-monitor still logs "File processing completed" and schedules PRAGMA optimize;
-it does not restart. Do not wait for PRAGMA. If that `TriggerRestart` runs
-before the HTTP server is listening, it sets the restart flag (existing
-nil-server warn) and production `RuntimeManager.Serve` skips `ListenAndServe`
-(after `BeforeListen`, and again after `httpServer` assign) so `Run` proceeds
-to `ExecRestart`. The exec injects `SEPG_SKIP_STARTUP_DISCOVERY=1`, so the new
-process does not walk again and the completion monitor does not start. Drain
-error / cancelled discovery does not restart. Manual `POST /server/discovery`
-does not auto-restart.
+`restart_after_discovery` defaults to true and is hot-reloadable. After a
+successful startup discovery run (walk, drain, and `file_folder_index` rebuild),
+`App.runStartupDiscovery` schedules `PRAGMA optimize` and then, when
+`restart_after_discovery` is true, calls `TriggerRestart()` (log reason
+`discovery-complete`), unless the app is stopping. Do not wait for PRAGMA. `Service.Run` itself logs "File processing
+completed" and does not restart. If `TriggerRestart` runs before the HTTP server
+is listening, it sets the restart flag and production `RuntimeManager.Serve`
+skips `ListenAndServe` (after `BeforeListen`, and again after the `httpServer`
+assignment) so `Run` proceeds to `ExecRestart`. The exec injects
+`SEPG_SKIP_STARTUP_DISCOVERY=1`, so the new process does not walk again. A
+drain error or canceled discovery does not restart. Manual
+`POST /server/discovery` does not auto-restart.
 
-If startup `TriggerDiscovery` returns a **folder-index rebuild** failure
-(`errors.Is(err, files.ErrFolderIndexRebuild)`), the startup goroutine calls
-`app.Shutdown()` and does **not** `TriggerRestart` — a broken populate must not
-exec a skip-discovery child that skips the rebuild next boot. Drain-cancel
-errors are logged inside `TriggerDiscovery` and keep serving
-(no `Shutdown`). `POST /server/discovery` does not `Shutdown` (Task 5 dashboard
-banner); only the startup path does.
+If startup discovery returns a **folder-index rebuild** failure
+(`errors.Is(err, database.ErrFolderIndexRebuild)`), `App.runStartupDiscovery`
+does **not** request a restart: a broken populate must not exec a
+skip-discovery child that skips the rebuild next boot. It sends the error to
+`Run` and cancels the app context, so `Run` returns the error and the process
+exits with status 1 (see [§6.3](#63-server-lifecycle)). Startup discovery runs
+on the runtime wait group, so `Shutdown` waits for it. `POST /server/discovery`
+does not shut the server down: it records the error for the dashboard alert and
+keeps serving.
 
 ### 7.2 File Processing Pipeline
 
-Same diagram as [§4 File Processing Pipeline](diagrams/ARCHITECTURE_DIAGRAMS.md#4-file-processing-pipeline) in the diagrams doc. Index: [§2 Process-to-package map](#2-process-to-package-map).
+Index: [§2 Process-to-package map](#2-process-to-package-map).
 
 ```mermaid
 flowchart TD
     subgraph server["server · internal/server"]
         TD["TriggerDiscovery( )"]
-        DRAIN["waitForFileProcessingDrain( )"]
     end
 
-    subgraph files_walk["files · internal/server/files"]
-        WID["WalkImageDir( )"]
-        ENQ["enqueueWithBackpressure( )"]
+    subgraph disc["discovery · internal/discovery"]
+        RUN["Service.Run( )"]
+        WALK["Service.walk( )"]
+        Q["backlog<br/>PathWork"]
+        WORK["Service.work( )"]
+        IMP["Service.importFile( )"]
+        DRAIN["Service.waitDrained( )"]
     end
 
     subgraph pwd["parallelwalkdir · internal/parallelwalkdir"]
         PW["ParallelWalk( )"]
     end
 
-    subgraph discovery_q["server · internal/server discovery_dque.go + dque · internal/dque"]
-        Q["discovery-dque<br/>DiscoveryPathWork"]
-    end
-
     subgraph wp["workerpool · internal/workerpool"]
-        MON["MonitorPool( )"]
+        MON["StartWorkerPool( )"]
     end
 
     subgraph files_proc["files · internal/server/files"]
-        RPW["runPoolWorkerWithProcessor( )"]
         PDF["ProcessDiscoveryFile( )"]
-        PDW["processDiscoveryWorkerFile( )"]
         PFC["processFileContents( )"]
-        SFW["SubmitFileForWrite( )"]
-        RFI["RebuildFileFolderIndex( )"]
     end
 
-    subgraph batch["server · internal/server batcher_wiring + writebatcher · internal/writebatcher"]
-        BAT["UnifiedBatcher.SubmitFile( )"]
+    subgraph tm["thumbnail · internal/thumbnail<br/>metadata · internal/metadata"]
+        READ["Generator.Read( )"]
+        EXT["Extractor.Extract( )"]
+        GEN["Generator.GenerateThumbnailAndHashes( )"]
     end
 
-    TD --> WID
-    WID --> PW
-    PW -->|ReportedFile| ENQ
-    ENQ --> Q
-    MON -.->|scale workers| RPW
-    Q --> RPW
-    WID -->|walk returns| DRAIN
+    subgraph db["database · internal/server/database"]
+        SUB["Writer.SubmitFile( )"]
+        FLUSH["flush.write( )"]
+        RFI["Writer.RebuildFolderIndex( )"]
+    end
+
+    TD --> RUN
+    RUN --> WALK
+    WALK --> PW
+    PW -->|ReportedFile| Q
+    MON -.->|scale workers| WORK
+    Q --> WORK
+    WORK --> IMP
+    RUN --> DRAIN
     DRAIN --> RFI
 
-    RPW --> PDF
-    PDF --> PDW
-    PDW --> PFC
-    PFC --> SFW
-    SFW --> BAT
-    BAT --> RPW
+    IMP --> PDF
+    PDF --> PFC
+    PFC --> READ
+    PFC --> EXT
+    PFC --> GEN
+    IMP --> SUB
+    SUB --> FLUSH
 ```
 
-| Diagram label                   | Package                   | Directory                                                    | Symbol / file                                            |
-| ------------------------------- | ------------------------- | ------------------------------------------------------------ | -------------------------------------------------------- |
-| `TriggerDiscovery( )`           | `server`                  | `internal/server`                                            | `server.go`                                              |
-| `waitForFileProcessingDrain( )` | `server`                  | `internal/server`                                            | `app_lifecycle.go`                                       |
-| `WalkImageDir( )`               | `files`                   | `internal/server/files`                                      | `walker.go`                                              |
-| `enqueueWithBackpressure( )`    | `files`                   | `internal/server/files`                                      | `walker.go`                                              |
-| `ParallelWalk( )`               | `parallelwalkdir`         | `internal/parallelwalkdir`                                   | `parallelwalkdir.go`                                     |
-| `discovery-dque`                | `server` + `dque`         | `internal/server/discovery_dque.go`, `internal/dque`         | Queue label; opened/wiped in `SubsystemManager.Start( )` |
-| `MonitorPool( )`                | `workerpool`              | `internal/workerpool`                                        | `workerpool.go`                                          |
-| `runPoolWorkerWithProcessor( )` | `files`                   | `internal/server/files`                                      | `processor.go`                                           |
-| `ProcessDiscoveryFile( )`       | `files`                   | `internal/server/files`                                      | `service.go`                                             |
-| `processDiscoveryWorkerFile( )` | `files`                   | `internal/server/files`                                      | `processor.go`; always `processFileContents` for dequeue |
-| `processFileContents( )`        | `files`                   | `internal/server/files`                                      | `processor.go`; calls `imagemeta`, `thumbnail`           |
-| `SubmitFileForWrite( )`         | `files`                   | `internal/server/files`                                      | `service.go`                                             |
-| `UnifiedBatcher.SubmitFile( )`  | `server` + `writebatcher` | `internal/server/batcher_wiring.go`, `internal/writebatcher` | Flush via `flushBatchedWrites( )`                        |
-| `RebuildFileFolderIndex( )`     | `files`                   | `internal/server/files`                                      | `folder_index.go`                                        |
+| Diagram label                              | Package            | Directory                             | Symbol / file                                                                  |
+| ------------------------------------------ | ------------------ | ------------------------------------- | ------------------------------------------------------------------------------ |
+| `TriggerDiscovery( )`                      | `server`           | `internal/server`                     | `server.go`; calls `Service.Run` with the app's context                        |
+| `Service.Run( )`                           | `discovery`        | `internal/discovery`                  | `service.go`; walk, drain, save counters, rebuild the folder index             |
+| `Service.walk( )`                          | `discovery`        | `internal/discovery`                  | `walk.go`                                                                      |
+| `ParallelWalk( )`                          | `parallelwalkdir`  | `internal/parallelwalkdir`            | `parallelwalkdir.go`                                                           |
+| `backlog` (`PathWork`)                     | `discovery`+`dque` | `internal/discovery`, `internal/dque` | `backlog.go`; opened and wiped by `discovery.New`                              |
+| `StartWorkerPool( )`                       | `workerpool`       | `internal/workerpool`                 | `workerpool.go`; `Service.Start` runs `Service.work` under it                  |
+| `Service.work( )`, `Service.importFile( )` | `discovery`        | `internal/discovery`                  | `worker.go`                                                                    |
+| `Service.waitDrained( )`                   | `discovery`        | `internal/discovery`                  | `service.go`; waits for an empty backlog, no file in flight, no pending writes |
+| `ProcessDiscoveryFile( )`                  | `files`            | `internal/server/files`               | `service.go`                                                                   |
+| `processFileContents( )`                   | `files`            | `internal/server/files`               | `processor.go`; calls `thumbnail` and `metadata`                               |
+| `Generator.Read( )`                        | `thumbnail`        | `internal/thumbnail`                  | `generator.go`                                                                 |
+| `Extractor.Extract( )`                     | `metadata`         | `internal/metadata`                   | `extractor.go`                                                                 |
+| `Generator.GenerateThumbnailAndHashes( )`  | `thumbnail`        | `internal/thumbnail`                  | `generator.go`                                                                 |
+| `Writer.SubmitFile( )`                     | `database`         | `internal/server/database`            | `writer.go`                                                                    |
+| `flush.write( )`                           | `database`         | `internal/server/database`            | `flush.go`; transaction body run by the `writebatcher` worker                  |
+| `Writer.RebuildFolderIndex( )`             | `database`         | `internal/server/database`            | `folder_index.go`                                                              |
 
-**Processing Steps:**
+**Processing Steps** (`processFileContents`):
 
-1. **MIME Detection** - Determine file type (image/jpeg, image/png, image/webp, etc.)
-2. **Walk-only modification gate** - Unchanged images filtered during `parallelwalkdir` catalog compare; dequeued workers always decode (no worker-side DB modification skip)
-3. **Metadata Extraction** - EXIF only; IPTC/XMP tables exist but are not populated
-4. **Image Decode** - Read width/height via `image.DecodeConfig`
-5. **Thumbnail Generation** - Single size `"m"` (200x150 box), JPEG, stored in `thumbs.db`
-6. **Database Write** - Batch insert/update via unified WriteBatcher
+1. **Walk-only modification gate** - Unchanged images are filtered during the `parallelwalkdir` catalog compare; dequeued workers always process the file (no worker-side DB modification skip).
+2. **Read** - `Generator.Read` reads the whole file once into a buffer the generator reuses. Reads of all generators share a 192 MiB in-flight byte budget, charged by the size the walk saw.
+3. **MIME detection** - `http.DetectContentType` on the bytes. A type that does not start with `image` fails the file as `non-image`.
+4. **Metadata extraction** - `Extractor.Extract` runs ExifTool on the file path and returns EXIF, IPTC, and XMP as plain Go values. An ExifTool error fails the file (reason `exif`).
+5. **Image config** - `image.DecodeConfig` reads width and height.
+6. **Thumbnail and hashes** - `Generator.GenerateThumbnailAndHashes` decodes the image, makes one thumbnail (size label `"m"`, fit in a 200x150 box, JPEG), and computes the MD5 of the file bytes and the pHash of the decoded pixels.
+7. **Database write** - `importFile` submits the file to the `Writer`, which writes batches as described in [§5.1](#51-database-writer). A file that failed in steps 2 to 6 is submitted as an `InvalidFile` instead, if a fresh stat of it succeeds (see [§7.1.1](#711-discovery-walk-metadata-and-walk-only-gate)), with its reason: `non-image`, `decode`, `thumbnail`, `exif`, `open`, or `unknown` (`files.InvalidReason`). A file whose processing was canceled is not recorded, so the next run processes it again.
+
+When the walk ends, `waitDrained` polls every 100 ms until no walk is queueing, the backlog is empty, no file is in flight, and the Writer has no pending writes. `Run` then saves the run counters to `module_state` and calls `Writer.RebuildFolderIndex`. A rebuild error is returned from `Run` (wrapping `database.ErrFolderIndexRebuild`).
 
 #### Discovery processing stats (dashboard metrics)
 
-[`ProcessingStats`](internal/server/files/processor.go) feeds [`FileProcessingMetrics`](internal/server/metrics/collector.go) on the admin dashboard (`total_found`, `already_existing`, `newly_inserted`, `skipped_invalid`, `in_flight`).
+[`discovery.Stats`](../internal/discovery/stats.go) feeds [`FileProcessingMetrics`](../internal/server/metrics/collector.go) on the admin dashboard (`total_found`, `already_existing`, `newly_inserted`, `skipped_invalid`, `in_flight`). `Run` zeroes the four run counters at its start, saves them to `module_state` when the drain ends, and `Service.Hydrate` loads the saved values at startup when startup discovery is skipped.
 
-| Counter               | During a discovery run                                                                                                                                                                          |
-| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`TotalFound`**      | Incremented once per regular image file that passes walk filters at the DirEnt catalog gate (`discoveryDirEntModifiedCore` in `files`).                                                         |
-| **`AlreadyExisting`** | Incremented at walk when catalog compare classifies the file as unchanged in **`files`** (mtime/size/MD5 match).                                                                                |
-| **`SkippedInvalid`**  | Incremented at walk for unchanged **`invalid_files`** rows; incremented in **`runPoolWorkerWithProcessor`** when **`ProcessDiscoveryFile`** fails and **`recordInvalidFileFromPath`** succeeds. |
-| **`NewlyInserted`**   | Incremented in the worker for every dequeued path that successfully **`ProcessDiscoveryFile`** and proceeds toward **`SubmitFileForWrite`** (unchanged valid/invalid files are not dequeued).   |
-| **`InFlight`**        | Worker pool: incremented on dequeue, decremented when processing completes (success, failure, or skip-before-submit).                                                                           |
+| Counter               | During a discovery run                                                                                                                                                             |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`TotalFound`**      | Incremented once per regular image file that passes walk filters at the DirEnt catalog gate (`Service.modified`).                                                                  |
+| **`AlreadyExisting`** | Incremented at walk when `decide` classifies the file as unchanged in **`files`** (mtime, size, and MD5 present).                                                                  |
+| **`SkippedInvalid`**  | Incremented at walk for unchanged **`invalid_files`** rows; incremented in **`Service.recordInvalid`** when processing fails and the invalid record is submitted.                  |
+| **`NewlyInserted`**   | Incremented in `Service.importFile` for every file that **`ProcessDiscoveryFile`** processed, before **`Writer.SubmitFile`** (unchanged valid and invalid files are not dequeued). |
+| **`InFlight`**        | Incremented when a worker takes a file from the backlog (`claim`), decremented when `importFile` returns. `Run` does not reset it.                                                 |
 
-**Conservation (per run):** `TotalFound == AlreadyExisting + SkippedInvalid + NewlyInserted` once the walk and worker drain finish (`SkippedInvalid` counts both walk-time unchanged invalid rows and worker-recorded failures; `NewlyInserted` counts only successful worker processing).
+**Conservation (per run):** `TotalFound == AlreadyExisting + SkippedInvalid + NewlyInserted` once the walk and worker drain finish, provided every path the catalog gate selected for processing was enqueued on the backlog (after an enqueue error the walk discards the remaining reports, which were already counted), no file was canceled, and every invalid record was submitted (`SkippedInvalid` counts both walk-time unchanged invalid rows and worker-recorded failures; `NewlyInserted` counts only successful processing).
 
 **Thumbnail decode (`GenerateThumbnailAndHashes`):**
 
-- **All images** decode via `fullImageDecodeHook` (production default `decodeFullImage`): JPEG input is sniffed with a buffered peek, then that same buffered reader is handed to the go-scaled-jpeg decoder at an **adaptive DCT scale** (`chooseJPEGDCTSize`); any other format falls back to stdlib `image.Decode` on the buffered reader. The scale is chosen from the source dimensions (read via `image.DecodeConfig` in step 4) so the decoded JPEG is at least the 200×150 gallery-thumb fit size: large JPEGs decode at 1/8 (`DCTSizeScaled: 1`), small JPEGs decode closer to 1:1 so the thumbnail resize never upscales. A JPEG full-image decode error **hard-fails** generation - there is no stdlib `image/jpeg.Decode` fallback and no embedded-EXIF-thumbnail shortcut.
-- **TIFF** - all TIFF inputs hard-fail thumbnail generation (there is no TIFF decoder on the generate path).
-- **WebP** - WebP with a full image payload still decodes (`golang.org/x/image/webp` is registered); WebP that is thumb-only / not a full image may hard-fail.
-- **Encode** stays stdlib `image/jpeg.Encode` (go-scaled-jpeg is decode-only).
-
-> **Note:** Existing `thumbs.db` thumbnail blobs and stored pHash rows are **unchanged** until rediscovery/regeneration. New thumbnails for EXIF-bearing JPEGs come from the full-image decode (adaptive DCT scale) instead of the embedded EXIF thumbnail, so quality improves but thumb bytes and pHash differ. **New** thumbnails/pHash can change geometry - under the old fixed 1/8 decode a 400×300 JPEG decoded to 50×37 and rendered as an upscaled 200×148; the adaptive scale decodes it at dct 4 (1/2) to exactly 200×150, so small JPEGs are no longer upscaled.
+- **PNG and GIF** (by sniffed MIME type) decode with Wuffs (`wuffs-wasm`) into 8-bit premultiplied RGBA; a GIF decodes as its first frame at the frame's bounds. The decoder is reused from file to file. A decode with more than 4 MiB of output is followed by `Trim`, and a failed decode closes the decoder.
+- **JPEG** decodes with go-scaled-jpeg at an **adaptive DCT scale** (`chooseJPEGDCTSize`): the scale is chosen from the source dimensions (read in step 5) so the decoded JPEG is at least the 200x150 gallery-thumb fit size, or full size if the source is smaller. Large JPEGs decode at 1/8 (`DCTSizeScaled: 1`); small JPEGs decode closer to 1:1, at most full size. The DCT scale reduces the intermediate decode size; the decoded image is then resized to fit. An original smaller than the 200x150 box is enlarged to fit it (`fitInsideBoxDims`). A JPEG decode error **hard-fails** the file: there is no stdlib `image/jpeg.Decode` fallback.
+- **Other formats** go through the standard `image` registry. The `thumbnail` package registers WebP (`golang.org/x/image/webp`); a format with no registered decoder fails.
+- **Resize and encode** - the decoded image is scaled with `draw.ApproxBiLinear` into a reused canvas and encoded with stdlib `image/jpeg.Encode` (go-scaled-jpeg is decode-only).
+- **pHash** - `go-image-phash` computes a 64-bit hash from the decoded pixels (for a JPEG, at the DCT-scaled size). If the hash cannot be computed, it is logged and stored as 0.
+- **Memory** - a `thumbnail.Pool` shares its budgets across generators: up to 256 MiB (`RetainedBytes`) of scratch memory kept between files, and one slot at a time for a decode that needs more than the retained size. Wuffs decoder memory is outside the Go heap: a generator keeps its decoder, trims it after a decode with more than 4 MiB of output, and closes it after a failed decode.
 
 ### 7.3 Task Scheduler
 
@@ -1063,7 +1107,7 @@ graph TB
     end
 
     subgraph "Background Workers"
-        Batcher[Unified WriteBatcher]
+        Batcher[database.Writer]
         Preload[Preload Worker]
     end
 
@@ -1084,11 +1128,9 @@ graph TB
     Handler --> Response
 
     Batcher -->|Flush Transaction| CacheDB
-    Batcher -->|OnSuccess| Evict
-    Evict[maybeEvictCacheEntries] -->|Check Size| CacheDB
-    CacheDB -->|EvictLRU| CacheDB
-    Evict --> AtomicCounter
-    Batcher --> AtomicCounter
+    Batcher -->|OnCacheStored| Evict
+    Evict[cacheStored] -->|Add stored bytes| AtomicCounter
+    Evict -->|Over budget: EvictLRU| CacheDB
 
     Preload --> CacheDB
 
@@ -1174,7 +1216,7 @@ HTTP cache response bodies may be **compressed at rest** in SQLite using a plugg
 
 - **No migration.** Read dispatch uses magic-prefix matching (primary) + `htmlsniff` (plaintext fallback). Legacy plaintext HTML rows (no compression magic) still HIT.
 - `content_length` column stores the **uncompressed** size (HTTP `Content-Length` on replay; `MaxEntrySize` check).
-- Disk accounting (`GetHttpCacheSizeBytes`, least-recently-used (LRU) eviction, batcher `OnSuccess`) uses **stored** bytes (`LENGTH(body)` / `len(Body)`).
+- Disk accounting (`GetHttpCacheSizeBytes`, least-recently-used (LRU) eviction, Writer `OnCacheStored`) uses **stored** bytes (`LENGTH(body)` / `len(Body)`).
 - **Default write codec:** `zstd-1`. Configurable via `http_cache_body_codec` (YAML/DB/modal only; no `SFG_` env variable — same pattern as `etag_version`).
 - Typical profile (~10 MB gallery page): encode ~56 ms, decode ~14 ms; `Match` + `htmlsniff` ≪1 ms per request.
 - **`ErrUnrecognizedCacheBody`** (corrupt or unclassifiable blob) → MISS. The middleware logs a warning and falls through to handler re-render, which overwrites the bad row on store.
@@ -1187,14 +1229,14 @@ HTTP cache response bodies may be **compressed at rest** in SQLite using a plugg
 
 **Cache Eviction:**
 
-Cache eviction happens **after successful batch flush** in the `OnSuccess` callback:
+Cache eviction happens **after a successful batch flush that stored cache entries**, in the `OnCacheStored` callback (`InfrastructureService.cacheStored`):
 
 ```mermaid
 sequenceDiagram
     participant Req as Request Thread
-    participant Batcher as Unified WriteBatcher
+    participant Batcher as database.Writer
     participant Flush as Flush Function
-    participant Evict as maybeEvictCacheEntries
+    participant Evict as cacheStored
     participant DB as Database
 
     Req->>Batcher: Submit cache entry (10KB)
@@ -1207,8 +1249,8 @@ sequenceDiagram
     Flush->>DB: Commit transaction
     Flush-->>Batcher: Success
 
-    Batcher->>Evict: OnSuccess callback
-    Evict->>DB: SELECT SUM(LENGTH(body))
+    Batcher->>Evict: OnCacheStored(bytes, entries)
+    Evict->>Evict: Add to atomic size and entry counters
     Evict->>Evict: size > max?
     alt Over budget
         Evict->>DB: EvictLRU(freed bytes)
@@ -1220,10 +1262,10 @@ sequenceDiagram
 **Design Notes:**
 
 - Eviction happens **outside the transaction** to avoid SQLite deadlocks
-- Database is queried for actual size (source of truth)
+- The atomic counters are estimates of the cache size: each store adds the full body size and one entry, so replacing an existing key overcounts until the next recalibration. They are loaded from the database at startup and after a failed cache flush, and adjusted on each store and eviction
 - 10% buffer added to eviction target to avoid thrashing
-- Atomic counter updated for runtime eviction calculations
-- WAL checkpointing runs after every successful batch commit and periodically (every 5 minutes or when the WAL exceeds 256 MB); periodic `PRAGMA optimize` runs from `postCommitMaintenance` every `DBOptimizeInterval` (default 1h)
+- The counters are lowered by the bytes and entries each eviction frees
+- WAL checkpoints and periodic `PRAGMA optimize` are described in [§5.1](#51-database-writer); `PRAGMA optimize` runs from the Writer's maintenance every `DBOptimizeInterval` (default 1h)
 
 ### 8.4 Cache Preload
 
@@ -1565,6 +1607,7 @@ stateDiagram-v2
     CheckType -->|Listener address/port| RestartRequired
     CheckType -->|Images directory| RestartRequired
     CheckType -->|Log directory| RestartRequired
+    CheckType -->|Database pool settings| RestartRequired
     CheckType -->|Cache settings| RuntimeUpdate
     CheckType -->|Session settings| RuntimeUpdate
 
@@ -1578,11 +1621,13 @@ stateDiagram-v2
 **Restart behavior:**
 
 A web-triggered restart is a full process re-exec (`syscall.Exec`). The running
-process shuts down its HTTP server, flushes pending writes, closes database pools,
+process shuts down its HTTP server, attempts to flush the Writer's in-memory writes (records queued on disk stay there for replay; see [§5.1](#51-database-writer)), closes database pools,
 and replaces itself with a fresh process image. The new process reloads
 configuration from the database and reinitializes all runtime services (HTTP cache,
 worker pool, batch-load manager, etc.). There is no longer a separate "HTTP-only"
 listener reload.
+
+**Pool settings need a restart.** `db_max_pool_size`, `db_min_idle_connections`, and `db_pool_monitor_interval` are marked as requiring a restart. The `database.Writer` keeps the pools it was started with, so `InfrastructureService.ReconfigurePools` refuses to run once the Writer has started; pools are sized only at startup (see [§5.3](#53-connection-pool-design)).
 
 ---
 
@@ -1644,7 +1689,9 @@ wb.Submit(item)
 - Eliminates write contention on single-writer databases like SQLite
 - Automatically flushes on size (count or bytes), interval, or Close()
 - Single background worker handles all flushes synchronously
-- When `DQueDirPath` is set, overflows the in-memory channel to `dque` (absorbs bursts, crash recovery, drain-on-close) instead of returning `ErrFull`
+- When `DQueDirPath` is set, tries to overflow the in-memory channel to `dque` (absorbs bursts; queued items stay on disk at close). `Submit` returns `ErrQuotaExceeded` at the disk quota and `ErrFull` when the disk enqueue fails
+
+`database.Writer` is its production user: it supplies `BeginTx`, `Flush`, and the other callbacks, and starts the batcher with a `dque` overflow directory (see [§5.1](#51-database-writer)).
 
 #### 11.1.4 dque
 
@@ -1729,59 +1776,17 @@ pool.Put(cpc)
 
 **Memory test database mode (`dbconnpool.Config.TestUseMemDB`):** Package tests opt in via `TestMain` (see `internal/server/config/testdb_test.go`): set `TestUseMemDB: true` on the `dbconnpool.Config` and call `NewDbSQLConnPool` with an **empty** DSN to select memory mode. A non-empty DSN selects normal file-backed mode even when the flag is true. Each schema key owns one shared `internal/testdb.MemoryDatabases` lease: construction materializes main immediately and reserves its fresh thumbs peer, while `ThumbsURI` materializes thumbs once on first use. Callers use only the `MainURI`/`ThumbsURI` URIs and never assemble SQLite URIs themselves. Main and thumbs live as separate named, memory-resident `memdb` VFS images, each restored from a process-local seed with SQLite's backup/restore API; each pool connection attaches the thumbs image per connection. RW and RO pools use distinct `*sql.DB` handles over the same image, and RO handles use SQLite read-only mode. The slot keeps shared-pool ownership and calls `Close` only on final release; there is no live disk copy and no repository-local fixture. File-backed test copies use `dbconnpool.CopyMainTestDatabaseTo` / `CopyThumbsTestDatabaseTo`, which copy from a short-lived memory pair.
 
-#### 11.1.10 imagemeta
+#### 11.1.10 metadata
 
-**Purpose:** EXIF/XMP metadata extraction (forked)
+**Purpose:** EXIF, IPTC, and XMP extraction with ExifTool, returned as plain Go values (`metadata.Info`).
 
-`internal/imagemeta` is a fork of [`github.com/evanoberholster/imagemeta`](https://github.com/evanoberholster/imagemeta) v0.3.1
-(MIT-licensed), vendored as a git submodule at [`github.com/lbe/imagemeta`](https://github.com/lbe/imagemeta)
-and wired into the module graph via a `replace` directive in `go.mod`:
+`metadata.Extractor` ([`internal/metadata`](../internal/metadata/extractor.go)) runs ExifTool through [`github.com/lbe/go-exiftool-wasm`](https://github.com/lbe/go-exiftool-wasm), a WebAssembly build of ExifTool and its Perl interpreter. It is built into the binary, so no external `exiftool` is needed.
 
-```
-replace github.com/evanoberholster/imagemeta => ./internal/imagemeta
-```
-
-Upstream was merged at submodule commit `653f189`, bringing the package restructure:
-`exif2` → `meta/exif`, top-level `jpeg` → `meta/jpeg`, and XMP under `meta/xmp`
-(plus `meta/logging` shared helpers). The fork has diverged further with
-project-specific enhancements that would be difficult to upstream cleanly:
-
-| Area                                     | Changes                                                           |
-| ---------------------------------------- | ----------------------------------------------------------------- |
-| **Canon makernotes**                     | Enhanced Canon metadata handling and makernote parsing            |
-| **Apple makernotes**                     | New Apple makernote package                                       |
-| **XMP**                                  | XMP namespace additions and improvements                          |
-| **GPS / EXIF**                           | Improved GPS IFD, EXIF IFD, and coordinate parsing                |
-| **Image type detection**                 | Expanded magic byte signatures, BMFF/JXL detection, SVG sniffing, |
-| subtype detection, ExifTool-style naming |
-| **pHash**                                | Deterministic perceptual hash across x86-64 and ARM64             |
-| **CI / linting**                         | Harden golangci-lint configuration and security checks            |
-
-**Fork policy:**
-
-- **Status:** Maintain separately. The upstream repository sees limited activity,
-  and the fork carries substantial enhancements tailored to this project's needs.
-- **Upstream merging:** The fork periodically merges upstream changes to stay
-  current with any bug fixes or CL improvements. Merge commits are visible in the
-  submodule history.
-- **Future direction:** Maintain as a fork with selective upstream pulls. The
-  merge at `653f189` demonstrates that re-integrating upstream is feasible;
-  future upstream changes will be pulled in selectively as needed rather than
-  cherry-picked wholesale. If the upstream project becomes active again,
-  individual improvements could be contributed back on a case-by-case basis.
-
-**sfpg-go consumption:**
-
-- `internal/server/files/metadata_xmp.go` — imports `meta/exif`, `meta/jpeg`, and
-  `meta/logging`; decodes JPEG metadata via `jpeg.ScanJPEGWithSourceContext` with
-  a timeout context so embedded XMP extension segments are captured.
-- `internal/server/files/metadata.go` — `ExtractExifData` remaps fields from the
-  nested `exif.Exif` struct (`IFD0`, `ExifIFD`, `GPS`, `SelectedDate()`) into the
-  `File.Exif` database columns.
-- `go.mod` — `replace github.com/evanoberholster/imagemeta => ./internal/imagemeta`.
-
-EXIF decode runs `ScanJPEGWithSourceContext` under a timeout context; the non-JPEG
-`imageMetaDecode` path has no context timeout (accepted limitation).
+- **Pool:** `New` returns an `Extractor` that runs up to `PoolSize()` ExifTool servers at once: one per three CPUs, from 2 to 4. Servers start on first use. A background goroutine shuts down servers idle for 30 s or more, checked every 30 s; `Close` stops it and waits.
+- **Command:** `Extract(ctx, path)` runs one ExifTool command on the file path with JSON output, group names, numeric values, every tag, and the raw XMP packet. It excludes five embedded-image tags (`ThumbnailImage`, `PreviewImage`, `PhotoshopThumbnail`, `JpgFromRaw`, `OtherImage`).
+- **Retirement:** a server is shut down instead of reused after a command error, after a file of 16 MiB or more, or after a result of 1 MiB or more, because ExifTool's WASM memory grows to the largest input and never shrinks.
+- **Result:** `Info` holds `Exif`, `IPTC` (including keywords), and `XMP` (the raw packet and GPS strings). `files.processFileContents` calls `Extract`; `database.Writer` replaces the stored EXIF, IPTC, and XMP rows of a file from the result (`writeMetadata`).
+- **Errors:** an error reported by ExifTool for the file is returned, and the file is recorded in `invalid_files` with reason `exif`. `ErrClosed` is returned after `Close`.
 
 #### 11.1.11 osza
 
@@ -1830,6 +1835,16 @@ n, err := osza.ReadDir(dirPath, dirLen, entries, nameBuf, scratch, joinBuf)
 
 **Extending:** New capability → `internal/osza/<name>/` + `<name>_export.go` at facade root; same buffer and sentinel-error conventions.
 
+#### 11.1.12 memlimit
+
+**Purpose:** Set the Go soft memory limit from the machine's RAM and what the process needs memory for, and size the discovery worker count to fit.
+
+`memlimit.Apply(Need)` ([`internal/memlimit`](../internal/memlimit/memlimit.go)) runs once, from `SubsystemManager.Start`, with the configured worker count, `metadata.PoolSize()`, and `thumbnail.RetainedBytes`.
+
+- **Limit:** the floor is 20 MiB, plus 13 MiB per worker, plus 64 MiB per ExifTool server, plus the retained scratch budget; the limit adds 96 MiB of headroom. The computed limit never exceeds 75% of RAM (a `GOMEMLIMIT` override is left as set), where RAM is the smaller of physical memory and the cgroup v2 limit (Linux; other platforms have their own `ram_*.go`). When RAM is unknown there is no ceiling.
+- **Workers:** if the limit for the configured workers exceeds the ceiling, `Limit.Workers` is cut to 1; if one worker does not fit either, the limit is capped at the ceiling.
+- **GC:** unless `GOGC` is set, GC percent is turned off so the limit alone paces collection. With `GOMEMLIMIT` set, `Apply` changes nothing and keeps the configured worker count.
+
 ### 11.2 Testing Utilities
 
 #### 11.2.1 testutil
@@ -1869,7 +1884,7 @@ gentestfiles.Generate(dir,
 | **Connection pooling**           | Database           | Enables concurrent reads                                                                                           |
 | **Batch writes**                 | File processing    | 10-100x throughput improvement                                                                                     |
 | **Persistent overflow**          | WriteBatcher       | Absorbs bursts without dropping writes (dque)                                                                      |
-| **Crash recovery**               | WriteBatcher       | Pending writes survive process restarts (dque)                                                                     |
+| **Crash recovery**               | WriteBatcher       | Records still queued on disk are replayed after restart (dque)                                                     |
 | **Prepared-statement threading** | WriteBatcher flush | Reuses compiled query plans (BeginTx/WithTx)                                                                       |
 | **Intra-batch memoization**      | gallerylib         | Eliminates repeated folder/path queries per batch                                                                  |
 | **Gob persistence**              | BatchedWrite/File  | Enables on-disk overflow serialization                                                                             |
@@ -1879,15 +1894,15 @@ gentestfiles.Generate(dir,
 | **Cache preload**                | Gallery pages      | 50-100ms faster subsequent loads                                                                                   |
 | **Index optimization**           | Database queries   | 2-5x faster queries                                                                                                |
 | **DirEnt catalog at walk**       | Discovery walk     | One RO Get/Put per directory (`GetFolderIDByPath` + files + invalid by `folder_id`); unchanged files never enqueue |
-| **Walk metadata (no re-Stat)**   | Discovery pipeline | Mtime/size from walk on dequeued items; workers do not Stat                                                        |
+| **Walk metadata (no re-Stat)**   | Discovery pipeline | Mtime/size from walk on dequeued items; no worker-side Stat for change checks                                      |
 
 ### 12.2 Discovery walk metadata without re-Stat (2026-09-20)
 
-Discovery backlog items are **`DiscoveryPathWork`** (path, modification time, size from `parallelwalkdir`). File workers copy that metadata onto `*File` and run **`processDiscoveryWorkerFile`** without a worker-side modification DB lookup. See [Discovery walk metadata and walk-only gate](#711-discovery-walk-metadata-and-walk-only-gate) for the full pipeline and the accepted time-of-check to time-of-use (TOCTOU) tradeoff.
+Discovery backlog items are **`discovery.PathWork`** (path, modification time, size from `parallelwalkdir`). File workers copy that metadata onto `*File` and run **`Service.importFile`** without a worker-side modification DB lookup. See [Discovery walk metadata and walk-only gate](#711-discovery-walk-metadata-and-walk-only-gate) for the full pipeline and the accepted time-of-check to time-of-use (TOCTOU) tradeoff.
 
 ### 12.3 Walk-only modification gate (2026-09)
 
-Modification semantics (invalid-only, file row mtime/size/md5, not-in-catalog) are centralized in **`discovery_modification.go`** and applied at walk time via **`DiscoveryDirEntModified`**. Discovery workers process every dequeued path without re-querying catalog state. Catalog loading uses **`GetFolderIDByPath`** plus **`ListDiscoveryFilesByFolderID`** and **`ListDiscoveryInvalidByFolderID`** on one RO connection per directory during the walk (`invalid_files.folder_id` indexed; NOT NULL + ON DELETE CASCADE after migration **022**).
+Modification semantics (invalid-only, file row mtime/size/md5, not-in-catalog) are centralized in **`decide`** in [`internal/discovery/walk.go`](../internal/discovery/walk.go) and applied at walk time by **`Service.modified`**. Discovery workers process every dequeued path without re-querying catalog state. Catalog loading uses **`GetFolderIDByPath`** plus **`ListDiscoveryFilesByFolderID`** and **`ListDiscoveryInvalidByFolderID`** on one RO connection per directory during the walk (`invalid_files.folder_id` indexed; NOT NULL + ON DELETE CASCADE after migration **022**).
 
 ### 12.4 Performance Timeline
 
@@ -1902,6 +1917,7 @@ timeline
     2025-02 : Atomic size tracking<br/>Eliminates SUM queries
     2026-09 : Walk metadata in discovery queue<br/>No re-Stat on worker hot path
     2026-09 : Walk-only catalog gate<br/>Workers process all dequeued items
+    2026-11 : Rebuilt image stack<br/>Thumbnail run 31 m 27 s, 1.62 GB peak RSS (16.12 M files, 127,073 new)<br/>Discovery-only runs 9 m 19 s and 9 m 10 s, 1.13 GB
 ```
 
 ### 12.5 PRAGMA Optimize Strategy
@@ -1912,20 +1928,20 @@ for better index selection. In SFPG, **pool-aware** optimize is handled by
 runner lives in the connection-pool package (never in `database`) and operates
 on a single `*sql.Conn`.
 
-| Scenario  | Mask                         | When                                                                |
-| --------- | ---------------------------- | ------------------------------------------------------------------- |
-| Startup   | `0x10002` (fresh connection) | Async after listen + quiet; once per process                        |
-| Periodic  | `0` (plain)                  | Every `DBOptimizeInterval` (default 1h) via `postCommitMaintenance` |
-| Migration | `0` (plain)                  | Sync, only when migration actually applied                          |
-| Discovery | `0` (plain)                  | Scheduled non-blocking before `return` in discovery completion      |
-| Shutdown  | `0` (plain)                  | After batcher close, before pool close; 30s timeout                 |
+| Scenario          | Mask                         | When                                                                  |
+| ----------------- | ---------------------------- | --------------------------------------------------------------------- |
+| Startup           | `0x10002` (fresh connection) | Async after listen + quiet; once per process                          |
+| Periodic          | `0` (plain)                  | Every `DBOptimizeInterval` (default 1h) via `Writer.optimize`         |
+| Migration         | `0` (plain)                  | Sync, only when migration actually applied                            |
+| Startup discovery | `0` (plain)                  | Scheduled non-blocking after startup discovery completes successfully |
+| Shutdown          | `0` (plain)                  | After batcher close, before pool close; 30s timeout                   |
 
 - **SQLite 3.53.2**: `PRAGMA optimize` auto-limits analysis scope; do **not** add
   manual `PRAGMA analysis_limit`.
 - **Stats target**: `sqlite_stat1` table; not per pooled connection.
-- **No writebatcher coupling**: Periodic timing uses its own
-  `lastPragmaOptimizeRun` atomic, ignoring the writebatcher's `lastOptimizeTime`
-  (which had a reset bug that prevented hourly runs from ever firing).
+- **Periodic timing**: `Writer.maintain`, the batcher's after-commit hook, calls
+  `Writer.optimize`, which runs when `DBOptimizeInterval` has passed since
+  `Writer.lastOptimize`, the time of the last successful run.
 
 ### 12.6 Benchmarks
 
@@ -1959,7 +1975,7 @@ The test suite uses **build tags** to separate unit tests from integration tests
 ```
 internal/
 ├── cachelite/
-│   ├── cache_test.go                          # Unit tests (default)
+│   ├── cache_unit_test.go                     # Unit tests (default)
 │   ├── http_cache_middleware_test.go          # Unit tests (default)
 │   ├── http_cache_middleware_db_test.go       # DB-component tests (default)
 │   ├── cache_benchmark_test.go                # Benchmarks (default)
@@ -1976,15 +1992,12 @@ internal/
 │   ├── config_precedence_integration_test.go  # Precedence integration/e2e
 │   ├── logging_integration_test.go            # Logging integration/e2e
 │   ├── cache_batch_load_integration_test.go   # Cache batch load integration
-│   ├── writebatcher_dque_lifecycle_integration_test.go  # dque overflow integration
-│   ├── discovery_dque_test.go                 # Discovery dque unit tests
 │   ├── folder_index_sql_guard_test.go         # Folder index SQL guard tests
-│   ├── trigger_discovery_test.go            # TriggerDiscovery unit tests
+│   ├── trigger_discovery_integration_test.go  # TriggerDiscovery integration (real discovery run)
 │   ├── infrastructure_service_test.go         # InfrastructureService unit
 │   ├── infrastructure_service_db_test.go      # DB-component tests (default)
 │   ├── infrastructure_pragma_test.go          # PRAGMA optimize scheduling
 │   ├── infrastructure_cache_calibration_test.go
-│   ├── batcher_wiring_test.go
 │   ├── runtime_manager_test.go                # RuntimeManager unit
 │   ├── runtime_manager_integration_test.go
 │   ├── subsystem_manager_test.go
@@ -1992,15 +2005,30 @@ internal/
 │   ├── metrics_adapters_test.go
 │   ├── quiet_once_test.go                     # Quiet-once logging helper tests
 │   ├── helpers_integration_test.go            # Shared auth helpers
+│   ├── database/
+│   │   ├── writer_test.go                     # Writer on a new database (default)
+│   │   ├── flush_test.go                      # Batch flush (default)
+│   │   ├── folder_index_test.go               # Folder-index rebuild (default)
+│   │   └── catalog_test.go                    # Discovery catalog (default)
 │   └── files/
 │       ├── service_test.go                    # Unit tests (default)
-│       └── files_db_test.go                   # DB-component tests (default)
+│       └── processor_test.go                  # Unit tests (default)
+├── discovery/
+│   ├── service_test.go                        # Service unit tests (default)
+│   ├── walk_test.go                           # Walk and modification decision (default)
+│   └── service_integration_test.go            # Real run (integration)
+├── metadata/
+│   ├── info_test.go                           # Unit tests (default)
+│   └── extractor_integration_test.go          # ExifTool (integration)
+├── memlimit/
+│   └── memlimit_test.go                       # Unit tests (default)
 └── workerpool/
     ├── workerpool_test.go                     # Unit tests
-    └── mock.go                                # Test doubles
+    ├── mock_test.go                           # Test doubles
+    └── mock_helper_test.go                    # Test doubles
 ```
 
-The layout above is a subset of root `internal/server/*_test.go` files (not a full inventory).
+The layout above is a subset of the test files (not a full inventory).
 
 **Running tests:**
 
@@ -2079,6 +2107,8 @@ Where each test category lives and how to choose the right seam.
 | `TestMain` + `TestUseMemDB`            | `internal/server/config/testdb_test.go` (pattern for package DB tests)                                                                     | Medium   | Shared memory-mode RW/RO pools: `TestUseMemDB: true` + empty DSN to `NewDbSQLConnPool`. A non-empty DSN selects file-backed mode even when the flag is true. Isolated file pools copy both images with `CopyMainTestDatabaseTo` / `CopyThumbsTestDatabaseTo` before opening a file DSN. |
 | `testdb`                               | `internal/testdb` (`MemoryDatabases`, `NewMemoryDatabases`, `MainURI`, `ThumbsURI`, `Close`)                                               | Low      | Single memory-backed test database mechanism keyed by caller-supplied schema key; process-local seeds restored into named `memdb` VFS images. Used by `dbconnpool` slots and `gallerydb` shared/isolated harnesses (`config`, `cachelite`, … receive URIs only). Not for production.    |
 | `dbconnpool` memory test helpers       | `internal/dbconnpool/schema_seed_helpers.go` (`CopyMainTestDatabaseTo`, `CopyThumbsTestDatabaseTo`; copy from a short-lived `testdb` pair) | Low      | File-backed test database copies for callers that already import `dbconnpool`. Do not open pools.                                                                                                                                                                                       |
+| `fakeWriter`                           | `internal/discovery/helpers_test.go`                                                                                                       | Very low | Testing `discovery.Service` without a database: it records submitted files and holds the drain open while writes are pending.                                                                                                                                                           |
+| `newTestWriter`                        | `internal/server/database/writer_test.go`                                                                                                  | Medium   | Testing `database.Writer`, batch flush, and the folder-index rebuild on a new migrated database in a temporary directory.                                                                                                                                                               |
 | `*.testSeams.*`                        | `internal/server/testseams.go` + manager structs                                                                                           | Low–Med  | Stubbing App/manager lifecycle paths (serve, restart, pool recreate, handler build, cache hooks) without full `CreateApp` when a narrower seam suffices.                                                                                                                                |
 | `CreateApp`                            | `internal/server/helpers_test.go`                                                                                                          | High     | Testing full routing, middleware, lifecycle, or anything that requires a wired `*server.App`. Use sparingly.                                                                                                                                                                            |
 
@@ -2263,15 +2293,17 @@ sfpg-go/
 │   ├── scheduler/               # Task scheduling
 │   ├── queue/                   # Generic deque
 │   ├── writebatcher/            # Batch database operations (with overflow)
-│   ├── dque/                    # Persistent on-disk FIFO (writebatcher overflow + discovery backlog)
+│   ├── dque/                    # Persistent on-disk FIFO (Writer overflow + discovery backlog)
 │   ├── flock/                   # Cross-platform file locking
 │   ├── errors/                  # Error sentinels for dque
 │   ├── dbconnpool/              # Connection pooling
 │   ├── testdb/                  # Memory-backed test databases (process-local seeds)
 │   ├── gallerydb/               # Database queries (sqlc)
 │   ├── gallerylib/              # File import / path-chain upserts
-│   ├── thumbnail/               # Thumbnail generation
-│   ├── imagemeta/               # EXIF extraction (local replace of evanoberholster/imagemeta)
+│   ├── thumbnail/               # Thumbnail, MD5, and pHash generation
+│   ├── discovery/               # Discovery Service: walk, backlog, workers, run counters
+│   ├── metadata/                # EXIF, IPTC, and XMP extraction with ExifTool
+│   ├── memlimit/                # Process memory limit and worker count
 │   ├── osza/                    # Zero-alloc os helpers (facade + readdir/, README.md)
 │   ├── parallelwalkdir/         # Bounded dir walk: schedule queue + feeder → dirCh (GOMAXPROCS workers)
 │   ├── gensyncpool/             # Reset-enforcing sync.Pool wrappers
@@ -2292,9 +2324,10 @@ sfpg-go/
 │   │   ├── cachepreload/        # Cache preload manager
 │   │   ├── conditional/         # ETag/304 helper package
 │   │   ├── config/              # Configuration management
-│   │   ├── database/            # Database setup and pools
-│   │   ├── files/               # File processing pipeline
+│   │   ├── database/            # Database setup, pools, and the write path (Writer)
+│   │   ├── files/               # File processing (metadata, thumbnail, hashes)
 │   │   ├── handlers/            # Route handlers (auth, gallery, config, menu, theme, etc.)
+│   │   ├── handlerqueriesfake/  # Shared HandlerQueries fake for tests
 │   │   ├── interfaces/          # Handler dependency interfaces
 │   │   ├── logging/             # Logging helpers
 │   │   ├── metrics/             # Runtime metrics
@@ -2317,27 +2350,30 @@ sfpg-go/
 
 ### 15.2 External Dependencies
 
-| Dependency | Purpose | License |
-| ---------- | ------- | ------- |
+| Dependency                               | Purpose                                                                  | License                                                       |
+| ---------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------- |
+| **github.com/charmbracelet/bubbles**     | TUI dashboard components                                                 | MIT                                                           |
+| **github.com/charmbracelet/bubbletea**   | TUI framework                                                            | MIT                                                           |
+| **github.com/charmbracelet/lipgloss**    | TUI styling                                                              | MIT                                                           |
+| **github.com/dop251/goja**               | JavaScript runtime (tests)                                               | BSD-2-Clause                                                  |
+| **github.com/golang-migrate/migrate/v4** | Database migrations                                                      | MIT                                                           |
+| **github.com/gorilla/sessions**          | Session management                                                       | BSD-3-Clause                                                  |
+| **github.com/klauspost/compress**        | zstd codec for HTTP cache bodies                                         | BSD-3-Clause (Apache-2.0 for `gzhttp`)                        |
+| **github.com/lbe/go-exiftool-wasm**      | ExifTool (with Perl) compiled to WebAssembly: EXIF, IPTC, XMP extraction | MIT                                                           |
+| **github.com/lbe/go-image-phash**        | Perceptual hash (pHash) of decoded pixels                                | MIT                                                           |
+| **github.com/lbe/wuffs-wasm**            | PNG and GIF decode (Wuffs compiled to WebAssembly)                       | MIT                                                           |
+| **github.com/m8rge/go-scaled-jpeg**      | Scaled JPEG decode (thumbnail generation)                                | MIT; BSD-3-Clause (code derived from Go); IJG (IDCT routines) |
+| **github.com/ncruces/go-sqlite3**        | SQLite driver                                                            | MIT                                                           |
+| **github.com/phsym/console-slog**        | Console slog handler                                                     | MIT                                                           |
+| **github.com/pkg/profile**               | CPU/mem/block profiling                                                  | BSD-2-Clause                                                  |
+| **golang.org/x/crypto**                  | bcrypt password hashing                                                  | BSD-3-Clause                                                  |
+| **golang.org/x/image**                   | WebP decode, thumbnail resize (`draw`)                                   | BSD-3-Clause                                                  |
+| **golang.org/x/net**                     | Networking utilities                                                     | BSD-3-Clause                                                  |
+| **golang.org/x/sync**                    | `errgroup` concurrency primitives                                        | BSD-3-Clause                                                  |
+| **golang.org/x/sys**                     | OS-specific syscalls (RAM size, directory reads)                         | BSD-3-Clause                                                  |
+| **gopkg.in/yaml.v3**                     | YAML config parsing                                                      | MIT                                                           |
 
-| **github.com/charmbracelet/bubbles** | TUI dashboard components | MIT |
-| **github.com/charmbracelet/bubbletea** | TUI framework | MIT |
-| **github.com/charmbracelet/lipgloss** | TUI styling | MIT |
-| **github.com/dop251/goja** | JavaScript runtime (tests) | BSD-2-Clause |
-| **github.com/evanoberholster/imagemeta** | EXIF metadata (replaced locally) | MIT |
-| **github.com/golang-migrate/migrate/v4** | Database migrations | MIT |
-| **github.com/gorilla/sessions** | Session management | BSD-3-Clause |
-| **github.com/m8rge/go-scaled-jpeg** | Scaled JPEG decode (thumbnail generation) | MIT |
-| **github.com/ncruces/go-sqlite3** | SQLite driver | MIT |
-| **github.com/nfnt/resize** | Image resizing | ISC |
-| **github.com/phsym/console-slog** | Console slog handler | MIT |
-| **github.com/pkg/profile** | CPU/mem/block profiling | BSD-2-Clause |
-| **github.com/playwright-community/playwright-go** | Browser E2E tests | MIT |
-| **golang.org/x/crypto** | bcrypt password hashing | BSD-3-Clause |
-| **golang.org/x/image** | WebP decode support | BSD-3-Clause |
-| **golang.org/x/net** | Networking utilities | BSD-3-Clause |
-| **golang.org/x/sync** | `errgroup` concurrency primitives | BSD-3-Clause |
-| **gopkg.in/yaml.v3** | YAML config parsing | MIT |
+The binary also embeds ExifTool and a Perl interpreter compiled to WebAssembly by zeroperl (ExifTool and Perl: Artistic License or GPL-1.0-or-later; zeroperl: MIT), through `go-exiftool-wasm`, and the Wuffs decoders compiled to WebAssembly (Apache-2.0 or MIT, used under MIT), through `wuffs-wasm`. See [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).
 
 ---
 

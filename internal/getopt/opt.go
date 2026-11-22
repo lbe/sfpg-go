@@ -184,10 +184,10 @@ func validateOpt(opt *Opt) error {
 	// Skip session secret validation when using unlock-account (database operation doesn't need sessions)
 	if !opt.UnlockAccount.IsSet || opt.UnlockAccount.String == "" {
 		if !opt.SessionSecret.IsSet || opt.SessionSecret.String == "" {
-			return fmt.Errorf("session-secret is required (set via SEPG_SESSION_SECRET environment variable or -session-secret flag)")
+			return fmt.Errorf("session secret is required: set SEPG_SESSION_SECRET")
 		}
 		if len(opt.SessionSecret.String) < 32 {
-			return fmt.Errorf("session-secret must be at least 32 bytes long (got %d bytes); generate a strong random secret via: head -c 48 /dev/urandom | base64", len(opt.SessionSecret.String))
+			return fmt.Errorf("session secret must be at least 32 bytes long (got %d bytes); generate a strong random secret via: head -c 48 /dev/urandom | base64", len(opt.SessionSecret.String))
 		}
 	}
 	if opt.LogLevel.IsSet {

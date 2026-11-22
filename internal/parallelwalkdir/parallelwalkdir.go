@@ -5,11 +5,11 @@
 //
 // Workers read dirWork only from a buffered dirCh. Subdirectories are enqueued on
 // an unbounded schedule FIFO (internal/queue.Queue[*dirWork]). One feeder goroutine
-// dequeues with DequeueWait, is the sole dirCh writer, and is the only caller of
-// pending.Add before each send. The coordinator waits on idleMu/idleCond until the
-// schedule queue is empty and processing and feeding atomics are zero, then
-// pending.Wait (serialized with feeder Add via pendingMu), stops the feeder,
-// closes dirCh, waits for workers, and closes results and errs.
+// dequeues with DequeueWait and is the sole dirCh writer. Each directory is counted
+// before enqueue until processing or discard finishes, including feeder-held and
+// buffered work. The coordinator waits for this count to reach zero or cancellation,
+// cancels and joins the feeder, drains queued work, closes dirCh, joins workers,
+// and closes results and errs.
 //
 // Visit tracking uses FNV-1a 128-bit hashes of canonical directory path bytes
 // (EvalSymlinks when needed) to avoid symlink loops. Hash collisions may silently
@@ -19,7 +19,7 @@
 //
 //   - WithBasenameInclude: match entry basenames with zero-alloc suffix checks
 //     derived from the compiled regexp pattern (cached by pattern string). Use for
-//     production discovery walks (see files.WalkImageDir). Unsupported patterns
+//     production discovery walks. Unsupported patterns
 //     panic when the option is applied.
 //   - WithRegexpInclude: match entry basenames with regexp.Regexp.Match (may
 //     allocate under load). Tests and patterns not supported by suffix derivation.
@@ -32,7 +32,7 @@
 // WithDirEntCatalog: GetDirEntMapFunc runs before readDirAllFn per directory;
 // CheckIfFileModifiedFunc gates sendReported on PathHash keys from
 // HashPathBytes(entry.Name). Requires WithBasenameInclude and WithSizeNotZero.
-// Production discovery passes files.DiscoveryDirEntModifiedWithStats from WalkImageDir;
+// The discovery walk passes its per-file check;
 // unchanged files are dropped at walk time and never reach discovery workers.
 // FNV-128 key collisions may mis-skip files (accepted).
 //
@@ -76,6 +76,10 @@ const (
 	readDirScratchBytes     = 8192
 	maxReadDirEntries       = 1 << 20
 	maxReadDirNameBytes     = 64 << 20
+	// Grown entries/nameBuf above these sizes are dropped after each directory
+	// so an idle worker does not pin a huge listing's buffers until the walk ends.
+	retainReadDirEntries   = 4 * initialReadDirEntries
+	retainReadDirNameBytes = 4 * initialReadDirNameBytes
 )
 
 var (
@@ -143,7 +147,7 @@ type WalkDirFunc func(path []byte, info fs.FileInfo) bool
 
 // Walker holds state for a parallel directory traversal: a fixed pool of worker
 // goroutines reading from dirCh, an unbounded schedule queue and feeder that is
-// the sole writer to dirCh, in-flight work accounting (pending), visited-path
+// the sole writer to dirCh, outstanding directory accounting, visited-path
 // loop detection, and result/error channels.
 type Walker struct {
 	results chan ReportedFile // Buffered channel of matching files with walk metadata.
@@ -182,7 +186,8 @@ type Walker struct {
 }
 
 // ParallelWalk traverses rootPath. The returned channels are read-only; both close
-// when the walk finishes. The same Walker may be reused for another walk.
+// when the walk finishes. The visited set is not cleared between calls, so create
+// a new Walker for each walk.
 //
 // WithMaxReportedFiles wraps the walk context in a cancel func; reaching the limit
 // cancels further scheduling.
@@ -207,129 +212,71 @@ func (w *Walker) ParallelWalk(rootPath string) (<-chan ReportedFile, <-chan erro
 	}
 	dirCh := make(chan *dirWork, dirChCap)
 
-	var pending sync.WaitGroup
-	var pendingMu sync.Mutex // Serializes feeder Add with coordinator Wait (race-free at zero).
 	var workerWg sync.WaitGroup
 	var feederWg sync.WaitGroup
 
 	dirQueue := queue.NewQueue[*dirWork](64)
-	var processing atomic.Int32
-	var feeding atomic.Int32
-	var stopFeeder atomic.Bool
+	feederCtx, stopFeeder := context.WithCancel(w.ctx)
 
 	var idleMu sync.Mutex
 	idleCond := sync.NewCond(&idleMu)
-	idleBroadcast := func() {
+	var outstanding int
+	var stopping bool
+	finish := func(work *dirWork) {
+		dirWorkPool.Put(work)
 		idleMu.Lock()
-		idleCond.Broadcast()
+		outstanding--
+		if outstanding == 0 {
+			idleCond.Broadcast()
+		}
 		idleMu.Unlock()
 	}
 
-	push := func(work *dirWork) bool {
-		if stopFeeder.Load() {
-			dirWorkPool.Put(work)
-			return false
-		}
-		if err := dirQueue.Enqueue(work); err != nil {
-			dirWorkPool.Put(work)
-			return false
-		}
-		idleBroadcast()
-		return true
-	}
-
 	schedule := func(work *dirWork) {
-		if w.ctx.Err() != nil {
+		idleMu.Lock()
+		defer idleMu.Unlock()
+		if stopping || w.ctx.Err() != nil {
 			dirWorkPool.Put(work)
 			return
 		}
-		push(work)
-	}
-
-	endProcessing := func() {
-		processing.Add(-1)
-		idleBroadcast()
-	}
-
-	endFeeding := func() {
-		feeding.Add(-1)
-		idleBroadcast()
-	}
-
-	stopFeederNow := func() {
-		stopFeeder.Store(true)
-		dirQueue.BroadcastWaiters()
-		idleBroadcast()
-	}
-
-	dropQueued := func() {
-		for {
-			work, err := dirQueue.Dequeue()
-			if errors.Is(err, queue.ErrEmptyQueue) {
-				break
-			}
-			if err != nil {
-				break
-			}
+		outstanding++
+		if err := dirQueue.Enqueue(work); err != nil {
+			outstanding--
 			dirWorkPool.Put(work)
+			if outstanding == 0 {
+				idleCond.Broadcast()
+			}
 		}
-		idleBroadcast()
-	}
-
-	scheduleQuiescent := func() bool {
-		return dirQueue.IsEmpty() && processing.Load() == 0 && feeding.Load() == 0
 	}
 
 	for range n {
 		workerWg.Go(func() {
 			dirBufs := newReadDirBuffers()
 			for work := range dirCh {
-				processing.Add(1)
 				w.processDir(work, schedule, dirBufs)
-				dirWorkPool.Put(work)
-				endProcessing()
-				pending.Done()
+				dirBufs.trim()
+				finish(work)
 			}
 		})
 	}
 
 	feederWg.Go(func() {
 		for {
-			if stopFeeder.Load() {
-				return
-			}
-			work, err := dirQueue.DequeueWait(w.ctx)
+			work, err := dirQueue.DequeueWait(feederCtx)
 			if err != nil {
-				if w.ctx.Err() != nil {
-					return
-				}
-				if errors.Is(err, queue.ErrClosedQueue) {
-					return
-				}
 				if errors.Is(err, queue.ErrEmptyQueue) {
-					if stopFeeder.Load() {
-						return
-					}
 					continue
 				}
 				return
 			}
-			if stopFeeder.Load() {
-				dirWorkPool.Put(work)
+			if feederCtx.Err() != nil {
+				finish(work)
 				return
 			}
-			feeding.Add(1)
-			idleBroadcast()
-			pendingMu.Lock()
-			pending.Add(1)
-			pendingMu.Unlock()
 			select {
 			case dirCh <- work:
-				endFeeding()
-			case <-w.ctx.Done():
-				endFeeding()
-				pending.Done()
-				dirWorkPool.Put(work)
+			case <-feederCtx.Done():
+				finish(work)
 				return
 			}
 		}
@@ -347,38 +294,30 @@ func (w *Walker) ParallelWalk(rootPath string) (<-chan ReportedFile, <-chan erro
 		dw.current = root
 		dw.reported = root
 		dw.visitKey = HashPathBytes([]byte(rootPath))
-		push(dw)
+		schedule(dw)
 
-		for w.ctx.Err() == nil {
+		stopWake := context.AfterFunc(w.ctx, func() {
 			idleMu.Lock()
-			for (!dirQueue.IsEmpty() || processing.Load() != 0 || feeding.Load() != 0) && w.ctx.Err() == nil {
-				idleCond.Wait()
-			}
+			idleCond.Broadcast()
 			idleMu.Unlock()
-
-			if w.ctx.Err() != nil {
-				break
-			}
-
-			pendingMu.Lock()
-			pending.Wait()
-			pendingMu.Unlock()
-
-			if scheduleQuiescent() {
-				break
-			}
+		})
+		idleMu.Lock()
+		for outstanding != 0 && w.ctx.Err() == nil {
+			idleCond.Wait()
 		}
+		stopping = true
+		idleMu.Unlock()
+		stopWake()
 
-		if w.ctx.Err() != nil {
-			dropQueued()
-		}
-
-		stopFeederNow()
+		stopFeeder()
 		feederWg.Wait()
-
-		pendingMu.Lock()
-		pending.Wait()
-		pendingMu.Unlock()
+		for {
+			work, err := dirQueue.Dequeue()
+			if err != nil {
+				break
+			}
+			finish(work)
+		}
 		close(dirCh)
 		workerWg.Wait()
 		close(w.results)
@@ -671,7 +610,9 @@ func WithBasenameInclude(r *regexp.Regexp) Option {
 // runtime.GOMAXPROCS(0) when WithMaxWorkers is unset or <= 0.
 //
 // Panics if include options conflict: WithValidationFunc with any other filter
-// option, or both WithRegexpInclude and WithBasenameInclude.
+// option, or both WithRegexpInclude and WithBasenameInclude. It also panics when
+// WithDirEntCatalog is incomplete or combined with WithRegexpInclude or
+// WithValidationFunc, or lacks WithBasenameInclude or WithSizeNotZero.
 func NewWalker(opts ...Option) *Walker {
 	w := &Walker{
 		results: make(chan ReportedFile, 100),
@@ -718,10 +659,6 @@ func NewWalker(opts ...Option) *Walker {
 	return w
 }
 
-// WithContext sets cancellation for the walk. When cancelled, the feeder stops
-// without feeding queued work that was not yet sent on dirCh; workers and
-// schedule submit paths exit as soon as practical; results and errs close after
-// workers finish.
 // WithWalkPathStore sets the bump arena for reported paths. When unset,
 // ParallelWalk allocates a default store for the Walker.
 func WithWalkPathStore(store *WalkPathStore) Option {
@@ -730,6 +667,10 @@ func WithWalkPathStore(store *WalkPathStore) Option {
 	}
 }
 
+// WithContext sets cancellation for the walk. When cancelled, the feeder stops
+// without feeding queued work that was not yet sent on dirCh; workers and
+// schedule submit paths exit as soon as practical; results and errs close after
+// workers finish.
 func WithContext(ctx context.Context) Option {
 	return func(w *Walker) {
 		w.ctx = ctx
@@ -1167,6 +1108,16 @@ func newReadDirBuffers() *readDirBuffers {
 		b.scratch = make([]byte, readDirScratchBytes)
 	}
 	return b
+}
+
+// trim replaces entries and nameBuf with initial-sized buffers when either has
+// grown past the retain thresholds. Other buffers are left unchanged.
+func (b *readDirBuffers) trim() {
+	if len(b.entries) <= retainReadDirEntries && len(b.nameBuf) <= retainReadDirNameBytes {
+		return
+	}
+	b.entries = make([]osza.Entry, initialReadDirEntries)
+	b.nameBuf = make([]byte, initialReadDirNameBytes)
 }
 
 func readDirAllFromPathBuf(b *readDirBuffers, dirLen int) (n int, outLen int, err error) {

@@ -2,32 +2,29 @@ package files
 
 import (
 	"bytes"
-	"database/sql"
 	"testing"
 
 	"github.com/lbe/sfpg-go/internal/gallerydb"
+	"github.com/lbe/sfpg-go/internal/metadata"
 )
 
 func TestFile_GobRoundTrip(t *testing.T) {
 	t.Run("with thumbnail", func(t *testing.T) {
 		thumb := bytes.NewBuffer([]byte{1, 2, 3, 4})
 		original := File{
-			Exists:    true,
 			ImagesDir: "/tmp/Images",
 			Path:      "foo/bar.jpg",
 			File:      gallerydb.File{ID: 42, Filename: "bar.jpg"},
 			Thumbnail: thumb,
-			Exif:      gallerydb.UpsertExifParams{CameraMake: sql.NullString{String: "make", Valid: true}},
-			Itpc:      gallerydb.UpsertIPTCParams{Title: sql.NullString{String: "title", Valid: true}},
-			XmpProps: []gallerydb.UpsertXMPPropertyParams{
-				{
-					Namespace: "ns",
-					Property:  "prop",
-					Value:     sql.NullString{String: "value", Valid: true},
+			Metadata: metadata.Info{
+				Exif: metadata.Exif{CameraMake: "make"},
+				IPTC: metadata.IPTC{Title: "title"},
+				XMP: metadata.XMP{
+					Packet:       []byte("<xmp/>"),
+					GPSLatitude:  "26,34.951N",
+					GPSLongitude: "80,12.014W",
 				},
 			},
-			XmpRaw:              gallerydb.UpsertXMPRawParams{RawXml: sql.NullString{String: "<xmp/>", Valid: true}},
-			HasValidJpegMarkers: true,
 		}
 
 		encoded, err := original.GobEncode()
@@ -45,22 +42,22 @@ func TestFile_GobRoundTrip(t *testing.T) {
 			t.Fatalf("GobDecode: %v", err)
 		}
 
-		if decoded.Exists != original.Exists ||
-			decoded.ImagesDir != original.ImagesDir ||
+		if decoded.ImagesDir != original.ImagesDir ||
 			decoded.Path != original.Path ||
 			decoded.File.ID != original.File.ID ||
 			decoded.File.Filename != original.File.Filename ||
-			decoded.Exif.CameraMake.String != original.Exif.CameraMake.String ||
-			decoded.Itpc.Title.String != original.Itpc.Title.String ||
-			decoded.XmpRaw.RawXml.String != original.XmpRaw.RawXml.String ||
-			decoded.HasValidJpegMarkers != original.HasValidJpegMarkers {
+			decoded.Metadata.Exif.CameraMake != original.Metadata.Exif.CameraMake ||
+			decoded.Metadata.IPTC.Title != original.Metadata.IPTC.Title {
 			t.Errorf("decoded File mismatch: got %+v, want %+v", decoded, original)
 		}
-		if len(decoded.XmpProps) != 1 ||
-			decoded.XmpProps[0].Namespace != original.XmpProps[0].Namespace ||
-			decoded.XmpProps[0].Property != original.XmpProps[0].Property ||
-			decoded.XmpProps[0].Value.String != original.XmpProps[0].Value.String {
-			t.Errorf("decoded XmpProps mismatch: got %+v, want %+v", decoded.XmpProps, original.XmpProps)
+		if !bytes.Equal(decoded.Metadata.XMP.Packet, original.Metadata.XMP.Packet) {
+			t.Errorf("decoded XMP packet mismatch: got %q, want %q", decoded.Metadata.XMP.Packet, original.Metadata.XMP.Packet)
+		}
+		if decoded.Metadata.XMP.GPSLatitude != original.Metadata.XMP.GPSLatitude {
+			t.Errorf("decoded XMP GPSLatitude: got %q, want %q", decoded.Metadata.XMP.GPSLatitude, original.Metadata.XMP.GPSLatitude)
+		}
+		if decoded.Metadata.XMP.GPSLongitude != original.Metadata.XMP.GPSLongitude {
+			t.Errorf("decoded XMP GPSLongitude: got %q, want %q", decoded.Metadata.XMP.GPSLongitude, original.Metadata.XMP.GPSLongitude)
 		}
 		if decoded.Thumbnail == nil {
 			t.Fatal("expected decoded thumbnail to be non-nil")

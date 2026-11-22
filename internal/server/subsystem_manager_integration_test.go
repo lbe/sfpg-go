@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -16,7 +15,6 @@ import (
 	"github.com/lbe/sfpg-go/internal/gallerydb"
 	"github.com/lbe/sfpg-go/internal/server/cachebatch"
 	"github.com/lbe/sfpg-go/internal/server/config"
-	"github.com/lbe/sfpg-go/internal/server/files"
 	"github.com/lbe/sfpg-go/internal/server/metrics"
 	"github.com/lbe/sfpg-go/internal/workerpool"
 )
@@ -72,17 +70,6 @@ func expectedAutoPoolWorkers() (minWorkers, maxWorkers int) {
 	return 0, maxWorkers
 }
 
-// preloadManagerRoutes reads the unexported cacheableRoutes slice from a PreloadManager.
-func preloadManagerRoutes(t *testing.T, pm interface{}) []string {
-	t.Helper()
-	v := reflect.ValueOf(pm).Elem().FieldByName("cacheableRoutes")
-	routes := make([]string, v.Len())
-	for i := range routes {
-		routes[i] = v.Index(i).String()
-	}
-	return routes
-}
-
 // fakeBatchQueries is a minimal cachebatch.BatchLoadQueries implementation for tests.
 type fakeBatchQueries struct{}
 
@@ -94,23 +81,7 @@ func (fakeBatchQueries) HttpCacheExistsByKey(ctx context.Context, key string) (b
 	return false, nil
 }
 
-// waitForProcessedPaths waits until the recording file processor has recorded
-// at least want processed paths. The pool dequeues items before processing
-// them, so queue length alone is not a reliable completion signal.
-func waitForProcessedPaths(t *testing.T, fp *recordingFileProcessor, want int) {
-	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for len(fp.ProcessedPaths()) < want {
-		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for %d processed path(s), got %d", want, len(fp.ProcessedPaths()))
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-}
-
 func TestSubsystemManager_Start(t *testing.T) {
-	defaultRoutes := []string{"/gallery/", "/lightbox/", "/info/folder/", "/info/image/"}
-
 	tests := []struct {
 		name               string
 		cfg                *config.Config
@@ -163,14 +134,12 @@ func TestSubsystemManager_Start(t *testing.T) {
 				t.Fatal("moduleStateService should be initialized")
 			}
 
-			if mgr.q == nil {
-				t.Fatal("queue should be initialized")
+			if mgr.discovery == nil {
+				t.Fatal("discovery service should be initialized")
 			}
-			// The discovery backlog is dque-backed (wiped on start): it opens
-			// empty rather than sized by QueueSize, and its dedicated directory
-			// exists on disk. Capacity assertions do not apply (no Cap on the
-			// adapter) and QueueSize does not size the discovery work queue.
-			if got := mgr.q.Len(); got != 0 {
+			// The discovery backlog is wiped on start: it opens empty, and its
+			// dedicated directory exists on disk.
+			if got := mgr.discovery.QueueLen(); got != 0 {
 				t.Errorf("queue Len = %d, want 0 on fresh start", got)
 			}
 			if _, err := os.Stat(app.discoveryDQueDirPath); err != nil {
@@ -186,10 +155,6 @@ func TestSubsystemManager_Start(t *testing.T) {
 			}
 			if got := mgr.preloadManager.IsEnabled(); got != tt.wantPreloadEnabled {
 				t.Errorf("preloadManager.IsEnabled() = %v, want %v", got, tt.wantPreloadEnabled)
-			}
-			gotRoutes := preloadManagerRoutes(t, mgr.preloadManager)
-			if !reflect.DeepEqual(gotRoutes, defaultRoutes) {
-				t.Errorf("preloadManager routes = %v, want %v", gotRoutes, defaultRoutes)
 			}
 
 			if mgr.pool == nil {
@@ -209,8 +174,8 @@ func TestSubsystemManager_Start(t *testing.T) {
 				t.Errorf("pool.MaxIdleTime = %v, want %v", mgr.pool.MaxIdleTime, tt.wantIdleTime)
 			}
 
-			if mgr.processingStats == nil {
-				t.Error("processingStats should be initialized")
+			if mgr.stats == nil {
+				t.Error("stats should be initialized")
 			}
 		})
 	}
@@ -278,15 +243,10 @@ func TestSubsystemManager_Start_CacheMWRoutes(t *testing.T) {
 		CacheMaxEntrySize:  1024 * 1024,
 		EnableCachePreload: true,
 	}
-	mgr, app := startTestManager(t, 0, 0, cfg, withCacheMW(cfg))
+	_, app := startTestManager(t, 0, 0, cfg, withCacheMW(cfg))
 
 	if app.cacheMW == nil {
 		t.Fatal("cache middleware should be initialized")
-	}
-	wantRoutes := app.cacheMW.Config().CacheableRoutes
-	gotRoutes := preloadManagerRoutes(t, mgr.preloadManager)
-	if !reflect.DeepEqual(gotRoutes, wantRoutes) {
-		t.Errorf("preloadManager routes = %v, want %v", gotRoutes, wantRoutes)
 	}
 }
 
@@ -322,7 +282,7 @@ func TestSubsystemManager_StartPool(t *testing.T) {
 	mgr, app := startTestManager(t, 0, 0, cfg)
 
 	done := make(chan struct{})
-	mgr.StartPool(context.Background(), done, app.normalizedImagesDir, removeImagesDirPrefix, app.SubsystemManager.fileProcessor, nil)
+	mgr.StartPool(done)
 
 	app.RuntimeManager.cancel()
 	select {
@@ -332,62 +292,33 @@ func TestSubsystemManager_StartPool(t *testing.T) {
 	}
 }
 
-func TestSubsystemManager_StartPool_ProcessesFile(t *testing.T) {
+// TestSubsystemManager_StartPool_ProcessesDiscoveredFile verifies that workers
+// started by StartPool process the images a discovery run finds, through the
+// injected file processor.
+func TestSubsystemManager_StartPool_ProcessesDiscoveredFile(t *testing.T) {
 	cfg := &config.Config{WorkerPoolMax: 2, WorkerPoolMinIdle: 1}
 	app := CreateApp(t)
+	// Close the app's processor before replacing it, so its ExifTool reaper stops.
+	if err := app.SubsystemManager.fileProcessor.Close(); err != nil {
+		t.Fatal(err)
+	}
 	fp := &recordingFileProcessor{}
-	mgr := NewSubsystemManager(app.InfrastructureService)
-	WithFileProcessor(fp)(mgr)
+	WithFileProcessor(fp)(app.SubsystemManager)
 
-	mgr.Start(app.RuntimeManager.ctx, cfg, 1, 2, app.imagesDir, app.normalizedImagesDir, removeImagesDirPrefix, app.getRouter, app.GetHandlerQueries, app.GetETagVersion)
-	defer mgr.Shutdown()
+	app.SubsystemManager.Start(app.RuntimeManager.ctx, cfg, 1, 2, app.imagesDir, app.normalizedImagesDir, removeImagesDirPrefix, app.getRouter, app.GetHandlerQueries, app.GetETagVersion, nil, nil)
 
-	done := make(chan struct{})
-	mgr.StartPool(context.Background(), done, app.normalizedImagesDir, removeImagesDirPrefix, fp, nil)
-
-	relPath := filepath.Join(app.normalizedImagesDir, "test.jpg")
-	mgr.q.Enqueue(files.DiscoveryPathWork{Path: []byte(relPath), MtimeUnix: 1, SizeBytes: 1})
-
-	// Wait until the pool worker has processed the file. The queue can drain
-	// before processing completes, so wait on the recorded result instead of
-	// the queue length.
-	waitForProcessedPaths(t, fp, 1)
-
-	processed := fp.ProcessedPaths()
-	if len(processed) != 1 || processed[0] != "test.jpg" {
-		t.Errorf("processed paths = %v, want [test.jpg]", processed)
+	if err := os.WriteFile(filepath.Join(app.imagesDir, "test.jpg"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("write image: %v", err)
 	}
 
-	app.RuntimeManager.cancel()
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("poolDone was not closed after pool context was canceled")
-	}
-}
-
-func TestSubsystemManager_StartPool_UsesProvidedPools(t *testing.T) {
-	cfg := &config.Config{WorkerPoolMax: 2, WorkerPoolMinIdle: 1}
-	app := CreateApp(t)
-	fp := &recordingFileProcessor{}
-	mgr := NewSubsystemManager(app.InfrastructureService)
-	WithFileProcessor(fp)(mgr)
-
-	mgr.Start(app.RuntimeManager.ctx, cfg, 1, 2, app.imagesDir, app.normalizedImagesDir, removeImagesDirPrefix, app.getRouter, app.GetHandlerQueries, app.GetETagVersion)
-	defer mgr.Shutdown()
-
 	done := make(chan struct{})
-	mgr.StartPool(context.Background(), done, app.normalizedImagesDir, removeImagesDirPrefix, fp, nil)
+	app.SubsystemManager.StartPool(done)
 
-	mgr.q.Enqueue(files.DiscoveryPathWork{
-		Path: []byte(filepath.Join(app.normalizedImagesDir, "test.jpg")), MtimeUnix: 1, SizeBytes: 1,
-	})
-
-	// Pool workers call ProcessDiscoveryFile only (no worker-held RO checkout).
-	waitForProcessedPaths(t, fp, 1)
-
-	processed := fp.ProcessedPaths()
-	if len(processed) != 1 || processed[0] != "test.jpg" {
+	// TriggerDiscovery returns once the workers have processed the queued file.
+	if err := app.TriggerDiscovery(context.Background()); err != nil {
+		t.Fatalf("TriggerDiscovery: %v", err)
+	}
+	if processed := fp.ProcessedPaths(); len(processed) != 1 || processed[0] != "test.jpg" {
 		t.Errorf("processed paths = %v, want [test.jpg]", processed)
 	}
 
@@ -505,56 +436,5 @@ func TestSubsystemManager_WireMetrics_WiresAllSources(t *testing.T) {
 	}
 	if snap.FileProcessing.TotalFound != 0 {
 		t.Error("FileProcessor metrics not wired")
-	}
-}
-
-// TestSubsystemManager_HydrateFileProcessingStats verifies the incident path:
-// after SaveFileProcessing on "discovery", a zeroed processingStats hydrates
-// the four last-run counters and leaves InFlight at 0 (live state is never
-// persisted or hydrated). CreateApp skips Start, so hydrate must first no-op
-// without panicking; startTestManager supplies full Start wiring for the
-// positive path below.
-func TestSubsystemManager_HydrateFileProcessingStats(t *testing.T) {
-	ctx := context.Background()
-
-	app := CreateApp(t)
-	// CreateApp never calls Start: processingStats and moduleStateService are
-	// both nil, so hydrate must be a no-op.
-	app.SubsystemManager.HydrateFileProcessingStats(ctx)
-
-	sm, _ := startTestManager(t, 1, 2, config.DefaultConfig())
-	if sm.processingStats == nil {
-		t.Fatal("processingStats not allocated by SubsystemManager.Start")
-	}
-	if sm.moduleStateService == nil {
-		t.Fatal("moduleStateService not created by SubsystemManager.Start")
-	}
-
-	if err := sm.moduleStateService.SaveFileProcessing(ctx, "discovery", metrics.FileProcessingMetrics{
-		TotalFound:      15666608,
-		AlreadyExisting: 15620677,
-		NewlyInserted:   40000,
-		SkippedInvalid:  5931,
-	}); err != nil {
-		t.Fatalf("SaveFileProcessing: %v", err)
-	}
-
-	// The stats are fresh zeros; hydrate must match the saved payload.
-	sm.HydrateFileProcessingStats(ctx)
-
-	if got := sm.processingStats.TotalFound.Load(); got != 15666608 {
-		t.Errorf("TotalFound = %d, want 15666608", got)
-	}
-	if got := sm.processingStats.AlreadyExisting.Load(); got != 15620677 {
-		t.Errorf("AlreadyExisting = %d, want 15620677", got)
-	}
-	if got := sm.processingStats.NewlyInserted.Load(); got != 40000 {
-		t.Errorf("NewlyInserted = %d, want 40000", got)
-	}
-	if got := sm.processingStats.SkippedInvalid.Load(); got != 5931 {
-		t.Errorf("SkippedInvalid = %d, want 5931", got)
-	}
-	if got := sm.processingStats.InFlight.Load(); got != 0 {
-		t.Errorf("InFlight = %d, want 0 (InFlight is never hydrated)", got)
 	}
 }

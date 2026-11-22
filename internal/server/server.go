@@ -5,7 +5,6 @@ package server
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -13,12 +12,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/lbe/sfpg-go/internal/dbconnpool"
 	"github.com/lbe/sfpg-go/internal/gallerydb"
 	"github.com/lbe/sfpg-go/internal/humanize"
-	"github.com/lbe/sfpg-go/internal/parallelwalkdir"
 	"github.com/lbe/sfpg-go/internal/server/config"
-	"github.com/lbe/sfpg-go/internal/server/files"
 	"github.com/lbe/sfpg-go/internal/server/interfaces"
 	"github.com/lbe/sfpg-go/internal/server/middleware"
 	"github.com/lbe/sfpg-go/internal/server/pathutil"
@@ -86,26 +82,6 @@ func (app *App) ImagesDir() string {
 // UpdateConfigWithPrecedence stores configuration and reapplies CLI/env precedence rules.
 func (app *App) UpdateConfigWithPrecedence(c *config.Config, changedFields []string) {
 	app.ConfigManager.UpdateConfigWithPrecedence(c, changedFields, app.opt)
-}
-
-// ResetStats resets the file processing statistics counters.
-func (app *App) ResetStats() {
-	app.SubsystemManager.ResetStats()
-}
-
-// persistFileProcessingStats writes the completed discovery run's counters to
-// module_state.payload key file_processing on the discovery row so a
-// skip-startup-discovery restart can hydrate them. It is a no-op (nil error)
-// when processingStats or the module state service are nil, matching
-// waitForFileProcessingDrain and HydrateFileProcessingStats — nil stats never
-// call GetStats(). Errors are returned for the caller to log; a persist
-// failure must not fail discovery.
-func (app *App) persistFileProcessingStats(ctx context.Context) error {
-	sm := app.SubsystemManager
-	if sm.processingStats == nil || sm.moduleStateService == nil {
-		return nil
-	}
-	return sm.moduleStateService.SaveFileProcessing(ctx, "discovery", sm.processingStats.GetStats())
 }
 
 // ensureSession creates the session store and session manager if not already set.
@@ -389,100 +365,19 @@ func (app *App) unlockAccountFromTask(ctx context.Context, username string) erro
 	return app.SessionAuthFacade.UnlockAccountFromTask(ctx, username, app.dbRwPool)
 }
 
-// TriggerDiscovery walks the images directory, waits for file processing to
-// drain, then rebuilds file_folder_index. It updates module_state for
-// "discovery" so batch load can guard against concurrent discovery.
-func (app *App) TriggerDiscovery(ctx context.Context) error {
-	if !app.discoveryRunning.CompareAndSwap(false, true) {
-		slog.Info("discovery already in flight")
-		return nil
-	}
-	defer app.discoveryRunning.Store(false)
-
-	// Zero live counters only after winning the CAS, so a failed CAS leaves
-	// live counters and the persisted payload unchanged. A starting run must
-	// not add onto hydrated skip-startup last-run totals. Reset happens before
-	// the testSeams.TriggerDiscovery check so tests observe it via the seam.
-	app.ResetStats()
-
-	app.RuntimeManager.GalleryStats().markRunning(1)
-	defer app.RuntimeManager.GalleryStats().markRunning(-1)
-
-	if app.SubsystemManager.moduleStateService != nil {
-		if err := app.SubsystemManager.moduleStateService.SetActive(app.getCtx(), "discovery", true); err != nil {
-			slog.Error("failed to set discovery active in module_state", "err", err)
-		}
-		defer func() {
-			// Use Background so finish is persisted even if app ctx is cancelled
-			if err := app.SubsystemManager.moduleStateService.SetActive(context.Background(), "discovery", false); err != nil {
-				slog.Error("failed to set discovery inactive in module_state", "err", err)
-			}
-		}()
-	}
-
-	if app.testSeams.TriggerDiscovery != nil {
-		return app.testSeams.TriggerDiscovery(ctx)
-	}
-
+// TriggerDiscovery runs discovery once: it imports new and changed images and
+// rebuilds file_folder_index. A run already in progress makes it return nil.
+// The run uses the app's context, not ctx, so canceling the request that
+// started it does not cancel it.
+func (app *App) TriggerDiscovery(_ context.Context) error {
 	lifecycleCtx := app.getCtx()
-
-	sm := app.SubsystemManager
-	if sm.q != nil && (sm.qSendersActive.Load() != 0 || sm.q.Len() != 0) {
-		return fmt.Errorf("discovery walk refused: queue backlog or active senders must be empty before walk")
-	}
-
-	walkPathStore := parallelwalkdir.NewWalkPathStore()
-	walkDeps := &files.WalkDeps{
-		Wg:                  &app.RuntimeManager.wg,
-		QSendersActive:      &sm.qSendersActive,
-		Ctx:                 lifecycleCtx,
-		ImagesDir:           app.imagesDir,
-		Q:                   sm.q,
-		WalkPathStore:       walkPathStore,
-		NormalizedImagesDir: app.normalizedImagesDir,
-		RemoveImagesPrefix:  removeImagesDirPrefix,
-		CatalogROPool:       app.dbRoPool,
-		Stats:               sm.processingStats,
-	}
-	files.WalkImageDir(walkDeps)
-
-	if err := app.waitForFileProcessingDrain(lifecycleCtx); err != nil {
-		slog.Error("discovery drain cancelled during shutdown", "err", err)
-		return lifecycleCtx.Err()
-	}
-	walkDeps.WalkPathStore.Reset()
-
-	// Persist the completed run's counters so a skip-startup-discovery restart
-	// can hydrate them. Skipped on drain cancel above; a persist failure is
-	// logged and does not fail discovery.
-	if err := app.persistFileProcessingStats(lifecycleCtx); err != nil {
-		slog.Error("failed to persist file processing stats", "err", err)
-	}
-
-	if app.dbRwPool == nil {
-		slog.Error("cannot rebuild file_folder_index: RW pool is nil")
-		return nil
-	}
-
-	rebuild := app.testSeams.RebuildFileFolderIndex
-	if rebuild == nil {
-		rebuild = func(ctx context.Context, db *dbconnpool.DbSQLConnPool) error {
-			if app.SubsystemManager.unifiedBatcher == nil {
-				return fmt.Errorf("%w: unified batcher is nil", files.ErrFolderIndexRebuild)
-			}
-			return files.RebuildFileFolderIndex(ctx, db, app.dbRoPool, app.SubsystemManager.unifiedBatcher)
-		}
-	}
-	if err := rebuild(lifecycleCtx, app.dbRwPool); err != nil {
-		slog.Error("failed to rebuild file_folder_index", "err", err)
-		if errors.Is(err, context.Canceled) {
+	if err := app.SubsystemManager.discovery.Run(lifecycleCtx); err != nil {
+		if lifecycleCtx.Err() != nil {
 			return lifecycleCtx.Err()
 		}
-		// Non-cancel rebuild failures are already wrapped with
-		// files.ErrFolderIndexRebuild; return them so the startup goroutine can
-		// Shutdown instead of exec'ing a skip-discovery child.
+		// Rebuild failures are wrapped with database.ErrFolderIndexRebuild; at
+		// startup, Run returns them and its caller shuts down.
 		return err
 	}
-
 	return nil
 }

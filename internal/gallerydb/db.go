@@ -36,6 +36,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.countHttpCacheEntriesStmt, err = db.PrepareContext(ctx, countHttpCacheEntries); err != nil {
 		return nil, fmt.Errorf("error preparing query CountHttpCacheEntries: %w", err)
 	}
+	if q.deleteExifStmt, err = db.PrepareContext(ctx, deleteExif); err != nil {
+		return nil, fmt.Errorf("error preparing query DeleteExif: %w", err)
+	}
 	if q.deleteHttpCacheByIDStmt, err = db.PrepareContext(ctx, deleteHttpCacheByID); err != nil {
 		return nil, fmt.Errorf("error preparing query DeleteHttpCacheByID: %w", err)
 	}
@@ -48,14 +51,14 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.deleteIPTCStmt, err = db.PrepareContext(ctx, deleteIPTC); err != nil {
 		return nil, fmt.Errorf("error preparing query DeleteIPTC: %w", err)
 	}
-	if q.deleteIPTCKeywordStmt, err = db.PrepareContext(ctx, deleteIPTCKeyword); err != nil {
-		return nil, fmt.Errorf("error preparing query DeleteIPTCKeyword: %w", err)
+	if q.deleteIPTCKeywordsStmt, err = db.PrepareContext(ctx, deleteIPTCKeywords); err != nil {
+		return nil, fmt.Errorf("error preparing query DeleteIPTCKeywords: %w", err)
 	}
 	if q.deleteInvalidFileByPathStmt, err = db.PrepareContext(ctx, deleteInvalidFileByPath); err != nil {
 		return nil, fmt.Errorf("error preparing query DeleteInvalidFileByPath: %w", err)
 	}
-	if q.deleteXMPPropertyStmt, err = db.PrepareContext(ctx, deleteXMPProperty); err != nil {
-		return nil, fmt.Errorf("error preparing query DeleteXMPProperty: %w", err)
+	if q.deleteXMPPropertiesStmt, err = db.PrepareContext(ctx, deleteXMPProperties); err != nil {
+		return nil, fmt.Errorf("error preparing query DeleteXMPProperties: %w", err)
 	}
 	if q.deleteXMPRawStmt, err = db.PrepareContext(ctx, deleteXMPRaw); err != nil {
 		return nil, fmt.Errorf("error preparing query DeleteXMPRaw: %w", err)
@@ -159,6 +162,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.insertIPTCKeywordStmt, err = db.PrepareContext(ctx, insertIPTCKeyword); err != nil {
 		return nil, fmt.Errorf("error preparing query InsertIPTCKeyword: %w", err)
 	}
+	if q.insertXMPPropertyStmt, err = db.PrepareContext(ctx, insertXMPProperty); err != nil {
+		return nil, fmt.Errorf("error preparing query InsertXMPProperty: %w", err)
+	}
 	if q.listDiscoveryFilesByFolderIDStmt, err = db.PrepareContext(ctx, listDiscoveryFilesByFolderID); err != nil {
 		return nil, fmt.Errorf("error preparing query ListDiscoveryFilesByFolderID: %w", err)
 	}
@@ -210,9 +216,6 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.upsertThumbnailReturningIDStmt, err = db.PrepareContext(ctx, upsertThumbnailReturningID); err != nil {
 		return nil, fmt.Errorf("error preparing query UpsertThumbnailReturningID: %w", err)
 	}
-	if q.upsertXMPPropertyStmt, err = db.PrepareContext(ctx, upsertXMPProperty); err != nil {
-		return nil, fmt.Errorf("error preparing query UpsertXMPProperty: %w", err)
-	}
 	if q.upsertXMPRawStmt, err = db.PrepareContext(ctx, upsertXMPRaw); err != nil {
 		return nil, fmt.Errorf("error preparing query UpsertXMPRaw: %w", err)
 	}
@@ -241,6 +244,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing countHttpCacheEntriesStmt: %w", cerr)
 		}
 	}
+	if q.deleteExifStmt != nil {
+		if cerr := q.deleteExifStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing deleteExifStmt: %w", cerr)
+		}
+	}
 	if q.deleteHttpCacheByIDStmt != nil {
 		if cerr := q.deleteHttpCacheByIDStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing deleteHttpCacheByIDStmt: %w", cerr)
@@ -261,9 +269,9 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing deleteIPTCStmt: %w", cerr)
 		}
 	}
-	if q.deleteIPTCKeywordStmt != nil {
-		if cerr := q.deleteIPTCKeywordStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing deleteIPTCKeywordStmt: %w", cerr)
+	if q.deleteIPTCKeywordsStmt != nil {
+		if cerr := q.deleteIPTCKeywordsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing deleteIPTCKeywordsStmt: %w", cerr)
 		}
 	}
 	if q.deleteInvalidFileByPathStmt != nil {
@@ -271,9 +279,9 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing deleteInvalidFileByPathStmt: %w", cerr)
 		}
 	}
-	if q.deleteXMPPropertyStmt != nil {
-		if cerr := q.deleteXMPPropertyStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing deleteXMPPropertyStmt: %w", cerr)
+	if q.deleteXMPPropertiesStmt != nil {
+		if cerr := q.deleteXMPPropertiesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing deleteXMPPropertiesStmt: %w", cerr)
 		}
 	}
 	if q.deleteXMPRawStmt != nil {
@@ -446,6 +454,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing insertIPTCKeywordStmt: %w", cerr)
 		}
 	}
+	if q.insertXMPPropertyStmt != nil {
+		if cerr := q.insertXMPPropertyStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing insertXMPPropertyStmt: %w", cerr)
+		}
+	}
 	if q.listDiscoveryFilesByFolderIDStmt != nil {
 		if cerr := q.listDiscoveryFilesByFolderIDStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing listDiscoveryFilesByFolderIDStmt: %w", cerr)
@@ -531,11 +544,6 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing upsertThumbnailReturningIDStmt: %w", cerr)
 		}
 	}
-	if q.upsertXMPPropertyStmt != nil {
-		if cerr := q.upsertXMPPropertyStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing upsertXMPPropertyStmt: %w", cerr)
-		}
-	}
 	if q.upsertXMPRawStmt != nil {
 		if cerr := q.upsertXMPRawStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing upsertXMPRawStmt: %w", cerr)
@@ -584,13 +592,14 @@ type Queries struct {
 	clearLoginAttemptsStmt                  *sql.Stmt
 	configKeyExistsStmt                     *sql.Stmt
 	countHttpCacheEntriesStmt               *sql.Stmt
+	deleteExifStmt                          *sql.Stmt
 	deleteHttpCacheByIDStmt                 *sql.Stmt
 	deleteHttpCacheByKeyStmt                *sql.Stmt
 	deleteHttpCacheExpiredStmt              *sql.Stmt
 	deleteIPTCStmt                          *sql.Stmt
-	deleteIPTCKeywordStmt                   *sql.Stmt
+	deleteIPTCKeywordsStmt                  *sql.Stmt
 	deleteInvalidFileByPathStmt             *sql.Stmt
-	deleteXMPPropertyStmt                   *sql.Stmt
+	deleteXMPPropertiesStmt                 *sql.Stmt
 	deleteXMPRawStmt                        *sql.Stmt
 	getConfigValueByKeyStmt                 *sql.Stmt
 	getConfigsStmt                          *sql.Stmt
@@ -625,6 +634,7 @@ type Queries struct {
 	httpCacheExistsByKeyStmt                *sql.Stmt
 	insertConfigIfNotExistsStmt             *sql.Stmt
 	insertIPTCKeywordStmt                   *sql.Stmt
+	insertXMPPropertyStmt                   *sql.Stmt
 	listDiscoveryFilesByFolderIDStmt        *sql.Stmt
 	listDiscoveryInvalidByFolderIDStmt      *sql.Stmt
 	setModuleStateStmt                      *sql.Stmt
@@ -642,7 +652,6 @@ type Queries struct {
 	upsertInvalidFileStmt                   *sql.Stmt
 	upsertLoginAttemptStmt                  *sql.Stmt
 	upsertThumbnailReturningIDStmt          *sql.Stmt
-	upsertXMPPropertyStmt                   *sql.Stmt
 	upsertXMPRawStmt                        *sql.Stmt
 }
 
@@ -654,13 +663,14 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		clearLoginAttemptsStmt:                  q.clearLoginAttemptsStmt,
 		configKeyExistsStmt:                     q.configKeyExistsStmt,
 		countHttpCacheEntriesStmt:               q.countHttpCacheEntriesStmt,
+		deleteExifStmt:                          q.deleteExifStmt,
 		deleteHttpCacheByIDStmt:                 q.deleteHttpCacheByIDStmt,
 		deleteHttpCacheByKeyStmt:                q.deleteHttpCacheByKeyStmt,
 		deleteHttpCacheExpiredStmt:              q.deleteHttpCacheExpiredStmt,
 		deleteIPTCStmt:                          q.deleteIPTCStmt,
-		deleteIPTCKeywordStmt:                   q.deleteIPTCKeywordStmt,
+		deleteIPTCKeywordsStmt:                  q.deleteIPTCKeywordsStmt,
 		deleteInvalidFileByPathStmt:             q.deleteInvalidFileByPathStmt,
-		deleteXMPPropertyStmt:                   q.deleteXMPPropertyStmt,
+		deleteXMPPropertiesStmt:                 q.deleteXMPPropertiesStmt,
 		deleteXMPRawStmt:                        q.deleteXMPRawStmt,
 		getConfigValueByKeyStmt:                 q.getConfigValueByKeyStmt,
 		getConfigsStmt:                          q.getConfigsStmt,
@@ -695,6 +705,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		httpCacheExistsByKeyStmt:                q.httpCacheExistsByKeyStmt,
 		insertConfigIfNotExistsStmt:             q.insertConfigIfNotExistsStmt,
 		insertIPTCKeywordStmt:                   q.insertIPTCKeywordStmt,
+		insertXMPPropertyStmt:                   q.insertXMPPropertyStmt,
 		listDiscoveryFilesByFolderIDStmt:        q.listDiscoveryFilesByFolderIDStmt,
 		listDiscoveryInvalidByFolderIDStmt:      q.listDiscoveryInvalidByFolderIDStmt,
 		setModuleStateStmt:                      q.setModuleStateStmt,
@@ -712,7 +723,6 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		upsertInvalidFileStmt:                   q.upsertInvalidFileStmt,
 		upsertLoginAttemptStmt:                  q.upsertLoginAttemptStmt,
 		upsertThumbnailReturningIDStmt:          q.upsertThumbnailReturningIDStmt,
-		upsertXMPPropertyStmt:                   q.upsertXMPPropertyStmt,
 		upsertXMPRawStmt:                        q.upsertXMPRawStmt,
 	}
 }

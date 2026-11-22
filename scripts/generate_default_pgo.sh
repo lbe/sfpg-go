@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Generate default.pgo by profiling the server while running tests.
 #
-# Flow: discovery → e2eweb + Playwright → cache batch load (Playwright teardown)
-#       → SIGTERM → write default.pgo
+# Flow: discovery → restart → e2eweb + Playwright
+#       → cache batch load (Playwright teardown) → SIGTERM → merge profiles → write default.pgo
 #
 # Shared wait/parse helpers are in generate_default_pgo-wait.sh (sourced below).
 #
@@ -114,35 +114,105 @@ strip_ansi() {
   sed 's/\x1b\[[0-9;]*m//g'
 }
 
-# Resolve cpu.pprof path into CPU_PROF. Do not call from $(...); die must run in
-# the main shell so failures exit the script instead of becoming a fake path.
-find_cpu_profile() {
-  local profile_dir cpu_prof plain
+# Collect every cpu.pprof written by this run into CPU_PROFS (one per server
+# process: discovery phase and post-restart phase). Do not call from $(...); die
+# must run in the main shell so failures exit the script instead of becoming a
+# fake path.
+find_cpu_profiles() {
+  local plain dir f
+  local -a dirs=() files=()
   plain="$(strip_ansi < "${SERVER_LOG}")"
 
-  # Prefer the flushed-artifact line; fall back to startup Profiler dir= line.
-  profile_dir="$(printf '%s\n' "${plain}" | grep 'Profile artifacts written' | tail -1 | sed -n 's/.*dir=\([^ ]*\).*/\1/p' || true)"
-  if [[ -z "${profile_dir}" ]]; then
-    profile_dir="$(printf '%s\n' "${plain}" | grep 'Profiler' | grep 'dir=' | tail -1 | sed -n 's/.*dir=\([^ ]*\).*/\1/p' || true)"
+  # Prefer flushed-artifact lines; fall back to startup Profiler dir= lines,
+  # then to Starting profiler file=/tmp/profileN/cpu.pprof lines.
+  mapfile -t dirs < <(grep 'Profile artifacts written' <<< "${plain}" | sed -n 's/.*dir=\([^ ]*\).*/\1/p' | awk '!seen[$0]++')
+  if [[ "${#dirs[@]}" -eq 0 ]]; then
+    mapfile -t dirs < <(grep 'Profiler' <<< "${plain}" | grep 'dir=' | sed -n 's/.*dir=\([^ ]*\).*/\1/p' | awk '!seen[$0]++')
   fi
-  if [[ -z "${profile_dir}" ]]; then
-    # Starting profiler logs file=/tmp/profileN/cpu.pprof
-    cpu_prof="$(printf '%s\n' "${plain}" | grep 'Starting profiler' | tail -1 | sed -n 's/.*file=\([^ ]*\).*/\1/p' || true)"
-    if [[ -n "${cpu_prof}" ]]; then
-      profile_dir="$(dirname "${cpu_prof}")"
-    fi
+  if [[ "${#dirs[@]}" -eq 0 ]]; then
+    mapfile -t files < <(grep 'Starting profiler' <<< "${plain}" | sed -n 's/.*file=\([^ ]*\).*/\1/p' | awk '!seen[$0]++')
+    for f in "${files[@]}"; do
+      dirs+=("$(dirname "${f}")")
+    done
   fi
+  [[ "${#dirs[@]}" -gt 0 ]] || die "Could not find profiler directory in ${SERVER_LOG}"
 
-  [[ -n "${profile_dir}" ]] || die "Could not find profiler directory in ${SERVER_LOG}"
-  CPU_PROF="${profile_dir}/cpu.pprof"
-  [[ -f "${CPU_PROF}" ]] || die "Missing ${CPU_PROF}"
-  log "Found CPU profile ${CPU_PROF}"
+  CPU_PROFS=()
+  for dir in "${dirs[@]}"; do
+    if [[ -f "${dir}/cpu.pprof" ]]; then
+      CPU_PROFS+=("${dir}/cpu.pprof")
+      log "Found CPU profile ${dir}/cpu.pprof"
+    else
+      log "No cpu.pprof in ${dir}; skipping"
+    fi
+  done
+  [[ "${#CPU_PROFS[@]}" -gt 0 ]] || die "Missing cpu.pprof in every profiler directory listed in ${SERVER_LOG}"
 }
 
+# Merge all CPU profiles into OUTPUT_PGO. Arguments are cpu.pprof paths.
 convert_profile_to_pgo() {
-  local cpu_prof="$1"
-  go tool pprof -output="${OUTPUT_PGO}" -proto "${cpu_prof}"
+  log "Merging $# CPU profile(s) into ${OUTPUT_PGO}"
+  go tool pprof -proto -output="${OUTPUT_PGO}" "$@"
   log "Wrote ${OUTPUT_PGO}"
+}
+
+restart_requested() {
+  grep -Fq 'discovery complete; requesting process restart' <<< "$(strip_ansi < "${SERVER_LOG}")"
+}
+
+# Wait for the post-discovery restart: the second "starting web server" line
+# marks the new process; then check its health.
+wait_for_restart() {
+  local deadline=$((SECONDS + 900))
+  local starts
+  while [[ "${SECONDS}" -lt "${deadline}" ]]; do
+    starts="$(grep -Fc 'starting web server' <<< "$(strip_ansi < "${SERVER_LOG}")" || true)"
+    if [[ "${starts}" -ge 2 ]]; then
+      wait_for_health
+      log "Server restarted after startup discovery"
+      return 0
+    fi
+    sleep 1
+  done
+  die "Server did not restart after startup discovery within 900s"
+}
+
+# Startup discovery may restart the server (restart_after_discovery). Wait for
+# that to finish so later steps do not race the restart gap.
+wait_for_startup_discovery() {
+  local start=${SECONDS}
+  local deadline=$((SECONDS + 900))
+  local plain grace
+  while [[ "${SECONDS}" -lt "${deadline}" ]]; do
+    plain="$(strip_ansi < "${SERVER_LOG}")"
+    if grep -Fq 'discovery complete; requesting process restart' <<< "${plain}"; then
+      wait_for_restart
+      return 0
+    fi
+    if grep -Fq 'tableswap completed successfully' <<< "${plain}"; then
+      # The restart request is logged shortly after tableswap.
+      grace=$((SECONDS + 5))
+      while [[ "${SECONDS}" -lt "${grace}" ]]; do
+        if restart_requested; then
+          wait_for_restart
+          return 0
+        fi
+        sleep 1
+      done
+      log "Startup discovery finished without a restart request"
+      return 0
+    fi
+    if grep -Fq 'skipping startup file discovery' <<< "${plain}"; then
+      log "Startup file discovery skipped; wait_for_discovery will trigger a manual run"
+      return 0
+    fi
+    if [[ "$((SECONDS - start))" -ge 60 ]] && ! grep -Fq 'walkImageDir for all images Started' <<< "${plain}"; then
+      log "Startup discovery did not run; wait_for_discovery will trigger a manual run"
+      return 0
+    fi
+    sleep 1
+  done
+  die "Startup discovery did not finish within 900s"
 }
 
 cleanup() {
@@ -177,12 +247,13 @@ SERVER_PID=$!
 log "Server pid=${SERVER_PID}"
 
 wait_for_health
+wait_for_startup_discovery
 wait_for_discovery
 execute_tests
 # Playwright global teardown starts/waits for cache batch load; ensure it finished.
 wait_for_cache_batch_load
 stop_server
-find_cpu_profile
-convert_profile_to_pgo "${CPU_PROF}"
+find_cpu_profiles
+convert_profile_to_pgo "${CPU_PROFS[@]}"
 
 log "Done"

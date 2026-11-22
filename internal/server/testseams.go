@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"database/sql"
 	"io/fs"
 	"net/http"
 	"time"
@@ -14,7 +13,6 @@ import (
 	"github.com/lbe/sfpg-go/internal/server/config"
 	"github.com/lbe/sfpg-go/internal/server/database"
 	"github.com/lbe/sfpg-go/internal/server/interfaces"
-	"github.com/lbe/sfpg-go/internal/writebatcher"
 )
 
 // AppTestSeams holds optional test doubles for App lifecycle paths.
@@ -37,24 +35,8 @@ type AppTestSeams struct {
 	BatchLoadManagerRun func(ctx context.Context) error
 	// GalleryStatsStartup replaces the async startup stats goroutine in Run().
 	GalleryStatsStartup func()
-	// TriggerDiscovery replaces the walk/drain/rebuild body inside app.TriggerDiscovery()
-	// when non-nil. Checked after CAS guard, discoveryRunning defer, GalleryStats markRunning,
-	// and module_state SetActive — startup and ServerDiscoveryPost always dispatch
-	// go app.TriggerDiscovery(context.Background()).
-	TriggerDiscovery func(context.Context) error
-	// RebuildFileFolderIndex replaces files.RebuildFileFolderIndex at discovery completion.
-	RebuildFileFolderIndex func(context.Context, *dbconnpool.DbSQLConnPool) error
-	// OnDiscoveryProcessingMonitorComplete runs after the startup completion monitor
-	// logs "File processing completed" (tests only; nil in production).
-	OnDiscoveryProcessingMonitorComplete func()
-	// OnDiscoveryProcessingMonitorPhase1Tick runs on each 100ms phase-1 poll of the
-	// startup completion monitor (tests only; nil in production).
-	OnDiscoveryProcessingMonitorPhase1Tick func()
 	// OnTriggerRestart runs after restart is requested via App.TriggerRestart (tests only).
 	OnTriggerRestart func()
-	// OnStartupDiscoveryRebuildFailedShutdown runs before Shutdown when startup
-	// TriggerDiscovery returns files.ErrFolderIndexRebuild (tests only).
-	OnStartupDiscoveryRebuildFailedShutdown func()
 	// FallbackConfig supplies the config used when loadConfig fails in Run.
 	FallbackConfig func() *config.Config
 	// ConfigService replaces config.NewService(...) in setDB and reconfigurePoolsFromConfig.
@@ -72,34 +54,15 @@ type AppTestSeams struct {
 // InfrastructureTestSeams holds optional test doubles for InfrastructureService.
 // The zero value means use production implementations.
 type InfrastructureTestSeams struct {
-	BuildWriteBatcher          func(ctx context.Context, maxBatchSize int, flushInterval time.Duration) (*writebatcher.WriteBatcher[BatchedWrite], error)
-	ShutdownWriteBatcher       func() error
-	PerformWALCheckpoint       func(ctx context.Context)
-	PragmaOptimize             func(ctx context.Context, pool dbPoolForCheckpoint)
-	WALCheckpointQuery         func(ctx context.Context, conn *sql.Conn) (*sql.Rows, error)
 	GetCacheSizeBytes          func(ctx context.Context, pool *dbconnpool.DbSQLConnPool) (int64, error)
 	GetCacheEntryCount         func(ctx context.Context, pool *dbconnpool.DbSQLConnPool) (int64, error)
 	EvictLRU                   func(ctx context.Context, pool *dbconnpool.DbSQLConnPool, targetFree int64) (int64, int64, error)
-	FlushBatchedWrites         func(ctx context.Context, tx *sql.Tx, batch []BatchedWrite) error
+	PragmaOptimize             func(ctx context.Context, pool *dbconnpool.DbSQLConnPool)
 	HandlerQueries             interfaces.HandlerQueries
 	RecreatePoolsWithConfig    func(ctx context.Context, dbPaths database.DatabasePaths, cfg *config.Config, oldRw, oldRo *dbconnpool.DbSQLConnPool) (*dbconnpool.DbSQLConnPool, *dbconnpool.DbSQLConnPool, error)
 	PragmaOptimizePollInterval time.Duration
 	PragmaOptimizeMaxWait      time.Duration
 
-	// BeginTxPoolGetErr, when non-nil, is returned from buildWriteBatcher's BeginTx
-	// closure instead of dbRwPool.Get. Exercises batcher error paths without closing
-	// the shared pool (required for in-memory DB tests).
-	BeginTxPoolGetErr error
-
-	// OnBeginTx is called (if non-nil) before production Get+BeginTx
-	// inside buildWriteBatcher's BeginTx closure. Observe-then-production:
-	// the hook runs first, then production Get + Conn.BeginTx always
-	// follows. The hook must not return *sql.Tx or Get a pool conn.
-	OnBeginTx func()
-	// OnPut is called (if non-nil) before production dbRwPool.Put(cpcRw)
-	// in OnSuccess/OnError. Observe-then-production: the hook runs first,
-	// then production Put always follows. The hook must not Put itself.
-	OnPut func()
 	// BeforeCloseDatabasePools runs on the App.Shutdown goroutine immediately
 	// before closeDatabasePools (tests only; nil in production).
 	BeforeCloseDatabasePools func()
@@ -129,9 +92,4 @@ type HandlerManagerTestSeams struct {
 // MUST stay the zero value in committed code. Tests that set this before New()
 // must use t.Cleanup(func() { defaultNewTestSeams = AppTestSeams{} }) (or
 // setDefaultNewTestSeams) so the package global cannot leak across tests.
-//
-// Do not put a non-nil RebuildFileFolderIndex (or other discovery seams) here;
-// New() copies this into app.testSeams and TriggerDiscovery would skip
-// files.RebuildFileFolderIndex. Set app.testSeams.RebuildFileFolderIndex after
-// New() instead.
 var defaultNewTestSeams AppTestSeams

@@ -426,7 +426,7 @@ func TestHttpCacheQueries(t *testing.T) {
 			t.Fatalf("UpsertHttpCache (non-expired) failed: %v", err)
 		}
 		// Delete expired entries
-		err = q.DeleteHttpCacheExpired(ctx)
+		_, err = q.DeleteHttpCacheExpired(ctx)
 		if err != nil {
 			t.Fatalf("DeleteHttpCacheExpired failed: %v", err)
 		}

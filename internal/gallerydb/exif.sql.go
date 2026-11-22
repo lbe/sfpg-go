@@ -10,6 +10,15 @@ import (
 	"database/sql"
 )
 
+const deleteExif = `-- name: DeleteExif :exec
+DELETE FROM exif_metadata WHERE file_id = ?
+`
+
+func (q *Queries) DeleteExif(ctx context.Context, fileID int64) error {
+	_, err := q.exec(ctx, q.deleteExifStmt, deleteExif, fileID)
+	return err
+}
+
 const getExifByFile = `-- name: GetExifByFile :one
 SELECT file_id, camera_make, camera_model, lens_model, focal_length, aperture, shutter_speed, iso, orientation, latitude, longitude, altitude, capture_date, software FROM exif_metadata WHERE file_id = ?
 `

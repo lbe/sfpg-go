@@ -2,8 +2,6 @@ package workerpool
 
 import (
 	"context"
-
-	"github.com/lbe/sfpg-go/internal/dbconnpool"
 )
 
 // PoolStatsSnapshot provides read-only access to pool statistics.
@@ -36,10 +34,8 @@ type WorkerContext interface {
 }
 
 // PoolFunc is the function signature for worker functions.
-// Using ConnectionPool interface instead of concrete type.
 type PoolFunc func(ctx context.Context,
 	wc WorkerContext,
-	dbRoPool, dbRwPool dbconnpool.ConnectionPool,
 	queueLenFunc func() int,
 	id int,
 ) error

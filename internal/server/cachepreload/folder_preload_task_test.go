@@ -16,7 +16,6 @@ import (
 	"github.com/lbe/sfpg-go/internal/dbconnpool"
 	"github.com/lbe/sfpg-go/internal/gallerydb"
 	"github.com/lbe/sfpg-go/internal/scheduler"
-	"github.com/lbe/sfpg-go/internal/server/database"
 	"github.com/lbe/sfpg-go/internal/server/handlerqueriesfake"
 	"github.com/lbe/sfpg-go/internal/server/interfaces"
 )
@@ -25,13 +24,7 @@ import (
 // schedules preloads for both /info/image/{id} and /lightbox/{id} for each image.
 func TestFolderPreloadTask_ImagesPreloadInfoAndLightbox(t *testing.T) {
 	ctx := context.Background()
-	tempDir := t.TempDir()
-	_, dbRwPool, dbRoPool, err := database.Setup(ctx, tempDir, nil)
-	if err != nil {
-		t.Fatalf("database setup: %v", err)
-	}
-	defer dbRwPool.Close()
-	defer dbRoPool.Close()
+	_, dbRoPool := newTestPools(t)
 
 	// One image schedules exactly two routes: /info/image/42 and /lightbox/42.
 	const wantRequests = 2
@@ -76,7 +69,7 @@ func TestFolderPreloadTask_ImagesPreloadInfoAndLightbox(t *testing.T) {
 		GetQueries: func(*dbconnpool.CpConn) interfaces.HandlerQueries { return mock },
 	}
 
-	err = task.Run(ctx)
+	err := task.Run(ctx)
 	if err != nil {
 		t.Fatalf("FolderPreloadTask.Run: %v", err)
 	}
@@ -115,13 +108,7 @@ func TestFolderPreloadTask_ImagesPreloadInfoAndLightbox(t *testing.T) {
 // cache entries are skipped (not preloaded) to avoid unnecessary HTTP requests.
 func TestFolderPreloadTask_SkipsAlreadyCachedRoutes(t *testing.T) {
 	ctx := context.Background()
-	tempDir := t.TempDir()
-	_, dbRwPool, dbRoPool, err := database.Setup(ctx, tempDir, nil)
-	if err != nil {
-		t.Fatalf("database setup: %v", err)
-	}
-	defer dbRwPool.Close()
-	defer dbRoPool.Close()
+	dbRwPool, dbRoPool := newTestPools(t)
 
 	// /info/image/42 is skipped at schedule time (cache entry exists), so the
 	// handler is expected to see exactly one request: /lightbox/42.
@@ -167,7 +154,7 @@ func TestFolderPreloadTask_SkipsAlreadyCachedRoutes(t *testing.T) {
 		ExpiresAt:     sql.NullInt64{Int64: now + 3600, Valid: true},
 	}
 	if storeErr := cachelite.StoreCacheEntry(ctx, dbRwPool, cachedEntry); storeErr != nil {
-		t.Fatalf("failed to store cache entry: %v", err)
+		t.Fatalf("failed to store cache entry: %v", storeErr)
 	}
 
 	sched := scheduler.NewScheduler(4)
@@ -193,7 +180,7 @@ func TestFolderPreloadTask_SkipsAlreadyCachedRoutes(t *testing.T) {
 		GetQueries: func(*dbconnpool.CpConn) interfaces.HandlerQueries { return mock },
 	}
 
-	err = task.Run(ctx)
+	err := task.Run(ctx)
 	if err != nil {
 		t.Fatalf("FolderPreloadTask.Run: %v", err)
 	}

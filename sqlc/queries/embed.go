@@ -16,8 +16,3 @@ func InsertFileFolderIndexNewSQL() string {
 	parts := strings.Split(fileFolderIndexRebuildSQL, "-- statement-break")
 	return strings.TrimSpace(parts[1])
 }
-
-func CountFilesForFolderIndexRebuildSQL() string {
-	parts := strings.Split(fileFolderIndexRebuildSQL, "-- statement-break")
-	return strings.TrimSpace(parts[2])
-}

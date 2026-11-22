@@ -31,28 +31,9 @@ func (app *App) scheduleDiscoveryCompletePragmaOptimize() {
 	)
 }
 
-// fileProcessingQuiet reports whether discovery walk, queue, and workers are idle.
+// fileProcessingQuiet reports whether discovery has nothing to do.
 func (app *App) fileProcessingQuiet() bool {
-	if app.discoveryRunning.Load() {
-		return false
-	}
-	sm := app.SubsystemManager
-	if sm == nil {
-		return true
-	}
-	if sm.qSendersActive.Load() > 0 {
-		return false
-	}
-	if sm.q != nil && sm.q.Len() > 0 {
-		return false
-	}
-	if sm.processingStats != nil && sm.processingStats.InFlight.Load() > 0 {
-		return false
-	}
-	if sm.fileProcessor != nil && sm.fileProcessor.PendingWriteCount() > 0 {
-		return false
-	}
-	return true
+	return app.SubsystemManager.discovery == nil || app.SubsystemManager.discovery.Idle()
 }
 
 func (app *App) cacheSizeQuietCheck(ctx context.Context) bool {
@@ -70,7 +51,7 @@ func (app *App) cacheSizeQuietCheck(ctx context.Context) bool {
 			return false
 		}
 	}
-	if app.writeBatcher != nil && app.writeBatcher.PendingCount() >= cacheCalibrationQuietPendingMax {
+	if app.writer != nil && app.writer.PendingCount() >= cacheCalibrationQuietPendingMax {
 		return false
 	}
 	return true

@@ -14,7 +14,6 @@ import (
 	"github.com/lbe/sfpg-go/internal/server/auth"
 	"github.com/lbe/sfpg-go/internal/server/cachepreload"
 	"github.com/lbe/sfpg-go/internal/server/config"
-	"github.com/lbe/sfpg-go/internal/server/files"
 	"github.com/lbe/sfpg-go/internal/server/interfaces"
 	"github.com/lbe/sfpg-go/internal/server/metrics"
 	"github.com/lbe/sfpg-go/internal/server/session"
@@ -27,24 +26,20 @@ func (app *App) Shutdown() {
 	app.RuntimeManager.shutdownOnce.Do(func() {
 		app.LogProfileLocation()
 
-		if app.RuntimeManager.cancel != nil {
-			app.RuntimeManager.cancel()
-		}
+		app.RuntimeManager.stop()
 		if app.RuntimeManager.poolDone != nil {
 			<-app.RuntimeManager.poolDone
 		}
 		app.RuntimeManager.wg.Wait()
 
-		// Poll until discoveryRunning clears — TriggerDiscovery's drain/rebuild
-		// runs outside wg, so we must wait for it before closing pools.
-		discoveryTicker := time.NewTicker(100 * time.Millisecond)
-		defer discoveryTicker.Stop()
-		for app.discoveryRunning.Load() {
-			<-discoveryTicker.C
+		// A discovery run may still be draining or rebuilding; wait for it
+		// before the pools close.
+		if app.SubsystemManager.discovery != nil {
+			app.SubsystemManager.discovery.Wait()
 		}
 
 		app.SubsystemManager.Shutdown()
-		// Subsystem scheduler stops via RuntimeManager.cancel above; Start waits for
+		// Subsystem scheduler stops via RuntimeManager.stop above; Start waits for
 		// active tasks before returning. Do not call scheduler.Shutdown here — it
 		// returns ErrSchedulerRunning while Start is still in its run loop.
 
@@ -120,12 +115,9 @@ func (app *App) SetPreloadService(pm cachepreload.PreloadService) {
 
 // Start creates all subsystems from config.
 func (app *App) Start(ctx context.Context, cfg *config.Config, minPoolWorkers, maxPoolWorkers int, imagesDir, normalizedImagesDir string, removeImagesDirPrefixFn func(string, string) (string, error), getRouter func() http.Handler, getHandlerQueries func(*dbconnpool.CpConn) interfaces.HandlerQueries, getETagVersion func() string) {
-	app.SubsystemManager.Start(ctx, cfg, minPoolWorkers, maxPoolWorkers, imagesDir, normalizedImagesDir, removeImagesDirPrefixFn, getRouter, getHandlerQueries, getETagVersion)
-}
-
-// StartPool launches the worker pool goroutine.
-func (app *App) StartPool(ctx context.Context, poolDone chan struct{}, normalizedImagesDir string, removeImagesDirPrefixFn func(string, string) (string, error), processor files.FileProcessor, onFileInserted func(int64)) {
-	app.SubsystemManager.StartPool(ctx, poolDone, normalizedImagesDir, removeImagesDirPrefixFn, processor, onFileInserted)
+	stats := app.RuntimeManager.GalleryStats()
+	app.SubsystemManager.Start(ctx, cfg, minPoolWorkers, maxPoolWorkers, imagesDir, normalizedImagesDir, removeImagesDirPrefixFn, getRouter, getHandlerQueries, getETagVersion,
+		func(d int) { stats.markRunning(int32(d)) }, stats.addFile)
 }
 
 // WireMetrics connects subsystem metrics to the collector.
@@ -191,7 +183,7 @@ func (app *App) memoryReclaimer(cfg MemoryReclaimerConfig) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			isQueueEmpty := app.SubsystemManager.q.IsEmpty()
+			isQueueEmpty := app.SubsystemManager.discovery.QueueLen() == 0
 			timeSinceLastCompletion := app.SubsystemManager.pool.TimeSinceLastCompletion()
 
 			if isQueueEmpty && timeSinceLastCompletion > cfg.IdleThreshold {

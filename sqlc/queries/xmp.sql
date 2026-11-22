@@ -1,17 +1,12 @@
--- name: UpsertXMPProperty :exec
-INSERT INTO xmp_properties (id, file_id, namespace, property, value)
-VALUES (?, ?, ?, ?, ?)
-ON CONFLICT(id) DO UPDATE SET
-  file_id=excluded.file_id,
-  namespace=excluded.namespace,
-  property=excluded.property,
-  value=excluded.value;
+-- name: InsertXMPProperty :exec
+INSERT INTO xmp_properties (file_id, namespace, property, value)
+VALUES (?, ?, ?, ?);
 
 -- name: GetXMPPropertiesByFile :many
 SELECT * FROM xmp_properties WHERE file_id = ?;
 
--- name: DeleteXMPProperty :exec
-DELETE FROM xmp_properties WHERE id = ?;
+-- name: DeleteXMPProperties :exec
+DELETE FROM xmp_properties WHERE file_id = ?;
 
 -- name: UpsertXMPRaw :exec
 INSERT INTO xmp_raw (file_id, raw_xml)

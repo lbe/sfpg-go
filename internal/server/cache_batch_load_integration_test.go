@@ -19,13 +19,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lbe/sfpg-go/internal/cachelite"
 	"github.com/lbe/sfpg-go/internal/gallerydb"
 	"github.com/lbe/sfpg-go/internal/getopt"
 	"github.com/lbe/sfpg-go/internal/server/cachebatch"
 	"github.com/lbe/sfpg-go/internal/server/config"
 	"github.com/lbe/sfpg-go/internal/testutil"
-	"github.com/lbe/sfpg-go/internal/writebatcher"
 )
 
 // --- moved from server_e2e_test.go (cache batch load) ---
@@ -200,79 +198,6 @@ func TestIntegration_CacheBatchLoad_ErrorWhenManagerNil(t *testing.T) {
 	if code != 1 {
 		t.Errorf("RunCacheBatchLoad() with nil manager = %d, want 1 (error)", code)
 	}
-}
-
-func TestIntegration_CacheBatchLoad_SubmitCacheWrite(t *testing.T) {
-	t.Run("successfully submits cache entry when batcher is available", func(t *testing.T) {
-		wb, err := writebatcher.New[BatchedWrite](context.Background(), writebatcher.Config[BatchedWrite]{
-			BeginTx:      func(ctx context.Context) (*sql.Tx, error) { return nil, nil },
-			Flush:        func(ctx context.Context, tx *sql.Tx, batch []BatchedWrite) error { return nil },
-			MaxBatchSize: 10,
-			ChannelSize:  10,
-		})
-		if err != nil {
-			t.Fatalf("New writebatcher: %v", err)
-		}
-		defer wb.Close()
-
-		app := &App{
-			InfrastructureService: NewInfrastructureService(),
-		}
-		app.writeBatcher = wb
-
-		entry := cachelite.GetHTTPCacheEntry()
-		entry.Path = "/test/path"
-		entry.ETag = sql.NullString{String: "etag123", Valid: true}
-		entry.ContentLength = sql.NullInt64{Int64: 100, Valid: true}
-		entry.Body = []byte("test body")
-
-		app.submitCacheWrite(entry)
-
-		// Verify entry was submitted
-		if wb.PendingCount() != 1 {
-			t.Errorf("expected pending count 1, got %d", wb.PendingCount())
-		}
-	})
-
-	t.Run("handles nil batcher gracefully", func(t *testing.T) {
-		app := &App{
-			InfrastructureService: NewInfrastructureService(),
-		}
-		app.writeBatcher = nil
-
-		entry := cachelite.GetHTTPCacheEntry()
-		entry.Path = "/test/path"
-
-		// Should not panic
-		app.submitCacheWrite(entry)
-	})
-
-	t.Run("handles submission error by returning entry to pool", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		wb, err := writebatcher.New[BatchedWrite](ctx, writebatcher.Config[BatchedWrite]{
-			BeginTx:      func(ctx context.Context) (*sql.Tx, error) { return nil, nil },
-			Flush:        func(ctx context.Context, tx *sql.Tx, batch []BatchedWrite) error { return nil },
-			MaxBatchSize: 1,
-			ChannelSize:  1,
-		})
-		if err != nil {
-			t.Fatalf("New writebatcher: %v", err)
-		}
-		defer wb.Close()
-
-		app := &App{
-			InfrastructureService: NewInfrastructureService(),
-		}
-		app.writeBatcher = wb
-
-		entry := cachelite.GetHTTPCacheEntry()
-		entry.Path = "/test/path"
-
-		// Should not panic even if batcher rejects it
-		app.submitCacheWrite(entry)
-	})
 }
 
 func TestIntegration_CacheBatchLoad_CLI_Blocked(t *testing.T) {

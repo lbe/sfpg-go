@@ -176,7 +176,7 @@ func DefaultConfig() *Config {
 		CacheMaxEntrySize:                     10 * 1024 * 1024,    // 10MB
 		CacheCleanupInterval:                  5 * time.Minute,
 		DBMaxPoolSize:                         100,
-		DBMinIdleConnections:                  10,
+		DBMinIdleConnections:                  1,
 		DBOptimizeInterval:                    1 * time.Hour,
 		WorkerPoolMax:                         0, // Auto-calculate
 		WorkerPoolMinIdle:                     0, // no idle workers
@@ -189,7 +189,7 @@ func DefaultConfig() *Config {
 
 		// Discovery
 		RunFileDiscovery:      true,
-		RestartAfterDiscovery: false,
+		RestartAfterDiscovery: true,
 
 		// Security
 		LockoutDuration:     3600, // 1 hour

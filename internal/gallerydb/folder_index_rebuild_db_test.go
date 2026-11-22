@@ -4,81 +4,9 @@ package gallerydb
 import (
 	"context"
 	"database/sql"
+	"math"
 	"testing"
 )
-
-// TestCountFilesForFolderIndexRebuild_MatchesStreamExcludesOrphan verifies the
-// COUNT query returns the same count as the stream and excludes orphans.
-func TestCountFilesForFolderIndexRebuild_MatchesStreamExcludesOrphan(t *testing.T) {
-	db, prepared, ctx := setupTestDB(t)
-	conn, err := db.Conn(ctx)
-	if err != nil {
-		t.Fatalf("db.Conn: %v", err)
-	}
-	defer conn.Close()
-	// Same fixture as TestQueryFilesForFolderIndexRebuild_StreamsInFolderFilenameOrder.
-	if _, err := conn.ExecContext(ctx,
-		`INSERT INTO folder_paths (id, path) VALUES (101, 'folder-a'), (102, 'folder-b')`); err != nil {
-		t.Fatalf("insert folder_paths: %v", err)
-	}
-	if _, err := conn.ExecContext(ctx,
-		`INSERT INTO folders (id, parent_id, path_id, name) VALUES (101, NULL, 101, 'folder-a'), (102, NULL, 102, 'folder-b')`); err != nil {
-		t.Fatalf("insert folders: %v", err)
-	}
-	if _, err := conn.ExecContext(ctx,
-		`INSERT INTO file_paths (id, path) VALUES (1001, 'f1a'), (1002, 'f1z'), (1003, 'f1m'),
-		                                        (1004, 'f2a'), (1005, 'f2z')`); err != nil {
-		t.Fatalf("insert file_paths: %v", err)
-	}
-	if _, err := conn.ExecContext(ctx, `
-		INSERT INTO files (id, folder_id, path_id, filename, size_bytes, mtime, mime_type, created_at, updated_at)
-		VALUES (100, 101, 1001, 'a.jpg', 1, 1, 'image/jpeg', 1, 1),
-		       (  1, 101, 1002, 'z.jpg', 1, 1, 'image/jpeg', 1, 1),
-		       ( 50, 101, 1003, 'm.jpg', 1, 1, 'image/jpeg', 1, 1),
-		       (200, 102, 1004, 'a.jpg', 1, 1, 'image/jpeg', 1, 1),
-		       (  2, 102, 1005, 'z.jpg', 1, 1, 'image/jpeg', 1, 1)`); err != nil {
-		t.Fatalf("insert files: %v", err)
-	}
-	// Orphan: folder_id NULL — must not be counted.
-	if _, err := conn.ExecContext(ctx,
-		`INSERT INTO file_paths (id, path) VALUES (1999, 'orphan')`); err != nil {
-		t.Fatalf("insert orphan file_path: %v", err)
-	}
-	if _, err := conn.ExecContext(ctx,
-		`INSERT INTO files (id, folder_id, path_id, filename, size_bytes, mtime, mime_type, created_at, updated_at)
-			 VALUES (999, NULL, 1999, 'orphan.jpg', 1, 1, 'image/jpeg', 1, 1)`); err != nil {
-		t.Fatalf("insert orphan file: %v", err)
-	}
-	// COUNT must match the stream.
-	count, err := prepared.CountFilesForFolderIndexRebuild(ctx)
-	if err != nil {
-		t.Fatalf("CountFilesForFolderIndexRebuild: %v", err)
-	}
-	// Stream to verify.
-	rows, err := prepared.QueryFilesForFolderIndexRebuild(ctx)
-	if err != nil {
-		t.Fatalf("QueryFilesForFolderIndexRebuild: %v", err)
-	}
-	var streamCount int64
-	for rows.Next() {
-		streamCount++
-		var id, folderID int64
-		if err := rows.Scan(&id, &folderID); err != nil {
-			rows.Close()
-			t.Fatalf("scan: %v", err)
-		}
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		t.Fatalf("rows.Err: %v", err)
-	}
-	if count != streamCount {
-		t.Errorf("count %d != stream %d", count, streamCount)
-	}
-	if count != 5 {
-		t.Errorf("expected 5 folder-bearing files, got %d", count)
-	}
-}
 
 // TestInsertFileFolderIndexNewRows_RequiresTx verifies G2/G3: InsertFileFolderIndexNewRows
 // must be called on a WithTx-bound CustomQueries. Called without WithTx it returns an
@@ -219,7 +147,7 @@ func TestQueryFilesForFolderIndexRebuild_StreamsInFolderFilenameOrder(t *testing
 			 VALUES (999, NULL, 1999, 'orphan.jpg', 1, 1, 'image/jpeg', 1, 1)`); err != nil {
 		t.Fatalf("insert orphan file: %v", err)
 	}
-	rows, err := prepared.QueryFilesForFolderIndexRebuild(ctx)
+	rows, err := prepared.QueryFilesForFolderIndexRebuild(ctx, math.MinInt64)
 	if err != nil {
 		t.Fatalf("QueryFilesForFolderIndexRebuild: %v", err)
 	}
@@ -257,5 +185,67 @@ func TestQueryFilesForFolderIndexRebuild_StreamsInFolderFilenameOrder(t *testing
 		if got[i] != want[i] {
 			t.Errorf("row %d: got %+v want %+v", i, got[i], want[i])
 		}
+	}
+}
+
+// TestQueryFilesForFolderIndexRebuild_ResumesAfterFolderID verifies the keyset
+// resume: rows with folder_id <= after are skipped and the rest stay ordered.
+func TestQueryFilesForFolderIndexRebuild_ResumesAfterFolderID(t *testing.T) {
+	db, prepared, ctx := setupTestDB(t)
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatalf("db.Conn: %v", err)
+	}
+	defer conn.Close()
+	for _, stmt := range []string{
+		`INSERT INTO folder_paths (id, path) VALUES (101, 'folder-a'), (102, 'folder-b')`,
+		`INSERT INTO folders (id, parent_id, path_id, name) VALUES (101, NULL, 101, 'folder-a'), (102, NULL, 102, 'folder-b')`,
+		`INSERT INTO file_paths (id, path) VALUES (1001, 'f1a'), (1002, 'f1z'), (1003, 'f1m'),
+		                                        (1004, 'f2a'), (1005, 'f2z'), (1999, 'orphan')`,
+		`INSERT INTO files (id, folder_id, path_id, filename, size_bytes, mtime, mime_type, created_at, updated_at)
+		 VALUES (100, 101, 1001, 'a.jpg', 1, 1, 'image/jpeg', 1, 1),
+		        (  1, 101, 1002, 'z.jpg', 1, 1, 'image/jpeg', 1, 1),
+		        ( 50, 101, 1003, 'm.jpg', 1, 1, 'image/jpeg', 1, 1),
+		        (200, 102, 1004, 'a.jpg', 1, 1, 'image/jpeg', 1, 1),
+		        (  2, 102, 1005, 'z.jpg', 1, 1, 'image/jpeg', 1, 1),
+		        (999, NULL, 1999, 'orphan.jpg', 1, 1, 'image/jpeg', 1, 1)`,
+	} {
+		if _, err := conn.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("seed %q: %v", stmt, err)
+		}
+	}
+
+	collect := func(after int64) []int64 {
+		t.Helper()
+		rows, err := prepared.QueryFilesForFolderIndexRebuild(ctx, after)
+		if err != nil {
+			t.Fatalf("QueryFilesForFolderIndexRebuild(after=%d): %v", after, err)
+		}
+		defer rows.Close()
+		var ids []int64
+		for rows.Next() {
+			var id, folderID int64
+			if err := rows.Scan(&id, &folderID); err != nil {
+				t.Fatalf("scan: %v", err)
+			}
+			if folderID <= after {
+				t.Errorf("after=%d returned folder_id %d", after, folderID)
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatalf("rows.Err: %v", err)
+		}
+		return ids
+	}
+
+	if got := collect(math.MinInt64); len(got) != 5 {
+		t.Errorf("after=MinInt64 ids = %v, want 5 rows", got)
+	}
+	if got := collect(101); len(got) != 2 || got[0] != 200 || got[1] != 2 {
+		t.Errorf("after=101 ids = %v, want [200 2]", got)
+	}
+	if got := collect(102); len(got) != 0 {
+		t.Errorf("after=102 ids = %v, want none", got)
 	}
 }

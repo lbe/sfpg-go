@@ -10,12 +10,12 @@ import (
 	"database/sql"
 )
 
-const deleteXMPProperty = `-- name: DeleteXMPProperty :exec
-DELETE FROM xmp_properties WHERE id = ?
+const deleteXMPProperties = `-- name: DeleteXMPProperties :exec
+DELETE FROM xmp_properties WHERE file_id = ?
 `
 
-func (q *Queries) DeleteXMPProperty(ctx context.Context, id int64) error {
-	_, err := q.exec(ctx, q.deleteXMPPropertyStmt, deleteXMPProperty, id)
+func (q *Queries) DeleteXMPProperties(ctx context.Context, fileID int64) error {
+	_, err := q.exec(ctx, q.deleteXMPPropertiesStmt, deleteXMPProperties, fileID)
 	return err
 }
 
@@ -72,27 +72,20 @@ func (q *Queries) GetXMPRaw(ctx context.Context, fileID int64) (XmpRaw, error) {
 	return i, err
 }
 
-const upsertXMPProperty = `-- name: UpsertXMPProperty :exec
-INSERT INTO xmp_properties (id, file_id, namespace, property, value)
-VALUES (?, ?, ?, ?, ?)
-ON CONFLICT(id) DO UPDATE SET
-  file_id=excluded.file_id,
-  namespace=excluded.namespace,
-  property=excluded.property,
-  value=excluded.value
+const insertXMPProperty = `-- name: InsertXMPProperty :exec
+INSERT INTO xmp_properties (file_id, namespace, property, value)
+VALUES (?, ?, ?, ?)
 `
 
-type UpsertXMPPropertyParams struct {
-	ID        int64
+type InsertXMPPropertyParams struct {
 	FileID    int64
 	Namespace string
 	Property  string
 	Value     sql.NullString
 }
 
-func (q *Queries) UpsertXMPProperty(ctx context.Context, arg UpsertXMPPropertyParams) error {
-	_, err := q.exec(ctx, q.upsertXMPPropertyStmt, upsertXMPProperty,
-		arg.ID,
+func (q *Queries) InsertXMPProperty(ctx context.Context, arg InsertXMPPropertyParams) error {
+	_, err := q.exec(ctx, q.insertXMPPropertyStmt, insertXMPProperty,
 		arg.FileID,
 		arg.Namespace,
 		arg.Property,

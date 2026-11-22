@@ -15,7 +15,7 @@ import (
 	"github.com/lbe/sfpg-go/internal/rssmonitor"
 	"github.com/lbe/sfpg-go/internal/server/cachebatch"
 	"github.com/lbe/sfpg-go/internal/server/config"
-	"github.com/lbe/sfpg-go/internal/server/files"
+	"github.com/lbe/sfpg-go/internal/server/database"
 	"github.com/lbe/sfpg-go/internal/server/metrics"
 	"github.com/lbe/sfpg-go/web"
 )
@@ -84,33 +84,6 @@ func (app *App) logStartupConfigSummary(queueSize int, runDiscovery bool) {
 }
 
 // Run initializes the application, starts background workers, and blocks until shutdown or error.
-// waitForFileProcessingDrain polls until all queue senders, queue items,
-// in-flight processing, and pending writes reach zero, or ctx is cancelled.
-// Callers pass app.getCtx() for shutdown cancellation. No timeout or deadline.
-func (app *App) waitForFileProcessingDrain(ctx context.Context) error {
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		sm := app.SubsystemManager
-		// When subsystems aren't initialized, treat all counters as zero.
-		if sm.q == nil || sm.processingStats == nil || sm.fileProcessor == nil {
-			return nil
-		}
-		activeSenders := sm.qSendersActive.Load()
-		queueLen := sm.q.Len()
-		inFlight := sm.processingStats.InFlight.Load()
-		pendingWrites := sm.fileProcessor.PendingWriteCount()
-		if activeSenders == 0 && queueLen == 0 && inFlight == 0 && pendingWrites == 0 {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-		}
-	}
-}
-
 func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 	if app.rootDir == "" {
 		app.setRootDir(nil)
@@ -272,13 +245,10 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 		os.Unsetenv(skipStartupDiscoveryEnv)
 	}
 
-	// Hydrate the persisted last-run file processing counters only when startup
-	// discovery will not run. When runDiscovery is true the walk and the
-	// completion monitor own the counters; a hydrated TotalFound would make the
-	// monitor treat the run as started and log completion / schedule the pragma
-	// on stale last-run data.
+	// Without a startup run, show the last run's counters on the dashboard. A
+	// run resets them itself.
 	if !runDiscovery {
-		app.SubsystemManager.HydrateFileProcessingStats(app.getCtx())
+		app.SubsystemManager.discovery.Hydrate(app.getCtx())
 	}
 
 	app.startGalleryStatsBaselines()
@@ -297,90 +267,29 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 	//   lives in gallerylib which has no import restrictions, so a func()
 	//   field on InfrastructureService works directly.
 	//
-	//   Files — drilled callback (onFileInserted). internal/server/files
-	//   cannot import internal/server (circular), so a plain func(int64)
-	//   is threaded through StartPool → NewPoolFuncWithProcessor →
-	//   runPoolWorkerWithProcessor, where it fires on SubmitFileForWrite
-	//   success.
+	//   Files — the discovery Service's OnFileInserted callback, set in
+	//   Start, fires when a worker submits a file for writing.
 	app.OnFolderCreated = func() {
 		app.RuntimeManager.GalleryStats().addFolder()
 	}
 
+	// startupFailed receives a failed startup folder-index rebuild; Run returns
+	// it once Serve stops. startupDone closes when startup discovery has
+	// finished, with its restart decision.
+	startupFailed := make(chan error, 1)
+	startupDone := make(chan struct{})
 	if runDiscovery {
-		go func() {
-			discoveryStart := time.Now()
-			err := app.TriggerDiscovery(context.Background())
-			if errors.Is(err, files.ErrFolderIndexRebuild) {
-				slog.Error("startup folder-index rebuild failed; shutting down", "err", err)
-				if app.testSeams.OnStartupDiscoveryRebuildFailedShutdown != nil {
-					app.testSeams.OnStartupDiscoveryRebuildFailedShutdown()
-				}
-				app.Shutdown()
-				return
-			}
-			if err != nil {
-				return
-			}
-			app.ConfigManager.ConfigMu.RLock()
-			restartAfter := app.ConfigManager.Config != nil && app.ConfigManager.Config.RestartAfterDiscovery
-			app.ConfigManager.ConfigMu.RUnlock()
-			if restartAfter {
-				slog.Info("discovery complete; requesting process restart",
-					"reason", "discovery-complete",
-					"elapsed", time.Since(discoveryStart))
-				app.TriggerRestart()
-			}
-		}()
+		app.RuntimeManager.wg.Go(func() {
+			defer close(startupDone)
+			app.runStartupDiscovery(startupFailed)
+		})
+	} else {
+		close(startupDone)
 	}
 
 	// Worker pool startup
 	app.RuntimeManager.poolDone = make(chan struct{})
-	app.StartPool(app.RuntimeManager.ctx, app.RuntimeManager.poolDone, app.normalizedImagesDir, removeImagesDirPrefix, app.SubsystemManager.fileProcessor,
-		func(size int64) { app.RuntimeManager.GalleryStats().addFile(size) })
-
-	// Completion monitor for initial batch processing
-	if runDiscovery {
-		go func() {
-			// 1. Wait for discovery to start (optional, but handles fast/slow starts)
-			// We check periodically until active senders or processing starts
-			timeout := time.After(30 * time.Second)
-			ticker := time.NewTicker(100 * time.Millisecond)
-			defer ticker.Stop()
-
-			for {
-				select {
-				case <-app.RuntimeManager.ctx.Done():
-					return
-				case <-timeout:
-					// If nothing happened in 30s, just exit monitor
-					return
-				case <-ticker.C:
-					if app.testSeams.OnDiscoveryProcessingMonitorPhase1Tick != nil {
-						app.testSeams.OnDiscoveryProcessingMonitorPhase1Tick()
-					}
-					if app.SubsystemManager.qSendersActive.Load() > 0 || app.SubsystemManager.processingStats.TotalFound.Load() > 0 {
-						goto wait_for_end
-					}
-				}
-			}
-
-		wait_for_end:
-			// 2. Wait for queue to drain and workers to finish.
-			if err := app.waitForFileProcessingDrain(app.RuntimeManager.ctx); err != nil {
-				return
-			}
-			slog.Info("File processing completed",
-				"found", app.SubsystemManager.processingStats.TotalFound.Load(),
-				"existing", app.SubsystemManager.processingStats.AlreadyExisting.Load(),
-				"inserted", app.SubsystemManager.processingStats.NewlyInserted.Load(),
-				"skipped_invalid", app.SubsystemManager.processingStats.SkippedInvalid.Load(),
-			)
-			if app.testSeams.OnDiscoveryProcessingMonitorComplete != nil {
-				app.testSeams.OnDiscoveryProcessingMonitorComplete()
-			}
-			app.scheduleDiscoveryCompletePragmaOptimize()
-		}()
-	}
+	app.SubsystemManager.StartPool(app.RuntimeManager.poolDone)
 
 	prodReclaimerCfg := MemoryReclaimerConfig{
 		InitialDelay:  1 * time.Minute,
@@ -413,10 +322,9 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 					deleted, err := cachelite.CleanupExpired(ctx, app.dbRwPool)
 					if err != nil {
 						slog.Error("HTTP cache cleanup failed", "err", err)
-					} // else if deleted > 0 {
-					// slog.Info("HTTP cache cleanup completed", "deleted_entries", deleted)
-					//}
-					_ = deleted
+					} else if deleted > 0 {
+						slog.Info("HTTP cache cleanup completed", "deleted_entries", deleted)
+					}
 				}
 			}
 		})
@@ -433,7 +341,7 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 	if app.ConfigManager.Config != nil {
 		queueSize = app.ConfigManager.Config.QueueSize
 	}
-	app.RuntimeManager.metricsCollector.SetQueueInfo(func() int { return app.SubsystemManager.q.Len() }, queueSize)
+	app.RuntimeManager.metricsCollector.SetQueueInfo(app.SubsystemManager.discovery.QueueLen, queueSize)
 	app.logStartupConfigSummary(queueSize, runDiscovery)
 
 	// Ensure the session store and manager exist before building handlers.
@@ -473,6 +381,16 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 		panic("main")
 	}
 
+	// Serve has stopped: stop startup discovery if it is still running and wait
+	// for it, so its outcome is known. A failed rebuild wins over a restart.
+	app.RuntimeManager.stop()
+	<-startupDone
+	select {
+	case err := <-startupFailed:
+		return err
+	default:
+	}
+
 	// If a restart was requested, replace the current process image. On success
 	// this does not return; on failure it exits the process.
 	if app.IsRestartRequested() {
@@ -481,6 +399,34 @@ func (app *App) Run(minPoolWorkers, maxPoolWorkers int) error {
 	}
 
 	return nil
+}
+
+// runStartupDiscovery runs discovery at startup. A failed folder-index rebuild
+// is sent on failed and stops the app: Run returns it and the caller shuts
+// down. After a successful run it schedules PRAGMA optimize and, with
+// RestartAfterDiscovery, requests a restart, unless the app is stopping.
+func (app *App) runStartupDiscovery(failed chan<- error) {
+	start := time.Now()
+	err := app.TriggerDiscovery(context.Background())
+	switch {
+	case errors.Is(err, database.ErrFolderIndexRebuild):
+		slog.Error("startup folder-index rebuild failed; shutting down", "err", err)
+		failed <- err
+		app.RuntimeManager.stop()
+		return
+	case err != nil, app.getCtx().Err() != nil:
+		return
+	}
+	app.scheduleDiscoveryCompletePragmaOptimize()
+	app.ConfigManager.ConfigMu.RLock()
+	restartAfter := app.ConfigManager.Config != nil && app.ConfigManager.Config.RestartAfterDiscovery
+	app.ConfigManager.ConfigMu.RUnlock()
+	if restartAfter {
+		slog.Info("discovery complete; requesting process restart",
+			"reason", "discovery-complete",
+			"elapsed", time.Since(start))
+		app.TriggerRestart()
+	}
 }
 
 // startGalleryStatsBaselines launches three parallel goroutines to populate
