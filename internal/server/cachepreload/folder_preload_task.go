@@ -15,32 +15,6 @@ import (
 	"github.com/lbe/sfpg-go/internal/server/interfaces"
 )
 
-var (
-	// dbPoolGetFn wraps DbSQLConnPool.Get so tests can simulate pool errors
-	// or return a fake connection without a real SQLite database.
-	dbPoolGetFn = (*dbconnpool.DbSQLConnPool).Get
-
-	// dbPoolPutFn wraps DbSQLConnPool.Put so tests can no-op release.
-	dbPoolPutFn = (*dbconnpool.DbSQLConnPool).Put
-
-	// getPreloadRoutesByFolderIDFn wraps the query so tests can inject routes or errors.
-	getPreloadRoutesByFolderIDFn = func(q interfaces.HandlerQueries, ctx context.Context, folderID int64) ([]string, error) {
-		return q.GetPreloadRoutesByFolderID(ctx, sql.NullInt64{Int64: folderID, Valid: true})
-	}
-
-	// httpCacheExistsByKeyFn wraps HttpCacheExistsByKey so tests can control cache
-	// hit/miss without populating a real cache table.
-	httpCacheExistsByKeyFn = func(queries *gallerydb.CustomQueries, ctx context.Context, key string) (bool, error) {
-		return queries.HttpCacheExistsByKey(ctx, key)
-	}
-
-	// folderSchedulerAddTaskFn wraps Scheduler.AddTask used by FolderPreloadTask.
-	// Tests override it to exercise the AddTask error path.
-	folderSchedulerAddTaskFn = func(s *scheduler.Scheduler, task scheduler.Task, mode scheduler.ExecutionMode, start time.Time) (string, error) {
-		return s.AddTask(task, mode, start)
-	}
-)
-
 // isCacheablePath returns true if path matches any cacheable route.
 func isCacheablePath(path string, routes []string) bool {
 	for _, route := range routes {
@@ -49,6 +23,16 @@ func isCacheablePath(path string, routes []string) bool {
 		}
 	}
 	return false
+}
+
+// folderPreloadTaskTestSeams holds optional test doubles for FolderPreloadTask.
+// Nil func fields use the production pool, query and scheduler methods.
+type folderPreloadTaskTestSeams struct {
+	PoolGet          func(pool *dbconnpool.DbSQLConnPool) (*dbconnpool.CpConn, error)
+	PoolPut          func(pool *dbconnpool.DbSQLConnPool, conn *dbconnpool.CpConn)
+	GetPreloadRoutes func(q interfaces.HandlerQueries, ctx context.Context, folderID int64) ([]string, error)
+	CacheExists      func(queries *gallerydb.CustomQueries, ctx context.Context, key string) (bool, error)
+	SchedulerAddTask func(sched *scheduler.Scheduler, task scheduler.Task, mode scheduler.ExecutionMode, start time.Time) (string, error)
 }
 
 // FolderPreloadTask checks a folder's contents and schedules individual preload tasks.
@@ -64,6 +48,7 @@ type FolderPreloadTask struct {
 	RequestConfig   InternalRequestConfig     // handler and ETag version for internal requests
 	Metrics         *PreloadMetrics           // optional; records skipped/scheduled
 	GetQueries      func(*dbconnpool.CpConn) interfaces.HandlerQueries
+	testSeams       folderPreloadTaskTestSeams
 }
 
 // Run implements scheduler.Task.
@@ -71,14 +56,33 @@ type FolderPreloadTask struct {
 func (t *FolderPreloadTask) Run(ctx context.Context) error {
 	slog.Debug("folder preload task running", "folder_id", t.FolderID, "session_id", truncateSessionID(t.SessionID, 8))
 
-	cpcRo, err := dbPoolGetFn(t.DBRoPool)
+	var (
+		cpcRo *dbconnpool.CpConn
+		err   error
+	)
+	if t.testSeams.PoolGet != nil {
+		cpcRo, err = t.testSeams.PoolGet(t.DBRoPool)
+	} else {
+		cpcRo, err = t.DBRoPool.Get()
+	}
 	if err != nil {
 		return fmt.Errorf("get db connection: %w", err)
 	}
-	defer dbPoolPutFn(t.DBRoPool, cpcRo)
+	defer func() {
+		if t.testSeams.PoolPut != nil {
+			t.testSeams.PoolPut(t.DBRoPool, cpcRo)
+			return
+		}
+		t.DBRoPool.Put(cpcRo)
+	}()
 
 	q := t.GetQueries(cpcRo)
-	paths, err := getPreloadRoutesByFolderIDFn(q, ctx, t.FolderID)
+	var paths []string
+	if t.testSeams.GetPreloadRoutes != nil {
+		paths, err = t.testSeams.GetPreloadRoutes(q, ctx, t.FolderID)
+	} else {
+		paths, err = q.GetPreloadRoutesByFolderID(ctx, sql.NullInt64{Int64: t.FolderID, Valid: true})
+	}
 	if err != nil {
 		return fmt.Errorf("get preload routes: %w", err)
 	}
@@ -113,7 +117,15 @@ func (t *FolderPreloadTask) schedulePreload(ctx context.Context, path, query str
 	cacheKey := cachelite.NewCacheKey(params)
 
 	// Check if cache entry already exists (lightweight check, no body loaded)
-	exists, err := httpCacheExistsByKeyFn(queries, ctx, cacheKey)
+	var (
+		exists bool
+		err    error
+	)
+	if t.testSeams.CacheExists != nil {
+		exists, err = t.testSeams.CacheExists(queries, ctx, cacheKey)
+	} else {
+		exists, err = queries.HttpCacheExistsByKey(ctx, cacheKey)
+	}
 	if err == nil && exists {
 		// Cache entry exists
 		if t.Metrics != nil {
@@ -145,7 +157,11 @@ func (t *FolderPreloadTask) schedulePreload(ctx context.Context, path, query str
 		t.Metrics.TasksScheduled.Add(1)
 	}
 
-	_, err = folderSchedulerAddTaskFn(t.Scheduler, preloadTask, scheduler.OneTime, time.Now())
+	if t.testSeams.SchedulerAddTask != nil {
+		_, err = t.testSeams.SchedulerAddTask(t.Scheduler, preloadTask, scheduler.OneTime, time.Now())
+	} else {
+		_, err = t.Scheduler.AddTask(preloadTask, scheduler.OneTime, time.Now())
+	}
 	if err != nil {
 		t.TaskTracker.UnregisterTask(cacheKey)
 		slog.Warn("failed to schedule preload task", "path", path, "error", err)

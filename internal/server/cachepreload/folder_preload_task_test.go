@@ -235,19 +235,12 @@ func TestIsCacheablePath(t *testing.T) {
 }
 
 func TestFolderPreloadTask_Run_DbPoolGetError(t *testing.T) {
-	origGet := dbPoolGetFn
-	origPut := dbPoolPutFn
-	defer func() {
-		dbPoolGetFn = origGet
-		dbPoolPutFn = origPut
-	}()
-
-	dbPoolGetFn = func(_ *dbconnpool.DbSQLConnPool) (*dbconnpool.CpConn, error) {
+	task := &FolderPreloadTask{DBRoPool: &dbconnpool.DbSQLConnPool{}}
+	task.testSeams.PoolGet = func(_ *dbconnpool.DbSQLConnPool) (*dbconnpool.CpConn, error) {
 		return nil, errors.New("pool closed")
 	}
-	dbPoolPutFn = func(_ *dbconnpool.DbSQLConnPool, _ *dbconnpool.CpConn) {}
+	task.testSeams.PoolPut = func(_ *dbconnpool.DbSQLConnPool, _ *dbconnpool.CpConn) {}
 
-	task := &FolderPreloadTask{DBRoPool: &dbconnpool.DbSQLConnPool{}}
 	err := task.Run(context.Background())
 	if err == nil {
 		t.Fatal("expected error from Run")
@@ -258,29 +251,20 @@ func TestFolderPreloadTask_Run_DbPoolGetError(t *testing.T) {
 }
 
 func TestFolderPreloadTask_Run_GetRoutesError(t *testing.T) {
-	origGet := dbPoolGetFn
-	origPut := dbPoolPutFn
-	origRoutes := getPreloadRoutesByFolderIDFn
-	defer func() {
-		dbPoolGetFn = origGet
-		dbPoolPutFn = origPut
-		getPreloadRoutesByFolderIDFn = origRoutes
-	}()
-
-	dbPoolGetFn = func(_ *dbconnpool.DbSQLConnPool) (*dbconnpool.CpConn, error) {
-		return &dbconnpool.CpConn{}, nil
-	}
-	dbPoolPutFn = func(_ *dbconnpool.DbSQLConnPool, _ *dbconnpool.CpConn) {}
-	getPreloadRoutesByFolderIDFn = func(_ interfaces.HandlerQueries, _ context.Context, _ int64) ([]string, error) {
-		return nil, errors.New("query denied")
-	}
-
 	task := &FolderPreloadTask{
 		DBRoPool: &dbconnpool.DbSQLConnPool{},
 		GetQueries: func(*dbconnpool.CpConn) interfaces.HandlerQueries {
 			return &handlerqueriesfake.Fake{}
 		},
 	}
+	task.testSeams.PoolGet = func(_ *dbconnpool.DbSQLConnPool) (*dbconnpool.CpConn, error) {
+		return &dbconnpool.CpConn{}, nil
+	}
+	task.testSeams.PoolPut = func(_ *dbconnpool.DbSQLConnPool, _ *dbconnpool.CpConn) {}
+	task.testSeams.GetPreloadRoutes = func(_ interfaces.HandlerQueries, _ context.Context, _ int64) ([]string, error) {
+		return nil, errors.New("query denied")
+	}
+
 	err := task.Run(context.Background())
 	if err == nil {
 		t.Fatal("expected error from Run")
@@ -291,40 +275,6 @@ func TestFolderPreloadTask_Run_GetRoutesError(t *testing.T) {
 }
 
 func TestFolderPreloadTask_Run_EmptyPathSkipped(t *testing.T) {
-	origGet := dbPoolGetFn
-	origPut := dbPoolPutFn
-	origRoutes := getPreloadRoutesByFolderIDFn
-	origCache := httpCacheExistsByKeyFn
-	origAdd := folderSchedulerAddTaskFn
-	defer func() {
-		dbPoolGetFn = origGet
-		dbPoolPutFn = origPut
-		getPreloadRoutesByFolderIDFn = origRoutes
-		httpCacheExistsByKeyFn = origCache
-		folderSchedulerAddTaskFn = origAdd
-	}()
-
-	dbPoolGetFn = func(_ *dbconnpool.DbSQLConnPool) (*dbconnpool.CpConn, error) {
-		return &dbconnpool.CpConn{}, nil
-	}
-	dbPoolPutFn = func(_ *dbconnpool.DbSQLConnPool, _ *dbconnpool.CpConn) {}
-	getPreloadRoutesByFolderIDFn = func(_ interfaces.HandlerQueries, _ context.Context, _ int64) ([]string, error) {
-		return []string{"", "/gallery/1"}, nil
-	}
-	httpCacheExistsByKeyFn = func(_ *gallerydb.CustomQueries, _ context.Context, _ string) (bool, error) {
-		return false, nil
-	}
-
-	var scheduledPaths []string
-	folderSchedulerAddTaskFn = func(_ *scheduler.Scheduler, task scheduler.Task, _ scheduler.ExecutionMode, _ time.Time) (string, error) {
-		pt, ok := task.(*PreloadTask)
-		if !ok {
-			t.Fatalf("expected *PreloadTask, got %T", task)
-		}
-		scheduledPaths = append(scheduledPaths, pt.Path)
-		return "task-id", nil
-	}
-
 	task := &FolderPreloadTask{
 		DBRoPool:        &dbconnpool.DbSQLConnPool{},
 		CacheableRoutes: []string{"/gallery/"},
@@ -334,6 +284,26 @@ func TestFolderPreloadTask_Run_EmptyPathSkipped(t *testing.T) {
 		GetQueries: func(*dbconnpool.CpConn) interfaces.HandlerQueries {
 			return &handlerqueriesfake.Fake{}
 		},
+	}
+	task.testSeams.PoolGet = func(_ *dbconnpool.DbSQLConnPool) (*dbconnpool.CpConn, error) {
+		return &dbconnpool.CpConn{}, nil
+	}
+	task.testSeams.PoolPut = func(_ *dbconnpool.DbSQLConnPool, _ *dbconnpool.CpConn) {}
+	task.testSeams.GetPreloadRoutes = func(_ interfaces.HandlerQueries, _ context.Context, _ int64) ([]string, error) {
+		return []string{"", "/gallery/1"}, nil
+	}
+	task.testSeams.CacheExists = func(_ *gallerydb.CustomQueries, _ context.Context, _ string) (bool, error) {
+		return false, nil
+	}
+
+	var scheduledPaths []string
+	task.testSeams.SchedulerAddTask = func(_ *scheduler.Scheduler, task scheduler.Task, _ scheduler.ExecutionMode, _ time.Time) (string, error) {
+		pt, ok := task.(*PreloadTask)
+		if !ok {
+			t.Fatalf("expected *PreloadTask, got %T", task)
+		}
+		scheduledPaths = append(scheduledPaths, pt.Path)
+		return "task-id", nil
 	}
 
 	err := task.Run(context.Background())
@@ -347,40 +317,6 @@ func TestFolderPreloadTask_Run_EmptyPathSkipped(t *testing.T) {
 }
 
 func TestFolderPreloadTask_Run_NonCacheablePathSkipped(t *testing.T) {
-	origGet := dbPoolGetFn
-	origPut := dbPoolPutFn
-	origRoutes := getPreloadRoutesByFolderIDFn
-	origCache := httpCacheExistsByKeyFn
-	origAdd := folderSchedulerAddTaskFn
-	defer func() {
-		dbPoolGetFn = origGet
-		dbPoolPutFn = origPut
-		getPreloadRoutesByFolderIDFn = origRoutes
-		httpCacheExistsByKeyFn = origCache
-		folderSchedulerAddTaskFn = origAdd
-	}()
-
-	dbPoolGetFn = func(_ *dbconnpool.DbSQLConnPool) (*dbconnpool.CpConn, error) {
-		return &dbconnpool.CpConn{}, nil
-	}
-	dbPoolPutFn = func(_ *dbconnpool.DbSQLConnPool, _ *dbconnpool.CpConn) {}
-	getPreloadRoutesByFolderIDFn = func(_ interfaces.HandlerQueries, _ context.Context, _ int64) ([]string, error) {
-		return []string{"/admin/1", "/gallery/1"}, nil
-	}
-	httpCacheExistsByKeyFn = func(_ *gallerydb.CustomQueries, _ context.Context, _ string) (bool, error) {
-		return false, nil
-	}
-
-	var scheduledPaths []string
-	folderSchedulerAddTaskFn = func(_ *scheduler.Scheduler, task scheduler.Task, _ scheduler.ExecutionMode, _ time.Time) (string, error) {
-		pt, ok := task.(*PreloadTask)
-		if !ok {
-			t.Fatalf("expected *PreloadTask, got %T", task)
-		}
-		scheduledPaths = append(scheduledPaths, pt.Path)
-		return "task-id", nil
-	}
-
 	task := &FolderPreloadTask{
 		DBRoPool:        &dbconnpool.DbSQLConnPool{},
 		CacheableRoutes: []string{"/gallery/"},
@@ -390,6 +326,26 @@ func TestFolderPreloadTask_Run_NonCacheablePathSkipped(t *testing.T) {
 		GetQueries: func(*dbconnpool.CpConn) interfaces.HandlerQueries {
 			return &handlerqueriesfake.Fake{}
 		},
+	}
+	task.testSeams.PoolGet = func(_ *dbconnpool.DbSQLConnPool) (*dbconnpool.CpConn, error) {
+		return &dbconnpool.CpConn{}, nil
+	}
+	task.testSeams.PoolPut = func(_ *dbconnpool.DbSQLConnPool, _ *dbconnpool.CpConn) {}
+	task.testSeams.GetPreloadRoutes = func(_ interfaces.HandlerQueries, _ context.Context, _ int64) ([]string, error) {
+		return []string{"/admin/1", "/gallery/1"}, nil
+	}
+	task.testSeams.CacheExists = func(_ *gallerydb.CustomQueries, _ context.Context, _ string) (bool, error) {
+		return false, nil
+	}
+
+	var scheduledPaths []string
+	task.testSeams.SchedulerAddTask = func(_ *scheduler.Scheduler, task scheduler.Task, _ scheduler.ExecutionMode, _ time.Time) (string, error) {
+		pt, ok := task.(*PreloadTask)
+		if !ok {
+			t.Fatalf("expected *PreloadTask, got %T", task)
+		}
+		scheduledPaths = append(scheduledPaths, pt.Path)
+		return "task-id", nil
 	}
 
 	err := task.Run(context.Background())
@@ -403,33 +359,6 @@ func TestFolderPreloadTask_Run_NonCacheablePathSkipped(t *testing.T) {
 }
 
 func TestFolderPreloadTask_Run_ScheduleAddTaskError(t *testing.T) {
-	origGet := dbPoolGetFn
-	origPut := dbPoolPutFn
-	origRoutes := getPreloadRoutesByFolderIDFn
-	origCache := httpCacheExistsByKeyFn
-	origAdd := folderSchedulerAddTaskFn
-	defer func() {
-		dbPoolGetFn = origGet
-		dbPoolPutFn = origPut
-		getPreloadRoutesByFolderIDFn = origRoutes
-		httpCacheExistsByKeyFn = origCache
-		folderSchedulerAddTaskFn = origAdd
-	}()
-
-	dbPoolGetFn = func(_ *dbconnpool.DbSQLConnPool) (*dbconnpool.CpConn, error) {
-		return &dbconnpool.CpConn{}, nil
-	}
-	dbPoolPutFn = func(_ *dbconnpool.DbSQLConnPool, _ *dbconnpool.CpConn) {}
-	getPreloadRoutesByFolderIDFn = func(_ interfaces.HandlerQueries, _ context.Context, _ int64) ([]string, error) {
-		return []string{"/gallery/1"}, nil
-	}
-	httpCacheExistsByKeyFn = func(_ *gallerydb.CustomQueries, _ context.Context, _ string) (bool, error) {
-		return false, nil
-	}
-	folderSchedulerAddTaskFn = func(_ *scheduler.Scheduler, _ scheduler.Task, _ scheduler.ExecutionMode, _ time.Time) (string, error) {
-		return "", errors.New("scheduler full")
-	}
-
 	tt := &TaskTracker{}
 	task := &FolderPreloadTask{
 		DBRoPool:        &dbconnpool.DbSQLConnPool{},
@@ -440,6 +369,19 @@ func TestFolderPreloadTask_Run_ScheduleAddTaskError(t *testing.T) {
 		GetQueries: func(*dbconnpool.CpConn) interfaces.HandlerQueries {
 			return &handlerqueriesfake.Fake{}
 		},
+	}
+	task.testSeams.PoolGet = func(_ *dbconnpool.DbSQLConnPool) (*dbconnpool.CpConn, error) {
+		return &dbconnpool.CpConn{}, nil
+	}
+	task.testSeams.PoolPut = func(_ *dbconnpool.DbSQLConnPool, _ *dbconnpool.CpConn) {}
+	task.testSeams.GetPreloadRoutes = func(_ interfaces.HandlerQueries, _ context.Context, _ int64) ([]string, error) {
+		return []string{"/gallery/1"}, nil
+	}
+	task.testSeams.CacheExists = func(_ *gallerydb.CustomQueries, _ context.Context, _ string) (bool, error) {
+		return false, nil
+	}
+	task.testSeams.SchedulerAddTask = func(_ *scheduler.Scheduler, _ scheduler.Task, _ scheduler.ExecutionMode, _ time.Time) (string, error) {
+		return "", errors.New("scheduler full")
 	}
 
 	err := task.Run(context.Background())
@@ -454,40 +396,6 @@ func TestFolderPreloadTask_Run_ScheduleAddTaskError(t *testing.T) {
 }
 
 func TestFolderPreloadTask_Run_AlreadyCachedSkip(t *testing.T) {
-	origGet := dbPoolGetFn
-	origPut := dbPoolPutFn
-	origRoutes := getPreloadRoutesByFolderIDFn
-	origCache := httpCacheExistsByKeyFn
-	origAdd := folderSchedulerAddTaskFn
-	defer func() {
-		dbPoolGetFn = origGet
-		dbPoolPutFn = origPut
-		getPreloadRoutesByFolderIDFn = origRoutes
-		httpCacheExistsByKeyFn = origCache
-		folderSchedulerAddTaskFn = origAdd
-	}()
-
-	dbPoolGetFn = func(_ *dbconnpool.DbSQLConnPool) (*dbconnpool.CpConn, error) {
-		return &dbconnpool.CpConn{}, nil
-	}
-	dbPoolPutFn = func(_ *dbconnpool.DbSQLConnPool, _ *dbconnpool.CpConn) {}
-	getPreloadRoutesByFolderIDFn = func(_ interfaces.HandlerQueries, _ context.Context, _ int64) ([]string, error) {
-		return []string{"/info/image/1"}, nil
-	}
-	httpCacheExistsByKeyFn = func(_ *gallerydb.CustomQueries, _ context.Context, _ string) (bool, error) {
-		return true, nil
-	}
-
-	var scheduledPaths []string
-	folderSchedulerAddTaskFn = func(_ *scheduler.Scheduler, task scheduler.Task, _ scheduler.ExecutionMode, _ time.Time) (string, error) {
-		pt, ok := task.(*PreloadTask)
-		if !ok {
-			t.Fatalf("expected *PreloadTask, got %T", task)
-		}
-		scheduledPaths = append(scheduledPaths, pt.Path)
-		return "task-id", nil
-	}
-
 	metrics := &PreloadMetrics{}
 	task := &FolderPreloadTask{
 		DBRoPool:        &dbconnpool.DbSQLConnPool{},
@@ -499,6 +407,26 @@ func TestFolderPreloadTask_Run_AlreadyCachedSkip(t *testing.T) {
 		GetQueries: func(*dbconnpool.CpConn) interfaces.HandlerQueries {
 			return &handlerqueriesfake.Fake{}
 		},
+	}
+	task.testSeams.PoolGet = func(_ *dbconnpool.DbSQLConnPool) (*dbconnpool.CpConn, error) {
+		return &dbconnpool.CpConn{}, nil
+	}
+	task.testSeams.PoolPut = func(_ *dbconnpool.DbSQLConnPool, _ *dbconnpool.CpConn) {}
+	task.testSeams.GetPreloadRoutes = func(_ interfaces.HandlerQueries, _ context.Context, _ int64) ([]string, error) {
+		return []string{"/info/image/1"}, nil
+	}
+	task.testSeams.CacheExists = func(_ *gallerydb.CustomQueries, _ context.Context, _ string) (bool, error) {
+		return true, nil
+	}
+
+	var scheduledPaths []string
+	task.testSeams.SchedulerAddTask = func(_ *scheduler.Scheduler, task scheduler.Task, _ scheduler.ExecutionMode, _ time.Time) (string, error) {
+		pt, ok := task.(*PreloadTask)
+		if !ok {
+			t.Fatalf("expected *PreloadTask, got %T", task)
+		}
+		scheduledPaths = append(scheduledPaths, pt.Path)
+		return "task-id", nil
 	}
 
 	err := task.Run(context.Background())
