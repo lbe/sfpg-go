@@ -3,6 +3,7 @@ package server
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"github.com/lbe/sfpg-go/internal/dbconnpool"
 	"github.com/lbe/sfpg-go/internal/discovery"
 	"github.com/lbe/sfpg-go/internal/getopt"
+	"github.com/lbe/sfpg-go/internal/metadata"
 	"github.com/lbe/sfpg-go/internal/server/config"
 	"github.com/lbe/sfpg-go/internal/server/database"
 	"github.com/lbe/sfpg-go/internal/server/files"
@@ -21,6 +23,19 @@ import (
 	"github.com/lbe/sfpg-go/internal/workerpool"
 	"github.com/lbe/sfpg-go/web"
 )
+
+// testExtractor is the one metadata.Extractor the package's tests share. It
+// runs one ExifTool process, which TestMain closes after the tests.
+var testExtractor *metadata.Extractor //nolint:gochecknoglobals // R9 allows unexported test-file identifiers; TestMain sets it once.
+
+func TestMain(m *testing.M) {
+	testExtractor = metadata.New()
+	code := m.Run()
+	if err := testExtractor.Close(); err != nil {
+		fmt.Fprintf(os.Stderr, "close test extractor: %v\n", err)
+	}
+	os.Exit(code)
+}
 
 func init() {
 	seedTestDatabase = seedTestDBIfAbsent
@@ -298,7 +313,7 @@ func CreateApp(t testing.TB, opts ...AppOption) *App {
 // need a pool, so it reads app.SubsystemManager.pool. CreateApp calls it once.
 func wireDiscovery(app *App) {
 	sm := app.SubsystemManager
-	sm.fileProcessor = files.NewFileProcessor(app.imagesDir)
+	sm.fileProcessor = files.NewFileProcessor(app.imagesDir, testExtractor)
 	sm.moduleStateService = modulestate.NewService(app.dbRwPool)
 	sm.stats = &discovery.Stats{}
 	svc, err := discovery.New(discovery.Config{

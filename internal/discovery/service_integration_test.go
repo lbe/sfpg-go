@@ -13,11 +13,24 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lbe/sfpg-go/internal/metadata"
 	"github.com/lbe/sfpg-go/internal/parallelwalkdir"
 	"github.com/lbe/sfpg-go/internal/server/files"
 	"github.com/lbe/sfpg-go/internal/server/metrics"
 	"github.com/lbe/sfpg-go/internal/workerpool"
 )
+
+// newTestExtractor returns a metadata.Extractor that the test closes.
+func newTestExtractor(t *testing.T) *metadata.Extractor {
+	t.Helper()
+	e := metadata.New()
+	t.Cleanup(func() {
+		if err := e.Close(); err != nil {
+			t.Errorf("extractor Close: %v", err)
+		}
+	})
+	return e
+}
 
 // TestRunImportsAndSkipsUnchangedFiles runs discovery against a real database,
 // a real writer and the real processor over three runs: the first imports,
@@ -32,7 +45,7 @@ func TestRunImportsAndSkipsUnchangedFiles(t *testing.T) {
 	writeFile(t, dir, "broken.jpg", []byte("not an image"), testMtime)
 	writeFile(t, dir, "poison.jpg", []byte{0xFF, 0xD8, 0xFF, 0x00}, testMtime)
 
-	proc := files.NewFileProcessor(dir)
+	proc := files.NewFileProcessor(dir, newTestExtractor(t))
 	t.Cleanup(func() {
 		if err := proc.Close(); err != nil {
 			t.Errorf("processor Close: %v", err)

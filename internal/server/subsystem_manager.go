@@ -41,6 +41,7 @@ type SubsystemManager struct {
 	pool               *workerpool.Pool
 	discovery          *discovery.Service
 	fileProcessor      files.FileProcessor
+	extractor          *metadata.Extractor // created by Start with fileProcessor; Shutdown closes it
 	stats              *discovery.Stats
 	scheduler          *scheduler.Scheduler
 	preloadManager     preloadManager
@@ -91,9 +92,18 @@ func (m *SubsystemManager) Start(
 	if maxWorkers == 0 {
 		maxWorkers = workerpool.DefaultMaxWorkers()
 	}
+	// File processor (tests may inject a fake via m.fileProcessor)
+	if m.fileProcessor == nil {
+		m.extractor = metadata.New()
+		m.fileProcessor = files.NewFileProcessor(imagesDir, m.extractor)
+	}
+	wasmServers := 0
+	if m.extractor != nil {
+		wasmServers = m.extractor.WASMServers()
+	}
 	limit := memlimit.Apply(memlimit.Need{
 		Workers:         maxWorkers,
-		ExifToolServers: metadata.PoolSize(),
+		ExifToolServers: wasmServers,
 		RetainedBytes:   thumbnail.RetainedBytes,
 	})
 	maxWorkers = limit.Workers
@@ -101,11 +111,6 @@ func (m *SubsystemManager) Start(
 
 	// Module state service
 	m.moduleStateService = modulestate.NewService(m.infra.DBRwPool())
-
-	// File processor (tests may inject a fake via m.fileProcessor)
-	if m.fileProcessor == nil {
-		m.fileProcessor = files.NewFileProcessor(imagesDir)
-	}
 
 	// Cache preload manager (tests may inject a fake via m.preloadManager)
 	if m.preloadManager == nil {
@@ -184,8 +189,8 @@ func (m *SubsystemManager) StartPool(poolDone chan struct{}) {
 	}()
 }
 
-// Shutdown stops preload, closes the discovery backlog and the file
-// processor. App.Shutdown calls it after discovery has stopped.
+// Shutdown stops preload, closes the discovery backlog, the file processor and
+// the extractor Start created. App.Shutdown calls it after discovery has stopped.
 func (m *SubsystemManager) Shutdown() {
 	if m.preloadManager != nil {
 		m.preloadManager.Shutdown()
@@ -194,6 +199,12 @@ func (m *SubsystemManager) Shutdown() {
 		if err := m.fileProcessor.Close(); err != nil {
 			slog.Error("close file processor", "err", err)
 		}
+	}
+	if m.extractor != nil {
+		if err := m.extractor.Close(); err != nil {
+			slog.Error("close metadata extractor", "err", err)
+		}
+		m.extractor = nil
 	}
 	if m.discovery != nil {
 		if err := m.discovery.Close(); err != nil {

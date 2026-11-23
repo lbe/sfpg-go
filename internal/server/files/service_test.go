@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/lbe/sfpg-go/internal/metadata"
 )
 
 // discoveryFields returns the mtime and size a walk reports for the file at fullPath.
@@ -20,9 +22,21 @@ func discoveryFields(t *testing.T, fullPath string) (mtime, size int64) {
 	return info.ModTime().Unix(), info.Size()
 }
 
+// newTestExtractor returns a metadata.Extractor that the test closes.
+func newTestExtractor(t *testing.T) *metadata.Extractor {
+	t.Helper()
+	e := metadata.New()
+	t.Cleanup(func() {
+		if err := e.Close(); err != nil {
+			t.Errorf("extractor Close: %v", err)
+		}
+	})
+	return e
+}
+
 func TestFileProcessor_ProcessDiscoveryFile(t *testing.T) {
 	t.Run("cancelled context", func(t *testing.T) {
-		processor := NewFileProcessor(t.TempDir())
+		processor := NewFileProcessor(t.TempDir(), newTestExtractor(t))
 		t.Cleanup(func() { _ = processor.Close() })
 
 		ctx, cancel := context.WithCancel(context.Background())
@@ -35,7 +49,7 @@ func TestFileProcessor_ProcessDiscoveryFile(t *testing.T) {
 	})
 
 	t.Run("empty file path", func(t *testing.T) {
-		processor := NewFileProcessor(t.TempDir())
+		processor := NewFileProcessor(t.TempDir(), newTestExtractor(t))
 		t.Cleanup(func() { _ = processor.Close() })
 
 		if _, err := processor.ProcessDiscoveryFile(context.Background(), "", 1, 1); err == nil {
@@ -44,7 +58,7 @@ func TestFileProcessor_ProcessDiscoveryFile(t *testing.T) {
 	})
 
 	t.Run("missing file", func(t *testing.T) {
-		processor := NewFileProcessor(t.TempDir())
+		processor := NewFileProcessor(t.TempDir(), newTestExtractor(t))
 		t.Cleanup(func() { _ = processor.Close() })
 
 		_, err := processor.ProcessDiscoveryFile(context.Background(), "missing.jpg", 1, 1)
@@ -61,7 +75,7 @@ func TestFileProcessor_ProcessDiscoveryFile(t *testing.T) {
 // TestFileProcessor_ProcessDiscoveryFileSucceeds processes a small real JPEG.
 func TestFileProcessor_ProcessDiscoveryFileSucceeds(t *testing.T) {
 	imagesDir := t.TempDir()
-	processor := NewFileProcessor(imagesDir)
+	processor := NewFileProcessor(imagesDir, newTestExtractor(t))
 	t.Cleanup(func() { _ = processor.Close() })
 
 	path := createTestImage(t, imagesDir, "process-discovery-success.jpg")
@@ -100,7 +114,7 @@ func TestFileProcessor_ProcessDiscoveryFileSucceeds(t *testing.T) {
 // TestFileProcessor_Close verifies Close returns nil, also when called twice.
 func TestFileProcessor_Close(t *testing.T) {
 	t.Run("close returns nil", func(t *testing.T) {
-		processor := NewFileProcessor(t.TempDir())
+		processor := NewFileProcessor(t.TempDir(), newTestExtractor(t))
 
 		if err := processor.Close(); err != nil {
 			t.Errorf("Close returned error: %v", err)
@@ -108,7 +122,7 @@ func TestFileProcessor_Close(t *testing.T) {
 	})
 
 	t.Run("multiple close is safe", func(t *testing.T) {
-		processor := NewFileProcessor(t.TempDir())
+		processor := NewFileProcessor(t.TempDir(), newTestExtractor(t))
 
 		err1 := processor.Close()
 		err2 := processor.Close()
@@ -152,7 +166,7 @@ func TestFileProcessor_ProcessDiscoveryFileReadsMetadata(t *testing.T) {
 	if err = os.WriteFile(filepath.Join(imagesDir, "photo.jpg"), input, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	p := NewFileProcessor(imagesDir)
+	p := NewFileProcessor(imagesDir, newTestExtractor(t))
 	t.Cleanup(func() { _ = p.Close() })
 
 	f, err := p.ProcessDiscoveryFile(context.Background(), "photo.jpg", 1700000000, int64(len(input)))
@@ -178,7 +192,7 @@ func TestFileProcessor_PoisonJPEGIsDecodeFailure(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(imagesDir, "poison.jpg"), data, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	p := NewFileProcessor(imagesDir)
+	p := NewFileProcessor(imagesDir, newTestExtractor(t))
 	t.Cleanup(func() { _ = p.Close() })
 
 	_, err := p.ProcessDiscoveryFile(context.Background(), "poison.jpg", 1, int64(len(data)))

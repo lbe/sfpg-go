@@ -18,7 +18,7 @@ const (
 // Need is what the process needs memory for.
 type Need struct {
 	Workers         int   // discovery workers
-	ExifToolServers int   // metadata.PoolSize()
+	ExifToolServers int   // metadata.Extractor.WASMServers()
 	RetainedBytes   int64 // thumbnail.RetainedBytes
 }
 

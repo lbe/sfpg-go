@@ -18,8 +18,8 @@ type FileProcessor interface {
 	// classifies its error.
 	ProcessDiscoveryFile(ctx context.Context, path string, mtime, size int64) (*File, error)
 
-	// Close shuts down the metadata extractor, waiting for running extractions,
-	// and releases the thumbnail generators' memory.
+	// Close releases the thumbnail generators' memory. It does not close the
+	// metadata extractor, which the caller owns.
 	Close() error
 }
 
@@ -37,11 +37,13 @@ type fileProcessor struct {
 	generators *thumbnail.Pool
 }
 
-// NewFileProcessor returns a FileProcessor for the files under imagesDir.
-func NewFileProcessor(imagesDir string) FileProcessor {
+// NewFileProcessor returns a FileProcessor for the files under imagesDir that
+// extracts metadata with extractor. The caller owns extractor and closes it
+// after the processor is no longer used.
+func NewFileProcessor(imagesDir string, extractor *metadata.Extractor) FileProcessor {
 	return &fileProcessor{
 		imagesDir:  imagesDir,
-		extractor:  metadata.New(),
+		extractor:  extractor,
 		generators: thumbnail.NewPool(),
 	}
 }
@@ -69,5 +71,5 @@ func (s *fileProcessor) ProcessDiscoveryFile(ctx context.Context, path string, m
 
 func (s *fileProcessor) Close() error {
 	s.generators.Close()
-	return s.extractor.Close()
+	return nil
 }

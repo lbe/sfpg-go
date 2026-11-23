@@ -575,7 +575,7 @@ The application is organized with a clear separation of concerns, with most of t
   - `gensyncpool`: Generic, type-safe `sync.Pool` wrappers with reset enforcement.
   - `getopt`: Parses and manages configuration from flags, environment variables, and config files.
   - `discovery`: Finds new and changed images and imports them: walk, disk backlog, workers, and run counters.
-  - `metadata`: EXIF, IPTC, and XMP extraction with ExifTool (go-exiftool-wasm).
+  - `metadata`: EXIF, IPTC, and XMP extraction with ExifTool (go-exiftool-wasm). It uses a native `exiftool` 13.00 or later on `PATH` when one is installed, and the embedded WASM build otherwise. The executable must run in the server's environment: an ExifTool installed in a Perl `local::lib`, for example, needs `PERL5LIB` set there too.
   - `memlimit`: Sets the Go memory limit from RAM and sizes the discovery worker count.
   - `thumbnail`: Thumbnails, MD5, and perceptual hashes; reuses decode and scratch memory under shared budgets.
   - `multihandler`: Multi-handler structured logging (console + file).

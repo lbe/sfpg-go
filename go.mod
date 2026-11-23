@@ -14,6 +14,7 @@ require (
 	github.com/lbe/go-image-phash v0.2.0
 	github.com/lbe/wuffs-wasm v0.6.0
 	github.com/m8rge/go-scaled-jpeg v1.2.0
+	github.com/ncruces/go-exiftool v0.4.2
 	github.com/ncruces/go-sqlite3 v0.35.0
 	github.com/phsym/console-slog v0.3.1
 	github.com/pkg/profile v1.7.0
@@ -68,3 +69,5 @@ require (
 	modernc.org/memory v1.11.0 // indirect
 	modernc.org/sqlite v1.52.0 // indirect
 )
+
+replace github.com/ncruces/go-exiftool => github.com/lbe/go-exiftool v0.4.3

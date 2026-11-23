@@ -44,7 +44,7 @@ SFPG (Simple Fast Photo Gallery) is a high-performance, self-hosted photo galler
 | **Web Framework**    | net/http (standard library)                                                                                                                                     |
 | **UI**               | HTMX + Go html/template                                                                                                                                         |
 | **Image Processing** | go-scaled-jpeg (JPEG decode), wuffs-wasm (PNG and GIF decode), `golang.org/x/image/webp` (WebP decode), `image/jpeg` (encode), go-image-phash (perceptual hash) |
-| **Metadata**         | ExifTool through go-exiftool-wasm (EXIF, IPTC, XMP)                                                                                                             |
+| **Metadata**         | ExifTool (EXIF, IPTC, XMP): a native `exiftool` 13.00+ on PATH through go-exiftool, else the embedded build through go-exiftool-wasm                            |
 | **HTTP Cache**       | Custom SQLite-backed cache with async eviction                                                                                                                  |
 | **Write Overflow**   | Persistent on-disk first-in, first-out (FIFO) queue (`dque`)                                                                                                    |
 
@@ -302,7 +302,7 @@ The application is organized into domain-driven packages under `internal/`:
 | **gallerydb**           | Database queries (sqlc)                                                                                                                                                   | `Queries`, `CustomQueries`                                                                                                                                                                                                                                                                       |
 | **gallerylib**          | File import / path-chain upserts                                                                                                                                          | `Importer`                                                                                                                                                                                                                                                                                       |
 | **thumbnail**           | Thumbnail and pHash from decoded pixels, MD5 of the source bytes; shared memory budgets                                                                                   | `Pool`, `Generator`, `GenerateThumbnailAndHashes`                                                                                                                                                                                                                                                |
-| **metadata**            | EXIF, IPTC, and XMP through a pool of ExifTool servers                                                                                                                    | `Extractor`, `Info`, `PoolSize`                                                                                                                                                                                                                                                                  |
+| **metadata**            | EXIF, IPTC, and XMP through a pool of ExifTool servers                                                                                                                    | `Extractor`, `Info`                                                                                                                                                                                                                                                                              |
 | **memlimit**            | Go soft memory limit from RAM and need; sizes the worker count                                                                                                            | `Apply`, `Need`, `Limit`                                                                                                                                                                                                                                                                         |
 | **discovery**           | Finds new and changed images and imports them: walk, disk backlog, workers, run counters                                                                                  | `Service`, `Config`, `Deps`, `Stats`, `Writer`                                                                                                                                                                                                                                                   |
 | **multihandler**        | Multi-handler structured logging                                                                                                                                          | `MultiHandler`                                                                                                                                                                                                                                                                                   |
@@ -683,7 +683,7 @@ stateDiagram-v2
 - **Another error, or the app is stopping:** it returns without further action.
 - **Success:** it schedules `PRAGMA optimize` and, when `restart_after_discovery` is true (the default), requests a process restart. See [§7.1](#71-worker-pool-architecture).
 
-`App.Shutdown` runs in this order: cancel the app context, wait for the runtime goroutines, the discovery workers, and any run in progress, shut down the preload manager, the file processor, and the discovery backlog, close the Writer, run `PRAGMA optimize`, then close the pools ([`app_lifecycle.go`](../internal/server/app_lifecycle.go)).
+`App.Shutdown` runs in this order: cancel the app context, wait for the runtime goroutines, the discovery workers, and any run in progress, shut down the preload manager, the file processor, the metadata extractor that `Start` created, and the discovery backlog, close the Writer, run `PRAGMA optimize`, then close the pools ([`app_lifecycle.go`](../internal/server/app_lifecycle.go)).
 
 ### 6.4 Request Middleware Stack
 
@@ -1780,11 +1780,11 @@ pool.Put(cpc)
 
 **Purpose:** EXIF, IPTC, and XMP extraction with ExifTool, returned as plain Go values (`metadata.Info`).
 
-`metadata.Extractor` ([`internal/metadata`](../internal/metadata/extractor.go)) runs ExifTool through [`github.com/lbe/go-exiftool-wasm`](https://github.com/lbe/go-exiftool-wasm), a WebAssembly build of ExifTool and its Perl interpreter. It is built into the binary, so no external `exiftool` is needed.
+`metadata.Extractor` ([`internal/metadata`](../internal/metadata/extractor.go)) runs ExifTool in one of two ways, chosen once per process. If an `exiftool` of 13.00 or later is on `PATH`, it runs that executable through [`github.com/ncruces/go-exiftool`](https://github.com/lbe/go-exiftool) (a fork pinned by a `replace` directive): one server, in a separate process. Otherwise it runs the embedded WebAssembly build of ExifTool through [`github.com/lbe/go-exiftool-wasm`](https://github.com/lbe/go-exiftool-wasm), so no external `exiftool` is needed.
 
-- **Pool:** `New` returns an `Extractor` that runs up to `PoolSize()` ExifTool servers at once: one per three CPUs, from 2 to 4. Servers start on first use. A background goroutine shuts down servers idle for 30 s or more, checked every 30 s; `Close` stops it and waits.
+- **Pool:** `New` returns an `Extractor` that runs one native server, or up to `e.WASMServers()` WASM servers at once (0 for the native ExifTool): one per three CPUs, from 2 to 4. WASM servers start on first use. A background goroutine shuts down servers idle for 30 s or more, checked every 30 s; `Close` stops it and waits. The caller that calls `New` owns the `Extractor` and closes it. `files.NewFileProcessor` takes one and does not close it.
 - **Command:** `Extract(ctx, path)` runs one ExifTool command on the file path with JSON output, group names, numeric values, every tag, and the raw XMP packet. It excludes five embedded-image tags (`ThumbnailImage`, `PreviewImage`, `PhotoshopThumbnail`, `JpgFromRaw`, `OtherImage`).
-- **Retirement:** a server is shut down instead of reused after a command error, after a file of 16 MiB or more, or after a result of 1 MiB or more, because ExifTool's WASM memory grows to the largest input and never shrinks.
+- **Retirement:** a server is shut down instead of reused after a command error. A WASM server is also shut down after a file of 16 MiB or more, or a result of 1 MiB or more, because its memory grows to the largest input and never shrinks. A native server's memory is in its own process, so it is kept.
 - **Result:** `Info` holds `Exif`, `IPTC` (including keywords), and `XMP` (the raw packet and GPS strings). `files.processFileContents` calls `Extract`; `database.Writer` replaces the stored EXIF, IPTC, and XMP rows of a file from the result (`writeMetadata`).
 - **Errors:** an error reported by ExifTool for the file is returned, and the file is recorded in `invalid_files` with reason `exif`. `ErrClosed` is returned after `Close`.
 
@@ -1839,9 +1839,9 @@ n, err := osza.ReadDir(dirPath, dirLen, entries, nameBuf, scratch, joinBuf)
 
 **Purpose:** Set the Go soft memory limit from the machine's RAM and what the process needs memory for, and size the discovery worker count to fit.
 
-`memlimit.Apply(Need)` ([`internal/memlimit`](../internal/memlimit/memlimit.go)) runs once, from `SubsystemManager.Start`, with the configured worker count, `metadata.PoolSize()`, and `thumbnail.RetainedBytes`.
+`memlimit.Apply(Need)` ([`internal/memlimit`](../internal/memlimit/memlimit.go)) runs once, from `SubsystemManager.Start`, with the configured worker count, the `WASMServers()` of the extractor `Start` creates, and `thumbnail.RetainedBytes`.
 
-- **Limit:** the floor is 20 MiB, plus 13 MiB per worker, plus 64 MiB per ExifTool server, plus the retained scratch budget; the limit adds 96 MiB of headroom. The computed limit never exceeds 75% of RAM (a `GOMEMLIMIT` override is left as set), where RAM is the smaller of physical memory and the cgroup v2 limit (Linux; other platforms have their own `ram_*.go`). When RAM is unknown there is no ceiling.
+- **Limit:** the floor is 20 MiB, plus 13 MiB per worker, plus 64 MiB per WASM ExifTool server (none for the native ExifTool), plus the retained scratch budget; the limit adds 96 MiB of headroom. The computed limit never exceeds 75% of RAM (a `GOMEMLIMIT` override is left as set), where RAM is the smaller of physical memory and the cgroup v2 limit (Linux; other platforms have their own `ram_*.go`). When RAM is unknown there is no ceiling.
 - **Workers:** if the limit for the configured workers exceeds the ceiling, `Limit.Workers` is cut to 1; if one worker does not fit either, the limit is capped at the ceiling.
 - **GC:** unless `GOGC` is set, GC percent is turned off so the limit alone paces collection. With `GOMEMLIMIT` set, `Apply` changes nothing and keeps the configured worker count.
 
@@ -2350,28 +2350,29 @@ sfpg-go/
 
 ### 15.2 External Dependencies
 
-| Dependency                               | Purpose                                                                  | License                                                       |
-| ---------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------- |
-| **github.com/charmbracelet/bubbles**     | TUI dashboard components                                                 | MIT                                                           |
-| **github.com/charmbracelet/bubbletea**   | TUI framework                                                            | MIT                                                           |
-| **github.com/charmbracelet/lipgloss**    | TUI styling                                                              | MIT                                                           |
-| **github.com/dop251/goja**               | JavaScript runtime (tests)                                               | BSD-2-Clause                                                  |
-| **github.com/golang-migrate/migrate/v4** | Database migrations                                                      | MIT                                                           |
-| **github.com/gorilla/sessions**          | Session management                                                       | BSD-3-Clause                                                  |
-| **github.com/klauspost/compress**        | zstd codec for HTTP cache bodies                                         | BSD-3-Clause (Apache-2.0 for `gzhttp`)                        |
-| **github.com/lbe/go-exiftool-wasm**      | ExifTool (with Perl) compiled to WebAssembly: EXIF, IPTC, XMP extraction | MIT                                                           |
-| **github.com/lbe/go-image-phash**        | Perceptual hash (pHash) of decoded pixels                                | MIT                                                           |
-| **github.com/lbe/wuffs-wasm**            | PNG and GIF decode (Wuffs compiled to WebAssembly)                       | MIT                                                           |
-| **github.com/m8rge/go-scaled-jpeg**      | Scaled JPEG decode (thumbnail generation)                                | MIT; BSD-3-Clause (code derived from Go); IJG (IDCT routines) |
-| **github.com/ncruces/go-sqlite3**        | SQLite driver                                                            | MIT                                                           |
-| **github.com/phsym/console-slog**        | Console slog handler                                                     | MIT                                                           |
-| **github.com/pkg/profile**               | CPU/mem/block profiling                                                  | BSD-2-Clause                                                  |
-| **golang.org/x/crypto**                  | bcrypt password hashing                                                  | BSD-3-Clause                                                  |
-| **golang.org/x/image**                   | WebP decode, thumbnail resize (`draw`)                                   | BSD-3-Clause                                                  |
-| **golang.org/x/net**                     | Networking utilities                                                     | BSD-3-Clause                                                  |
-| **golang.org/x/sync**                    | `errgroup` concurrency primitives                                        | BSD-3-Clause                                                  |
-| **golang.org/x/sys**                     | OS-specific syscalls (RAM size, directory reads)                         | BSD-3-Clause                                                  |
-| **gopkg.in/yaml.v3**                     | YAML config parsing                                                      | MIT                                                           |
+| Dependency                               | Purpose                                                                                         | License                                                       |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| **github.com/charmbracelet/bubbles**     | TUI dashboard components                                                                        | MIT                                                           |
+| **github.com/charmbracelet/bubbletea**   | TUI framework                                                                                   | MIT                                                           |
+| **github.com/charmbracelet/lipgloss**    | TUI styling                                                                                     | MIT                                                           |
+| **github.com/dop251/goja**               | JavaScript runtime (tests)                                                                      | BSD-2-Clause                                                  |
+| **github.com/golang-migrate/migrate/v4** | Database migrations                                                                             | MIT                                                           |
+| **github.com/gorilla/sessions**          | Session management                                                                              | BSD-3-Clause                                                  |
+| **github.com/klauspost/compress**        | zstd codec for HTTP cache bodies                                                                | BSD-3-Clause (Apache-2.0 for `gzhttp`)                        |
+| **github.com/lbe/go-exiftool-wasm**      | ExifTool (with Perl) compiled to WebAssembly: EXIF, IPTC, XMP extraction                        | MIT                                                           |
+| **github.com/lbe/go-image-phash**        | Perceptual hash (pHash) of decoded pixels                                                       | MIT                                                           |
+| **github.com/lbe/wuffs-wasm**            | PNG and GIF decode (Wuffs compiled to WebAssembly)                                              | MIT                                                           |
+| **github.com/m8rge/go-scaled-jpeg**      | Scaled JPEG decode (thumbnail generation)                                                       | MIT; BSD-3-Clause (code derived from Go); IJG (IDCT routines) |
+| **github.com/ncruces/go-exiftool**       | Native ExifTool server (`exiftool -stay_open`); replaced by the github.com/lbe/go-exiftool fork | MIT                                                           |
+| **github.com/ncruces/go-sqlite3**        | SQLite driver                                                                                   | MIT                                                           |
+| **github.com/phsym/console-slog**        | Console slog handler                                                                            | MIT                                                           |
+| **github.com/pkg/profile**               | CPU/mem/block profiling                                                                         | BSD-2-Clause                                                  |
+| **golang.org/x/crypto**                  | bcrypt password hashing                                                                         | BSD-3-Clause                                                  |
+| **golang.org/x/image**                   | WebP decode, thumbnail resize (`draw`)                                                          | BSD-3-Clause                                                  |
+| **golang.org/x/net**                     | Networking utilities                                                                            | BSD-3-Clause                                                  |
+| **golang.org/x/sync**                    | `errgroup` concurrency primitives                                                               | BSD-3-Clause                                                  |
+| **golang.org/x/sys**                     | OS-specific syscalls (RAM size, directory reads)                                                | BSD-3-Clause                                                  |
+| **gopkg.in/yaml.v3**                     | YAML config parsing                                                                             | MIT                                                           |
 
 The binary also embeds ExifTool and a Perl interpreter compiled to WebAssembly by zeroperl (ExifTool and Perl: Artistic License or GPL-1.0-or-later; zeroperl: MIT), through `go-exiftool-wasm`, and the Wuffs decoders compiled to WebAssembly (Apache-2.0 or MIT, used under MIT), through `wuffs-wasm`. See [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).
 

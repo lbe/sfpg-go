@@ -203,6 +203,24 @@ limits as above.
   3,984, the extra one an HTTP cache cleanup failure).
 - v3-run9 ran beside other work on the host, which may explain its time.
 
+### Native ExifTool (2026-11-22)
+
+Thumbnail runs with ExifTool running natively (one `exiftool` 13.55 server)
+instead of the embedded WASM pool, same workload, method and limits. Peak
+tree RSS sums the server and its `exiftool` child, sampled every 2 s.
+
+| Run      | ExifTool | Load at start | Time      | Peak RSS (server log) | Peak tree RSS | Result |
+| -------- | -------- | ------------- | --------- | --------------------- | ------------- | ------ |
+| v3-run10 | WASM     | 3.81          | 33 m 25 s | 1.30 GB               |               | passes |
+| v3-run11 | WASM     | 0.76          | 32 m 04 s | 1.30 GB               |               | passes |
+| v3-run12 | native   | 3.59          | 31 m 12 s | 1.04 GB               | 1.09 GB       | passes |
+| v3-run13 | native   | 0.90          | 30 m 18 s | 1.05 GB               | 1.09 GB       | passes |
+
+- Time to `File processing completed`: 23 m 50 s and 22 m 50 s native, against
+  24 m 57 s and 25 m 04 s with WASM.
+- Every run inserted 132,045 files; v3-run12 logged 3,983 `ERROR` lines and
+  v3-run13 3,984 (the extra one an HTTP cache cleanup failure).
+
 ## Approvals needed
 
 - No new Go package, rename, exported API change or `go.mod` change.

@@ -848,8 +848,9 @@ func TestApp_Shutdown_DelegatesToSubsystemManager(t *testing.T) {
 	}
 }
 
+// TestApp_LoadsETagFromConfig is not parallel: the UI cache version it checks
+// is process-wide, and every app that starts sets it.
 func TestApp_LoadsETagFromConfig(t *testing.T) {
-	t.Parallel()
 	app := CreateApp(t)
 	ctx := context.Background()
 

@@ -7,13 +7,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 
-	exiftool "github.com/lbe/go-exiftool-wasm"
 	"golang.org/x/sync/semaphore"
 )
 
@@ -25,16 +23,21 @@ const (
 	// release its memory.
 	idleTimeout = 30 * time.Second
 
-	// ExifTool's WASM memory grows to fit the largest file or result it has
-	// handled and never shrinks, so a server is shut down after a file or a
-	// result at least this large instead of being kept.
+	// A WASM server's memory grows to fit the largest file or result it has
+	// handled and never shrinks, so it is shut down after a file or a result at
+	// least this large instead of being kept. A native server's memory is in
+	// its own process and is released when the process exits, so these limits
+	// do not apply to it.
 	retireFileBytes   = 16 << 20
 	retireOutputBytes = 1 << 20
 )
 
-// Extractor runs a small pool of ExifTool servers. Servers start on first use
-// and shut down after idleTimeout. It is safe for concurrent use.
+// Extractor runs ExifTool servers: one native server, or a small pool of WASM
+// servers. Servers start on first use and shut down after idleTimeout. It is
+// safe for concurrent use.
 type Extractor struct {
+	backend backendChoice
+
 	// sem bounds running extractions, and so the number of servers: each
 	// holder of a slot holds at most one server.
 	sem   *semaphore.Weighted
@@ -50,22 +53,27 @@ type Extractor struct {
 }
 
 type idleServer struct {
-	server *exiftool.Server
-	since  time.Time
+	srv   server
+	since time.Time
 }
-
-// PoolSize returns the most ExifTool servers an Extractor runs at once: one
-// per three CPUs, from 2 to 4.
-func PoolSize() int { return min(4, max(2, runtime.NumCPU()/3)) }
 
 // New returns an Extractor. Close must be called to stop it.
 func New() *Extractor {
-	slots := int64(PoolSize())
+	return newExtractor(chooseBackend())
+}
+
+// newExtractor returns an Extractor that runs the backend b.
+func newExtractor(b backendChoice) *Extractor {
+	slots := int64(1)
+	if !b.native {
+		slots = int64(wasmPoolSize())
+	}
 	e := &Extractor{
-		sem:   semaphore.NewWeighted(slots),
-		slots: slots,
-		stop:  make(chan struct{}),
-		done:  make(chan struct{}),
+		backend: b,
+		sem:     semaphore.NewWeighted(slots),
+		slots:   slots,
+		stop:    make(chan struct{}),
+		done:    make(chan struct{}),
 	}
 	e.closeOnce = sync.OnceValue(e.shutdown)
 	go e.reap()
@@ -87,7 +95,7 @@ func (e *Extractor) Extract(ctx context.Context, path string) (Info, error) {
 	}
 	defer e.sem.Release(1)
 
-	server, err := e.take()
+	s, err := e.take()
 	if err != nil {
 		return Info{}, err
 	}
@@ -97,12 +105,13 @@ func (e *Extractor) Extract(ctx context.Context, path string) (Info, error) {
 	}
 	// A command cannot be interrupted once it starts, so check just before.
 	if err = ctx.Err(); err != nil {
-		e.put(server, false)
+		e.put(s, false)
 		return Info{}, err
 	}
-	out, err := server.Command(append(args(), path)...)
+	out, err := s.Command(append(args(), path)...)
 	// A server whose command failed may be broken; the next file gets a new one.
-	e.put(server, err != nil || size >= retireFileBytes || len(out) >= retireOutputBytes)
+	large := size >= retireFileBytes || len(out) >= retireOutputBytes
+	e.put(s, err != nil || (!e.backend.native && large))
 	if err != nil {
 		return Info{}, fmt.Errorf("metadata: exiftool: %w", err)
 	}
@@ -122,14 +131,16 @@ func args() []string {
 }
 
 // take returns an idle server or starts one. The caller holds a slot.
-func (e *Extractor) take() (*exiftool.Server, error) {
+//
+//nolint:ireturn // R8: the server interface has two production implementations.
+func (e *Extractor) take() (server, error) {
 	e.mu.Lock()
 	if e.closed {
 		e.mu.Unlock()
 		return nil, ErrClosed
 	}
 	if n := len(e.idle); n > 0 {
-		s := e.idle[n-1].server
+		s := e.idle[n-1].srv
 		e.idle[n-1] = idleServer{}
 		e.idle = e.idle[:n-1]
 		e.mu.Unlock()
@@ -137,7 +148,7 @@ func (e *Extractor) take() (*exiftool.Server, error) {
 	}
 	e.mu.Unlock()
 
-	s, err := exiftool.NewServer()
+	s, err := newServer(e.backend)
 	if err != nil {
 		return nil, fmt.Errorf("metadata: start exiftool: %w", err)
 	}
@@ -149,13 +160,13 @@ func (e *Extractor) take() (*exiftool.Server, error) {
 }
 
 // put returns a server to the idle list, or shuts it down if retire is set.
-func (e *Extractor) put(s *exiftool.Server, retire bool) {
+func (e *Extractor) put(s server, retire bool) {
 	if retire {
 		shutdown(s)
 		return
 	}
 	e.mu.Lock()
-	e.idle = append(e.idle, idleServer{server: s, since: time.Now()})
+	e.idle = append(e.idle, idleServer{srv: s, since: time.Now()})
 	e.mu.Unlock()
 }
 
@@ -189,7 +200,7 @@ func (e *Extractor) shutdownIdle(now time.Time) {
 			e.sem.Release(1)
 			return
 		}
-		s := e.idle[i].server
+		s := e.idle[i].srv
 		e.idle = slices.Delete(e.idle, i, i+1)
 		e.mu.Unlock()
 		shutdown(s)
@@ -199,8 +210,17 @@ func (e *Extractor) shutdownIdle(now time.Time) {
 
 // shutdown stops a server that is no longer needed. Its result, if any, has
 // already been read, so a failure to stop cleanly changes nothing.
-func shutdown(s *exiftool.Server) {
+func shutdown(s server) {
 	_ = s.Shutdown() //nolint:errcheck // see above
+}
+
+// WASMServers returns the most WASM ExifTool servers e runs at once: the WASM
+// pool size, one per three CPUs, from 2 to 4. It is 0 for the native ExifTool.
+func (e *Extractor) WASMServers() int {
+	if e.backend.native {
+		return 0
+	}
+	return int(e.slots)
 }
 
 // Close waits for running extractions and shuts the servers down. Extract
@@ -227,7 +247,7 @@ func (e *Extractor) shutdown() error {
 	e.mu.Unlock()
 	var errs []error
 	for _, s := range idle {
-		errs = append(errs, s.server.Shutdown())
+		errs = append(errs, s.srv.Shutdown())
 	}
 	return errors.Join(errs...)
 }
