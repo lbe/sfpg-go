@@ -15,6 +15,7 @@ type AuthState int
 // Authentication states for the login flow.
 const (
 	// authStateNone indicates no authentication has been attempted.
+	//lint:ignore U1000 zero value is the default auth state
 	authStateNone AuthState = iota
 	// authStatePrompting shows the login prompt to the user.
 	authStatePrompting

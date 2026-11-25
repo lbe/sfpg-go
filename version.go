@@ -1,4 +1,4 @@
 package main
 
 // Version is the application release version string.
-const Version = "0.17.83"
+const Version = "0.17.100"

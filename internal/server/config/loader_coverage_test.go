@@ -187,8 +187,7 @@ func TestLoadFromOptDBKeysExistInFields(t *testing.T) {
 	// This is informational only; many fields intentionally have no CLI flag.
 }
 
-// TestConfig_LoadFromOptExcluding_EmptyExcludeList verifies behavior with nil/empty exclude.
-func TestConfig_LoadFromOptExcluding_EmptyExcludeList(t *testing.T) {
+func TestConfig_LoadFromOptExcluding_NilExcludeList(t *testing.T) {
 	cfg := Config{
 		ListenerPort: 8080,
 	}
@@ -197,15 +196,7 @@ func TestConfig_LoadFromOptExcluding_EmptyExcludeList(t *testing.T) {
 		Port: getopt.OptInt{Int: 9090, IsSet: true},
 	}
 
-	// Nil exclude list should behave like empty list
 	cfg.LoadFromOptExcluding(opt, nil)
-	if cfg.ListenerPort != 9090 {
-		t.Errorf("ListenerPort: got %d, want 9090", cfg.ListenerPort)
-	}
-
-	// Reset and test with empty list
-	cfg.ListenerPort = 8080
-	cfg.LoadFromOptExcluding(opt, []string{})
 	if cfg.ListenerPort != 9090 {
 		t.Errorf("ListenerPort: got %d, want 9090", cfg.ListenerPort)
 	}

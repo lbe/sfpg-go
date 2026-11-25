@@ -138,8 +138,6 @@ func TestSetDB(t *testing.T) {
 	// Create a temporary directory structure
 	tempDir := t.TempDir()
 
-	ss := "this-is-a-test-secret-with-min-32-bytes"
-	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
 	app := New(getopt.Opt{}, "x.y.z")
 
 	app.setRootDir(&tempDir)
@@ -233,8 +231,6 @@ func TestSetDB(t *testing.T) {
 
 func TestReconfigurePools_DQueWired(t *testing.T) {
 	tempDir := t.TempDir()
-	ss := "this-is-a-test-secret-with-min-32-bytes"
-	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
 	app := New(getopt.Opt{}, "x.y.z")
 	app.setRootDir(&tempDir)
 	defer app.RuntimeManager.cancel()
@@ -282,8 +278,6 @@ func TestReconfigurePools_DQueWired(t *testing.T) {
 
 func TestUnlockAccount(t *testing.T) {
 	tempDir := t.TempDir()
-	ss := "this-is-a-test-secret-with-min-32-bytes"
-	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
 	app := New(getopt.Opt{}, "x.y.z")
 
 	app.setRootDir(&tempDir)
@@ -350,8 +344,6 @@ func TestUnlockAccount(t *testing.T) {
 
 func TestUnlockAccount_NonExistent(t *testing.T) {
 	tempDir := t.TempDir()
-	ss := "this-is-a-test-secret-with-min-32-bytes"
-	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
 	app := New(getopt.Opt{}, "x.y.z")
 
 	app.setRootDir(&tempDir)
@@ -375,8 +367,6 @@ func TestApp_ImageDirectory_FromConfig_NotHardcoded(t *testing.T) {
 	tempDir := t.TempDir()
 	customImageDir := filepath.Join(tempDir, "custom-images")
 
-	ss := "this-is-a-test-secret-with-min-32-bytes"
-	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
 	app := New(getopt.Opt{}, "x.y.z")
 
 	app.setRootDir(&tempDir)
@@ -438,8 +428,6 @@ func TestApp_ImageDirectory_CreatedAfterConfigLoad(t *testing.T) {
 	tempDir := t.TempDir()
 	customImageDir := filepath.Join(tempDir, "my-images")
 
-	ss := "this-is-a-test-secret-with-min-32-bytes"
-	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
 	app := New(getopt.Opt{}, "x.y.z")
 
 	app.setRootDir(&tempDir)
@@ -501,8 +489,6 @@ func TestApp_ImageDirectory_CustomPath(t *testing.T) {
 	tempDir := t.TempDir()
 	customImageDir := filepath.Join(tempDir, "photos", "gallery")
 
-	ss := "this-is-a-test-secret-with-min-32-bytes"
-	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
 	app := New(getopt.Opt{}, "x.y.z")
 
 	app.setRootDir(&tempDir)
@@ -570,8 +556,6 @@ func TestImageDirectoryIntegration_StartupFlow(t *testing.T) {
 	tempDir := t.TempDir()
 	customImageDir := filepath.Join(tempDir, "custom-gallery")
 
-	ss := "this-is-a-test-secret-with-min-32-bytes"
-	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
 	app := New(getopt.Opt{}, "x.y.z")
 
 	app.setRootDir(&tempDir)
@@ -635,8 +619,6 @@ func TestImageDirectoryIntegration_RuntimeChange(t *testing.T) {
 	initialImageDir := filepath.Join(tempDir, "initial")
 	newImageDir := filepath.Join(tempDir, "new")
 
-	ss := "this-is-a-test-secret-with-min-32-bytes"
-	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
 	app := New(getopt.Opt{}, "x.y.z")
 
 	app.setRootDir(&tempDir)
@@ -700,8 +682,6 @@ func TestImageDirectoryIntegration_FileDiscoveryUsesConfig(t *testing.T) {
 	tempDir := t.TempDir()
 	customImageDir := filepath.Join(tempDir, "discovery-test")
 
-	ss := "this-is-a-test-secret-with-min-32-bytes"
-	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
 	app := New(getopt.Opt{}, "x.y.z")
 
 	app.setRootDir(&tempDir)
@@ -758,8 +738,6 @@ func TestImageDirectoryIntegration_FileDiscoveryUsesConfig(t *testing.T) {
 func TestApplyConfig_PanicsWhenImageDirectoryUndefined(t *testing.T) {
 	tempDir := t.TempDir()
 
-	ss := "this-is-a-test-secret-with-min-32-bytes"
-	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
 	app := New(getopt.Opt{}, "x.y.z")
 
 	app.setRootDir(&tempDir)
@@ -2425,7 +2403,6 @@ func TestProcessRestart_RequestsRestartAndExecs(t *testing.T) {
 // TestApp_ApplyConfig_SyncsLoginRateLimitMax verifies ApplyConfig pushes the
 // configured per-IP login limit into the live auth handlers (hot reload).
 func TestApp_ApplyConfig_SyncsLoginRateLimitMax(t *testing.T) {
-	setenvForTest(t, "SEPG_SESSION_SECURE", "false")
 	app := createStartedApp(t)
 	defer app.Shutdown()
 

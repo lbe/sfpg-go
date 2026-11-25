@@ -24,6 +24,7 @@ sql:
         out: "./internal/gallerydb"
         emit_interface: true
         emit_prepared_queries: true # Enable explicit prepared queries
+        omit_unused_structs: true # Skip table/view types no query uses
         overrides:
           - column: "*.found"
             go_type: "bool"

@@ -9,6 +9,8 @@ import (
 	"time"
 
 	_ "github.com/ncruces/go-sqlite3/driver"
+
+	"github.com/lbe/sfpg-go/internal/testdb/gallerytest"
 )
 
 func TestThumbnailQueries(t *testing.T) {
@@ -501,7 +503,7 @@ func TestNewAndClose(t *testing.T) {
 		}
 	})
 	t.Run("Close", func(t *testing.T) {
-		isolatedDB := newIsolatedGallerySQLDB(t)
+		isolatedDB := gallerytest.IsolatedDB(t)
 		ctx := context.Background()
 		q, err := PrepareCustomQueries(ctx, isolatedDB)
 		if err != nil {
@@ -698,7 +700,7 @@ func TestIsolatedTestDatabasesObserveNoSharedState(t *testing.T) {
 		t.Fatalf("UpsertConfigValueOnly (shared): %v", err)
 	}
 
-	isolatedA := newIsolatedGallerySQLDB(t)
+	isolatedA := gallerytest.IsolatedDB(t)
 	ctxA := context.Background()
 	qA, err := PrepareCustomQueries(ctxA, isolatedA)
 	if err != nil {
@@ -718,7 +720,7 @@ func TestIsolatedTestDatabasesObserveNoSharedState(t *testing.T) {
 		t.Fatalf("UpsertConfigValueOnly (isolated A): %v", err)
 	}
 
-	isolatedB := newIsolatedGallerySQLDB(t)
+	isolatedB := gallerytest.IsolatedDB(t)
 	ctxB := context.Background()
 	qB, err := PrepareCustomQueries(ctxB, isolatedB)
 	if err != nil {

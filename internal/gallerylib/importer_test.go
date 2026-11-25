@@ -18,11 +18,19 @@ import (
 
 	"github.com/lbe/sfpg-go/internal/gallerydb"
 	"github.com/lbe/sfpg-go/internal/gallerylib"
+	"github.com/lbe/sfpg-go/internal/testdb/gallerytest"
 	"github.com/lbe/sfpg-go/migrations"
 )
 
 func setupTestDB(t *testing.T) (*sql.DB, *gallerydb.CustomQueries, context.Context) {
-	return gallerydb.SetupTestDBForTests(t)
+	t.Helper()
+	db := gallerytest.SharedDB(t)
+	ctx := context.Background()
+	q, err := gallerydb.PrepareCustomQueries(ctx, db)
+	if err != nil {
+		t.Fatalf("PrepareCustomQueries: %v", err)
+	}
+	return db, q, ctx
 }
 
 func createTestThumbnail(t *testing.T, q *gallerydb.CustomQueries, ctx context.Context, folderName, fileName string) int64 {
@@ -835,7 +843,7 @@ func TestUpdateFolderTileChain_ExistingTileStops(t *testing.T) {
 }
 
 func TestUpdateFolderTileChain_GetFolderError(t *testing.T) {
-	db := gallerydb.NewIsolatedTestSQLDBForTests(t)
+	db := gallerytest.IsolatedDB(t)
 	ctx := context.Background()
 	q, err := gallerydb.PrepareCustomQueries(ctx, db)
 	if err != nil {

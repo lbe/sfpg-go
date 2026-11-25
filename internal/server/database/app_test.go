@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lbe/sfpg-go/internal/testdb/gallerytest"
+
 	_ "github.com/ncruces/go-sqlite3/driver"
 
 	"github.com/lbe/sfpg-go/internal/dbconnpool"
@@ -18,10 +20,10 @@ import (
 
 func copyTestDBFixture(t *testing.T, mainDB, thumbsDB string) {
 	t.Helper()
-	if err := dbconnpool.CopyMainTestDatabaseTo(mainDB); err != nil {
+	if err := gallerytest.CopyMainTestDatabaseTo(mainDB); err != nil {
 		t.Fatalf("CopyMainTestDatabaseTo: %v", err)
 	}
-	if err := dbconnpool.CopyThumbsTestDatabaseTo(thumbsDB); err != nil {
+	if err := gallerytest.CopyThumbsTestDatabaseTo(thumbsDB); err != nil {
 		t.Fatalf("CopyThumbsTestDatabaseTo: %v", err)
 	}
 }

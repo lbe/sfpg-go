@@ -281,8 +281,6 @@ func TestDBPoolMonitorBootstrap_NilSetDBLoadDefaultsLiveInterval(t *testing.T) {
 
 // --- merged from config_restart_persistence_integration_test.go ---
 func TestConfigPersistence_AfterRestart_SiteNamePersist(t *testing.T) {
-	setenvForTest(t, "SEPG_SESSION_SECURE", "false")
-
 	app1 := CreateApp(t)
 	defer func() {
 		if app1 != nil {
@@ -666,8 +664,6 @@ log-level: "warn"
 // --- moved from server_e2e_test.go (DB config → runtime behavior) ---
 func TestIntegration_DBConfig_HTTPCacheDisableActuallyDisablesCaching(t *testing.T) {
 	tempDir := t.TempDir()
-	ss := "test-session-secret-with-min-32-bytes"
-	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
 
 	// Pre-populate database with enable_http_cache=false BEFORE creating app
 	// (simulates config saved in previous run)
@@ -795,8 +791,6 @@ func TestIntegration_DBConfig_ListenerPortChangeRequiresRestart(t *testing.T) {
 // TestIntegration_ConfigPost_LogLevelUpdatesLoggerNoRestart verifies POST /config
 // with a log-level-only change hot-reloads the logger and does not require restart.
 func TestIntegration_ConfigPost_LogLevelUpdatesLoggerNoRestart(t *testing.T) {
-	setenvForTest(t, "SEPG_SESSION_SECURE", "false")
-
 	app := CreateApp(t)
 	defer app.Shutdown()
 
@@ -870,8 +864,6 @@ func TestIntegration_ConfigPost_LogLevelUpdatesLoggerNoRestart(t *testing.T) {
 // fields round-trip: POST /config persists them to the DB and GET /config
 // renders the saved values in the session tab inputs.
 func TestConfigPersistence_LoginSecurityFields(t *testing.T) {
-	setenvForTest(t, "SEPG_SESSION_SECURE", "false")
-
 	app := CreateApp(t)
 	defer app.Shutdown()
 

@@ -6,7 +6,6 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/lbe/sfpg-go/cmd/sfpg-go-dashboard/client"
 	"github.com/lbe/sfpg-go/cmd/sfpg-go-dashboard/parser"
-	"github.com/lbe/sfpg-go/cmd/sfpg-go-dashboard/tuiview"
 )
 
 // dashboardModel builds a dashboard Model with fixed dimensions for view tests.
@@ -105,10 +104,10 @@ func populatedMetrics() *parser.DashboardMetrics {
 func TestViewDashboard_TitleAndVersion(t *testing.T) {
 	m := dashboardModel(&parser.DashboardMetrics{Version: "0.14.1-test"})
 	view := m.viewDashboard()
-	tuiview.AssertPlainIncludes(t, view, "Performance & Health Dashboard")
-	tuiview.AssertPlainIncludes(t, view, "Version 0.14.1-test")
-	tuiview.AssertPlainExcludes(t, view, "Performance & Health Dashboard  Version")
-	tuiview.AssertPlainExcludes(t, view, "System Dashboard")
+	assertPlainIncludes(t, view, "Performance & Health Dashboard")
+	assertPlainIncludes(t, view, "Version 0.14.1-test")
+	assertPlainExcludes(t, view, "Performance & Health Dashboard  Version")
+	assertPlainExcludes(t, view, "System Dashboard")
 }
 
 // TestViewDashboard_HeaderThreeZone shows the three-zone header layout: title
@@ -120,12 +119,12 @@ func TestViewDashboard_HeaderThreeZone(t *testing.T) {
 		LastUpdated: "17:32:31",
 	})
 	view := m.viewDashboard()
-	tuiview.AssertPlainIncludes(t, view, "Performance & Health Dashboard")
-	tuiview.AssertPlainIncludes(t, view, "Version 0.14.1-test")
-	tuiview.AssertPlainIncludes(t, view, "Live 17:32:31")
-	tuiview.AssertPlainExcludes(t, view, "Performance & Health Dashboard  Version")
-	tuiview.AssertPlainAppearsBefore(t, view, "Performance & Health Dashboard", "Version 0.14.1-test")
-	tuiview.AssertPlainAppearsBefore(t, view, "Version 0.14.1-test", "Live 17:32:31")
+	assertPlainIncludes(t, view, "Performance & Health Dashboard")
+	assertPlainIncludes(t, view, "Version 0.14.1-test")
+	assertPlainIncludes(t, view, "Live 17:32:31")
+	assertPlainExcludes(t, view, "Performance & Health Dashboard  Version")
+	assertPlainAppearsBefore(t, view, "Performance & Health Dashboard", "Version 0.14.1-test")
+	assertPlainAppearsBefore(t, view, "Version 0.14.1-test", "Live 17:32:31")
 }
 
 // TestViewDashboard_WriteBatcherDiskAndDQue shows dque status and disk
@@ -142,14 +141,14 @@ func TestViewDashboard_WriteBatcherDiskAndDQue(t *testing.T) {
 		},
 	})
 	view := m.viewDashboard()
-	tuiview.AssertPlainIncludes(t, view, "DQue Overflow")
-	tuiview.AssertPlainIncludes(t, view, "Enabled")
-	tuiview.AssertPlainIncludes(t, view, "Disk Usage")
-	tuiview.AssertPlainIncludes(t, view, "1.0 MiB")
-	tuiview.AssertPlainIncludes(t, view, "Disk Quota")
-	tuiview.AssertPlainIncludes(t, view, "50.0 GiB")
-	tuiview.AssertPlainExcludes(t, view, "DQue:On")
-	tuiview.AssertPlainExcludes(t, view, "DQue:Off")
+	assertPlainIncludes(t, view, "DQue Overflow")
+	assertPlainIncludes(t, view, "Enabled")
+	assertPlainIncludes(t, view, "Disk Usage")
+	assertPlainIncludes(t, view, "1.0 MiB")
+	assertPlainIncludes(t, view, "Disk Quota")
+	assertPlainIncludes(t, view, "50.0 GiB")
+	assertPlainExcludes(t, view, "DQue:On")
+	assertPlainExcludes(t, view, "DQue:Off")
 }
 
 // TestViewDashboard_CacheBatchLoadFields shows Loaded, Total, Progress,
@@ -165,12 +164,12 @@ func TestViewDashboard_CacheBatchLoadFields(t *testing.T) {
 		},
 	})
 	view := m.viewDashboard()
-	tuiview.AssertPlainIncludes(t, view, "Cache Batch Load")
-	tuiview.AssertPlainIncludes(t, view, "Loaded: 77")
-	tuiview.AssertPlainIncludes(t, view, "Total: 888")
-	tuiview.AssertPlainIncludes(t, view, "Progress: 10/999")
-	tuiview.AssertPlainIncludes(t, view, "Failed: 3")
-	tuiview.AssertPlainIncludes(t, view, "Skipped: 25")
+	assertPlainIncludes(t, view, "Cache Batch Load")
+	assertPlainIncludes(t, view, "Loaded: 77")
+	assertPlainIncludes(t, view, "Total: 888")
+	assertPlainIncludes(t, view, "Progress: 10/999")
+	assertPlainIncludes(t, view, "Failed: 3")
+	assertPlainIncludes(t, view, "Skipped: 25")
 }
 
 // TestViewDashboard_GalleryStats shows the Gallery Statistics card above the
@@ -188,18 +187,18 @@ func TestViewDashboard_GalleryStats(t *testing.T) {
 		},
 	})
 	view := m.viewDashboard()
-	tuiview.AssertPlainIncludes(t, view, "Gallery Statistics")
-	tuiview.AssertPlainIncludes(t, view, "Folders")
-	tuiview.AssertPlainIncludes(t, view, "42")
-	tuiview.AssertPlainIncludes(t, view, "Images")
-	tuiview.AssertPlainIncludes(t, view, "99")
-	tuiview.AssertPlainIncludes(t, view, "Images Size")
-	tuiview.AssertPlainIncludes(t, view, "3.0 GiB")
+	assertPlainIncludes(t, view, "Gallery Statistics")
+	assertPlainIncludes(t, view, "Folders")
+	assertPlainIncludes(t, view, "42")
+	assertPlainIncludes(t, view, "Images")
+	assertPlainIncludes(t, view, "99")
+	assertPlainIncludes(t, view, "Images Size")
+	assertPlainIncludes(t, view, "3.0 GiB")
 	// First/Last each on their own line, never "First: …  Last: …" on one line.
-	tuiview.AssertPlainIncludes(t, view, "First: 2026-03-01 00:00:00")
-	tuiview.AssertPlainIncludes(t, view, "Last: 2026-03-02 00:00:00")
-	tuiview.AssertPlainExcludes(t, view, "First: 2026-03-01 00:00:00  Last:")
-	tuiview.AssertPlainAppearsBefore(t, view, "Gallery Statistics", "File Processing")
+	assertPlainIncludes(t, view, "First: 2026-03-01 00:00:00")
+	assertPlainIncludes(t, view, "Last: 2026-03-02 00:00:00")
+	assertPlainExcludes(t, view, "First: 2026-03-01 00:00:00  Last:")
+	assertPlainAppearsBefore(t, view, "Gallery Statistics", "File Processing")
 }
 
 // TestViewDashboard_GalleryLoading shows the loading state when the gallery
@@ -207,8 +206,8 @@ func TestViewDashboard_GalleryStats(t *testing.T) {
 func TestViewDashboard_GalleryLoading(t *testing.T) {
 	m := dashboardModel(&parser.DashboardMetrics{})
 	view := m.viewDashboard()
-	tuiview.AssertPlainIncludes(t, view, "Gallery Statistics")
-	tuiview.AssertPlainIncludes(t, view, "Loading gallery data...")
+	assertPlainIncludes(t, view, "Gallery Statistics")
+	assertPlainIncludes(t, view, "Loading gallery data...")
 }
 
 // TestViewDashboard_GalleryUnknownDates shows "unknown" for empty First/Last
@@ -222,10 +221,10 @@ func TestViewDashboard_GalleryUnknownDates(t *testing.T) {
 		},
 	})
 	view := m.viewDashboard()
-	tuiview.AssertPlainIncludes(t, view, "First: unknown")
-	tuiview.AssertPlainIncludes(t, view, "Last: unknown")
-	tuiview.AssertPlainExcludes(t, view, "First: unknown  Last:")
-	tuiview.AssertPlainAppearsBefore(t, view, "Gallery Statistics", "File Processing")
+	assertPlainIncludes(t, view, "First: unknown")
+	assertPlainIncludes(t, view, "Last: unknown")
+	assertPlainExcludes(t, view, "First: unknown  Last:")
+	assertPlainAppearsBefore(t, view, "Gallery Statistics", "File Processing")
 }
 
 // TestViewDashboard_RebuildErrorBanner shows the folder-index rebuild error
@@ -235,16 +234,16 @@ func TestViewDashboard_RebuildErrorBanner(t *testing.T) {
 		FolderIndexRebuildError: "Manual discovery failed to rebuild the file's folder index. The live index is unchanged.",
 	})
 	view := m.viewDashboard()
-	tuiview.AssertPlainIncludes(t, view, "Folder Index Rebuild Failed")
-	tuiview.AssertPlainIncludes(t, view, "live index is unchanged")
-	tuiview.AssertPlainExcludes(t, view, "Acknowledge")
+	assertPlainIncludes(t, view, "Folder Index Rebuild Failed")
+	assertPlainIncludes(t, view, "live index is unchanged")
+	assertPlainExcludes(t, view, "Acknowledge")
 }
 
 // TestViewDashboard_RebuildErrorHidden omits the banner when the message is empty.
 func TestViewDashboard_RebuildErrorHidden(t *testing.T) {
 	m := dashboardModel(&parser.DashboardMetrics{})
 	view := m.viewDashboard()
-	tuiview.AssertPlainExcludes(t, view, "Folder Index Rebuild Failed")
+	assertPlainExcludes(t, view, "Folder Index Rebuild Failed")
 }
 
 // TestViewDashboard_SectionOrder renders every card title in the web section
@@ -253,14 +252,14 @@ func TestViewDashboard_RebuildErrorHidden(t *testing.T) {
 func TestViewDashboard_SectionOrder(t *testing.T) {
 	m := dashboardModel(populatedMetrics())
 	view := m.viewDashboard()
-	tuiview.AssertPlainAppearsBefore(t, view, "Memory", "Runtime")
-	tuiview.AssertPlainAppearsBefore(t, view, "Runtime", "Gallery Statistics")
-	tuiview.AssertPlainAppearsBefore(t, view, "Gallery Statistics", "File Processing")
-	tuiview.AssertPlainAppearsBefore(t, view, "File Processing", "Cache Preload")
-	tuiview.AssertPlainAppearsBefore(t, view, "Cache Preload", "Cache Batch Load")
-	tuiview.AssertPlainAppearsBefore(t, view, "Cache Batch Load", "HTTP Cache")
-	tuiview.AssertPlainAppearsBefore(t, view, "HTTP Cache", "Worker Pool")
-	tuiview.AssertPlainAppearsBefore(t, view, "Worker Pool", "Write Batcher")
+	assertPlainAppearsBefore(t, view, "Memory", "Runtime")
+	assertPlainAppearsBefore(t, view, "Runtime", "Gallery Statistics")
+	assertPlainAppearsBefore(t, view, "Gallery Statistics", "File Processing")
+	assertPlainAppearsBefore(t, view, "File Processing", "Cache Preload")
+	assertPlainAppearsBefore(t, view, "Cache Preload", "Cache Batch Load")
+	assertPlainAppearsBefore(t, view, "Cache Batch Load", "HTTP Cache")
+	assertPlainAppearsBefore(t, view, "HTTP Cache", "Worker Pool")
+	assertPlainAppearsBefore(t, view, "Worker Pool", "Write Batcher")
 }
 
 // TestViewDashboard_QueuedInsideFileProcessing shows Queued Items as a field
@@ -268,11 +267,11 @@ func TestViewDashboard_SectionOrder(t *testing.T) {
 func TestViewDashboard_QueuedInsideFileProcessing(t *testing.T) {
 	m := dashboardModel(&parser.DashboardMetrics{Queue: parser.QueueStats{Queued: "42"}})
 	view := m.viewDashboard()
-	tuiview.AssertPlainIncludes(t, view, "Queued Items")
-	tuiview.AssertPlainIncludes(t, view, "42")
-	tuiview.AssertPlainAppearsBefore(t, view, "File Processing", "Queued Items")
-	tuiview.AssertPlainAppearsBefore(t, view, "Queued Items", "Cache Preload")
-	tuiview.AssertPlainExcludes(t, view, "│ Queued Items │")
+	assertPlainIncludes(t, view, "Queued Items")
+	assertPlainIncludes(t, view, "42")
+	assertPlainAppearsBefore(t, view, "File Processing", "Queued Items")
+	assertPlainAppearsBefore(t, view, "Queued Items", "Cache Preload")
+	assertPlainExcludes(t, view, "│ Queued Items │")
 }
 
 // TestViewDashboard_WebLabels asserts every web field label appears on the TUI,
@@ -293,28 +292,28 @@ func TestViewDashboard_WebLabels(t *testing.T) {
 	})
 	view := m.viewDashboard()
 
-	tuiview.AssertPlainIncludes(t, view, "Running Workers")
-	tuiview.AssertPlainIncludes(t, view, "Completed Tasks")
-	tuiview.AssertPlainIncludes(t, view, "Successful")
-	tuiview.AssertPlainIncludes(t, view, "Failed")
-	tuiview.AssertPlainIncludes(t, view, "Total Found")
-	tuiview.AssertPlainIncludes(t, view, "Existing")
-	tuiview.AssertPlainIncludes(t, view, "New")
-	tuiview.AssertPlainIncludes(t, view, "Invalid")
-	tuiview.AssertPlainIncludes(t, view, "In Flight")
-	tuiview.AssertPlainIncludes(t, view, "Queued Items")
-	tuiview.AssertPlainIncludes(t, view, "Total Flushed:")
-	tuiview.AssertPlainIncludes(t, view, "Errors")
-	tuiview.AssertPlainIncludes(t, view, "Batch Size")
-	tuiview.AssertPlainIncludes(t, view, "Pending")
-	tuiview.AssertPlainIncludes(t, view, "Disk Usage")
-	tuiview.AssertPlainIncludes(t, view, "Disk Quota")
-	tuiview.AssertPlainIncludes(t, view, "DQue Overflow")
-	tuiview.AssertPlainIncludes(t, view, "Enabled")
+	assertPlainIncludes(t, view, "Running Workers")
+	assertPlainIncludes(t, view, "Completed Tasks")
+	assertPlainIncludes(t, view, "Successful")
+	assertPlainIncludes(t, view, "Failed")
+	assertPlainIncludes(t, view, "Total Found")
+	assertPlainIncludes(t, view, "Existing")
+	assertPlainIncludes(t, view, "New")
+	assertPlainIncludes(t, view, "Invalid")
+	assertPlainIncludes(t, view, "In Flight")
+	assertPlainIncludes(t, view, "Queued Items")
+	assertPlainIncludes(t, view, "Total Flushed:")
+	assertPlainIncludes(t, view, "Errors")
+	assertPlainIncludes(t, view, "Batch Size")
+	assertPlainIncludes(t, view, "Pending")
+	assertPlainIncludes(t, view, "Disk Usage")
+	assertPlainIncludes(t, view, "Disk Quota")
+	assertPlainIncludes(t, view, "DQue Overflow")
+	assertPlainIncludes(t, view, "Enabled")
 
-	tuiview.AssertPlainExcludes(t, view, "DQue:On")
-	tuiview.AssertPlainExcludes(t, view, "DQue:Off")
-	tuiview.AssertPlainExcludes(t, view, "Running:")
+	assertPlainExcludes(t, view, "DQue:On")
+	assertPlainExcludes(t, view, "DQue:Off")
+	assertPlainExcludes(t, view, "Running:")
 }
 
 // TestViewDashboard_DQueOff shows the DQue Overflow row in the Off state; with
@@ -330,11 +329,11 @@ func TestViewDashboard_DQueOff(t *testing.T) {
 		},
 	})
 	view := m.viewDashboard()
-	tuiview.AssertPlainIncludes(t, view, "DQue Overflow")
-	tuiview.AssertPlainIncludes(t, view, "Off")
-	tuiview.AssertPlainExcludes(t, view, "DQue:On")
-	tuiview.AssertPlainExcludes(t, view, "DQue:Off")
-	tuiview.AssertPlainExcludes(t, view, "Enabled")
+	assertPlainIncludes(t, view, "DQue Overflow")
+	assertPlainIncludes(t, view, "Off")
+	assertPlainExcludes(t, view, "DQue:On")
+	assertPlainExcludes(t, view, "DQue:Off")
+	assertPlainExcludes(t, view, "Enabled")
 }
 
 // TestViewDashboard_RowPairingWide pairs sibling cards on one row when the
@@ -343,11 +342,11 @@ func TestViewDashboard_RowPairingWide(t *testing.T) {
 	m := dashboardModel(populatedMetrics())
 	m.width = 120
 	view := m.viewDashboard()
-	tuiview.AssertPlainSameRow(t, view, "Memory", "Runtime")
-	tuiview.AssertPlainSameRow(t, view, "Gallery Statistics", "File Processing")
-	tuiview.AssertPlainSameRow(t, view, "Cache Preload", "Cache Batch Load")
-	tuiview.AssertPlainSameRow(t, view, "Cache Batch Load", "HTTP Cache")
-	tuiview.AssertPlainSameRow(t, view, "Worker Pool", "Write Batcher")
+	assertPlainSameRow(t, view, "Memory", "Runtime")
+	assertPlainSameRow(t, view, "Gallery Statistics", "File Processing")
+	assertPlainSameRow(t, view, "Cache Preload", "Cache Batch Load")
+	assertPlainSameRow(t, view, "Cache Batch Load", "HTTP Cache")
+	assertPlainSameRow(t, view, "Worker Pool", "Write Batcher")
 }
 
 // TestViewDashboard_RowPairingNarrow stacks sibling cards vertically below
@@ -357,20 +356,20 @@ func TestViewDashboard_RowPairingNarrow(t *testing.T) {
 	m.width = 40
 	view := m.viewDashboard()
 
-	tuiview.AssertPlainAppearsBefore(t, view, "Memory", "Runtime")
-	tuiview.AssertPlainAppearsBefore(t, view, "Runtime", "Gallery Statistics")
-	tuiview.AssertPlainAppearsBefore(t, view, "Gallery Statistics", "File Processing")
-	tuiview.AssertPlainAppearsBefore(t, view, "File Processing", "Cache Preload")
-	tuiview.AssertPlainAppearsBefore(t, view, "Cache Preload", "Cache Batch Load")
-	tuiview.AssertPlainAppearsBefore(t, view, "Cache Batch Load", "HTTP Cache")
-	tuiview.AssertPlainAppearsBefore(t, view, "HTTP Cache", "Worker Pool")
-	tuiview.AssertPlainAppearsBefore(t, view, "Worker Pool", "Write Batcher")
+	assertPlainAppearsBefore(t, view, "Memory", "Runtime")
+	assertPlainAppearsBefore(t, view, "Runtime", "Gallery Statistics")
+	assertPlainAppearsBefore(t, view, "Gallery Statistics", "File Processing")
+	assertPlainAppearsBefore(t, view, "File Processing", "Cache Preload")
+	assertPlainAppearsBefore(t, view, "Cache Preload", "Cache Batch Load")
+	assertPlainAppearsBefore(t, view, "Cache Batch Load", "HTTP Cache")
+	assertPlainAppearsBefore(t, view, "HTTP Cache", "Worker Pool")
+	assertPlainAppearsBefore(t, view, "Worker Pool", "Write Batcher")
 
-	tuiview.AssertPlainNotSameRow(t, view, "Memory", "Runtime")
-	tuiview.AssertPlainNotSameRow(t, view, "Gallery Statistics", "File Processing")
-	tuiview.AssertPlainNotSameRow(t, view, "Cache Preload", "Cache Batch Load")
-	tuiview.AssertPlainNotSameRow(t, view, "Cache Batch Load", "HTTP Cache")
-	tuiview.AssertPlainNotSameRow(t, view, "Worker Pool", "Write Batcher")
+	assertPlainNotSameRow(t, view, "Memory", "Runtime")
+	assertPlainNotSameRow(t, view, "Gallery Statistics", "File Processing")
+	assertPlainNotSameRow(t, view, "Cache Preload", "Cache Batch Load")
+	assertPlainNotSameRow(t, view, "Cache Batch Load", "HTTP Cache")
+	assertPlainNotSameRow(t, view, "Worker Pool", "Write Batcher")
 }
 
 // TestViewLogin_NetworkError shows the network error message.
@@ -384,5 +383,5 @@ func TestViewLogin_NetworkError(t *testing.T) {
 	m.usernameInput.Focus()
 
 	view := m.viewLogin()
-	tuiview.AssertPlainIncludes(t, view, "Network error - cannot connect to server")
+	assertPlainIncludes(t, view, "Network error - cannot connect to server")
 }

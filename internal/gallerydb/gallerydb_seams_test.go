@@ -10,6 +10,8 @@ import (
 	"time"
 
 	_ "github.com/ncruces/go-sqlite3/driver"
+
+	"github.com/lbe/sfpg-go/internal/testdb/gallerytest"
 )
 
 // openMemoryDB returns an un-migrated :memory: SQLite database.
@@ -42,7 +44,7 @@ func TestPrepare_HappyPath(t *testing.T) {
 }
 
 func TestQueriesClose_HappyPath(t *testing.T) {
-	db := newIsolatedGallerySQLDB(t)
+	db := gallerytest.IsolatedDB(t)
 
 	q, err := Prepare(context.Background(), db)
 	if err != nil {
@@ -111,7 +113,7 @@ func TestPrepareCustomQueries_CustomStatementFails(t *testing.T) {
 }
 
 func TestCustomQueriesClose_HappyPath(t *testing.T) {
-	db := newIsolatedGallerySQLDB(t)
+	db := gallerytest.IsolatedDB(t)
 	q, err := PrepareCustomQueries(context.Background(), db)
 	if err != nil {
 		t.Fatalf("PrepareCustomQueries: %v", err)
@@ -138,7 +140,7 @@ func TestCustomQueriesClose_CustomStatementCloseFails(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			db := newIsolatedGallerySQLDB(t)
+			db := gallerytest.IsolatedDB(t)
 			q, err := PrepareCustomQueries(context.Background(), db)
 			if err != nil {
 				t.Fatalf("PrepareCustomQueries: %v", err)

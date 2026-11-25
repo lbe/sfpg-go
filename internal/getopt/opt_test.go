@@ -855,14 +855,15 @@ func TestParse_SessionSameSiteEnvVar(t *testing.T) {
 	}
 }
 
-// TestApplyEnvVars verifies ApplyEnvVars reads environment variables without CLI flags.
-func TestApplyEnvVars(t *testing.T) {
+// TestApplyEnvVars_MarksIsSet verifies applyEnvVars marks environment values as
+// set (including the session secret) and leaves CLI-only options unset.
+func TestApplyEnvVars_MarksIsSet(t *testing.T) {
 	resetEnv()
 	t.Setenv("SFG_PORT", "7777")
 	t.Setenv("SEPG_SESSION_SECRET", "env-secret-with-at-least-32-bytes-long!!")
 
 	opt := Opt{}
-	ApplyEnvVars(&opt)
+	applyEnvVars(&opt)
 
 	if !opt.Port.IsSet || opt.Port.Int != 7777 {
 		t.Errorf("expected Port.IsSet=true and Port.Int=7777, got IsSet=%v Int=%d", opt.Port.IsSet, opt.Port.Int)

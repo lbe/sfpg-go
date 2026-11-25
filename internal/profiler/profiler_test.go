@@ -177,6 +177,8 @@ func TestStart_AllModes_ProfileStartCalled(t *testing.T) {
 			if len(capturedOpts) != tt.wantOptsLen {
 				t.Fatalf("captured opts length = %d, want %d", len(capturedOpts), tt.wantOptsLen)
 			}
+			// Go cannot compare funcs, and pkg/profile exposes no other way to
+			// tell its mode options apart, so compare code pointers via reflect.
 			if reflect.ValueOf(capturedOpts[0]).Pointer() != reflect.ValueOf(tt.wantProfile).Pointer() {
 				t.Fatalf("first opt does not match expected profile function for mode %q", tt.wantMode)
 			}

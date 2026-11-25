@@ -22,7 +22,6 @@ import (
 // --- merged from config_precedence_integration_test.go ---
 func TestIntegration_MultipleCategoryUpdates(t *testing.T) {
 	t.Parallel()
-	setenvForTest(t, "SEPG_SESSION_SECURE", "false")
 	app := CreateApp(t, WithPool())
 	defer app.Shutdown()
 
@@ -137,7 +136,6 @@ func TestIntegration_MultipleCategoryUpdates(t *testing.T) {
 
 func TestIntegration_ConfigPersistence_LoadFromOptDoesNotOverrideWithDefaults(t *testing.T) {
 	t.Parallel()
-	setenvForTest(t, "SEPG_SESSION_SECURE", "false")
 
 	// Create first app instance
 	app1 := CreateApp(t, WithPool())
@@ -239,7 +237,6 @@ func TestIntegration_ConfigPersistence_LoadFromOptDoesNotOverrideWithDefaults(t 
 
 func TestIntegration_ConfigLoadsOnStartup(t *testing.T) {
 	t.Parallel()
-	setenvForTest(t, "SEPG_SESSION_SECURE", "false")
 
 	// Create app and set a config value in database
 	app1 := CreateApp(t, WithPool())
@@ -294,8 +291,6 @@ func TestIntegration_ConfigLoadsOnStartup(t *testing.T) {
 
 func TestAppConfigPrecedence_DBOverridesDefaults(t *testing.T) {
 	tempDir := t.TempDir()
-	ss := "test-session-secret"
-	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
 
 	app := New(getopt.Opt{}, "x.y.z")
 	app.setRootDir(&tempDir)
@@ -334,8 +329,6 @@ func TestAppConfigPrecedence_DBOverridesDefaults(t *testing.T) {
 
 func TestAppConfigAppliesToFields(t *testing.T) {
 	tempDir := t.TempDir()
-	ss := "test-session-secret"
-	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
 
 	app := New(getopt.Opt{}, "x.y.z")
 	app.setRootDir(&tempDir)
@@ -358,10 +351,8 @@ func TestAppConfigAppliesToFields(t *testing.T) {
 	}
 }
 
-func TestDBConfig_EnvAndCLIOverrideDBValues(t *testing.T) {
+func TestDBConfig_OptOverridesDBValues(t *testing.T) {
 	tempDir := t.TempDir()
-	ss := "test-session-secret"
-	setenvForTest(t, "SEPG_SESSION_SECRET", ss)
 
 	// Test Case 1: DB value should override default
 	t.Run("DB overrides default", func(t *testing.T) {
@@ -401,11 +392,8 @@ func TestDBConfig_EnvAndCLIOverrideDBValues(t *testing.T) {
 		}
 	})
 
-	// Test Case 2: Env should override DB
-	t.Run("Env overrides DB", func(t *testing.T) {
-		setenvForTest(t, "SFG_HTTP_CACHE", "true") // Enable via env
-
-		// Simulate env var being parsed into Opt
+	// Test Case 2: startup options (env or CLI, already parsed into Opt) override DB
+	t.Run("Opt overrides DB", func(t *testing.T) {
 		opt := getopt.Opt{
 			EnableHTTPCache: getopt.OptBool{Bool: true, IsSet: true},
 		}
@@ -440,67 +428,16 @@ func TestDBConfig_EnvAndCLIOverrideDBValues(t *testing.T) {
 			t.Fatalf("failed to load config from DB: %v", err)
 		}
 
-		// Apply opt overrides (should apply env)
+		// Apply opt overrides
 		app.ConfigManager.Config.LoadFromOpt(app.opt)
 
-		// Verify env value overrides DB
 		if !app.ConfigManager.Config.EnableHTTPCache {
-			t.Errorf("expected EnableHTTPCache to be true from env, got false")
-		}
-	})
-
-	// Test Case 3: CLI should override both Env and DB
-	t.Run("CLI overrides Env and DB", func(t *testing.T) {
-		setenvForTest(t, "SFG_HTTP_CACHE", "false") // Disable via env
-
-		// CLI flag value (true via CLI should win)
-		opt := getopt.Opt{
-			EnableHTTPCache: getopt.OptBool{Bool: true, IsSet: true},
-		}
-
-		app := New(opt, "x.y.z")
-		app.setRootDir(&tempDir)
-		app.setDB()
-		defer app.Shutdown()
-
-		// Set different value in database (false)
-		cpcRw, err := app.dbRwPool.Get()
-		if err != nil {
-			t.Fatalf("failed to get RW connection: %v", err)
-		}
-		defer app.dbRwPool.Put(cpcRw)
-
-		now := time.Now().Unix()
-		err = cpcRw.Queries.UpsertConfigValueOnly(context.Background(), gallerydb.UpsertConfigValueOnlyParams{
-			Key:       "enable_http_cache",
-			Value:     "false",
-			CreatedAt: now,
-			UpdatedAt: now,
-		})
-		if err != nil {
-			t.Fatalf("failed to set DB config: %v", err)
-		}
-
-		// Load config from DB first
-		app.ConfigManager.Config = config.DefaultConfig()
-		err = app.ConfigManager.Config.LoadFromDatabase(context.Background(), cpcRw.Queries)
-		if err != nil {
-			t.Fatalf("failed to load config from DB: %v", err)
-		}
-
-		// Apply opt overrides (should apply CLI)
-		app.ConfigManager.Config.LoadFromOpt(app.opt)
-
-		// Verify CLI value overrides both env and DB
-		if !app.ConfigManager.Config.EnableHTTPCache {
-			t.Errorf("expected EnableHTTPCache to be true from CLI, got false")
+			t.Errorf("expected EnableHTTPCache to be true from Opt, got false")
 		}
 	})
 }
 
 func TestIntegration_ConfigPersistence_BooleanValues(t *testing.T) {
-	setenvForTest(t, "SEPG_SESSION_SECURE", "false")
-
 	app1 := CreateApp(t)
 	defer func() {
 		if app1 != nil {
@@ -594,8 +531,6 @@ func TestIntegration_ConfigPersistence_BooleanValues(t *testing.T) {
 }
 
 func TestIntegration_ConfigPersistence_CLIEnvOverridesDB(t *testing.T) {
-	setenvForTest(t, "SEPG_SESSION_SECURE", "false")
-
 	app1 := CreateApp(t)
 	defer func() {
 		if app1 != nil {
@@ -674,8 +609,6 @@ func TestIntegration_ConfigPersistence_CLIEnvOverridesDB(t *testing.T) {
 }
 
 func TestIntegration_ConcurrentConfigUpdates(t *testing.T) {
-	setenvForTest(t, "SEPG_SESSION_SECURE", "false")
-
 	app := CreateApp(t)
 	defer app.Shutdown()
 

@@ -187,6 +187,10 @@ func TestRenderTemplate(t *testing.T) {
 			expectError:  false,
 		},
 		{
+			name:         "config-etag-field template",
+			templateName: "config-etag-field.html.tmpl",
+		},
+		{
 			name:         "config-modal template",
 			templateName: "config-modal.html.tmpl",
 			data:         nil,
@@ -215,6 +219,10 @@ func TestRenderTemplate(t *testing.T) {
 			templateName: "hamburger-menu-items.html.tmpl",
 			data:         nil,
 			expectError:  false,
+		},
+		{
+			name:         "theme-modal template",
+			templateName: "theme-modal.html.tmpl",
 		},
 		{
 			name:         "about-modal template",
@@ -341,57 +349,26 @@ func TestRenderPage(t *testing.T) {
 				} else if tt.errorMsg != "" && !strings.Contains(err.Error(), tt.errorMsg) {
 					t.Errorf("RenderPage(%q, partial=%v) error = %v, want error containing %q", tt.pageName, tt.partial, err, tt.errorMsg)
 				}
-			} else {
-				// Check specifically for "no partial definition" error which indicates
-				// the partial case is not implemented for this page
-				if err != nil && strings.Contains(err.Error(), "no partial definition") {
+				return
+			}
+			if tt.pageName == "unknown" {
+				if err != nil {
+					t.Errorf("RenderPage(%q, partial=%v) error = %v, want nil", tt.pageName, tt.partial, err)
+				}
+				return
+			}
+			// Nil data can cause template execution to fail after successful dispatch.
+			if err != nil {
+				if strings.Contains(err.Error(), "no partial definition") {
 					t.Errorf("RenderPage(%q, partial=%v) missing partial definition: %v", tt.pageName, tt.partial, err)
 				}
-				// For known pages that should render without errors, verify output
-				// Note: nil data may cause template execution errors, which is acceptable
-				// as long as it's not a "no partial definition" error
-				if tt.pageName == "gallery" || tt.pageName == "image" {
-					if err == nil && buf.Len() == 0 {
-						t.Errorf("RenderPage(%q, partial=%v) wrote no output", tt.pageName, tt.partial)
-					}
-				}
-				// For dashboard, we mainly check that partial definition exists (not "no partial definition" error)
-				// The template may fail with nil data, which is expected
+				return
+			}
+			if buf.Len() == 0 {
+				t.Errorf("RenderPage(%q, partial=%v) wrote no output", tt.pageName, tt.partial)
 			}
 		})
 	}
-}
-
-// TestRenderPageWithNilData tests rendering pages with nil data to ensure
-// the functions execute without panicking even with nil data.
-func TestRenderPageWithNilData(t *testing.T) {
-	// Initialize templates before testing
-	if err := ParseTemplates(web.FS); err != nil {
-		t.Fatalf("ParseTemplates failed: %v", err)
-	}
-
-	t.Run("gallery with nil data", func(t *testing.T) {
-		var buf bytes.Buffer
-		// With nil data, templates may fail on field access, but RenderPage should not panic
-		err := RenderPage(&buf, "gallery", nil, false)
-		// We expect this might error due to nil data, but should not panic
-		if err == nil {
-			if buf.Len() == 0 {
-				t.Error("RenderPage with nil data wrote no output")
-			}
-		}
-	})
-
-	t.Run("image with nil data", func(t *testing.T) {
-		var buf bytes.Buffer
-		err := RenderPage(&buf, "image", nil, false)
-		// With nil data, might error, but should not panic
-		if err == nil {
-			if buf.Len() == 0 {
-				t.Error("RenderPage with nil data wrote no output")
-			}
-		}
-	})
 }
 
 // TestRenderTemplateWithSimpleData tests rendering templates with simple data.

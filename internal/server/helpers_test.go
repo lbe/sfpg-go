@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lbe/sfpg-go/internal/dbconnpool"
 	"github.com/lbe/sfpg-go/internal/discovery"
 	"github.com/lbe/sfpg-go/internal/getopt"
 	"github.com/lbe/sfpg-go/internal/metadata"
@@ -20,6 +19,7 @@ import (
 	"github.com/lbe/sfpg-go/internal/server/database"
 	"github.com/lbe/sfpg-go/internal/server/files"
 	"github.com/lbe/sfpg-go/internal/server/modulestate"
+	"github.com/lbe/sfpg-go/internal/testdb/gallerytest"
 	"github.com/lbe/sfpg-go/internal/workerpool"
 	"github.com/lbe/sfpg-go/web"
 )
@@ -53,10 +53,10 @@ func seedTestDBIfAbsent(rootDir string) error {
 		return statErr
 	}
 	thumbsPath := filepath.Join(rootDir, "DB", "thumbs", "thumbs.db")
-	if err := dbconnpool.CopyMainTestDatabaseTo(dbPath); err != nil {
+	if err := gallerytest.CopyMainTestDatabaseTo(dbPath); err != nil {
 		return err
 	}
-	if err := dbconnpool.CopyThumbsTestDatabaseTo(thumbsPath); err != nil {
+	if err := gallerytest.CopyThumbsTestDatabaseTo(thumbsPath); err != nil {
 		_ = os.Remove(dbPath)
 		_ = os.Remove(thumbsPath)
 		return err
@@ -85,24 +85,6 @@ type Thumb struct {
 	ThumbPath string
 	DispName  string
 	IsImage   bool
-}
-
-// setenvForTest sets an environment variable and registers a cleanup to restore
-// the original value. Unlike t.Setenv, this does not block t.Parallel(), allowing
-// tests to use both environment configuration and parallel execution.
-func setenvForTest(tb testing.TB, key, value string) {
-	tb.Helper()
-	prev, ok := os.LookupEnv(key)
-	if err := os.Setenv(key, value); err != nil {
-		tb.Fatalf("failed to set env %s: %v", key, err)
-	}
-	tb.Cleanup(func() {
-		if ok {
-			os.Setenv(key, prev)
-		} else {
-			os.Unsetenv(key)
-		}
-	})
 }
 
 // failOnExec makes a re-exec of the test binary fail the test. Run reads the
@@ -179,67 +161,16 @@ func CreateApp(t testing.TB, opts ...AppOption) *App {
 		tempDir = t.TempDir()
 	}
 
-	// Set default session flags without using t.Setenv (which blocks t.Parallel).
-	// Use os.Setenv + t.Cleanup instead to allow tests to use t.Parallel().
-	setenvForTest(t, "SEPG_SESSION_SECURE", func() string {
-		if val, ok := os.LookupEnv("SEPG_SESSION_SECURE"); ok {
-			return val
-		}
-		return "false"
-	}())
-	setenvForTest(t, "SEPG_SESSION_HTTPONLY", func() string {
-		if val, ok := os.LookupEnv("SEPG_SESSION_HTTPONLY"); ok {
-			return val
-		}
-		return "false"
-	}())
-
 	opt := cfg.opt
 
-	// Parse environment variables into opt if SessionSecret wasn't explicitly provided
-	// This allows tests to use t.Setenv() and have those values applied
-	if !opt.SessionSecret.IsSet {
-		envOpt := getopt.Opt{}
-		getopt.ApplyEnvVars(&envOpt)
-		// Merge env opt with provided opt, giving precedence to explicitly set values in opt
-		if !opt.Port.IsSet && envOpt.Port.IsSet {
-			opt.Port = envOpt.Port
-		}
-		if !opt.RunFileDiscovery.IsSet && envOpt.RunFileDiscovery.IsSet {
-			opt.RunFileDiscovery = envOpt.RunFileDiscovery
-		}
-		if !opt.DebugDelayMS.IsSet && envOpt.DebugDelayMS.IsSet {
-			opt.DebugDelayMS = envOpt.DebugDelayMS
-		}
-		if !opt.Profile.IsSet && envOpt.Profile.IsSet {
-			opt.Profile = envOpt.Profile
-		}
-		if !opt.EnableHTTPCache.IsSet && envOpt.EnableHTTPCache.IsSet {
-			opt.EnableHTTPCache = envOpt.EnableHTTPCache
-		}
-		if !opt.SessionSecret.IsSet && envOpt.SessionSecret.IsSet {
-			opt.SessionSecret = envOpt.SessionSecret
-		}
-		if !opt.SessionSecure.IsSet && envOpt.SessionSecure.IsSet {
-			opt.SessionSecure = envOpt.SessionSecure
-		}
-		if !opt.SessionHttpOnly.IsSet && envOpt.SessionHttpOnly.IsSet {
-			opt.SessionHttpOnly = envOpt.SessionHttpOnly
-		}
-		if !opt.SessionMaxAge.IsSet && envOpt.SessionMaxAge.IsSet {
-			opt.SessionMaxAge = envOpt.SessionMaxAge
-		}
-		if !opt.SessionSameSite.IsSet && envOpt.SessionSameSite.IsSet {
-			opt.SessionSameSite = envOpt.SessionSameSite
-		}
-		// Merge LoginRateLimitPerIP so setenvForTest(t, "SEPG_LOGIN_RATE_LIMIT_PER_IP", ...)
-		// applies in integration tests the same way as other SEPG_* session/security vars.
-		if !opt.LoginRateLimitPerIP.IsSet && envOpt.LoginRateLimitPerIP.IsSet {
-			opt.LoginRateLimitPerIP = envOpt.LoginRateLimitPerIP
-		}
-		if !opt.LogLevel.IsSet && envOpt.LogLevel.IsSet {
-			opt.LogLevel = envOpt.LogLevel
-		}
+	// Default session flags for tests unless the caller set them.
+	if !opt.SessionSecure.IsSet {
+		opt.SessionSecure.Bool = false
+		opt.SessionSecure.IsSet = true
+	}
+	if !opt.SessionHttpOnly.IsSet {
+		opt.SessionHttpOnly.Bool = false
+		opt.SessionHttpOnly.IsSet = true
 	}
 
 	// Ensure SessionSecret is set in opt if not already provided

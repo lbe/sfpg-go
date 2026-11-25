@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/lbe/sfpg-go/internal/gallerydb"
+	"github.com/lbe/sfpg-go/internal/testdb/gallerytest"
 	"github.com/lbe/sfpg-go/migrations"
 )
 
@@ -437,6 +438,8 @@ func TestMemDBPoolLifetime(t *testing.T) {
 	assertMemTablePresent(t, ctx, cf.Conn, "thumbs", "thumbnail_blobs")
 }
 
+var errMemDBLeaseThumbs = errors.New("thumbs test database unavailable")
+
 // failingThumbsLease wraps the production lease and fails ThumbsURI so
 // acquisition rollback is exercised deterministically.
 type failingThumbsLease struct {
@@ -619,10 +622,10 @@ func TestMemDBFlagWithFileDSNUsesFilePool(t *testing.T) {
 	dir := t.TempDir()
 	mainPath := filepath.Join(dir, "filemode.db")
 	thumbsPath := filepath.Join(dir, "thumbs.db")
-	if err := CopyMainTestDatabaseTo(mainPath); err != nil {
+	if err := gallerytest.CopyMainTestDatabaseTo(mainPath); err != nil {
 		t.Fatalf("copy main test database: %v", err)
 	}
-	if err := CopyThumbsTestDatabaseTo(thumbsPath); err != nil {
+	if err := gallerytest.CopyThumbsTestDatabaseTo(thumbsPath); err != nil {
 		t.Fatalf("copy thumbs test database: %v", err)
 	}
 	cfg := Config{

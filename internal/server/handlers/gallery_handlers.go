@@ -41,16 +41,6 @@ type GalleryData struct {
 	Thumbs      []DirectoryInfo
 }
 
-// ImageData holds data for the single-image view.
-type ImageData struct {
-	Breadcrumbs  []Breadcrumb
-	ImageID      int64
-	ImagePath    string
-	IsImageView  bool
-	CacheVersion int64
-	ImageCount   int
-}
-
 // LightboxData holds data for the lightbox view.
 type LightboxData struct {
 	Breadcrumbs     []Breadcrumb

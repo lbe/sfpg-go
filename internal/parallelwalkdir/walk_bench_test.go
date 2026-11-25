@@ -182,22 +182,13 @@ func BenchmarkIncludeFilter_Bytes_Discovery_PerWalk(b *testing.B) {
 	benchmarkIncludeFilterParallelOneWalk(b, names, basenameIncludeForRegexp(benchWalkImageIncludeRegexp))
 }
 
-func BenchmarkIncludeFilter_stdlib_WalkerInclude_PerWalk(b *testing.B) {
-	names := discoveryWalkFileBasenamesFromEnv()
-	if len(names) == 0 {
-		b.Skip("set SFPG_WALK_BENCH_ROOT")
-	}
-	w := NewWalker(WithRegexpInclude(benchWalkImageIncludeRegexp))
-	benchmarkIncludeFilterParallelOneWalk(b, names, w.includeBasenameMatchesBytes)
-}
-
 func BenchmarkIncludeFilter_Bytes_WalkerInclude_PerWalk(b *testing.B) {
 	names := discoveryWalkFileBasenamesFromEnv()
 	if len(names) == 0 {
 		b.Skip("set SFPG_WALK_BENCH_ROOT")
 	}
 	w := NewWalker(WithBasenameInclude(benchWalkImageIncludeRegexp))
-	benchmarkIncludeFilterParallelOneWalk(b, names, w.includeBasenameMatchesBytes)
+	benchmarkIncludeFilterParallelOneWalk(b, names, w.basenameInclude)
 }
 
 func benchmarkIncludeFilterParallelOneWalk(b *testing.B, names [][]byte, match func([]byte) bool) {

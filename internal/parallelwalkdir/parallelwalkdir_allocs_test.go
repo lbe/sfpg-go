@@ -10,11 +10,11 @@ import (
 	"testing"
 )
 
-// TestParallelWalk_ReportedPathAllocs checks that a no-match include regex does not
+// TestParallelWalk_ReportedPathAllocs checks that a no-match basename include does not
 // increase per-walk allocations versus an empty directory (baseline walk overhead only).
 // Skipped in race builds: -race instrumentation makes AllocsPerRun comparisons flaky.
 func TestParallelWalk_ReportedPathAllocs(t *testing.T) {
-	noMatch := regexp.MustCompile(`^nomatch$`)
+	noMatch := regexp.MustCompile(`(?i)nomatch$`)
 	emptyDir := t.TempDir()
 	tree := t.TempDir()
 	for i := range 8 {
@@ -24,7 +24,7 @@ func TestParallelWalk_ReportedPathAllocs(t *testing.T) {
 	}
 
 	drainWalk := func(root string) {
-		walker := NewWalker(WithRegexpInclude(noMatch), WithMaxWorkers(1))
+		walker := newTestWalker(1, WithBasenameInclude(noMatch))
 		results, errs := walker.ParallelWalk(root)
 		for range results {
 		}

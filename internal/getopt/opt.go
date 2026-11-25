@@ -209,12 +209,6 @@ func validateLogLevel(level string) error {
 	}
 }
 
-// ApplyEnvVars applies environment variable overrides to the provided Opt.
-// Sets IsSet=true for any values that are explicitly set via environment variables.
-func ApplyEnvVars(opt *Opt) {
-	applyEnvVars(opt)
-}
-
 func applyEnvVars(opt *Opt) {
 	if v := strings.TrimSpace(os.Getenv("SFG_PORT")); v != "" {
 		if p, err := strconv.Atoi(v); err == nil {

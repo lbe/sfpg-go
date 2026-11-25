@@ -29,8 +29,6 @@ import (
 var (
 	// ErrPoolClosed is returned when attempting to get a connection from a closed pool.
 	ErrPoolClosed = errors.New("connection pool is closed")
-	// ErrConnectionUnavailable is returned when no connections are available and max connections reached.
-	ErrConnectionUnavailable = errors.New("no connections available and max connections reached")
 )
 
 // ConnectionPool abstracts database connection pool operations.

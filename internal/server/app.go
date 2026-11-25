@@ -20,11 +20,6 @@ import (
 	"github.com/lbe/sfpg-go/web"
 )
 
-const (
-	// SQLiteDriverName is the name of the SQLite driver to use
-	SQLiteDriverName = "sqlite3"
-)
-
 // App holds the shared state and resources for the entire application.
 // It manages database connections, worker pools, queues, caching, application context,
 // and a task scheduler for recurring and one-time tasks.

@@ -55,22 +55,6 @@ type File struct {
 	UpdatedAt interface{}
 }
 
-type FileFolderIndex struct {
-	FileID     int64
-	FolderID   int64
-	ImageIndex int64
-	ImageCount int64
-	PrevID     sql.NullInt64
-	NextID     sql.NullInt64
-	FirstID    int64
-	LastID     int64
-}
-
-type FilePath struct {
-	ID   int64
-	Path string
-}
-
 type FileView struct {
 	ID         int64
 	FolderID   sql.NullInt64
@@ -97,17 +81,6 @@ type Folder struct {
 	TileID    sql.NullInt64
 	CreatedAt interface{}
 	UpdatedAt interface{}
-}
-
-type FolderPath struct {
-	ID   int64
-	Path string
-}
-
-type FolderTileExistsView struct {
-	Path  string
-	ID    int64
-	Found bool
 }
 
 type FolderView struct {
@@ -181,16 +154,6 @@ type ModuleState struct {
 	Payload        sql.NullString
 }
 
-type QcFilePathSubsetFileName struct {
-	Filename string
-	Path     string
-}
-
-type QcFolderPathSubsetFilePath struct {
-	FolderPath string
-	FilePath   string
-}
-
 type Thumbnail struct {
 	ID        int64
 	FileID    int64
@@ -200,12 +163,6 @@ type Thumbnail struct {
 	Format    string
 	CreatedAt interface{}
 	UpdatedAt interface{}
-}
-
-type ThumbnailExistsView struct {
-	Path  string
-	ID    int64
-	Found bool
 }
 
 type XmpProperty struct {

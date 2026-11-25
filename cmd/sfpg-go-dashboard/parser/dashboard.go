@@ -6,7 +6,6 @@ import (
 	"io"
 	"strings"
 
-	"github.com/lbe/sfpg-go/internal/testutil"
 	"golang.org/x/net/html"
 )
 
@@ -207,12 +206,12 @@ type DashboardMetrics struct {
 //	    // not a dashboard page
 //	}
 func ParseDashboard(r io.Reader) (*DashboardMetrics, error) {
-	doc, err := testutil.ParseHTML(r)
+	doc, err := parseHTML(r)
 	if err != nil {
 		return nil, err
 	}
 
-	container := testutil.FindElementByID(doc, "dashboard-container")
+	container := findElementByID(doc, "dashboard-container")
 	if container == nil {
 		return nil, ErrDashboardNotFound
 	}
@@ -239,41 +238,41 @@ func ParseDashboard(r io.Reader) (*DashboardMetrics, error) {
 
 // extractLastUpdated extracts the last-updated timestamp from the container.
 func extractLastUpdated(container *html.Node) string {
-	el := testutil.FindElementByID(container, "last-updated")
+	el := findElementByID(container, "last-updated")
 	if el == nil {
 		return ""
 	}
-	return strings.TrimSpace(testutil.GetTextContent(el))
+	return strings.TrimSpace(getTextContent(el))
 }
 
 // extractTextByID finds an element by ID and returns its trimmed text content.
 func extractTextByID(container *html.Node, id string) string {
-	el := testutil.FindElementByID(container, id)
+	el := findElementByID(container, id)
 	if el == nil {
 		return ""
 	}
-	return strings.TrimSpace(testutil.GetTextContent(el))
+	return strings.TrimSpace(getTextContent(el))
 }
 
 // extractAttrByID finds an element by ID and returns the value of attr,
 // or empty when the element is missing.
 func extractAttrByID(container *html.Node, id, attr string) string {
-	el := testutil.FindElementByID(container, id)
+	el := findElementByID(container, id)
 	if el == nil {
 		return ""
 	}
-	return testutil.GetAttr(el, attr)
+	return getAttr(el, attr)
 }
 
 // extractFolderIndexRebuildError collapses the whitespace of
 // #folder-index-rebuild-error-msg to a single-space-joined sentence.
 // Returns "" when the alert is absent.
 func extractFolderIndexRebuildError(container *html.Node) string {
-	el := testutil.FindElementByID(container, "folder-index-rebuild-error-msg")
+	el := findElementByID(container, "folder-index-rebuild-error-msg")
 	if el == nil {
 		return ""
 	}
-	return strings.Join(strings.Fields(testutil.GetTextContent(el)), " ")
+	return strings.Join(strings.Fields(getTextContent(el)), " ")
 }
 
 // extractMemoryStats extracts memory statistics into the metrics struct.
@@ -305,9 +304,9 @@ func extractWriteBatcherStats(container *html.Node, m *DashboardMetrics) {
 	m.WriteBatcher.DiskQuotaBytes = extractTextByID(container, "wb-dque-disk-quota")
 
 	// Extract channel size from wb-channel-size-desc "of X"
-	descEl := testutil.FindElementByID(container, "wb-channel-size-desc")
+	descEl := findElementByID(container, "wb-channel-size-desc")
 	if descEl != nil {
-		text := testutil.GetTextContent(descEl)
+		text := getTextContent(descEl)
 		// Format: "of X" where X is the number
 		parts := strings.Fields(text)
 		for i, p := range parts {
@@ -357,13 +356,13 @@ func extractFileProcessingStats(container *html.Node, m *DashboardMetrics) {
 // extractGalleryStats extracts gallery statistics into the metrics struct.
 // Present is false when #gallery-folders is missing (web loading branch).
 func extractGalleryStats(container *html.Node, m *DashboardMetrics) {
-	el := testutil.FindElementByID(container, "gallery-folders")
+	el := findElementByID(container, "gallery-folders")
 	if el == nil {
 		m.Gallery.Present = false
 		return
 	}
 	m.Gallery.Present = true
-	m.Gallery.Folders = strings.TrimSpace(testutil.GetTextContent(el))
+	m.Gallery.Folders = strings.TrimSpace(getTextContent(el))
 	m.Gallery.Images = extractTextByID(container, "gallery-images")
 	m.Gallery.ImagesSize = extractTextByID(container, "gallery-images-size")
 	m.Gallery.FirstDiscovery = extractAttrByID(container, "gallery-discovery-tip", "data-first-discovery")
@@ -378,9 +377,9 @@ func extractCachePreloadStats(container *html.Node, m *DashboardMetrics) {
 	m.CachePreload.Skipped = extractTextByID(container, "preload-skipped")
 
 	// Check status badge
-	statusEl := testutil.FindElementByID(container, "preload-status")
+	statusEl := findElementByID(container, "preload-status")
 	if statusEl != nil {
-		text := strings.TrimSpace(testutil.GetTextContent(statusEl))
+		text := strings.TrimSpace(getTextContent(statusEl))
 		m.CachePreload.IsEnabled = (text == "Enabled")
 	}
 }
@@ -411,9 +410,9 @@ func extractCacheBatchLoadStats(container *html.Node, m *DashboardMetrics) {
 	}
 
 	// Extract total from batch-total-desc
-	descEl := testutil.FindElementByID(container, "batch-total-desc")
+	descEl := findElementByID(container, "batch-total-desc")
 	if descEl != nil {
-		text := testutil.GetTextContent(descEl)
+		text := getTextContent(descEl)
 		// Format: "X total"
 		parts := strings.Fields(text)
 		if len(parts) >= 1 {
@@ -422,9 +421,9 @@ func extractCacheBatchLoadStats(container *html.Node, m *DashboardMetrics) {
 	}
 
 	// Check status badge
-	statusEl := testutil.FindElementByID(container, "batch-status")
+	statusEl := findElementByID(container, "batch-status")
 	if statusEl != nil {
-		text := strings.TrimSpace(testutil.GetTextContent(statusEl))
+		text := strings.TrimSpace(getTextContent(statusEl))
 		m.CacheBatchLoad.IsRunning = (text == "Running")
 	}
 }
@@ -438,9 +437,9 @@ func extractHTTPCacheStats(container *html.Node, m *DashboardMetrics) {
 	m.HTTPCache.Utilization = extractTextByID(container, "http-utilization")
 
 	// Check status badge
-	statusEl := testutil.FindElementByID(container, "http-status")
+	statusEl := findElementByID(container, "http-status")
 	if statusEl != nil {
-		text := strings.TrimSpace(testutil.GetTextContent(statusEl))
+		text := strings.TrimSpace(getTextContent(statusEl))
 		m.HTTPCache.Enabled = (text == "Enabled")
 	}
 }

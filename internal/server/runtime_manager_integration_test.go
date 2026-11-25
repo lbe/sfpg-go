@@ -20,8 +20,6 @@ import (
 // restart signal path. It starts the real HTTP server, triggers a restart, and
 // verifies that Serve returns and flags the restart request.
 func TestIntegration_Serve_RestartSignal(t *testing.T) {
-	t.Setenv("SEPG_SESSION_SECURE", "false")
-
 	app := CreateApp(t)
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -61,8 +59,6 @@ func TestIntegration_Serve_RestartSignal(t *testing.T) {
 // TestIntegration_RuntimeManager_ServeAndShutdown verifies that the server started by
 // App.Serve accepts requests and stops accepting connections after Shutdown.
 func TestIntegration_RuntimeManager_ServeAndShutdown(t *testing.T) {
-	t.Setenv("SEPG_SESSION_SECURE", "false")
-
 	app := CreateApp(t)
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

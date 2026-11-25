@@ -32,7 +32,7 @@ var ruleMessages = map[string]string{
 	"C3-get-text-content":   "strings.Contains on testutil.GetTextContent result; assert structure/exact text instead",
 	"C3-html-tree":          "strings.Contains on parsed HTML node/attr content; assert structure instead",
 	"C3-helper-contains":    "helper walks html.Node and uses strings.Contains on n.Data; use structural helpers",
-	"C4-tui-view":           "strings.Contains on rendered TUI view; use tuiview.AssertPlainIncludes or exact/model assertions",
+	"C4-tui-view":           "strings.Contains on rendered TUI view; use assertPlainIncludes or exact/model assertions",
 	"C5-inefficient-parse":  "html.Parse(strings.NewReader(response body)); use testutil.ParseHTML or html.Parse on io.Reader directly",
 	"C6-regexp-html":        "regexp on HTML-derived text; use structural or exact assertions",
 	"C7-htmx-partial-parse": "FindElementByTag(doc, shell)==nil does not detect HTMX partials on the wire; use testutil.FirstLiteralDocumentShellTag on raw body bytes",

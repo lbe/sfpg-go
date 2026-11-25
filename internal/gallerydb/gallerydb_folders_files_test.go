@@ -1,10 +1,11 @@
 package gallerydb
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
-	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -84,7 +85,7 @@ func TestViewAndCustomQueries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetFolderViewThumbnailBlobDataByPath failed: %v", err)
 		}
-		if !reflect.DeepEqual(retrievedData, thumbData) {
+		if !bytes.Equal(retrievedData, thumbData) {
 			t.Errorf("Expected thumb data %v, got %v", thumbData, retrievedData)
 		}
 	})
@@ -135,7 +136,7 @@ func TestViewAndCustomQueries(t *testing.T) {
 			t.Fatalf("rows.Err() was not nil: %v", scanErr)
 		}
 		expectedFiles := []string{"imageA.png", "imageB.jpg"}
-		if !reflect.DeepEqual(foundFiles, expectedFiles) {
+		if !slices.Equal(foundFiles, expectedFiles) {
 			t.Errorf("Expected files %v, got %v", expectedFiles, foundFiles)
 		}
 	})
@@ -158,7 +159,7 @@ func TestViewAndCustomQueries(t *testing.T) {
 			t.Fatalf("rows.Err() was not nil: %v", err)
 		}
 		expectedFiles := []string{"imageA.png", "imageB.jpg"}
-		if !reflect.DeepEqual(foundFiles, expectedFiles) {
+		if !slices.Equal(foundFiles, expectedFiles) {
 			t.Errorf("Expected files %v, got %v", expectedFiles, foundFiles)
 		}
 	})

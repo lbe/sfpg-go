@@ -380,8 +380,6 @@ func TestApp_UpdateConfigWithPrecedence(t *testing.T) {
 }
 
 func Test_GetAdminUsername_delegates_to_AuthService(t *testing.T) {
-	t.Setenv("SEPG_SESSION_SECRET", "test-secret-with-at-least-32-bytes-long")
-
 	app := New(getopt.Opt{SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true}}, "x.y.z")
 	defer app.Shutdown()
 
@@ -1327,8 +1325,6 @@ func TestApp_IncrementETag_ClearsCache(t *testing.T) {
 func TestApp_InitForIncrementETag(t *testing.T) {
 	// Use real database setup (Setup) so that DbSQLConnPool instances have
 	// a done channel and can be closed cleanly by Shutdown.
-	t.Setenv("SEPG_SESSION_SECRET", "test-secret-with-at-least-32-bytes-long")
-
 	app := New(getopt.Opt{SessionSecret: getopt.OptString{String: "test-secret-with-at-least-32-bytes-long", IsSet: true}}, "x.y.z")
 
 	ctx := context.Background()

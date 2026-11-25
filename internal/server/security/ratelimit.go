@@ -8,9 +8,8 @@ import (
 
 // Default IP rate limiting values.
 const (
-	DefaultLoginRateLimitPerIP = 10 // max login attempts per IP per window
-	DefaultRateLimitWindow     = 60 // window in seconds (1 minute)
-	defaultGCInterval          = 64 // sweep idle IPs every N Allow calls (when limited)
+	DefaultRateLimitWindow = 60 // window in seconds (1 minute)
+	defaultGCInterval      = 64 // sweep idle IPs every N Allow calls (when limited)
 )
 
 // IPRateLimiter implements a per-IP sliding window rate limiter.
@@ -103,14 +102,6 @@ func (rl *IPRateLimiter) maybeGCStaleLocked(now int64) {
 			delete(rl.attempts, ip)
 		}
 	}
-}
-
-// trackedIPCount returns the number of IPs with stored attempt history.
-// It is intended for tests in this package.
-func (rl *IPRateLimiter) trackedIPCount() int {
-	rl.mu.RLock()
-	defer rl.mu.RUnlock()
-	return len(rl.attempts)
 }
 
 // SetMax updates the per-IP attempt cap without resetting in-window history.

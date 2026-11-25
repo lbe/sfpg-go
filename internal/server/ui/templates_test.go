@@ -145,17 +145,6 @@ func TestParseTemplates_WithMissingTemplates(t *testing.T) {
 			t.Logf("Expected panic recovered: %v", err)
 		}
 	})
-
-	t.Run("FS with gallery template missing gallery-oob partial causes panic", func(t *testing.T) {
-		// Instead of trying to create complex template syntax, we verify that
-		// the panic recovery mechanism works by checking that various invalid
-		// inputs are properly caught. The specific "gallery-oob" panic is
-		// difficult to trigger without valid template syntax that parses but
-		// is missing the named template. The important thing is that panic
-		// recovery is tested (which it is in the above tests).
-		// This test documents that the panic recovery path is covered.
-		t.Skip("Skipping - requires valid template syntax that parses but is missing specific named templates")
-	})
 }
 
 // fstestInvalidFS is an invalid file system that causes panics or errors.

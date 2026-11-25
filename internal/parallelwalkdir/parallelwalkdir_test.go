@@ -8,9 +8,9 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"reflect"
 	"regexp"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -38,7 +38,7 @@ func readDirAll(dir string, b *readDirBuffers) (n int, dirLen int, err error) {
 	if cap(b.pathBuf) > len(b.pathBuf) {
 		b.pathBuf = b.pathBuf[:cap(b.pathBuf)]
 	}
-	dirLen, err = writePathBuf(b.pathBuf, dir)
+	dirLen, err = writePathBytes(b.pathBuf, []byte(dir))
 	if err != nil {
 		return 0, 0, err
 	}
@@ -222,6 +222,14 @@ func overrideHook[T any](target *T, replacement T) func() {
 	return func() { *target = old }
 }
 
+// newTestWalker returns a Walker with the private worker count set; tests in this
+// package use it in place of an exported option.
+func newTestWalker(workers int, opts ...Option) *Walker {
+	w := NewWalker(opts...)
+	w.maxWorkers = workers
+	return w
+}
+
 func regexpMust(s string) *regexp.Regexp {
 	r, err := regexp.Compile(s)
 	if err != nil {
@@ -263,13 +271,17 @@ func reportedPathForWalkTest(tempRoot, reported string) string {
 
 // testWalkWithOptions is a helper function to reduce code duplication in option tests.
 func testWalkWithOptions(t *testing.T, root string, opts []Option, expectedFiles []string, expectedErrors int, cleanup func()) {
+	testWalkWithWalker(t, root, NewWalker(opts...), expectedFiles, expectedErrors, cleanup)
+}
+
+// testWalkWithWalker walks root/rootDir with walker and checks results and errors.
+func testWalkWithWalker(t *testing.T, root string, walker *Walker, expectedFiles []string, expectedErrors int, cleanup func()) {
 	defer func() {
 		if cleanup != nil {
 			cleanup()
 		}
 	}()
 
-	walker := NewWalker(opts...)
 	walkRoot := filepath.Join(root, "rootDir")
 	resultsChan, errChan := walker.ParallelWalk(walkRoot)
 
@@ -320,7 +332,7 @@ func testWalkWithOptions(t *testing.T, root string, opts []Option, expectedFiles
 	// --- Verify Files ---
 	sort.Strings(actualFiles)
 	sort.Strings(expectedFiles)
-	if !reflect.DeepEqual(actualFiles, expectedFiles) {
+	if !slices.Equal(actualFiles, expectedFiles) {
 		t.Errorf("Walk results mismatch:\nGot (%d files):\n%v\n\nWant (%d files):\n%v", len(actualFiles), actualFiles, len(expectedFiles), expectedFiles)
 	}
 }
@@ -457,22 +469,8 @@ func TestEvalDirRealPath(t *testing.T) {
 	}
 }
 
-func TestDefaultWalkLstatJoin(t *testing.T) {
-	d := t.TempDir()
-	mustWriteFile(t, d, "photo.jpg")
-
-	bufs := newReadDirBuffers()
-	info, err := defaultWalkLstatJoin(bufs, d, []byte("photo.jpg"))
-	if err != nil {
-		t.Fatalf("defaultWalkLstatJoin: %v", err)
-	}
-	if info.Size() != int64(len("photo.jpg")) {
-		t.Fatalf("size=%d", info.Size())
-	}
-}
-
 func TestFilterAndReportFile(t *testing.T) {
-	w := NewWalker(WithRegexpInclude(regexp.MustCompile(`\.txt$`)))
+	w := NewWalker(WithBasenameInclude(regexp.MustCompile(`(?i)txt$`)))
 	w.results = make(chan ReportedFile, 1)
 
 	info := &fakeFileInfo{name: "a.txt", size: 10}
@@ -573,43 +571,6 @@ func TestFileInfoForDirEntry(t *testing.T) {
 	}
 }
 
-func TestIncludeBasenameMatches(t *testing.T) {
-	w := NewWalker(WithRegexpInclude(regexp.MustCompile(`\.png$`)))
-	if !w.includeBasenameMatchesBytes([]byte("x.png")) {
-		t.Fatal("expected png match")
-	}
-	if w.includeBasenameMatchesBytes([]byte("x.jpg")) {
-		t.Fatal("expected jpg non-match")
-	}
-
-	wb := NewWalker(WithBasenameInclude(regexp.MustCompile(`(?i)gif$`)))
-	if !wb.includeBasenameMatchesBytes([]byte("a.GIF")) {
-		t.Fatal("expected basename include match")
-	}
-}
-
-func TestMutualExclusivity(t *testing.T) {
-	// Test WithValidationFunc vs WithRegexpInclude
-	func() {
-		defer func() {
-			if r := recover(); r == nil {
-				t.Error("Expected panic when WithValidationFunc and WithRegexpInclude are used together")
-			}
-		}()
-		NewWalker(WithValidationFunc(func(_ []byte, _ fs.FileInfo) bool { return true }), WithRegexpInclude(regexp.MustCompile(".")))
-	}()
-
-	// Test WithValidationFunc vs WithSizeNotZero
-	func() {
-		defer func() {
-			if r := recover(); r == nil {
-				t.Error("Expected panic when WithValidationFunc and WithSizeNotZero are used together")
-			}
-		}()
-		NewWalker(WithValidationFunc(func(_ []byte, _ fs.FileInfo) bool { return true }), WithSizeNotZero())
-	}()
-}
-
 // TestParallelWalk verifies the functionality of the ParallelWalk method,
 // including parallel traversal, symlink handling, loop detection, and
 // error reporting for unreadable directories.
@@ -643,7 +604,7 @@ func TestParallelWalk(t *testing.T) {
 
 func TestParallelWalk_FeederStopEmptyQueue(t *testing.T) {
 	d := t.TempDir()
-	walker := NewWalker(WithMaxWorkers(4))
+	walker := newTestWalker(4)
 	resultsChan, errChan := walker.ParallelWalk(d)
 
 	done := make(chan struct{})
@@ -699,12 +660,9 @@ func TestParallelWalk_NoDeadlockWideSubdirSchedule(t *testing.T) {
 		}
 	}
 
-	jpgRegex := regexp.MustCompile(`(?i)\.jpe?g$`)
-	walker := NewWalker(
-		WithMaxWorkers(4),
-		WithDirChCapacity(8),
-		WithRegexpInclude(jpgRegex),
-	)
+	jpgRegex := regexp.MustCompile(`(?i)(?:jpe?g|gif|png)$`)
+	walker := newTestWalker(4, WithBasenameInclude(jpgRegex))
+	walker.dirChCapacity = 8
 	resultsChan, errChan := walker.ParallelWalk(root)
 
 	walkDone := make(chan struct{})
@@ -751,7 +709,7 @@ func TestParallelWalk_WideTreeBoundedGoroutines(t *testing.T) {
 			}
 		}
 
-		jpgRegex := regexp.MustCompile(`(?i)\.jpe?g$`)
+		jpgRegex := regexp.MustCompile(`(?i)(?:jpe?g|gif|png)$`)
 		baseline := runtime.NumGoroutine()
 
 		var peak atomic.Int64
@@ -769,7 +727,7 @@ func TestParallelWalk_WideTreeBoundedGoroutines(t *testing.T) {
 		}
 		peak.Store(int64(baseline))
 
-		walker := NewWalker(WithMaxWorkers(4), WithRegexpInclude(jpgRegex))
+		walker := newTestWalker(4, WithBasenameInclude(jpgRegex))
 		resultsChan, errChan := walker.ParallelWalk(root)
 
 		walkDone := make(chan struct{})
@@ -903,10 +861,7 @@ func TestParallelWalkWithContext_CancelDoesNotDeadlockOnFullBuffers(t *testing.T
 	defer cancel()
 
 	// Use single goroutine to serialize (makes test deterministic)
-	walker := NewWalker(
-		WithContext(ctx),
-		WithMaxWorkers(1),
-	)
+	walker := newTestWalker(1, WithContext(ctx))
 	resultsChan, errChan := walker.ParallelWalk(filepath.Join(d, "rootDir"))
 
 	// Do NOT drain channels immediately - simulate a stopped consumer
@@ -1155,7 +1110,7 @@ func TestWalkPlainDirTreeSkipsEvalSymlinks(t *testing.T) {
 	mustMkdir(t, d, "rootDir", "sub")
 	mustWriteFile(t, d, "photo.jpg", "rootDir", "sub")
 
-	walker := NewWalker(WithMaxWorkers(1))
+	walker := newTestWalker(1)
 	resultsChan, errChan := walker.ParallelWalk(filepath.Join(d, "rootDir"))
 	results, errs := drainChannels(t, resultsChan, errChan, 2*time.Second)
 	if len(errs) != 0 {
@@ -1169,18 +1124,6 @@ func TestWalkPlainDirTreeSkipsEvalSymlinks(t *testing.T) {
 	}
 }
 
-func TestWithBasenameInclude_PanicsWithRegexpInclude(t *testing.T) {
-	defer func() {
-		if recover() == nil {
-			t.Fatal("expected panic")
-		}
-	}()
-	NewWalker(
-		WithRegexpInclude(regexp.MustCompile(".")),
-		WithBasenameInclude(regexp.MustCompile(`(?i)png$`)),
-	)
-}
-
 func TestWithBasenameInclude_InvalidPatternPanics(t *testing.T) {
 	defer func() {
 		if recover() == nil {
@@ -1190,7 +1133,7 @@ func TestWithBasenameInclude_InvalidPatternPanics(t *testing.T) {
 	NewWalker(WithBasenameInclude(regexp.MustCompile(`(?i)^prefix`)))
 }
 
-func TestWithMaxWorkers(t *testing.T) {
+func TestWalk_WorkerCount(t *testing.T) {
 	d := t.TempDir()
 	defer func() {
 		if err := os.RemoveAll(d); err != nil {
@@ -1203,111 +1146,9 @@ func TestWithMaxWorkers(t *testing.T) {
 	}
 	expectedFiles := createSimpleTestDirStructure(t, d, filesToCreate)
 
-	testWalkWithOptions(t, d, []Option{WithMaxWorkers(1)}, expectedFiles, 0, nil)
-
-	// 0 or negative → default GOMAXPROCS(0) workers (asserted after worker-pool impl).
-	testWalkWithOptions(t, d, []Option{WithMaxWorkers(0)}, expectedFiles, 0, nil)
-	testWalkWithOptions(t, d, []Option{WithMaxWorkers(-5)}, expectedFiles, 0, nil)
-}
-
-func TestWithMaxReportedFiles(t *testing.T) {
-	d := t.TempDir()
-	mustMkdir(t, d, "rootDir")
-	for i := range 5 {
-		mustWriteFile(t, d, fmt.Sprintf("f%d.txt", i), "rootDir")
+	for _, workers := range []int{1, 0, -5} { // <= 0 falls back to GOMAXPROCS(0)
+		testWalkWithWalker(t, d, newTestWalker(workers), expectedFiles, 0, nil)
 	}
-
-	walker := NewWalker(WithMaxReportedFiles(2), WithMaxWorkers(1))
-	resultsChan, errChan := walker.ParallelWalk(filepath.Join(d, "rootDir"))
-	results, errs := drainChannels(t, resultsChan, errChan, 2*time.Second)
-	if len(errs) != 0 {
-		t.Fatalf("errors: %v", errs)
-	}
-	if len(results) != 2 {
-		t.Fatalf("results=%d want 2", len(results))
-	}
-}
-
-func TestWithRegexpInclude(t *testing.T) {
-	d := t.TempDir()
-	defer func() {
-		if err := os.RemoveAll(d); err != nil {
-			t.Errorf("Failed to clean up temporary directory %s: %v", d, err)
-		}
-	}() // Clean up the temp directory.
-
-	// Create a simple structure for this test.
-	filesToCreate := map[string][]string{
-		"rootDir":        {"test.txt", "image.jpg"},
-		"rootDir/subDir": {"another.txt", "document.pdf"},
-	}
-	// The expected files for this test are defined manually below.
-	createSimpleTestDirStructure(t, d, filesToCreate)
-
-	// Test for .txt files
-	txtRegex := regexp.MustCompile(`\.txt$`)
-	expectedTxtFiles := []string{
-		"rootDir/test.txt",
-		"rootDir/subDir/another.txt",
-	}
-	testWalkWithOptions(t, d, []Option{WithRegexpInclude(txtRegex)}, expectedTxtFiles, 0, nil)
-
-	// Test for .jpg files
-	jpgRegex := regexp.MustCompile(`\.jpg$`)
-	expectedJpgFiles := []string{
-		"rootDir/image.jpg",
-	}
-	testWalkWithOptions(t, d, []Option{WithRegexpInclude(jpgRegex)}, expectedJpgFiles, 0, nil)
-
-	// Test for files starting with 'doc'
-	docRegex := regexp.MustCompile(`^doc`)
-	expectedDocFiles := []string{
-		"rootDir/subDir/document.pdf",
-	}
-	testWalkWithOptions(t, d, []Option{WithRegexpInclude(docRegex)}, expectedDocFiles, 0, nil)
-}
-
-func TestWithRegexpExclude(t *testing.T) {
-	d := t.TempDir()
-	defer func() {
-		if err := os.RemoveAll(d); err != nil {
-			t.Errorf("Failed to clean up temporary directory %s: %v", d, err)
-		}
-	}() // Clean up the temp directory.
-
-	// Create a simple structure for this test.
-	filesToCreate := map[string][]string{
-		"rootDir":            {"file1.txt", "file2.log"},
-		"rootDir/excludeDir": {"file3.txt", "file4.log"},
-		"rootDir/includeDir": {"file5.txt"},
-	}
-	createSimpleTestDirStructure(t, d, filesToCreate)
-
-	// Exclude .log files
-	logRegex := regexp.MustCompile(`\.log$`)
-	expectedNoLogFiles := []string{
-		"rootDir/file1.txt",
-		"rootDir/excludeDir/file3.txt",
-		"rootDir/includeDir/file5.txt",
-	}
-	testWalkWithOptions(t, d, []Option{WithRegexpExclude(logRegex)}, expectedNoLogFiles, 0, nil)
-
-	// Exclude directories named 'excludeDir' (and their contents)
-	excludeDirRegex := regexp.MustCompile(`excludeDir`)
-	expectedNoExcludeDirFiles := []string{
-		"rootDir/file1.txt",
-		"rootDir/file2.log",
-		"rootDir/includeDir/file5.txt",
-	}
-	testWalkWithOptions(t, d, []Option{WithRegexpExclude(excludeDirRegex)}, expectedNoExcludeDirFiles, 0, nil)
-
-	// Exclude all .txt files
-	excludeTxtRegex := regexp.MustCompile(`\.txt$`)
-	expectedNoTxtFiles := []string{
-		"rootDir/file2.log",
-		"rootDir/excludeDir/file4.log",
-	}
-	testWalkWithOptions(t, d, []Option{WithRegexpExclude(excludeTxtRegex)}, expectedNoTxtFiles, 0, nil)
 }
 
 func TestWithSizeNotZero(t *testing.T) {
@@ -1332,46 +1173,6 @@ func TestWithSizeNotZero(t *testing.T) {
 	testWalkWithOptions(t, d, []Option{WithSizeNotZero()}, expectedNonZeroFiles, 0, nil)
 }
 
-func TestWithValidationFunc(t *testing.T) {
-	d := t.TempDir()
-	defer func() {
-		if err := os.RemoveAll(d); err != nil {
-			t.Errorf("Failed to clean up temporary directory %s: %v", d, err)
-		}
-	}() // Clean up the temp directory.
-
-	// Create a simple structure for this test.
-	mustMkdir(t, d, "rootDir")
-	mustWriteFile(t, d, "apple.txt", "rootDir")
-	mustWriteFile(t, d, "banana.jpg", "rootDir")
-	mustWriteFile(t, d, "cherry.pdf", "rootDir")
-	mustWriteFile(t, d, "date.txt", "rootDir")
-
-	// Custom validation: only return files with "a" in their name and size > 5 bytes
-	customValidation := func(path []byte, info fs.FileInfo) bool {
-		base := path
-		if i := bytes.LastIndexByte(path, '/'); i >= 0 {
-			base = path[i+1:]
-		}
-		return bytes.Contains(base, []byte("a")) && info.Size() > 5
-	}
-	expectedCustomFiles := []string{
-		"rootDir/apple.txt",
-		"rootDir/banana.jpg",
-		"rootDir/date.txt",
-	}
-	testWalkWithOptions(t, d, []Option{WithValidationFunc(customValidation)}, expectedCustomFiles, 0, nil)
-
-	// Custom validation: only return .pdf files
-	pdfValidation := func(path []byte, info fs.FileInfo) bool {
-		return bytes.HasSuffix(path, []byte(".pdf"))
-	}
-	expectedPdfFiles := []string{
-		"rootDir/cherry.pdf",
-	}
-	testWalkWithOptions(t, d, []Option{WithValidationFunc(pdfValidation)}, expectedPdfFiles, 0, nil)
-}
-
 func TestWalk_ContextCancelled_AfterReadDir(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -1388,7 +1189,7 @@ func TestWalk_ContextCancelled_AfterReadDir(t *testing.T) {
 		mustWriteFile(t, d, fmt.Sprintf("file%d.txt", i), "rootDir")
 	}
 
-	walker := NewWalker(WithContext(ctx), WithMaxWorkers(1))
+	walker := newTestWalker(1, WithContext(ctx))
 	resultsChan, errChan := walker.ParallelWalk(root)
 	results, errs := drainChannels(t, resultsChan, errChan, 2*time.Second)
 
@@ -1400,55 +1201,73 @@ func TestWalk_ContextCancelled_AfterReadDir(t *testing.T) {
 	}
 }
 
+// TestWalk_ContextCancelled_SkipsErrorSends cancels the walk inside a failing
+// filesystem call, so the error arrives after cancellation and must not be sent.
 func TestWalk_ContextCancelled_SkipsErrorSends(t *testing.T) {
 	cases := []struct {
-		name       string
-		setupHooks func()
+		name     string
+		linkRoot bool // walk from a symlinked root so EvalSymlinks runs
+		failing  func(cancel context.CancelFunc, hits *atomic.Int32) (restore func())
 	}{
 		{
-			name: "EvalSymlinks error",
-			setupHooks: func() {
-				overrideHook(&evalSymlinksAt, func(_ []byte, _ int, _ []byte) (int, error) {
+			name:     "EvalSymlinks error",
+			linkRoot: true,
+			failing: func(cancel context.CancelFunc, hits *atomic.Int32) func() {
+				return overrideHook(&evalSymlinksAt, func(_ []byte, _ int, _ []byte) (int, error) {
+					hits.Add(1)
+					cancel()
 					return 0, errors.New("eval denied")
-				})()
+				})
 			},
 		},
 		{
-			name: "ReadDir+Lstat error",
-			setupHooks: func() {
-				overrideHook(&readDirAllFn, func(_ *readDirBuffers, dirLen int) (int, int, error) {
+			name: "ReadDir error",
+			failing: func(cancel context.CancelFunc, hits *atomic.Int32) func() {
+				return overrideHook(&readDirAllFn, func(_ *readDirBuffers, dirLen int) (int, int, error) {
+					hits.Add(1)
+					cancel()
 					return 0, dirLen, errors.New("read dir denied")
-				})()
-				overrideHook(&walkLstatAt, func(_ *readDirBuffers, _ string) (fs.FileInfo, error) {
-					return nil, errors.New("lstat denied")
-				})()
+				})
 			},
 		},
 		{
 			name: "fileInfo error",
-			setupHooks: func() {
-				overrideHook(&fileInfoForDirEntryFn, func(_ *readDirBuffers, _ *osza.Entry) (fs.FileInfo, error) {
+			failing: func(cancel context.CancelFunc, hits *atomic.Int32) func() {
+				return overrideHook(&fileInfoForDirEntryFn, func(_ *readDirBuffers, _ *osza.Entry) (fs.FileInfo, error) {
+					hits.Add(1)
+					cancel()
 					return nil, errors.New("info denied")
-				})()
+				})
 			},
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			tc.setupHooks()
-
 			d := t.TempDir()
 			mustMkdir(t, d, "rootDir")
 			mustWriteFile(t, d, "file1.txt", "rootDir")
+			root := filepath.Join(d, "rootDir")
+			if tc.linkRoot {
+				if runtime.GOOS == "windows" {
+					t.Skip("symlink tests skipped on Windows")
+				}
+				mustSymlink(t, d, "rootDir", "rootLink")
+				root = filepath.Join(d, "rootLink")
+			}
 
 			ctx, cancel := context.WithCancel(context.Background())
-			cancel()
+			defer cancel()
+			var hits atomic.Int32
+			defer tc.failing(cancel, &hits)()
 
-			walker := NewWalker(WithContext(ctx), WithMaxWorkers(1))
-			resultsChan, errChan := walker.ParallelWalk(filepath.Join(d, "rootDir"))
+			walker := newTestWalker(1, WithContext(ctx))
+			resultsChan, errChan := walker.ParallelWalk(root)
 			results, errs := drainChannels(t, resultsChan, errChan, 2*time.Second)
 
+			if hits.Load() == 0 {
+				t.Fatal("failing call was never reached")
+			}
 			if len(errs) != 0 {
 				t.Fatalf("expected 0 errors with cancelled context, got %d: %v", len(errs), errs)
 			}
@@ -1499,7 +1318,7 @@ func TestWalk_EvalSymlinksError(t *testing.T) {
 				cancel()
 			}
 
-			walker := NewWalker(WithContext(ctx), WithMaxWorkers(1))
+			walker := newTestWalker(1, WithContext(ctx))
 			resultsChan, errChan := walker.ParallelWalk(filepath.Join(d, "rootLink"))
 			_, errs := drainChannels(t, resultsChan, errChan, 2*time.Second)
 
@@ -1522,7 +1341,7 @@ func TestWalk_EvalSymlinksError(t *testing.T) {
 	}
 }
 
-func TestWalk_IncludeRegexSkipsLstatJoinForNonMatchingNames(t *testing.T) {
+func TestWalk_BasenameIncludeSkipsMetadataForNonMatchingNames(t *testing.T) {
 	d := t.TempDir()
 	root := filepath.Join(d, "rootDir")
 	mustMkdir(t, d, "rootDir")
@@ -1547,11 +1366,7 @@ func TestWalk_IncludeRegexSkipsLstatJoinForNonMatchingNames(t *testing.T) {
 		return defaultFileInfoForDirEntry(bufs, entry)
 	})()
 
-	walker := NewWalker(
-		WithMaxWorkers(1),
-		WithRegexpInclude(jpgRegex),
-		WithSizeNotZero(),
-	)
+	walker := newTestWalker(1, WithBasenameInclude(jpgRegex), WithSizeNotZero())
 	resultsChan, errChan := walker.ParallelWalk(root)
 	results, errs := drainChannels(t, resultsChan, errChan, 2*time.Second)
 
@@ -1569,7 +1384,7 @@ func TestWalk_IncludeRegexSkipsLstatJoinForNonMatchingNames(t *testing.T) {
 	}
 }
 
-func TestWalk_LstatJoinError(t *testing.T) {
+func TestWalk_FileInfoError(t *testing.T) {
 	cases := []struct {
 		name            string
 		info            os.FileInfo
@@ -1603,7 +1418,7 @@ func TestWalk_LstatJoinError(t *testing.T) {
 			mustMkdir(t, d, "rootDir")
 			mustWriteFile(t, d, "file1.txt", "rootDir")
 
-			walker := NewWalker(WithMaxWorkers(1))
+			walker := newTestWalker(1)
 			resultsChan, errChan := walker.ParallelWalk(filepath.Join(d, "rootDir"))
 			results, errs := drainChannels(t, resultsChan, errChan, 2*time.Second)
 
@@ -1623,49 +1438,6 @@ func TestWalk_LstatJoinError(t *testing.T) {
 				t.Errorf("expected %d results, got %d", tc.wantResultCount, len(results))
 			}
 		})
-	}
-}
-
-func TestWalk_ReaddirMetaSkipsWalkStatHooks(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("Windows ReadDir fills entry meta via finddata")
-	}
-	d := t.TempDir()
-	root := filepath.Join(d, "imgs")
-	if err := os.Mkdir(root, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	for i := range 4 {
-		name := filepath.Join(root, fmt.Sprintf("photo%d.jpg", i))
-		if err := os.WriteFile(name, []byte("data"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	var joinCalls, atCalls atomic.Int32
-	savedJoin := walkLstatJoin
-	defer overrideHook(&walkLstatJoin, func(bufs *readDirBuffers, parentPath string, name []byte) (fs.FileInfo, error) {
-		joinCalls.Add(1)
-		return savedJoin(bufs, parentPath, name)
-	})()
-	savedAt := walkLstatAt
-	defer overrideHook(&walkLstatAt, func(bufs *readDirBuffers, path string) (fs.FileInfo, error) {
-		atCalls.Add(1)
-		return savedAt(bufs, path)
-	})()
-
-	jpgRegex := regexp.MustCompile(`(?i)jpe?g$`)
-	walker := NewWalker(WithRegexpInclude(jpgRegex), WithMaxWorkers(1))
-	resultsChan, errChan := walker.ParallelWalk(root)
-	results, errs := drainChannels(t, resultsChan, errChan, 2*time.Second)
-	if len(errs) != 0 {
-		t.Fatalf("errors: %v", errs)
-	}
-	if len(results) != 4 {
-		t.Fatalf("results=%d want 4", len(results))
-	}
-	if joinCalls.Load() != 0 || atCalls.Load() != 0 {
-		t.Fatalf("walkLstatJoin=%d walkLstatAt=%d want 0", joinCalls.Load(), atCalls.Load())
 	}
 }
 
@@ -1728,7 +1500,7 @@ func TestWalk_ReadDirError(t *testing.T) {
 				cancel()
 			}
 
-			walker := NewWalker(WithContext(ctx), WithMaxWorkers(1))
+			walker := newTestWalker(1, WithContext(ctx))
 			resultsChan, errChan := walker.ParallelWalk(filepath.Join(d, "rootDir"))
 			results, errs := drainChannels(t, resultsChan, errChan, 2*time.Second)
 
@@ -1762,15 +1534,7 @@ func TestWalk_SymlinkStatError(t *testing.T) {
 	mustWriteFile(t, d, "regular.txt", "rootDir")
 	mustSymlink(t, d, "/nonexistent/target", "rootDir/badlink")
 
-	savedStat := walkStatAt
-	defer overrideHook(&walkStatAt, func(bufs *readDirBuffers, name string) (fs.FileInfo, error) {
-		if name == filepath.Join(root, "badlink") {
-			return nil, errors.New("stat denied")
-		}
-		return savedStat(bufs, name)
-	})()
-
-	walker := NewWalker(WithMaxWorkers(1))
+	walker := newTestWalker(1)
 	resultsChan, errChan := walker.ParallelWalk(root)
 	results, errs := drainChannels(t, resultsChan, errChan, 2*time.Second)
 
@@ -1797,10 +1561,7 @@ func TestWalk_SymlinkFileIncludeFilter(t *testing.T) {
 	mustWriteFile(t, d, "notes.txt", "rootDir")
 	mustSymlink(t, d, "photo.jpg", "rootDir/link.jpg")
 
-	walker := NewWalker(
-		WithMaxWorkers(1),
-		WithRegexpInclude(regexp.MustCompile(`(?i)jpe?g$`)),
-	)
+	walker := newTestWalker(1, WithBasenameInclude(regexp.MustCompile(`(?i)(?:jpe?g|gif|png)$`)))
 	resultsChan, errChan := walker.ParallelWalk(root)
 	results, errs := drainChannels(t, resultsChan, errChan, 2*time.Second)
 	if len(errs) != 0 {
@@ -1811,7 +1572,7 @@ func TestWalk_SymlinkFileIncludeFilter(t *testing.T) {
 		filepath.Join(root, "link.jpg"),
 		filepath.Join(root, "photo.jpg"),
 	}
-	if !reflect.DeepEqual(results, want) {
+	if !slices.Equal(results, want) {
 		t.Fatalf("results=%v want %v", results, want)
 	}
 }
@@ -1834,7 +1595,7 @@ func TestWalkUsesOszaReadDir(t *testing.T) {
 	}
 	t.Cleanup(func() { oszaReadDir = saved })
 
-	walker := NewWalker(WithMaxWorkers(1), WithRegexpInclude(regexpMust(`(?i)\.png$`)))
+	walker := newTestWalker(1, WithBasenameInclude(regexpMust(`(?i)png$`)))
 	results, errs := walker.ParallelWalk(root)
 	got, errList := drainChannels(t, results, errs, 2*time.Second)
 	if len(errList) != 0 {
@@ -1861,23 +1622,6 @@ func TestWritePathBytes(t *testing.T) {
 		t.Fatal("expected error for empty path")
 	}
 	if _, err = writePathBytes(buf, []byte("012345678")); err == nil {
-		t.Fatal("expected error when path exceeds buffer")
-	}
-}
-
-func TestWritePathBuf(t *testing.T) {
-	buf := make([]byte, 8)
-	n, err := writePathBuf(buf, "short")
-	if err != nil {
-		t.Fatalf("writePathBuf: %v", err)
-	}
-	if n != len("short") {
-		t.Fatalf("n=%d", n)
-	}
-	if _, err = writePathBuf(buf, ""); err == nil {
-		t.Fatal("expected error for empty path")
-	}
-	if _, err = writePathBuf(buf, "012345678"); err == nil {
 		t.Fatal("expected error when path exceeds buffer")
 	}
 }
@@ -1952,7 +1696,7 @@ func TestParallelWalk_GrownReadDirBuffersTrimmedBetweenDirs(t *testing.T) {
 		want = append(want, filepath.Join(root, "small", name))
 	}
 
-	walker := NewWalker(WithMaxWorkers(1))
+	walker := newTestWalker(1)
 	resultsChan, errChan := walker.ParallelWalk(root)
 	got, errs := drainChannels(t, resultsChan, errChan, 30*time.Second)
 	if len(errs) != 0 {

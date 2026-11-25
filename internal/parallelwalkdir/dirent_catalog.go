@@ -26,8 +26,7 @@ type GetDirEntMapFunc func(ctx context.Context, reportedDir []byte) (map[PathHas
 type CheckIfFileModifiedFunc func(name []byte, info fs.FileInfo, state DirEntState, inMap bool) (modified bool, err error)
 
 // WithDirEntCatalog enables per-directory catalog filtering before reporting files.
-// Requires WithBasenameInclude and WithSizeNotZero. Mutually exclusive with
-// WithRegexpInclude and WithValidationFunc.
+// Requires WithBasenameInclude and WithSizeNotZero.
 func WithDirEntCatalog(getMap GetDirEntMapFunc, check CheckIfFileModifiedFunc) Option {
 	return func(w *Walker) {
 		w.getDirEntMap = getMap

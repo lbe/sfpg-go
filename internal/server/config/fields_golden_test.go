@@ -1,7 +1,7 @@
 package config
 
 import (
-	"reflect"
+	"maps"
 	"slices"
 	"testing"
 	"time"
@@ -140,7 +140,7 @@ func TestGoldenBaseline(t *testing.T) {
 			"run_file_discovery":                          "false",
 			"restart_after_discovery":                     "true",
 		}
-		if !reflect.DeepEqual(got, want) {
+		if !maps.Equal(got, want) {
 			t.Errorf("ToMap mismatch")
 			for k, w := range want {
 				g, ok := got[k]
@@ -206,13 +206,13 @@ func TestGoldenBaseline(t *testing.T) {
 			"discover":                                    false,
 			"restart-after-discovery":                     true,
 		}
-		if !reflect.DeepEqual(got, want) {
+		if !maps.EqualFunc(got, want, yamlValueEqual) {
 			t.Errorf("ExportToYAML parsed mismatch")
 			for k, w := range want {
 				g, ok := got[k]
 				if !ok {
 					t.Errorf("  missing key %q", k)
-				} else if !reflect.DeepEqual(g, w) {
+				} else if !yamlValueEqual(g, w) {
 					t.Errorf("  %s: got %v (%T), want %v (%T)", k, g, g, w, w)
 				}
 			}
@@ -244,7 +244,7 @@ func TestGoldenBaseline(t *testing.T) {
 			"http-cache-body-codec",
 		}
 		slices.Sort(want)
-		if !reflect.DeepEqual(got, want) {
+		if !slices.Equal(got, want) {
 			t.Errorf("IdentifyChanges mismatch\ngot:  %v\nwant: %v", got, want)
 		}
 	})
@@ -265,7 +265,7 @@ func TestGoldenBaseline(t *testing.T) {
 			"worker_pool_max_idle_time", "worker_pool_min_idle",
 		}
 		slices.Sort(want)
-		if !reflect.DeepEqual(got, want) {
+		if !slices.Equal(got, want) {
 			t.Errorf("restartRequiredKeys mismatch\ngot:  %v\nwant: %v", got, want)
 		}
 	})
@@ -296,7 +296,7 @@ func TestGoldenBaseline(t *testing.T) {
 		if zeroConfig.SiteName != def.SiteName {
 			t.Errorf("SiteName = %q, want %q", zeroConfig.SiteName, def.SiteName)
 		}
-		if !reflect.DeepEqual(zeroConfig.Themes, def.Themes) {
+		if !slices.Equal(zeroConfig.Themes, def.Themes) {
 			t.Errorf("Themes = %v, want %v", zeroConfig.Themes, def.Themes)
 		}
 		if zeroConfig.CurrentTheme != def.CurrentTheme {
@@ -421,7 +421,7 @@ func TestGoldenBaseline(t *testing.T) {
 		if zeroConfig.SiteName != def.SiteName {
 			t.Errorf("SiteName = %q, want %q", zeroConfig.SiteName, def.SiteName)
 		}
-		if !reflect.DeepEqual(zeroConfig.Themes, def.Themes) {
+		if !slices.Equal(zeroConfig.Themes, def.Themes) {
 			t.Errorf("Themes = %v, want %v", zeroConfig.Themes, def.Themes)
 		}
 		if zeroConfig.CurrentTheme != def.CurrentTheme {
@@ -512,4 +512,15 @@ func TestGoldenBaseline(t *testing.T) {
 			t.Errorf("DQueMaxDiskBytes = %d, want %d (recovered from defaults)", zeroConfig.DQueMaxDiskBytes, def.DQueMaxDiskBytes)
 		}
 	})
+}
+
+// yamlValueEqual compares values decoded from YAML: scalars with ==, and
+// sequences ([]any) element by element.
+func yamlValueEqual(a, b any) bool {
+	as, aok := a.([]any)
+	bs, bok := b.([]any)
+	if aok || bok {
+		return aok && bok && slices.EqualFunc(as, bs, yamlValueEqual)
+	}
+	return a == b
 }

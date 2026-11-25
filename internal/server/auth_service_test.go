@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lbe/sfpg-go/internal/testdb/gallerytest"
+
 	_ "github.com/ncruces/go-sqlite3/driver"
 
 	"github.com/lbe/sfpg-go/internal/dbconnpool"
@@ -23,10 +25,10 @@ func newSessionAuthFacadeTestPool(t *testing.T) *dbconnpool.DbSQLConnPool {
 	mainPath := filepath.Join(tempDir, "main.db")
 	thumbsPath := filepath.Join(tempDir, "thumbs.db")
 
-	if err := dbconnpool.CopyMainTestDatabaseTo(mainPath); err != nil {
+	if err := gallerytest.CopyMainTestDatabaseTo(mainPath); err != nil {
 		t.Fatalf("CopyMainTestDatabaseTo: %v", err)
 	}
-	if err := dbconnpool.CopyThumbsTestDatabaseTo(thumbsPath); err != nil {
+	if err := gallerytest.CopyThumbsTestDatabaseTo(thumbsPath); err != nil {
 		t.Fatalf("CopyThumbsTestDatabaseTo: %v", err)
 	}
 

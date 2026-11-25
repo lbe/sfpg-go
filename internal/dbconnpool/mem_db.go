@@ -3,7 +3,6 @@ package dbconnpool
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -214,5 +213,3 @@ func openMemTestPoolWithConfig(
 	failed = false
 	return out, nil
 }
-
-var errMemDBLeaseThumbs = errors.New("thumbs test database unavailable")

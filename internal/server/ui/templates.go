@@ -70,7 +70,6 @@ var (
 	serverShutdownTemplate          *template.Template
 	discoveryStartedTemplate        *template.Template
 	cacheBatchLoadStartedTemplate   *template.Template
-	shutdownModalTemplate           *template.Template
 	themeModalTemplate              *template.Template
 	aboutModalTemplate              *template.Template
 	funcMap                         template.FuncMap
@@ -343,9 +342,6 @@ func ParseTemplates(templateFS fs.FS) (err error) {
 
 	cacheBatchLoadStartedTemplate = template.Must(template.New("cache-batch-load-started.html.tmpl").Funcs(funcMap).
 		ParseFS(templateFS, "templates/cache-batch-load-started.html.tmpl"))
-
-	shutdownModalTemplate = template.Must(template.New("shutdown-modal.html.tmpl").Funcs(funcMap).
-		ParseFS(templateFS, "templates/shutdown-modal.html.tmpl"))
 
 	themeModalTemplate = template.Must(template.New("theme-modal.html.tmpl").Funcs(funcMap).
 		ParseFS(templateFS, "templates/theme-modal.html.tmpl"))

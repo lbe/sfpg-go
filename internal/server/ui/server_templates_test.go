@@ -27,7 +27,7 @@ func TestServerShutdownTemplate(t *testing.T) {
 	}
 
 	var buf strings.Builder
-	err := serverShutdownTemplate.ExecuteTemplate(&buf, "layout", nil)
+	err := RenderPage(&buf, "shutdown", nil, false)
 	if err != nil {
 		t.Fatalf("template execution failed: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestDiscoveryStartedTemplate(t *testing.T) {
 	}
 
 	var buf strings.Builder
-	err := discoveryStartedTemplate.Execute(&buf, data)
+	err := RenderPage(&buf, "discovery-started", data, false)
 	if err != nil {
 		t.Fatalf("template execution failed: %v", err)
 	}
@@ -120,14 +120,14 @@ func TestShutdownModalTemplate(t *testing.T) {
 		t.Fatalf("ParseTemplates failed: %v", err)
 	}
 
-	// This template is parsed as part of baseTemplates
-	if shutdownModalTemplate == nil {
-		t.Fatal("shutdownModalTemplate not initialized")
+	// The shutdown modal is included in baseTemplates, so galleryTemplate can render it by name
+	if galleryTemplate == nil {
+		t.Fatal("galleryTemplate not initialized")
 	}
 
 	// Verify the shutdown modal template can be executed
 	var buf strings.Builder
-	err := shutdownModalTemplate.Execute(&buf, nil)
+	err := galleryTemplate.ExecuteTemplate(&buf, "shutdown-modal.html.tmpl", nil)
 	if err != nil {
 		t.Fatalf("template execution failed: %v", err)
 	}

@@ -60,16 +60,3 @@ func TestRenderPage_EdgeCases(t *testing.T) {
 		t.Logf("Dashboard partial with nil data: err=%v", err)
 	})
 }
-
-// TestRenderPage_TemplateNilCheck tests behavior when templates are somehow nil
-// This is a defensive test - in normal operation templates should never be nil
-// after ParseTemplates, but the code has nil checks we should cover
-func TestRenderPage_TemplateNilCheck(t *testing.T) {
-	// We can't really test the nil template case properly because:
-	// 1. ParseTemplates initializes all templates with template.Must
-	// 2. If templates are nil after ParseTemplates, it would have panicked
-	// 3. The nil check in RenderPage is defensive programming
-
-	// This test documents that the nil check exists but is hard to trigger
-	t.Skip("Nil template checks are defensive - cannot trigger after successful ParseTemplates")
-}

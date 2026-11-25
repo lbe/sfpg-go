@@ -93,31 +93,6 @@ func TestNewWalker_DirEntCatalog_composesWithBasenameIncludeAndSizeNotZero(t *te
 	)
 }
 
-func TestNewWalker_DirEntCatalog_panicsWithRegexpInclude(t *testing.T) {
-	defer func() {
-		if recover() == nil {
-			t.Fatal("expected panic")
-		}
-	}()
-	parallelwalkdir.NewWalker(
-		parallelwalkdir.WithRegexpInclude(regexp.MustCompile(".")),
-		parallelwalkdir.WithSizeNotZero(),
-		parallelwalkdir.WithDirEntCatalog(noopGetMap, noopCheck),
-	)
-}
-
-func TestNewWalker_DirEntCatalog_panicsWithValidationFunc(t *testing.T) {
-	defer func() {
-		if recover() == nil {
-			t.Fatal("expected panic")
-		}
-	}()
-	parallelwalkdir.NewWalker(
-		parallelwalkdir.WithValidationFunc(func(_ []byte, _ fs.FileInfo) bool { return true }),
-		parallelwalkdir.WithDirEntCatalog(noopGetMap, noopCheck),
-	)
-}
-
 func TestNewWalker_DirEntCatalog_panicsWithoutBasenameInclude(t *testing.T) {
 	defer func() {
 		if recover() == nil {

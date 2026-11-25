@@ -15,19 +15,12 @@
 // (EvalSymlinks when needed) to avoid symlink loops. Hash collisions may silently
 // skip a directory (accepted policy).
 //
-// # Filtering (pick one include mode)
+// # Filtering
 //
-//   - WithBasenameInclude: match entry basenames with zero-alloc suffix checks
-//     derived from the compiled regexp pattern (cached by pattern string). Use for
-//     production discovery walks. Unsupported patterns
-//     panic when the option is applied.
-//   - WithRegexpInclude: match entry basenames with regexp.Regexp.Match (may
-//     allocate under load). Tests and patterns not supported by suffix derivation.
-//   - WithValidationFunc: custom filter on reported path bytes and fs.FileInfo.
-//
-// WithSizeNotZero drops zero-length files. WithRegexpExclude skips paths whose
-// reported path matches. Include options are mutually exclusive with each other
-// and with WithValidationFunc.
+// WithBasenameInclude matches entry basenames with zero-alloc suffix checks
+// derived from the compiled regexp pattern (cached by pattern string).
+// Unsupported patterns panic when the option is applied. WithSizeNotZero drops
+// zero-length files.
 //
 // WithDirEntCatalog: GetDirEntMapFunc runs before readDirAllFn per directory;
 // CheckIfFileModifiedFunc gates sendReported on PathHash keys from
@@ -46,8 +39,9 @@
 // # Test seams
 //
 // Package vars evalSymlinksAt, oszaReadDir, readDirAllFn, fileInfoForDirEntryFn,
-// walkLstatAt, walkLstatPathLen, walkStatAt, walkStatPathLen, and walkLstatJoin default
-// to production implementations and may be overridden in tests.
+// walkLstatPathLen, and walkStatPathLen default to production implementations and
+// may be overridden in tests. Tests also set Walker.maxWorkers and
+// Walker.dirChCapacity directly.
 package parallelwalkdir
 
 import (
@@ -62,7 +56,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
 
 	"github.com/lbe/sfpg-go/internal/gensyncpool"
@@ -88,11 +81,8 @@ var (
 	evalSymlinksAt           = defaultEvalSymlinksAt // hook: osza.EvalSymlinksAt
 	oszaReadDir              = osza.ReadDir          // hook: osza.ReadDir
 	readDirAllFn             = readDirAllFromPathBuf // hook: readDirAllFromPathBuf
-	walkLstatAt              = defaultWalkLstatAt
 	walkLstatPathLen         = defaultWalkLstatPathLen
-	walkStatAt               = defaultWalkStatAt
 	walkStatPathLen          = defaultWalkStatPathLen
-	walkLstatJoin            = defaultWalkLstatJoin
 )
 
 type basenameIncludeFunc func(name []byte) bool
@@ -140,11 +130,6 @@ type ReportedFile struct {
 	SizeBytes   int64
 }
 
-// WalkDirFunc decides inclusion from the reported path and FileInfo.
-// path is the reported path slice; valid only for the call; do not retain.
-// Mutually exclusive with WithRegexpInclude, WithBasenameInclude, and WithSizeNotZero.
-type WalkDirFunc func(path []byte, info fs.FileInfo) bool
-
 // Walker holds state for a parallel directory traversal: a fixed pool of worker
 // goroutines reading from dirCh, an unbounded schedule queue and feeder that is
 // the sole writer to dirCh, outstanding directory accounting, visited-path
@@ -158,25 +143,16 @@ type Walker struct {
 	visited map[PathHash]struct{}
 	ctx     context.Context // Cancellation; defaults to context.Background().
 
-	maxReportedFiles int64         // When > 0, stop the walk after this many results (benchmarks).
-	reportedSent     atomic.Uint64 // Reports emitted toward maxReportedFiles for the current walk.
-	stopWalk         context.CancelFunc
-	stopWalkOnce     sync.Once
+	// maxWorkers is the directory worker count when > 0. Tests in this package set
+	// it directly; production leaves it zero and workers() uses GOMAXPROCS(0).
+	maxWorkers int
 
-	maxWorkers int // Directory worker count when > 0; else workers() uses GOMAXPROCS(0).
+	// dirChCapacity is the dirCh buffer size when > 0. Tests in this package set it
+	// directly; production leaves it zero and the buffer is workers()*1024.
+	dirChCapacity int
 
-	dirChCapacity int // dirCh buffer size when > 0; else workers()*1024 (tests only).
-
-	includeRegex    *regexp.Regexp
 	basenameInclude basenameIncludeFunc
-	excludeRegex    *regexp.Regexp
 	sizeNotZero     bool
-	validationFunc  WalkDirFunc
-
-	hasIncludeRegex    bool
-	hasBasenameInclude bool
-	hasSizeNotZero     bool
-	hasValidationFunc  bool
 
 	getDirEntMap        GetDirEntMapFunc
 	checkIfFileModified CheckIfFileModifiedFunc
@@ -188,18 +164,7 @@ type Walker struct {
 // ParallelWalk traverses rootPath. The returned channels are read-only; both close
 // when the walk finishes. The visited set is not cleared between calls, so create
 // a new Walker for each walk.
-//
-// WithMaxReportedFiles wraps the walk context in a cancel func; reaching the limit
-// cancels further scheduling.
 func (w *Walker) ParallelWalk(rootPath string) (<-chan ReportedFile, <-chan error) {
-	parentCtx := w.ctx
-	walkCtx := parentCtx
-	if w.maxReportedFiles > 0 {
-		walkCtx, w.stopWalk = context.WithCancel(parentCtx)
-	}
-	w.ctx = walkCtx
-	w.reportedSent.Store(0)
-
 	if w.pathStore == nil {
 		w.pathStore = NewWalkPathStore()
 	}
@@ -283,12 +248,6 @@ func (w *Walker) ParallelWalk(rootPath string) (<-chan ReportedFile, <-chan erro
 	})
 
 	go func() {
-		defer func() {
-			w.ctx = parentCtx
-			w.stopWalk = nil
-			w.stopWalkOnce = sync.Once{}
-		}()
-
 		root := cloneStringPath(rootPath)
 		dw := dirWorkPool.Get()
 		dw.current = root
@@ -327,27 +286,22 @@ func (w *Walker) ParallelWalk(rootPath string) (<-chan ReportedFile, <-chan erro
 	return w.results, w.errs
 }
 
-func (w *Walker) acquireReportSlot() bool {
-	for {
-		n := w.reportedSent.Load()
-		if n >= uint64(w.maxReportedFiles) {
-			return false
-		}
-		if w.reportedSent.CompareAndSwap(n, n+1) {
-			return true
-		}
+// sendErr sends err on errs unless the walk is cancelled. It reports whether
+// err was sent; an error that arrives after cancellation is dropped.
+func (w *Walker) sendErr(err error) bool {
+	if w.ctx.Err() != nil {
+		return false
+	}
+	select {
+	case w.errs <- err:
+		return true
+	case <-w.ctx.Done():
+		return false
 	}
 }
 
 func (w *Walker) filterAndReportFile(reportedBuf []byte, reportedLen int, info fs.FileInfo, includeMatched bool, entMap map[PathHash]DirEntState, catalogBasename []byte) {
-	if w.validationFunc != nil {
-		if w.validationFunc(reportedBuf[:reportedLen], info) {
-			w.sendReported(reportedBuf, reportedLen, info)
-		}
-		return
-	}
-
-	if !includeMatched && w.usesIncludeFilter() && !w.includeBasenameMatchesBytes(basenameInBuf(reportedBuf, reportedLen)) {
+	if !includeMatched && w.basenameInclude != nil && !w.basenameInclude(basenameInBuf(reportedBuf, reportedLen)) {
 		return
 	}
 
@@ -364,10 +318,7 @@ func (w *Walker) filterAndReportFile(reportedBuf []byte, reportedLen int, info f
 		state, inMap := entMap[h]
 		modified, err := w.checkIfFileModified(catalogBasename, info, state, inMap)
 		if err != nil {
-			select {
-			case w.errs <- err:
-			case <-w.ctx.Done():
-			}
+			w.sendErr(err)
 			return
 		}
 		if !modified {
@@ -376,16 +327,6 @@ func (w *Walker) filterAndReportFile(reportedBuf []byte, reportedLen int, info f
 	}
 
 	w.sendReported(reportedBuf, reportedLen, info)
-}
-
-func (w *Walker) includeBasenameMatchesBytes(name []byte) bool {
-	if w.hasBasenameInclude {
-		return w.basenameInclude(name)
-	}
-	if !w.hasIncludeRegex {
-		return true
-	}
-	return w.includeRegex.Match(name)
 }
 
 func (w *Walker) processDir(work *dirWork, schedule func(*dirWork), dirBufs *readDirBuffers) {
@@ -401,18 +342,12 @@ func (w *Walker) processDir(work *dirWork, schedule func(*dirWork), dirBufs *rea
 
 	dirLen, err := writePathBytes(dirBufs.pathBuf, work.current)
 	if err != nil {
-		select {
-		case w.errs <- &fs.PathError{Op: "ReadDir", Path: string(work.current), Err: err}:
-		case <-w.ctx.Done():
-		}
+		w.sendErr(&fs.PathError{Op: "ReadDir", Path: string(work.current), Err: err})
 		return
 	}
 	reportedLen, err := writePathBytes(dirBufs.reportedBuf, work.reported)
 	if err != nil {
-		select {
-		case w.errs <- &fs.PathError{Op: "ReadDir", Path: string(work.current), Err: err}:
-		case <-w.ctx.Done():
-		}
+		w.sendErr(&fs.PathError{Op: "ReadDir", Path: string(work.current), Err: err})
 		return
 	}
 
@@ -421,10 +356,7 @@ func (w *Walker) processDir(work *dirWork, schedule func(*dirWork), dirBufs *rea
 		if w.ctx.Err() == nil {
 			slog.Error("EvalSymlinks error", "currentPath", string(work.current), "err", err)
 		}
-		select {
-		case w.errs <- &fs.PathError{Op: "EvalSymlinks", Path: string(work.current), Err: err}:
-		case <-w.ctx.Done():
-		}
+		w.sendErr(&fs.PathError{Op: "EvalSymlinks", Path: string(work.current), Err: err})
 		return
 	}
 
@@ -442,18 +374,11 @@ func (w *Walker) processDir(work *dirWork, schedule func(*dirWork), dirBufs *rea
 	w.visited[visitHash] = struct{}{}
 	w.mu.Unlock()
 
-	if w.excludeRegex != nil && w.excludeRegex.Match(work.reported) {
-		return
-	}
-
 	var entMap map[PathHash]DirEntState
 	if w.hasDirEntCatalog {
 		entMap, err = w.getDirEntMap(w.ctx, work.reported)
 		if err != nil {
-			select {
-			case w.errs <- err:
-			case <-w.ctx.Done():
-			}
+			w.sendErr(err)
 			return
 		}
 	}
@@ -469,10 +394,7 @@ func (w *Walker) processDir(work *dirWork, schedule func(*dirWork), dirBufs *rea
 			w.filterAndReportFile(dirBufs.reportedBuf, reportedLen, info, false, entMap, fileBasename)
 			return
 		}
-		select {
-		case w.errs <- &fs.PathError{Op: "ReadDir", Path: materializeString(dirBufs.pathBuf, dirLen), Err: err}:
-		case <-w.ctx.Done():
-		}
+		w.sendErr(&fs.PathError{Op: "ReadDir", Path: materializeString(dirBufs.pathBuf, dirLen), Err: err})
 		return
 	}
 
@@ -492,9 +414,7 @@ func (w *Walker) processDir(work *dirWork, schedule func(*dirWork), dirBufs *rea
 		var segErr error
 		dirBufs.pathBuf, pathEnd, segErr = appendPathSegment(dirBufs.pathBuf, dirLen, entry.Name)
 		if segErr != nil {
-			select {
-			case w.errs <- &fs.PathError{Op: "Stat", Path: materializeString(dirBufs.pathBuf, pathEnd), Err: segErr}:
-			case <-w.ctx.Done():
+			if !w.sendErr(&fs.PathError{Op: "Stat", Path: materializeString(dirBufs.pathBuf, pathEnd), Err: segErr}) {
 				return
 			}
 			continue
@@ -503,19 +423,13 @@ func (w *Walker) processDir(work *dirWork, schedule func(*dirWork), dirBufs *rea
 		if splitReported {
 			dirBufs.reportedBuf, reportedEnd, segErr = appendPathSegment(dirBufs.reportedBuf, reportedLen, entry.Name)
 			if segErr != nil {
-				select {
-				case w.errs <- &fs.PathError{Op: "Stat", Path: materializeString(dirBufs.pathBuf, pathEnd), Err: segErr}:
-				case <-w.ctx.Done():
+				if !w.sendErr(&fs.PathError{Op: "Stat", Path: materializeString(dirBufs.pathBuf, pathEnd), Err: segErr}) {
 					return
 				}
 				continue
 			}
 		} else {
 			copy(dirBufs.reportedBuf[dirLen:pathEnd], dirBufs.pathBuf[dirLen:pathEnd])
-		}
-
-		if w.excludeRegex != nil && w.excludeRegex.Match(dirBufs.reportedBuf[:reportedEnd]) {
-			continue
 		}
 
 		if entry.Type()&fs.ModeSymlink != 0 {
@@ -533,15 +447,13 @@ func (w *Walker) processDir(work *dirWork, schedule func(*dirWork), dirBufs *rea
 			continue
 		}
 
-		if w.usesIncludeFilter() && !w.includeBasenameMatchesBytes(entry.Name) {
+		if w.basenameInclude != nil && !w.basenameInclude(entry.Name) {
 			continue
 		}
 
 		info, statErr := fileInfoForDirEntry(dirBufs, entry)
 		if statErr != nil {
-			select {
-			case w.errs <- &fs.PathError{Op: "Stat", Path: materializeString(dirBufs.pathBuf, pathEnd), Err: statErr}:
-			case <-w.ctx.Done():
+			if !w.sendErr(&fs.PathError{Op: "Stat", Path: materializeString(dirBufs.pathBuf, pathEnd), Err: statErr}) {
 				return
 			}
 			continue
@@ -551,11 +463,6 @@ func (w *Walker) processDir(work *dirWork, schedule func(*dirWork), dirBufs *rea
 }
 
 func (w *Walker) sendReported(reportedBuf []byte, reportedLen int, info fs.FileInfo) {
-	if w.maxReportedFiles > 0 && !w.acquireReportSlot() {
-		w.requestWalkStop()
-		return
-	}
-
 	if w.pathStore == nil {
 		w.pathStore = NewWalkPathStore()
 	}
@@ -569,23 +476,6 @@ func (w *Walker) sendReported(reportedBuf []byte, reportedLen int, info fs.FileI
 	case <-w.ctx.Done():
 		return
 	}
-
-	if w.maxReportedFiles > 0 && int64(w.reportedSent.Load()) >= w.maxReportedFiles {
-		w.requestWalkStop()
-	}
-}
-
-func (w *Walker) usesIncludeFilter() bool {
-	return w.hasIncludeRegex || w.hasBasenameInclude
-}
-
-func (w *Walker) requestWalkStop() {
-	if w.stopWalk == nil {
-		return
-	}
-	w.stopWalkOnce.Do(func() {
-		w.stopWalk()
-	})
 }
 
 func (w *Walker) workers() int {
@@ -598,21 +488,17 @@ func (w *Walker) workers() int {
 // WithBasenameInclude matches file basenames with suffix checks derived from r.
 // Patterns must be an anchored alternation of literal suffix fragments (see
 // basenameSuffixesFromPattern); derivation is verified against r at build time.
-// Mutually exclusive with WithRegexpInclude and WithValidationFunc.
 func WithBasenameInclude(r *regexp.Regexp) Option {
 	return func(w *Walker) {
 		w.basenameInclude = basenameIncludeForRegexp(r)
-		w.hasBasenameInclude = true
 	}
 }
 
-// NewWalker creates a Walker and applies options. Default worker count is
-// runtime.GOMAXPROCS(0) when WithMaxWorkers is unset or <= 0.
+// NewWalker creates a Walker and applies options. The worker count defaults to
+// runtime.GOMAXPROCS(0).
 //
-// Panics if include options conflict: WithValidationFunc with any other filter
-// option, or both WithRegexpInclude and WithBasenameInclude. It also panics when
-// WithDirEntCatalog is incomplete or combined with WithRegexpInclude or
-// WithValidationFunc, or lacks WithBasenameInclude or WithSizeNotZero.
+// Panics when WithDirEntCatalog is incomplete or lacks WithBasenameInclude or
+// WithSizeNotZero.
 func NewWalker(opts ...Option) *Walker {
 	w := &Walker{
 		results: make(chan ReportedFile, 100),
@@ -628,13 +514,6 @@ func NewWalker(opts ...Option) *Walker {
 		w.ctx = context.Background()
 	}
 
-	if w.hasValidationFunc && (w.hasIncludeRegex || w.hasBasenameInclude || w.hasSizeNotZero) {
-		panic("WithValidationFunc is mutually exclusive with WithRegexpInclude, WithBasenameInclude, and WithSizeNotZero")
-	}
-	if w.hasIncludeRegex && w.hasBasenameInclude {
-		panic("WithRegexpInclude is mutually exclusive with WithBasenameInclude")
-	}
-
 	hasGet := w.getDirEntMap != nil
 	hasCheck := w.checkIfFileModified != nil
 	if hasGet != hasCheck {
@@ -642,16 +521,10 @@ func NewWalker(opts ...Option) *Walker {
 	}
 	if hasGet {
 		w.hasDirEntCatalog = true
-		if w.hasIncludeRegex {
-			panic("parallelwalkdir: WithDirEntCatalog is mutually exclusive with WithRegexpInclude")
-		}
-		if w.hasValidationFunc {
-			panic("parallelwalkdir: WithDirEntCatalog is mutually exclusive with WithValidationFunc")
-		}
-		if !w.hasBasenameInclude {
+		if w.basenameInclude == nil {
 			panic("parallelwalkdir: WithDirEntCatalog requires WithBasenameInclude")
 		}
-		if !w.hasSizeNotZero {
+		if !w.sizeNotZero {
 			panic("parallelwalkdir: WithDirEntCatalog requires WithSizeNotZero")
 		}
 	}
@@ -677,61 +550,10 @@ func WithContext(ctx context.Context) Option {
 	}
 }
 
-// WithDirChCapacity sets the buffered dirCh capacity. Zero uses workers()*1024.
-// Values > 0 set an exact buffer size (tests only; production does not set this).
-func WithDirChCapacity(n int) Option {
-	return func(w *Walker) {
-		w.dirChCapacity = n
-	}
-}
-
-// WithMaxWorkers sets the number of directory worker goroutines. Values <= 0 use
-// runtime.GOMAXPROCS(0). Intended for tests; production discovery does not set this.
-func WithMaxWorkers(n int) Option {
-	return func(w *Walker) {
-		w.maxWorkers = n
-	}
-}
-
-// WithRegexpExclude skips directory entries whose reported path matches r.
-// Applied to both files and directories before descent.
-func WithRegexpExclude(r *regexp.Regexp) Option {
-	return func(w *Walker) {
-		w.excludeRegex = r
-	}
-}
-
-// WithRegexpInclude limits files to those whose basename matches r via Match.
-// Mutually exclusive with WithBasenameInclude and WithValidationFunc.
-func WithRegexpInclude(r *regexp.Regexp) Option {
-	return func(w *Walker) {
-		w.includeRegex = r
-		w.hasIncludeRegex = true
-	}
-}
-
-// WithMaxReportedFiles stops the walk after n matching files are sent on results.
-// Intended for benchmarks and sampling; production discovery does not set this.
-func WithMaxReportedFiles(n int64) Option {
-	return func(w *Walker) {
-		w.maxReportedFiles = n
-	}
-}
-
-// WithSizeNotZero excludes zero-length files. Mutually exclusive with WithValidationFunc.
+// WithSizeNotZero excludes zero-length files.
 func WithSizeNotZero() Option {
 	return func(w *Walker) {
 		w.sizeNotZero = true
-		w.hasSizeNotZero = true
-	}
-}
-
-// WithValidationFunc supplies custom file filtering on reported path bytes.
-// Mutually exclusive with WithRegexpInclude, WithBasenameInclude, and WithSizeNotZero.
-func WithValidationFunc(vf WalkDirFunc) Option {
-	return func(w *Walker) {
-		w.validationFunc = vf
-		w.hasValidationFunc = true
 	}
 }
 
@@ -848,28 +670,6 @@ func defaultFileInfoForDirEntry(bufs *readDirBuffers, entry *osza.Entry) (fs.Fil
 	return entry.Info(bufs.joinBuf)
 }
 
-func defaultWalkLstatAt(bufs *readDirBuffers, path string) (fs.FileInfo, error) {
-	pathLen, err := writePathBuf(bufs.pathBuf, path)
-	if err != nil {
-		return nil, err
-	}
-	if err := osza.LstatAt(bufs.pathBuf, pathLen, &bufs.meta); err != nil {
-		return nil, err
-	}
-	return &bufs.meta, nil
-}
-
-func defaultWalkStatAt(bufs *readDirBuffers, path string) (fs.FileInfo, error) {
-	pathLen, err := writePathBuf(bufs.pathBuf, path)
-	if err != nil {
-		return nil, err
-	}
-	if err := osza.StatAt(bufs.pathBuf, pathLen, &bufs.meta); err != nil {
-		return nil, err
-	}
-	return &bufs.meta, nil
-}
-
 func defaultWalkLstatPathLen(bufs *readDirBuffers, pathLen int) (fs.FileInfo, error) {
 	if err := osza.LstatAt(bufs.pathBuf, pathLen, &bufs.meta); err != nil {
 		return nil, err
@@ -879,21 +679,6 @@ func defaultWalkLstatPathLen(bufs *readDirBuffers, pathLen int) (fs.FileInfo, er
 
 func defaultWalkStatPathLen(bufs *readDirBuffers, pathLen int) (fs.FileInfo, error) {
 	if err := osza.StatAt(bufs.pathBuf, pathLen, &bufs.meta); err != nil {
-		return nil, err
-	}
-	return &bufs.meta, nil
-}
-
-func defaultWalkLstatJoin(bufs *readDirBuffers, parentPath string, name []byte) (fs.FileInfo, error) {
-	parentLen := len(parentPath)
-	nameLen := len(name)
-	need := parentLen + 1 + nameLen + 1
-	if len(bufs.joinBuf) < need {
-		return nil, syscall.ENAMETOOLONG
-	}
-	copy(bufs.joinBuf[:parentLen], parentPath)
-	copy(bufs.joinBuf[parentLen:parentLen+nameLen], name)
-	if err := osza.LstatJoin(bufs.joinBuf, parentLen, nameLen, &bufs.meta); err != nil {
 		return nil, err
 	}
 	return &bufs.meta, nil
@@ -1220,13 +1005,4 @@ func unwrapSyntaxGroup(re *syntax.Regexp) *syntax.Regexp {
 			return re
 		}
 	}
-}
-
-func writePathBuf(buf []byte, path string) (int, error) {
-	n := len(path)
-	if n == 0 || n >= len(buf) {
-		return 0, syscall.EINVAL
-	}
-	copy(buf[:n], path)
-	return n, nil
 }

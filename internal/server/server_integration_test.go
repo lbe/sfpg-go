@@ -31,15 +31,6 @@ import (
 )
 
 // --- merged from middleware_wiring_integration_test.go ---
-func contains(header, value string) bool {
-	parts := strings.SplitSeq(header, ",")
-	for part := range parts {
-		if strings.TrimSpace(part) == value {
-			return true
-		}
-	}
-	return false
-}
 
 // createAppWithRouter returns a full app and its router for middleware/router tests.
 func createAppWithRouter(t testing.TB, opts ...AppOption) (*App, http.Handler) {
@@ -161,7 +152,6 @@ func TestGetRouter_MiddlewareOrdering(t *testing.T) {
 // HIT on /gallery/1 does not replay authenticated admin chrome to an anonymous client.
 // Gallery full-page HTML must stay auth-agnostic; admin links load only via HTMX hamburger.
 func TestIntegration_GalleryCache_AnonymousDoesNotReceiveAuthBody(t *testing.T) {
-	setenvForTest(t, "SEPG_SESSION_SECURE", "false")
 	opt := getopt.Opt{}
 	opt.SessionSecret.String = "gallery-cache-auth-isolation-test-secret-32b"
 	opt.SessionSecret.IsSet = true
@@ -234,7 +224,6 @@ func integrationTestHasAnchorHref(n *html.Node, href string) bool {
 }
 
 func TestIntegration_HTMLPartialRoutes_CacheHitPreservesContentType(t *testing.T) {
-	setenvForTest(t, "SEPG_SESSION_SECURE", "false")
 	opt := getopt.Opt{}
 	opt.SessionSecret.String = "gallery-cache-auth-isolation-test-secret-32b"
 	opt.SessionSecret.IsSet = true
@@ -397,7 +386,6 @@ func TestIntegration_HTMLPartialRoutes_CacheHitPreservesContentType(t *testing.T
 
 func TestIntegration_ConfigCache_ServerUsesConfig(t *testing.T) {
 	t.Parallel()
-	setenvForTest(t, "SEPG_SESSION_SECURE", "false")
 	app := CreateApp(t)
 	defer app.Shutdown()
 
@@ -651,9 +639,9 @@ func TestCrossOriginProtection_SafeMethodsFull(t *testing.T) {
 }
 
 func TestSessionSecurity_HttpOnly(t *testing.T) {
-	t.Setenv("SEPG_SESSION_HTTPONLY", "true")
+	opt := getopt.Opt{SessionHttpOnly: getopt.OptBool{Bool: true, IsSet: true}}
 
-	app, server := createAppWithServer(t)
+	app, server := createAppWithServer(t, WithGetoptOpt(opt))
 	defer app.Shutdown()
 	defer server.Close()
 
@@ -706,9 +694,9 @@ func TestSessionSecurity_HttpOnly(t *testing.T) {
 }
 
 func TestSessionSecurity_Secure(t *testing.T) {
-	t.Setenv("SEPG_SESSION_SECURE", "true")
+	opt := getopt.Opt{SessionSecure: getopt.OptBool{Bool: true, IsSet: true}}
 
-	app, server := createAppWithServer(t)
+	app, server := createAppWithServer(t, WithGetoptOpt(opt))
 	defer app.Shutdown()
 	defer server.Close()
 
@@ -1369,7 +1357,6 @@ func TestIntegration_TriggerDiscovery_RebuildsFileFolderIndex(t *testing.T) {
 }
 
 func TestIntegration_PprofLoopbackAndAuth(t *testing.T) {
-	setenvForTest(t, "SEPG_SESSION_SECURE", "false")
 	app := CreateApp(t)
 	defer app.Shutdown()
 	router := app.getRouter()
@@ -1421,8 +1408,6 @@ func TestIntegration_PprofLoopbackAndAuth(t *testing.T) {
 // login_rate_limit_per_ip=2 (which clears prior history), the third login
 // POST from the same IP returns 429.
 func TestLoginRateLimitPerIP_Returns429AfterLimit(t *testing.T) {
-	setenvForTest(t, "SEPG_SESSION_SECURE", "false")
-
 	app := CreateApp(t)
 	defer app.Shutdown()
 

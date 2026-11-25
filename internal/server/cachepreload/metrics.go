@@ -38,21 +38,3 @@ func (m *PreloadMetrics) RecordSkipped(reason string) {
 func (m *PreloadMetrics) RecordCancelled() {
 	m.TasksCancelled.Add(1)
 }
-
-// Summary returns a string summary for logging.
-func (m *PreloadMetrics) Summary() string {
-	sched := m.TasksScheduled.Load()
-	done := m.TasksCompleted.Load()
-	failed := m.TasksFailed.Load()
-	skipped := m.TasksSkipped.Load()
-	cancelled := m.TasksCancelled.Load()
-	durNs := m.TotalDuration.Load()
-	return slog.Any("summary", map[string]any{
-		"scheduled":   sched,
-		"completed":   done,
-		"failed":      failed,
-		"skipped":     skipped,
-		"cancelled":   cancelled,
-		"duration_ms": durNs / 1e6,
-	}).String()
-}

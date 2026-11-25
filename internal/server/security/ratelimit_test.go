@@ -234,8 +234,8 @@ func TestIPRateLimiter_GCRemovesIdleIPs(t *testing.T) {
 	if !rl.Allow("10.0.0.2") {
 		t.Fatal("10.0.0.2: expected allowed")
 	}
-	if rl.trackedIPCount() != 2 {
-		t.Fatalf("tracked IPs = %d, want 2", rl.trackedIPCount())
+	if trackedIPCount(rl) != 2 {
+		t.Fatalf("tracked IPs = %d, want 2", trackedIPCount(rl))
 	}
 
 	time.Sleep(1100 * time.Millisecond)
@@ -243,7 +243,7 @@ func TestIPRateLimiter_GCRemovesIdleIPs(t *testing.T) {
 	if !rl.Allow("10.0.0.3") {
 		t.Fatal("10.0.0.3: expected allowed after idle window")
 	}
-	if got := rl.trackedIPCount(); got != 1 {
+	if got := trackedIPCount(rl); got != 1 {
 		t.Fatalf("tracked IPs after GC = %d, want 1 (only active IP)", got)
 	}
 }
@@ -258,7 +258,14 @@ func TestIPRateLimiter_GCKeepsLimitedIP(t *testing.T) {
 	if rl.Allow("10.0.0.1") {
 		t.Fatal("expected denied")
 	}
-	if rl.trackedIPCount() != 1 {
-		t.Fatalf("tracked IPs = %d, want 1 while still in window", rl.trackedIPCount())
+	if trackedIPCount(rl) != 1 {
+		t.Fatalf("tracked IPs = %d, want 1 while still in window", trackedIPCount(rl))
 	}
+}
+
+// trackedIPCount returns the number of IPs with stored attempt history.
+func trackedIPCount(rl *IPRateLimiter) int {
+	rl.mu.RLock()
+	defer rl.mu.RUnlock()
+	return len(rl.attempts)
 }

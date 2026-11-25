@@ -12,7 +12,6 @@ import (
 	"github.com/lbe/sfpg-go/cmd/sfpg-go-dashboard/client"
 	"github.com/lbe/sfpg-go/cmd/sfpg-go-dashboard/config"
 	"github.com/lbe/sfpg-go/cmd/sfpg-go-dashboard/parser"
-	"github.com/lbe/sfpg-go/cmd/sfpg-go-dashboard/tuiview"
 )
 
 // TestInitialModel creates model with correct defaults
@@ -200,7 +199,7 @@ func TestViewDashboard(t *testing.T) {
 	}
 	view := m.View()
 
-	tuiview.AssertPlainIncludes(t, view, "22:30:00")
+	assertPlainIncludes(t, view, "22:30:00")
 }
 
 // TestViewLogin renders login form
@@ -214,9 +213,9 @@ func TestViewLogin(t *testing.T) {
 
 	view := m.View()
 
-	tuiview.AssertPlainIncludes(t, view, "Username")
-	tuiview.AssertPlainIncludes(t, view, "Password")
-	tuiview.AssertPlainIncludes(t, view, "Tab")
+	assertPlainIncludes(t, view, "Username")
+	assertPlainIncludes(t, view, "Password")
+	assertPlainIncludes(t, view, "Tab")
 }
 
 // TestHandleCredentialInputTab switches focus

@@ -1135,7 +1135,7 @@ func TestConcurrency(t *testing.T) {
 				for range iterations {
 					cpc, err := pool.Get()
 					if err != nil {
-						if !errors.Is(err, ErrConnectionUnavailable) && !errors.Is(err, ErrPoolClosed) {
+						if !errors.Is(err, ErrPoolClosed) {
 							select {
 							case errChan <- err:
 							default:

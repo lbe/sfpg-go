@@ -1,4 +1,6 @@
-package dbconnpool
+// Package gallerytest provides test-only SQLite databases for gallery tests.
+// Production code must not import it.
+package gallerytest
 
 import (
 	"context"

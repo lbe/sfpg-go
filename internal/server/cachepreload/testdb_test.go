@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/lbe/sfpg-go/internal/testdb/gallerytest"
+
 	"github.com/lbe/sfpg-go/internal/dbconnpool"
 	"github.com/lbe/sfpg-go/internal/gallerydb"
 )
@@ -16,10 +18,10 @@ func newTestPools(t *testing.T) (rw, ro *dbconnpool.DbSQLConnPool) {
 	dir := t.TempDir()
 	mainPath := filepath.Join(dir, "test.db")
 	thumbsPath := filepath.Join(dir, "thumbs.db")
-	if err := dbconnpool.CopyMainTestDatabaseTo(mainPath); err != nil {
+	if err := gallerytest.CopyMainTestDatabaseTo(mainPath); err != nil {
 		t.Fatalf("copy main test database: %v", err)
 	}
-	if err := dbconnpool.CopyThumbsTestDatabaseTo(thumbsPath); err != nil {
+	if err := gallerytest.CopyThumbsTestDatabaseTo(thumbsPath); err != nil {
 		t.Fatalf("copy thumbs test database: %v", err)
 	}
 	open := func(dsn string, readOnly bool) *dbconnpool.DbSQLConnPool {

@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lbe/sfpg-go/internal/testdb/gallerytest"
+
 	_ "github.com/ncruces/go-sqlite3/driver"
 
 	"github.com/lbe/sfpg-go/internal/dbconnpool"
@@ -25,10 +27,10 @@ func setupModuleStatePool(t *testing.T) (*dbconnpool.DbSQLConnPool, func()) {
 	mainPath := filepath.Join(tempDir, "module_state.db")
 	thumbsDBPath := filepath.Join(tempDir, "thumbs.db")
 
-	if err := dbconnpool.CopyMainTestDatabaseTo(mainPath); err != nil {
+	if err := gallerytest.CopyMainTestDatabaseTo(mainPath); err != nil {
 		t.Fatalf("CopyMainTestDatabaseTo: %v", err)
 	}
-	if err := dbconnpool.CopyThumbsTestDatabaseTo(thumbsDBPath); err != nil {
+	if err := gallerytest.CopyThumbsTestDatabaseTo(thumbsDBPath); err != nil {
 		t.Fatalf("CopyThumbsTestDatabaseTo: %v", err)
 	}
 

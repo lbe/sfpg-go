@@ -17,8 +17,6 @@ var (
 	ErrUnauthorized = errors.New("unauthorized")
 	// ErrNetworkError is returned when a network connection fails.
 	ErrNetworkError = errors.New("network error")
-	// ErrLoginFailed is returned when the server rejects the login credentials.
-	ErrLoginFailed = errors.New("login failed")
 )
 
 // Client handles HTTP communication with the sfpg-go server.

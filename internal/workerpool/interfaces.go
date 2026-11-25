@@ -4,15 +4,6 @@ import (
 	"context"
 )
 
-// PoolStatsSnapshot provides read-only access to pool statistics.
-type PoolStatsSnapshot struct {
-	RunningWorkers  int64
-	SubmittedTasks  uint64
-	SuccessfulTasks uint64
-	FailedTasks     uint64
-	CompletedTasks  uint64
-}
-
 // WorkerContext provides the interface workers use to interact with the pool.
 // This abstracts the Pool's methods that workers call during execution.
 type WorkerContext interface {

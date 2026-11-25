@@ -11,9 +11,8 @@
 // The intended consumers http_cache and file_folder_index do not do that;
 // consumer_ddl_lock_integration_test.go locks their DDL.
 //
-// Concurrency note: production Swap DROP TABLEs the stale table on the same
-// goroutine before returning. Tests using staleDropHold still spawn dropStale;
-// those tests use SetMaxOpenConns(1) and hold-before-BeginTx.
+// Concurrency note: Swap DROP TABLEs the stale table on the same goroutine
+// before returning.
 //
 // Index names: SQLite index names are database-global. CreateIndexes allocates
 // a free name with allocateIndexName. The first copy while the live index still
@@ -55,11 +54,6 @@ type DB interface {
 //   - staleDropSkip: dropStale is not run, so t_to_be_dropped lingers.
 //     Cutover/leftover tests use this so they can inspect t_to_be_dropped
 //     without racing the DROP.
-//   - staleDropHold: dropStale is spawned but its worker blocks BEFORE it
-//     acquires a DB connection or runs DROP (it must not skip DROP). Hold-seam
-//     tests use this to prove Swap returns before DROP and DROP later runs.
-//     Hold-before-BeginTx is mandatory for tests that use SetMaxOpenConns(1):
-//     if the worker held a connection while blocked, post-Swap queries would hang.
 //
 // Every test that mutates staleDrop MUST t.Cleanup back to staleDropSync.
 // The seam is unexported. staleDrop is an int so accidental string/bool
@@ -69,39 +63,9 @@ type staleDropMode int
 const (
 	staleDropSync staleDropMode = iota // default: DROP TABLE then return
 	staleDropSkip                      // do not DROP TABLE after cutover
-	staleDropHold                      // test only: spawn, block worker before BeginTx
 )
 
-// dropHold gates the staleDropHold seam. While held, the spawned dropStale
-// worker blocks before it acquires a DB connection or runs DROP. release
-// lets the worker proceed. It is nil unless staleDrop == staleDropHold.
-//
-// release is idempotent: it closes the released channel at most once, so it
-// is safe to call multiple times (e.g., from both a test body and t.Cleanup)
-// without panicking on a double close.
-type dropHoldGate struct {
-	released chan struct{}
-	once     sync.Once
-}
-
-// newDropHold returns a fresh hold gate (blocked).
-func newDropHold() *dropHoldGate {
-	return &dropHoldGate{released: make(chan struct{})}
-}
-
-// release unblocks the worker. It is safe to call more than once.
-func (g *dropHoldGate) release() { g.once.Do(func() { close(g.released) }) }
-
-// waitForHold blocks until release is called. A nil gate returns immediately.
-func (g *dropHoldGate) waitForHold() {
-	if g == nil {
-		return
-	}
-	<-g.released
-}
-
 var staleDrop staleDropMode = staleDropSync
-var dropHold *dropHoldGate
 
 // rewriteIdentifier performs an identifier-bounded substitution: it replaces
 // every whole-word occurrence of from with to in query. Word boundaries (\b)
@@ -324,8 +288,7 @@ func Swap(ctx context.Context, cpc *dbconnpool.CpConn, put func(*dbconnpool.CpCo
 
 	// putOnce releases the leased connection exactly once, regardless of which
 	// code path performs the Put. Swap never defers put at the top: skip Puts
-	// on the way out; production DROP Puts after DROP TABLE; hold Puts in the
-	// spawned worker.
+	// on the way out; the default path Puts in dropStale after DROP TABLE.
 	var putOnce sync.Once
 	putOnceFn := func() { putOnce.Do(func() { put(cpc) }) }
 
@@ -380,10 +343,6 @@ func Swap(ctx context.Context, cpc *dbconnpool.CpConn, put func(*dbconnpool.CpCo
 		putOnceFn()
 		return nil
 	}
-	if staleDrop == staleDropHold {
-		go dropStale(ctx, cpc, stale, putOnceFn)
-		return nil
-	}
 	dropStale(ctx, cpc, stale, putOnceFn)
 	return nil
 }
@@ -394,17 +353,8 @@ func Swap(ctx context.Context, cpc *dbconnpool.CpConn, put func(*dbconnpool.CpCo
 // or Commit failure it logs via slog; Swap still returns nil after a
 // successful cutover even if this DROP TABLE later fails. The drop is
 // best-effort: a missed DROP TABLE IF EXISTS leaves the stale table lingering.
-//
-// Production (staleDropSync) calls this on the Swap goroutine. staleDropHold
-// calls it from a spawned goroutine and blocks here before BeginTx so tests
-// using SetMaxOpenConns(1) can observe the table; holding a connection while
-// blocked would hang post-Swap queries.
 func dropStale(ctx context.Context, cpc *dbconnpool.CpConn, stale string, put func()) {
 	dropCtx := context.WithoutCancel(ctx)
-
-	if staleDrop == staleDropHold && dropHold != nil {
-		dropHold.waitForHold()
-	}
 
 	tx, err := cpc.Conn.BeginTx(dropCtx, nil)
 	if err != nil {

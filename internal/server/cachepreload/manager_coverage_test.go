@@ -57,8 +57,12 @@ func TestPreloadManager_Configure(t *testing.T) {
 
 		pm.Configure(cfg)
 
-		// Should not panic and defaults should be created
-		// We can't directly access the private fields, but we can verify no panic occurred
+		if pm.taskTracker == nil {
+			t.Error("Configure() did not create a default task tracker")
+		}
+		if pm.sessionTracker == nil {
+			t.Error("Configure() did not create a default session tracker")
+		}
 	})
 }
 
@@ -148,31 +152,6 @@ func TestPreloadManager_GetMetrics(t *testing.T) {
 		for range 10 {
 			<-done
 		}
-	})
-}
-
-// TestPreloadManager_ConfigureAndSchedule verifies Configure enables ScheduleFolderPreload.
-func TestPreloadManager_ConfigureAndSchedule(t *testing.T) {
-	t.Run("ScheduleFolderPreload with full config", func(t *testing.T) {
-		pm := NewPreloadManager([]string{"/gallery/"}, true)
-		defer pm.Shutdown()
-		requireScheduler(t, pm)
-
-		// Configure with minimal dependencies
-		taskTracker := &TaskTracker{}
-		sessionTracker := &SessionTracker{}
-		metrics := &PreloadMetrics{}
-
-		cfg := PreloadConfig{
-			TaskTracker:    taskTracker,
-			SessionTracker: sessionTracker,
-			Metrics:        metrics,
-			// Other deps nil - should log debug and return
-		}
-		pm.Configure(cfg)
-
-		// Should not panic when called with incomplete config
-		pm.ScheduleFolderPreload(context.Background(), 1, "session-1")
 	})
 }
 

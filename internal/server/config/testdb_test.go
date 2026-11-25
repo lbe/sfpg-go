@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/lbe/sfpg-go/internal/testdb/gallerytest"
+
 	"github.com/lbe/sfpg-go/internal/dbconnpool"
 	"github.com/lbe/sfpg-go/internal/gallerydb"
 )
@@ -141,10 +143,10 @@ func newIsolatedConfigService(t *testing.T) *configService {
 	dir := t.TempDir()
 	mainPath := filepath.Join(dir, "main.db")
 	thumbsPath := filepath.Join(dir, "thumbs.db")
-	if copyErr := dbconnpool.CopyMainTestDatabaseTo(mainPath); copyErr != nil {
+	if copyErr := gallerytest.CopyMainTestDatabaseTo(mainPath); copyErr != nil {
 		t.Fatalf("copy main test database: %v", copyErr)
 	}
-	if copyErr := dbconnpool.CopyThumbsTestDatabaseTo(thumbsPath); copyErr != nil {
+	if copyErr := gallerytest.CopyThumbsTestDatabaseTo(thumbsPath); copyErr != nil {
 		t.Fatalf("copy thumbs test database: %v", copyErr)
 	}
 
