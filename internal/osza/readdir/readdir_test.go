@@ -295,6 +295,9 @@ func TestReadDirCallerRetry(t *testing.T) {
 }
 
 func TestZeroAllocs(t *testing.T) {
+	if runtime.GOOS == "darwin" {
+		t.Skip(`darwin syscall.ReadDirent allocates: Getdirentries calls openat(fd, ".")`)
+	}
 	root := setupDir(t, []string{"a", "b", "c"}, []string{"d"})
 	entries := make([]readdir.Entry, 16)
 	nameBuf := make([]byte, 4096)

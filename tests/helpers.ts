@@ -186,12 +186,24 @@ export async function waitForConfigModalDismissed(page: Page): Promise<void> {
   });
 }
 
-/** Open Configuration from the menu and wait for the modal shell. */
+/**
+ * Wait until an HTMX swap into target has settled. htmx 1.9 inserts swapped
+ * content at once but attaches hx-* triggers and Hyperscript during the settle
+ * (~20ms later), so acting on new content right away can fire before any listener.
+ * Call only after the swapped content is visible: target carries htmx-settling
+ * from the swap until the settle completes.
+ */
+export async function waitForHtmxSettle(target: Locator): Promise<void> {
+  await expect(target).not.toHaveClass(/htmx-settling/, { timeout: 5000 });
+}
+
+/** Open Configuration from the menu and wait for the modal to settle. */
 export async function openConfigModalFromMenu(page: Page): Promise<Locator> {
   await openMenu(page);
   await page.locator('a[aria-label="Configuration"]').click();
   const root = configModal(page);
   await expect(root.locator("#config-form")).toBeVisible({ timeout: 5000 });
+  await waitForHtmxSettle(page.locator("body"));
   await expect(root.locator("#config_modal")).toBeChecked({ timeout: 5000 });
   return root;
 }

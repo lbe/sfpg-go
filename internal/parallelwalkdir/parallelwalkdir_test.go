@@ -1,7 +1,6 @@
 package parallelwalkdir
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -238,20 +237,12 @@ func regexpMust(s string) *regexp.Regexp {
 	return r
 }
 
-func evalDirRealPathForTest(current, reported string, bufs *readDirBuffers) (PathHash, bool, error) {
-	work := &dirWork{
-		current:  cloneStringPath(current),
-		reported: cloneStringPath(reported),
-	}
-	if bytes.Equal(work.current, work.reported) {
-		work.reported = work.current
-	}
-	work.visitKey = HashPathBytes(work.current)
-	dirLen, err := writePathBytes(bufs.pathBuf, work.current)
+func evalDirRealPathForTest(current string, bufs *readDirBuffers) (PathHash, bool, error) {
+	dirLen, err := writePathBytes(bufs.pathBuf, []byte(current))
 	if err != nil {
 		return PathHash{}, false, err
 	}
-	return evalDirRealPath(work, bufs, dirLen)
+	return evalDirRealPath(HashPathBytes([]byte(current)), bufs, dirLen)
 }
 
 // reportedPathForWalkTest maps an absolute reported path to rootDir/... expected by tests.
@@ -414,15 +405,39 @@ func TestBasenameSuffixesFromPattern_Invalid(t *testing.T) {
 	}
 }
 
+// TestResetDirWorkUnaliasesReported reuses a dirWork whose reported aliased
+// current, then fills it with different paths as dirWorkFromBufs does.
+func TestResetDirWorkUnaliasesReported(t *testing.T) {
+	path := cloneStringPath("/same/dir")
+	d := &dirWork{current: path, reported: path}
+
+	resetDirWork(d)
+	current, reported := []byte("/real/dir"), []byte("/link/dir")
+	copyPathInto(&d.current, current, len(current))
+	copyPathInto(&d.reported, reported, len(reported))
+
+	if string(d.current) != "/real/dir" {
+		t.Errorf("current=%q want %q", d.current, "/real/dir")
+	}
+	if string(d.reported) != "/link/dir" {
+		t.Errorf("reported=%q want %q", d.reported, "/link/dir")
+	}
+}
+
 func TestEvalDirRealPath(t *testing.T) {
 	bufs := newReadDirBuffers()
-	d := t.TempDir()
+	// Resolve the temp dir so the canonical-hash expectations hold on macOS,
+	// where it is under the /var -> /private/var symlink.
+	d, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	plain := filepath.Join(d, "plain")
-	if err := os.MkdirAll(plain, 0o755); err != nil {
+	if err = os.MkdirAll(plain, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
-	got, loopGuard, err := evalDirRealPathForTest(plain, plain, bufs)
+	got, loopGuard, err := evalDirRealPathForTest(plain, bufs)
 	if err != nil {
 		t.Fatalf("evalDirRealPath: %v", err)
 	}
@@ -445,7 +460,7 @@ func TestEvalDirRealPath(t *testing.T) {
 	if err = os.Symlink(target, link); err != nil {
 		t.Fatal(err)
 	}
-	got, loopGuard, err = evalDirRealPathForTest(link, link, bufs)
+	got, loopGuard, err = evalDirRealPathForTest(link, bufs)
 	if err != nil {
 		t.Fatalf("evalDirRealPath symlink dir: %v", err)
 	}
@@ -455,17 +470,6 @@ func TestEvalDirRealPath(t *testing.T) {
 	}
 	if !loopGuard {
 		t.Fatal("expected loopGuard true for symlink dir")
-	}
-
-	got, loopGuard, err = evalDirRealPathForTest(link, filepath.Join(d, "reported"), bufs)
-	if err != nil {
-		t.Fatalf("evalDirRealPath divergent: %v", err)
-	}
-	if got != want {
-		t.Fatalf("got %s want %s", got, want)
-	}
-	if !loopGuard {
-		t.Fatal("expected loopGuard true for divergent paths")
 	}
 }
 
@@ -600,6 +604,29 @@ func TestParallelWalk(t *testing.T) {
 	}
 
 	testWalkWithOptions(t, d, nil, expectedFiles, expectedErrors, cleanup)
+}
+
+// TestParallelWalk_SymlinkedRootAncestor walks a root reached through a
+// symlinked ancestor. A symlink back into the tree must not walk it twice, and
+// reported paths keep the root as given.
+func TestParallelWalk_SymlinkedRootAncestor(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink tests skipped on Windows")
+	}
+	real, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustMkdir(t, real, "rootDir", "dir1", "sub")
+	mustWriteFile(t, real, "a.jpg", "rootDir", "dir1")
+	mustSymlink(t, real, "../../dir1", filepath.Join("rootDir", "dir1", "sub", "back"))
+
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+
+	testWalkWithOptions(t, link, nil, []string{"rootDir/dir1/a.jpg"}, 0, nil)
 }
 
 func TestParallelWalk_FeederStopEmptyQueue(t *testing.T) {
@@ -1107,8 +1134,9 @@ func TestWalkPlainDirTreeSkipsEvalSymlinks(t *testing.T) {
 	})()
 
 	d := t.TempDir()
-	mustMkdir(t, d, "rootDir", "sub")
+	mustMkdir(t, d, "rootDir", "sub", "subsub")
 	mustWriteFile(t, d, "photo.jpg", "rootDir", "sub")
+	mustWriteFile(t, d, "photo2.jpg", "rootDir", "sub", "subsub")
 
 	walker := newTestWalker(1)
 	resultsChan, errChan := walker.ParallelWalk(filepath.Join(d, "rootDir"))
@@ -1116,11 +1144,12 @@ func TestWalkPlainDirTreeSkipsEvalSymlinks(t *testing.T) {
 	if len(errs) != 0 {
 		t.Fatalf("errors: %v", errs)
 	}
-	if len(results) != 1 {
-		t.Fatalf("results=%d want 1", len(results))
+	if len(results) != 2 {
+		t.Fatalf("results=%d want 2", len(results))
 	}
-	if evalCalls.Load() != 0 {
-		t.Fatalf("EvalSymlinks calls=%d want 0 for aligned non-symlink dirs", evalCalls.Load())
+	// The root is resolved once; directories below it skip EvalSymlinks.
+	if evalCalls.Load() != 1 {
+		t.Fatalf("EvalSymlinks calls=%d want 1 (root only) for non-symlink dirs", evalCalls.Load())
 	}
 }
 

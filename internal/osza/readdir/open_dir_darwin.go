@@ -13,23 +13,17 @@ func openDir(pathBuf []byte, pathLen int) (int, error) {
 	return openDirAt(unix.AT_FDCWD, pathBuf, pathLen)
 }
 
+// openDirAt opens pathBuf[:pathLen] relative to dirfd. Darwin supports system
+// calls only through libSystem, so it calls unix.Openat, which copies the path
+// to add the NUL; pathBuf is not modified.
 func openDirAt(dirfd int, pathBuf []byte, pathLen int) (int, error) {
 	if pathLen <= 0 || pathLen >= len(pathBuf) {
 		return -1, syscall.EINVAL
 	}
-	saved := pathBuf[pathLen]
-	pathBuf[pathLen] = 0
-	defer func() { pathBuf[pathLen] = saved }()
-
-	fd, _, errno := unix.Syscall6(
-		unix.SYS_OPENAT,
-		uintptr(dirfd),
-		uintptr(unsafe.Pointer(&pathBuf[0])),
-		uintptr(unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC),
-		0, 0, 0,
-	)
-	if errno != 0 {
-		return -1, errno
+	path := unsafe.String(unsafe.SliceData(pathBuf), pathLen)
+	fd, err := unix.Openat(dirfd, path, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return -1, err
 	}
-	return int(fd), nil
+	return fd, nil
 }

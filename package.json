@@ -1,6 +1,5 @@
 {
   "devDependencies": {
-    "@executeautomation/playwright-mcp-server": "^1.0.12",
     "@playwright/test": "^1.61.1",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^26.0.1",

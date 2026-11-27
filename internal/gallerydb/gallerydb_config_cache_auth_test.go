@@ -330,6 +330,7 @@ func TestHttpCacheQueries(t *testing.T) {
 			Path:      "/api/test2",
 			Status:    200,
 			CreatedAt: now,
+			Body:      []byte{},
 		})
 		if err != nil {
 			t.Fatalf("UpsertHttpCache (second entry) failed: %v", err)
@@ -408,6 +409,7 @@ func TestHttpCacheQueries(t *testing.T) {
 			Path:      "/api/expired",
 			Status:    200,
 			CreatedAt: pastTime - 100,
+			Body:      []byte{},
 			ExpiresAt: sql.NullInt64{Int64: pastTime, Valid: true},
 		})
 		if err != nil {
@@ -420,6 +422,7 @@ func TestHttpCacheQueries(t *testing.T) {
 			Path:      "/api/valid",
 			Status:    200,
 			CreatedAt: now,
+			Body:      []byte{},
 			ExpiresAt: sql.NullInt64{Int64: now + 3600, Valid: true},
 		})
 		if err != nil {
@@ -449,6 +452,7 @@ func TestHttpCacheQueries(t *testing.T) {
 			Path:      "/api/clearme",
 			Status:    200,
 			CreatedAt: now,
+			Body:      []byte{},
 		})
 		if err != nil {
 			t.Fatalf("UpsertHttpCache (for clear test) failed: %v", err)

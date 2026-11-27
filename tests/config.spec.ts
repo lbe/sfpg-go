@@ -1,9 +1,10 @@
 import { test, expect } from "@playwright/test";
 import {
   ensureGallerySession,
-  openMenu,
+  openConfigModalFromMenu,
   openConfigTab,
   waitForConfigModalDismissed,
+  waitForHtmxSettle,
 } from "./helpers";
 import {
   makeSnapshotRestore,
@@ -32,9 +33,7 @@ test.describe.serial("Configuration", () => {
   });
 
   test("1: Config modal opens from menu", async ({ page }) => {
-    await openMenu(page);
-    await page.locator('a[aria-label="Configuration"]').click();
-    await page.waitForSelector("#config-form", { timeout: 5000 });
+    await openConfigModalFromMenu(page);
     await expect(page.locator("#config_modal")).toBeChecked({ timeout: 3000 });
     // Switch to Application tab (site_name lives there, Server tab is default)
     await openConfigTab(
@@ -47,9 +46,7 @@ test.describe.serial("Configuration", () => {
   });
 
   test("2: Config modal cancel closes modal", async ({ page }) => {
-    await openMenu(page);
-    await page.locator('a[aria-label="Configuration"]').click();
-    await page.waitForSelector("#config-form", { timeout: 5000 });
+    await openConfigModalFromMenu(page);
     await expect(page.locator("#config_modal")).toBeChecked({ timeout: 3000 });
 
     await page.locator("#config-cancel-btn").click();
@@ -58,9 +55,7 @@ test.describe.serial("Configuration", () => {
 
   test("3: Config save (site name)", async ({ page }) => {
     // Read current site name first so we can restore it
-    await openMenu(page);
-    await page.locator('a[aria-label="Configuration"]').click();
-    await page.waitForSelector("#config-form", { timeout: 5000 });
+    await openConfigModalFromMenu(page);
     await openConfigTab(
       page,
       "#tab-application-btn",
@@ -84,9 +79,7 @@ test.describe.serial("Configuration", () => {
 
     await waitForConfigModalDismissed(page);
 
-    await openMenu(page);
-    await page.locator('a[aria-label="Configuration"]').click();
-    await page.waitForSelector("#config-form", { timeout: 5000 });
+    await openConfigModalFromMenu(page);
     await openConfigTab(
       page,
       "#tab-application-btn",
@@ -109,9 +102,7 @@ test.describe.serial("Configuration", () => {
   });
 
   test("3b: Config save (login security)", async ({ page }) => {
-    await openMenu(page);
-    await page.locator('a[aria-label="Configuration"]').click();
-    await page.waitForSelector("#config-form", { timeout: 5000 });
+    await openConfigModalFromMenu(page);
     await openConfigTab(
       page,
       "#tab-session-btn",
@@ -137,9 +128,7 @@ test.describe.serial("Configuration", () => {
 
     await waitForConfigModalDismissed(page);
 
-    await openMenu(page);
-    await page.locator('a[aria-label="Configuration"]').click();
-    await page.waitForSelector("#config-form", { timeout: 5000 });
+    await openConfigModalFromMenu(page);
     await openConfigTab(
       page,
       "#tab-session-btn",
@@ -197,9 +186,7 @@ test.describe.serial("Configuration", () => {
   });
 
   test("4: Config validation error", async ({ page }) => {
-    await openMenu(page);
-    await page.locator('a[aria-label="Configuration"]').click();
-    await page.waitForSelector("#config-form", { timeout: 5000 });
+    await openConfigModalFromMenu(page);
     await openConfigTab(
       page,
       "#tab-application-btn",
@@ -226,18 +213,14 @@ test.describe.serial("Configuration", () => {
   test("5: Theme list management", async ({ page }) => {
     // This test depends on config modal having a theme section.
     // Accept the save without asserting specific theme values.
-    await openMenu(page);
-    await page.locator('a[aria-label="Configuration"]').click();
-    await page.waitForSelector("#config-form", { timeout: 5000 });
+    await openConfigModalFromMenu(page);
 
     // Just verify the config form renders (theme list may be part of the form)
     await expect(page.locator("#config-form")).toBeVisible();
   });
 
   test("6: Increment ETag standalone", async ({ page }) => {
-    await openMenu(page);
-    await page.locator('a[aria-label="Configuration"]').click();
-    await page.waitForSelector("#config-form", { timeout: 5000 });
+    await openConfigModalFromMenu(page);
 
     // Read current etag version
     const etagVersionInput = page.locator("#config-etag-version");
@@ -255,9 +238,7 @@ test.describe.serial("Configuration", () => {
   });
 
   test("7: Config export to file", async ({ page }) => {
-    await openMenu(page);
-    await page.locator('a[aria-label="Configuration"]').click();
-    await page.waitForSelector("#config-form", { timeout: 5000 });
+    await openConfigModalFromMenu(page);
 
     // The Export button is in the Server tab footer (default tab)
     const exportBtn = page.locator('button[hx-post="/config/export/to-file"]');
@@ -287,9 +268,7 @@ test.describe.serial("Configuration", () => {
 
   test("8: Config export download", async ({ page }) => {
     // Open the Export modal first (sets up the download link)
-    await openMenu(page);
-    await page.locator('a[aria-label="Configuration"]').click();
-    await page.waitForSelector("#config-form", { timeout: 5000 });
+    await openConfigModalFromMenu(page);
 
     const exportBtn = page.locator('button[hx-post="/config/export/to-file"]');
     await expect(exportBtn).toBeVisible({ timeout: 5000 });
@@ -320,9 +299,7 @@ test.describe.serial("Configuration", () => {
   });
 
   test("9: Config import preview", async ({ page }) => {
-    await openMenu(page);
-    await page.locator('a[aria-label="Configuration"]').click();
-    await page.waitForSelector("#config-form", { timeout: 5000 });
+    await openConfigModalFromMenu(page);
 
     // The Import button triggers a hidden file input (#import-file-input)
     // that uploads to /config/import/preview via HTMX.
@@ -354,9 +331,7 @@ test.describe.serial("Configuration", () => {
   test("10: Config import commit", async ({ page, request }) => {
     // Use the preview flow to upload YAML, then commit the import.
     // The snapshot/restore in beforeAll/afterAll ensures config is restored.
-    await openMenu(page);
-    await page.locator('a[aria-label="Configuration"]').click();
-    await page.waitForSelector("#config-form", { timeout: 5000 });
+    await openConfigModalFromMenu(page);
 
     const yamlContent = "site-name: SmokeTestImported\n";
     const tmpFile = path.join(os.tmpdir(), "test-import-commit.yaml");
@@ -378,6 +353,7 @@ test.describe.serial("Configuration", () => {
       "#import-diff-modal .modal-action button[hx-post='/config/import/commit']",
     );
     await expect(commitBtn).toBeVisible({ timeout: 3000 });
+    await waitForHtmxSettle(page.locator("#import-diff-modal"));
     await commitBtn.click();
 
     const api = await authenticatedAPIContext(request);
@@ -389,9 +365,7 @@ test.describe.serial("Configuration", () => {
   });
 
   test("11: Config restore last-known-good", async ({ page }) => {
-    await openMenu(page);
-    await page.locator('a[aria-label="Configuration"]').click();
-    await page.waitForSelector("#config-form", { timeout: 5000 });
+    await openConfigModalFromMenu(page);
 
     const restoreBtn = page.locator("text=Restore").first();
     if (await restoreBtn.isVisible().catch(() => false)) {

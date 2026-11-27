@@ -15,7 +15,7 @@ import {
   type Page,
 } from "@playwright/test";
 
-import { configModal, openMenu } from "./helpers";
+import { openConfigModalFromMenu } from "./helpers";
 
 const BASE_URL = "http://localhost:8083";
 
@@ -24,11 +24,7 @@ const BASE_URL = "http://localhost:8083";
  * controls are interactive (avoids flakes after prior saves in serial runs).
  */
 export async function openConfigPerformanceTab(page: Page): Promise<Locator> {
-  await openMenu(page);
-  await page.locator('a[aria-label="Configuration"]').click();
-  const root = configModal(page);
-  await expect(root.locator("#config-form")).toBeVisible({ timeout: 5000 });
-  await expect(root.locator("#config_modal")).toBeChecked({ timeout: 5000 });
+  const root = await openConfigModalFromMenu(page);
   const perfTab = root.locator("#tab-performance-btn");
   await perfTab.scrollIntoViewIfNeeded();
   await expect(perfTab).toBeVisible({ timeout: 5000 });

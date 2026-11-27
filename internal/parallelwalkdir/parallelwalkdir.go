@@ -11,9 +11,11 @@
 // cancels and joins the feeder, drains queued work, closes dirCh, joins workers,
 // and closes results and errs.
 //
-// Visit tracking uses FNV-1a 128-bit hashes of canonical directory path bytes
-// (EvalSymlinks when needed) to avoid symlink loops. Hash collisions may silently
-// skip a directory (accepted policy).
+// Visit tracking uses FNV-1a 128-bit hashes of directory path bytes to avoid
+// symlink loops. The root is resolved with EvalSymlinks once, so directories below
+// it are keyed by their path without EvalSymlinks; symlinked directories are keyed
+// by their canonical path. Reported paths keep the root as given. Hash collisions
+// may silently skip a directory (accepted policy).
 //
 // # Filtering
 //
@@ -88,25 +90,38 @@ var (
 type basenameIncludeFunc func(name []byte) bool
 
 type dirWork struct {
-	current  []byte
+	// current is the path read: below the root it starts from the canonical root.
+	current []byte
+	// reported is the same directory under the root path as given to ParallelWalk.
 	reported []byte
 	// visitKey is HashPathBytes(work.current) at schedule time; used when EvalSymlinks
 	// is skipped so eval does not re-hash or canonicalize.
 	visitKey PathHash
+	// root marks the walk root, whose path processDir replaces with its canonical form.
+	root bool
 }
 
 var dirWorkPool = gensyncpool.New(
 	func() *dirWork { return &dirWork{} },
-	func(d *dirWork) {
-		if d.current != nil {
-			d.current = d.current[:0]
-		}
-		if d.reported != nil {
-			d.reported = d.reported[:0]
-		}
-		d.visitKey = PathHash{}
-	},
+	resetDirWork,
 )
+
+// resetDirWork clears d for reuse and keeps its path buffers. A reported that
+// aliases current is dropped, so a later fill with different paths cannot write
+// reported over current.
+func resetDirWork(d *dirWork) {
+	if cap(d.current) > 0 && cap(d.reported) > 0 && &d.current[:1][0] == &d.reported[:1][0] {
+		d.reported = nil
+	}
+	if d.current != nil {
+		d.current = d.current[:0]
+	}
+	if d.reported != nil {
+		d.reported = d.reported[:0]
+	}
+	d.visitKey = PathHash{}
+	d.root = false
+}
 
 // Option configures a Walker.
 type Option func(*Walker)
@@ -252,7 +267,7 @@ func (w *Walker) ParallelWalk(rootPath string) (<-chan ReportedFile, <-chan erro
 		dw := dirWorkPool.Get()
 		dw.current = root
 		dw.reported = root
-		dw.visitKey = HashPathBytes([]byte(rootPath))
+		dw.root = true
 		schedule(dw)
 
 		stopWake := context.AfterFunc(w.ctx, func() {
@@ -342,21 +357,27 @@ func (w *Walker) processDir(work *dirWork, schedule func(*dirWork), dirBufs *rea
 
 	dirLen, err := writePathBytes(dirBufs.pathBuf, work.current)
 	if err != nil {
-		w.sendErr(&fs.PathError{Op: "ReadDir", Path: string(work.current), Err: err})
+		w.sendErr(&fs.PathError{Op: "ReadDir", Path: string(work.reported), Err: err})
 		return
 	}
 	reportedLen, err := writePathBytes(dirBufs.reportedBuf, work.reported)
 	if err != nil {
-		w.sendErr(&fs.PathError{Op: "ReadDir", Path: string(work.current), Err: err})
+		w.sendErr(&fs.PathError{Op: "ReadDir", Path: string(work.reported), Err: err})
 		return
 	}
 
-	visitHash, loopGuard, err := evalDirRealPath(work, dirBufs, dirLen)
+	var visitHash PathHash
+	var loopGuard bool
+	if work.root {
+		dirLen, visitHash, err = resolveRoot(dirBufs, dirLen)
+	} else {
+		visitHash, loopGuard, err = evalDirRealPath(work.visitKey, dirBufs, dirLen)
+	}
 	if err != nil {
 		if w.ctx.Err() == nil {
 			slog.Error("EvalSymlinks error", "currentPath", string(work.current), "err", err)
 		}
-		w.sendErr(&fs.PathError{Op: "EvalSymlinks", Path: string(work.current), Err: err})
+		w.sendErr(&fs.PathError{Op: "EvalSymlinks", Path: string(work.reported), Err: err})
 		return
 	}
 
@@ -394,7 +415,7 @@ func (w *Walker) processDir(work *dirWork, schedule func(*dirWork), dirBufs *rea
 			w.filterAndReportFile(dirBufs.reportedBuf, reportedLen, info, false, entMap, fileBasename)
 			return
 		}
-		w.sendErr(&fs.PathError{Op: "ReadDir", Path: materializeString(dirBufs.pathBuf, dirLen), Err: err})
+		w.sendErr(&fs.PathError{Op: "ReadDir", Path: materializeString(dirBufs.reportedBuf, reportedLen), Err: err})
 		return
 	}
 
@@ -402,7 +423,7 @@ func (w *Walker) processDir(work *dirWork, schedule func(*dirWork), dirBufs *rea
 		return
 	}
 
-	splitReported := !bytes.Equal(work.current, work.reported)
+	splitReported := !bytes.Equal(dirBufs.pathBuf[:dirLen], dirBufs.reportedBuf[:reportedLen])
 
 	for i := range n {
 		if w.ctx.Err() != nil {
@@ -453,7 +474,7 @@ func (w *Walker) processDir(work *dirWork, schedule func(*dirWork), dirBufs *rea
 
 		info, statErr := fileInfoForDirEntry(dirBufs, entry)
 		if statErr != nil {
-			if !w.sendErr(&fs.PathError{Op: "Stat", Path: materializeString(dirBufs.pathBuf, pathEnd), Err: statErr}) {
+			if !w.sendErr(&fs.PathError{Op: "Stat", Path: materializeString(dirBufs.reportedBuf, reportedEnd), Err: statErr}) {
 				return
 			}
 			continue
@@ -791,28 +812,38 @@ func evalSymlinksCanonical(bufs *readDirBuffers, pathLen int) (canonicalLen int,
 	}
 }
 
-// evalDirRealPath returns the visit map key and whether to check visited before
-// descent (symlink alias or canonical path differs from work.current). When current
-// and reported paths match and current is not a symlink, EvalSymlinks is skipped.
-func evalDirRealPath(work *dirWork, bufs *readDirBuffers, dirLen int) (PathHash, bool, error) {
-	if !bytes.Equal(work.current, work.reported) {
-		canonicalLen, err := evalSymlinksCanonical(bufs, dirLen)
-		if err != nil {
-			return PathHash{}, false, err
-		}
-		canonical := bufs.evalDest[:canonicalLen]
-		return HashPathBytes(canonical), !bytes.Equal(work.current, canonical), nil
-	}
+// evalDirRealPath returns the visit map key for the directory at
+// bufs.pathBuf[:dirLen] and whether to check visited before descent. A directory
+// that is not a symlink is keyed by visitKey without EvalSymlinks. A symlinked
+// directory is keyed by its canonical path; loopGuard reports whether that
+// differs from the path read.
+func evalDirRealPath(visitKey PathHash, bufs *readDirBuffers, dirLen int) (PathHash, bool, error) {
 	info, err := walkLstatPathLen(bufs, dirLen)
 	if err == nil && info.Mode()&fs.ModeSymlink == 0 {
-		return work.visitKey, false, nil
+		return visitKey, false, nil
 	}
 	canonicalLen, err := evalSymlinksCanonical(bufs, dirLen)
 	if err != nil {
 		return PathHash{}, false, err
 	}
 	canonical := bufs.evalDest[:canonicalLen]
-	return HashPathBytes(canonical), !bytes.Equal(work.current, canonical), nil
+	return HashPathBytes(canonical), !bytes.Equal(bufs.pathBuf[:dirLen], canonical), nil
+}
+
+// resolveRoot replaces the root path in bufs.pathBuf[:dirLen] with its canonical
+// form and returns its length and visit key. Directories below the root are then
+// keyed by canonical paths that match the target of a symlink back into the tree,
+// even when an ancestor of the root is a symlink.
+func resolveRoot(bufs *readDirBuffers, dirLen int) (int, PathHash, error) {
+	canonicalLen, err := evalSymlinksCanonical(bufs, dirLen)
+	if err != nil {
+		return 0, PathHash{}, err
+	}
+	n, err := writePathBytes(bufs.pathBuf, bufs.evalDest[:canonicalLen])
+	if err != nil {
+		return 0, PathHash{}, err
+	}
+	return n, HashPathBytes(bufs.pathBuf[:n]), nil
 }
 
 func basenameInBuf(buf []byte, n int) []byte {

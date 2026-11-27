@@ -55,7 +55,7 @@ test-browser:
 	# Run browser-based menu/auth tests via Playwright (requires air on :8083)
 	# setup auth, then chromium (parallel) and chromium-serial (config + restart, workers=1)
 	# Skip post-suite cache batch load in global teardown (see tests/global-teardown.ts).
-	time SFPG_PW_SKIP_CACHE_BATCH=1 npx playwright test --project=chromium --project=chromium-serial --reporter=list
+	time ( SFPG_PW_SKIP_CACHE_BATCH=1 npx playwright test --project=chromium --project=chromium-serial --reporter=list )
 
 .PHONY: test-race
 test-race:

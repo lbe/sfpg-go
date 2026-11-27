@@ -20,6 +20,17 @@ func copyPathBuf(path string) []byte {
 	return buf
 }
 
+// realTempDir returns t.TempDir() with symlinks resolved. On macOS the temp
+// directory is under /var, a symlink to /private/var.
+func realTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
 func evalAt(path string, pathCap int, destCap int) (string, error) {
 	pathBuf := make([]byte, pathCap)
 	copy(pathBuf, path)
@@ -143,7 +154,7 @@ func TestEvalSymlinksAtLoop(t *testing.T) {
 }
 
 func TestEvalSymlinksAtDestTooSmall(t *testing.T) {
-	root := t.TempDir()
+	root := realTempDir(t)
 	if err := os.Mkdir(filepath.Join(root, "d"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -203,7 +214,7 @@ func TestEvalSymlinksAtGrowPathBufRetry(t *testing.T) {
 }
 
 func TestEvalSymlinksFacade(t *testing.T) {
-	root := t.TempDir()
+	root := realTempDir(t)
 	sub := filepath.Join(root, "d")
 	if err := os.Mkdir(sub, 0o755); err != nil {
 		t.Fatal(err)
