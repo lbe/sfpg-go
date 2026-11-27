@@ -23,6 +23,10 @@ jobs:
             arch: amd64
           - os: windows
             arch: arm64
+          - os: freebsd
+            arch: amd64
+          - os: freebsd
+            arch: arm64
     steps:
       - uses: actions/checkout@v6
         with:
@@ -36,12 +40,12 @@ jobs:
       - name: Build Binary
         run: |
           go generate ./...
-          BINARY_NAME=sfpg
+          EXT=""
           if [ "${{ matrix.os }}" = "windows" ]; then
-            BINARY_NAME="sfpg.exe"
+            EXT=".exe"
           fi
 
-          GOOS=${{ matrix.os }} GOARCH=${{ matrix.arch }} go build -v -o "dist/${BINARY_NAME}-${{ matrix.os }}-${{ matrix.arch }}" .
+          GOOS=${{ matrix.os }} GOARCH=${{ matrix.arch }} go build -v -o "dist/sfpg-${{ matrix.os }}-${{ matrix.arch }}${EXT}" .
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v7
