@@ -1791,6 +1791,9 @@ func TestNewCpConn_AttachError(t *testing.T) {
 }
 
 func TestNewCpConn_ThumbsPragmasError(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("Skipping permission test as root, which bypasses permissions")
+	}
 	dbPath, thumbsDBPath, cleanup := setupTestDB(t)
 	defer cleanup()
 

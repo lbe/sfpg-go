@@ -110,9 +110,9 @@ func createComplexTestDirStructure(t *testing.T, root string) ([]string, func())
 		for _, file := range files {
 			mustWriteFile(t, root, file, realDir)
 			// Do not add files from the unreadable directory to the expected list
-			// when we intend to make it unreadable (non-Windows). On Windows the
-			// permission test is skipped, so include those files in expectations.
-			if realDir != "rootDir/dir2/dir2a" || runtime.GOOS == "windows" {
+			// when we intend to make it unreadable. Where permissions are not
+			// enforced the directory stays readable, so include those files.
+			if realDir != "rootDir/dir2/dir2a" || !permissionsEnforced() {
 				expectedFiles = append(expectedFiles, filepath.ToSlash(filepath.Join(reportedDir, file)))
 			}
 		}
@@ -128,14 +128,12 @@ func createComplexTestDirStructure(t *testing.T, root string) ([]string, func())
 
 	// 4. Change permissions on a directory to make its content unaccessible.
 	unreadableDir := filepath.Join(root, "rootDir", "dir2", "dir2a")
-	if runtime.GOOS != "windows" {
-		// On Unix systems, make the directory unreadable
+	if permissionsEnforced() {
 		if err := os.Chmod(unreadableDir, 0o111); err != nil {
 			t.Fatalf("os.Chmod on %s returned %v\n", unreadableDir, err)
 		}
 	} else {
-		// On Windows, permission tests are skipped as they work differently
-		t.Log("Skipping permission test on Windows")
+		t.Log("Skipping permission test: permissions not enforced (Windows or root)")
 	}
 
 	// Give the filesystem a moment to settle
@@ -596,14 +594,18 @@ func TestParallelWalk(t *testing.T) {
 		expectedFiles = allFiles
 	}
 
-	// On Windows, directory permissions work differently, and we might not get
-	// the same permission errors as on Unix systems
 	expectedErrors := 0
-	if runtime.GOOS != "windows" {
-		expectedErrors = 1 // Expect error from unreadable directory on Unix systems
+	if permissionsEnforced() {
+		expectedErrors = 1 // Expect error from the unreadable directory
 	}
 
 	testWalkWithOptions(t, d, nil, expectedFiles, expectedErrors, cleanup)
+}
+
+// permissionsEnforced reports whether chmod can make a directory unreadable to
+// this process: not on Windows, and not as root, which bypasses permissions.
+func permissionsEnforced() bool {
+	return runtime.GOOS != "windows" && os.Getuid() != 0
 }
 
 // TestParallelWalk_SymlinkedRootAncestor walks a root reached through a

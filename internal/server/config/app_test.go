@@ -123,6 +123,9 @@ func TestValidateImageDirectory_NotReadable(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Skipping permission test on Windows")
 	}
+	if os.Getuid() == 0 {
+		t.Skip("Skipping permission test as root, which bypasses permissions")
+	}
 
 	tempDir := t.TempDir()
 	testDir := filepath.Join(tempDir, "no-read")
