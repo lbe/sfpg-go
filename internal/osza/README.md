@@ -16,9 +16,9 @@ internal/osza/
 ├── readdir/
 │   ├── readdir.go          # portable API
 │   ├── entry.go            # IsDir, Type
-│   ├── entry_unix.go       # Info (linux, darwin)
+│   ├── entry_unix.go       # Info (linux, darwin, freebsd)
 │   ├── entry_windows.go    # Info
-│   ├── readdir_unix.go     # linux, darwin
+│   ├── readdir_unix.go     # linux, darwin, freebsd
 │   ├── readdir_windows.go
 │   └── readdir_test.go     # exhaustive behavior tests
 └── stat/
@@ -82,16 +82,16 @@ Run `go doc github.com/lbe/sfpg-go/internal/osza` (or `-u` for readdir). Package
 
 ## Tests
 
-| Location                                 | Role                                             |
-| ---------------------------------------- | ------------------------------------------------ |
-| `osza_test.go`                           | Facade smoke (ReadDir, stat, sentinels)          |
-| `readdir/readdir_test.go`                | Overflow, unicode, os.ReadDir parity, retry      |
-| `readdir/readdir_checkptr_test.go`       | Unix checkptr / concurrent grow-retry canary     |
-| `readdir/readdir_symlinks_linux_test.go` | Linux symlink ReadDir parity                     |
-| `stat/stat_test.go`                      | `*At`/`*Join`, joinPacked, parity (linux/darwin) |
-| `stat/stat_windows_test.go`              | Same parity + alloc tests on Windows             |
-| `*_benchmark_test.go`                    | `ReportAllocs` / throughput (not CI gates)       |
-| `example/read_dir_retry/`                | Grow-and-retry integrator reference              |
+| Location                                 | Role                                                     |
+| ---------------------------------------- | -------------------------------------------------------- |
+| `osza_test.go`                           | Facade smoke (ReadDir, stat, sentinels)                  |
+| `readdir/readdir_test.go`                | Overflow, unicode, os.ReadDir parity, retry              |
+| `readdir/readdir_checkptr_test.go`       | Unix checkptr / concurrent grow-retry canary             |
+| `readdir/readdir_symlinks_linux_test.go` | Linux symlink ReadDir parity                             |
+| `stat/stat_test.go`                      | `*At`/`*Join`, joinPacked, parity (linux/darwin/freebsd) |
+| `stat/stat_windows_test.go`              | Same parity + alloc tests on Windows                     |
+| `*_benchmark_test.go`                    | `ReportAllocs` / throughput (not CI gates)               |
+| `example/read_dir_retry/`                | Grow-and-retry integrator reference                      |
 
 ```bash
 go test ./internal/osza/...

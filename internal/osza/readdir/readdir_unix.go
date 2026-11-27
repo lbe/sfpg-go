@@ -1,4 +1,4 @@
-//go:build linux || darwin
+//go:build linux || darwin || freebsd
 
 package readdir
 
@@ -23,8 +23,6 @@ const minScratchBytes = 8192
 var (
 	offDirentReclen  = unsafe.Offsetof(syscall.Dirent{}.Reclen)
 	sizeDirentReclen = unsafe.Sizeof(syscall.Dirent{}.Reclen)
-	offDirentIno     = unsafe.Offsetof(syscall.Dirent{}.Ino)
-	sizeDirentIno    = unsafe.Sizeof(syscall.Dirent{}.Ino)
 	offDirentName    = unsafe.Offsetof(syscall.Dirent{}.Name)
 	minDirentRec     = int(offDirentName) + 1
 )
