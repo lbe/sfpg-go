@@ -403,6 +403,6 @@ func TestUTF8PathToUTF16IgnoresBytesAfterPathLen(t *testing.T) {
 		t.Fatalf("utf8PathToUTF16: %v", err)
 	}
 	if n != 1 || wchar[0] != 'a' {
-		t.Fatalf("wchar=%q n=%d", wchar[:n+1], n)
+		t.Fatalf("wchar=%v n=%d", wchar[:n+1], n)
 	}
 }
