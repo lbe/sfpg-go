@@ -10,7 +10,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"github.com/lbe/sfpg-go/internal/log"
@@ -54,7 +53,7 @@ func NewRuntimeManager(parent context.Context) *RuntimeManager {
 	return &RuntimeManager{
 		ctx:          ctx,
 		cancel:       cancel,
-		execCommand:  syscall.Exec,
+		execCommand:  execReplacement,
 		galleryStats: &GalleryStats{},
 	}
 }
@@ -205,7 +204,8 @@ func environWithSkipStartupDiscovery(env []string) []string {
 	return setEnvValue(env, skipStartupDiscoveryEnv, "1")
 }
 
-// environForExecRestart returns env for syscall.Exec after an in-app restart.
+// environForExecRestart returns the env for the replacement process after an
+// in-app restart (exec on Unix, started child on Windows).
 func environForExecRestart(env []string, logFile string) []string {
 	env = environWithSkipStartupDiscovery(env)
 	if logFile != "" {
@@ -221,7 +221,8 @@ func envTruthySkipStartupDiscovery(env []string) bool {
 	return slices.Contains(env, prefix+"1")
 }
 
-// ExecRestart replaces the current process image with a fresh instance.
+// ExecRestart replaces the process with a fresh instance: it execs in place on
+// Unix, and on Windows starts a replacement and exits 0.
 // logFile is the absolute path to append after restart; empty skips SEPG_LOG_FILE.
 func (m *RuntimeManager) ExecRestart(logFile string) {
 	exe, err := os.Executable()
@@ -239,13 +240,14 @@ func (m *RuntimeManager) ExecRestart(logFile string) {
 		execCmd = m.testSeams.ExecCommand
 	}
 	if execCmd == nil {
-		execCmd = syscall.Exec
+		execCmd = execReplacement
 	}
 	if err := execCmd(exe, os.Args, environForExecRestart(os.Environ(), logFile)); err != nil {
 		slog.Error("failed to exec new process image", "err", err)
 		m.exit(1)
 		return
 	}
+	m.exit(0)
 }
 
 func (m *RuntimeManager) exit(code int) {

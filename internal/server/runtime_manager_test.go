@@ -99,6 +99,7 @@ func TestRuntimeManager_ExecRestart_Success(t *testing.T) {
 		gotEnv = env
 		return nil
 	}
+	m.testSeams.Exit = func(int) {}
 
 	m.ExecRestart("")
 
@@ -134,6 +135,7 @@ func TestRuntimeManager_ExecRestart_InjectsSkipEnv(t *testing.T) {
 		gotEnv = append([]string(nil), env...)
 		return nil
 	}
+	m.testSeams.Exit = func(int) {}
 
 	m.ExecRestart("")
 
@@ -156,6 +158,7 @@ func TestRuntimeManager_ExecRestart_InjectsLogFile(t *testing.T) {
 		gotEnv = append([]string(nil), env...)
 		return nil
 	}
+	m.testSeams.Exit = func(int) {}
 
 	m.ExecRestart(wantLog)
 
@@ -276,6 +279,25 @@ func TestRuntimeManager_ExecRestart_ExecError(t *testing.T) {
 	}
 	if exitCode != 1 {
 		t.Errorf("exit code = %d, want 1", exitCode)
+	}
+}
+
+// TestRuntimeManager_ExecRestart_SuccessExitsZero verifies that when the
+// replacement starts without error (Windows), the current process exits 0.
+func TestRuntimeManager_ExecRestart_SuccessExitsZero(t *testing.T) {
+	t.Parallel()
+	m := NewRuntimeManager(context.Background())
+
+	m.testSeams.Executable = func() (string, error) { return "/test/exe", nil }
+	m.testSeams.ExecCommand = func(string, []string, []string) error { return nil }
+
+	var exitCodes []int
+	m.testSeams.Exit = func(code int) { exitCodes = append(exitCodes, code) }
+
+	m.ExecRestart("")
+
+	if len(exitCodes) != 1 || exitCodes[0] != 0 {
+		t.Errorf("exit calls = %v, want exactly [0]", exitCodes)
 	}
 }
 

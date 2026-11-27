@@ -2375,6 +2375,7 @@ func TestProcessRestart_RequestsRestartAndExecs(t *testing.T) {
 		gotArgs = args
 		return nil
 	}
+	app.RuntimeManager.testSeams.Exit = func(int) {}
 
 	app.TriggerRestart()
 
