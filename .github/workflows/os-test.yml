@@ -50,10 +50,12 @@ jobs:
       - name: Run Tests in FreeBSD VM
         uses: vmactions/freebsd-vm@v1
         with:
-          envs: "SEPG_SESSION_SECURE"
           mem: 12288
           usesh: true
           prepare: pkg install -y go git
+          # The VM runs as root, which bypasses file permissions; run the tests
+          # as an unprivileged user so permission checks are exercised.
           run: |
-            go version
-            go test -p 2 -tags integration ./...
+            pw useradd -n ci -m -s /bin/sh
+            chown -R ci .
+            su -l ci -c "cd '$PWD' && go version && SEPG_SESSION_SECURE=false go test -p 2 -tags integration ./..."
