@@ -29,14 +29,44 @@ jobs:
           submodules: recursive
 
       - name: Set up Go
+        id: setup-go
         uses: actions/setup-go@v6
         with:
           go-version: "1.27.1"
-          cache: true
+          # setup-go saves its cache only when the job succeeds; Windows saves
+          # its own below so failing runs still keep the build cache.
+          cache: ${{ runner.os != 'Windows' }}
+
+      - name: Locate Go caches (Windows)
+        if: runner.os == 'Windows'
+        id: go-paths
+        shell: bash
+        run: |
+          echo "build=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+          echo "mod=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Go caches (Windows)
+        if: runner.os == 'Windows'
+        id: go-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ${{ steps.go-paths.outputs.build }}
+            ${{ steps.go-paths.outputs.mod }}
+          key: go-${{ runner.os }}-${{ runner.arch }}-${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.sum') }}
 
       - name: Run Tests
         shell: bash
         run: go test -p 2 -tags integration ./...
+
+      - name: Save Go caches (Windows)
+        if: always() && runner.os == 'Windows' && steps.go-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ${{ steps.go-paths.outputs.build }}
+            ${{ steps.go-paths.outputs.mod }}
+          key: ${{ steps.go-cache.outputs.cache-primary-key }}
 
   test-freebsd:
     name: Test (freebsd)
@@ -47,6 +77,15 @@ jobs:
         with:
           submodules: recursive
 
+      # The Go build and module caches live in .ci-cache in the workspace, which
+      # the VM action copies into the VM and back. go test ./... ignores
+      # directories that start with a dot.
+      - name: Cache Go build and module caches (FreeBSD)
+        uses: actions/cache@v6
+        with:
+          path: .ci-cache
+          key: go-freebsd-${{ hashFiles('go.sum') }}
+
       - name: Run Tests in FreeBSD VM
         uses: vmactions/freebsd-vm@v1
         with:
@@ -55,7 +94,9 @@ jobs:
           prepare: pkg install -y go git
           # The VM runs as root, which bypasses file permissions; run the tests
           # as an unprivileged user so permission checks are exercised.
+          # -modcacherw keeps the module cache writable for the copy back.
           run: |
             pw useradd -n ci -m -s /bin/sh
+            mkdir -p .ci-cache
             chown -R ci .
-            su -l ci -c "cd '$PWD' && go version && SEPG_SESSION_SECURE=false go test -p 2 -tags integration ./..."
+            su -l ci -c "cd '$PWD' && export GOCACHE='$PWD/.ci-cache/gocache' GOMODCACHE='$PWD/.ci-cache/gomodcache' GOFLAGS=-modcacherw && go version && SEPG_SESSION_SECURE=false go test -p 2 -tags integration ./..."
